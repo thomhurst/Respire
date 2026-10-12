@@ -479,6 +479,114 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
+    public async Task TransactionRetryPolicyPreservesInitialOpenCircuitRejection()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await Connect(sentinel, retryPolicy: new() { InitialBackoff = TimeSpan.Zero });
+        Open(client, primary);
+        await using var transaction = client.CreateTransaction();
+        var value = transaction.GetString("healthy");
+
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireCircuitOpenException>();
+        await Assert.That(async () => await value).Throws<RespireCircuitOpenException>();
+        await Assert.That(primary.ReceivedCommands.Contains("MULTI")).IsFalse();
+    }
+
+    [Test]
+    public async Task TransactionExecMemberReadOnlyResendsOnCurrentSentinelPrimary()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        var firstReply = first.ReplyOverride!;
+        first.ReplyOverride = (connection, command) =>
+        {
+            if (command.StartsWith("SET ")) return "+QUEUED\r\n"u8.ToArray();
+            if (command != "EXEC") return firstReply(connection, command);
+            Volatile.Write(ref port, second.Port);
+            return "*1\r\n-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
+        };
+        var secondReply = second.ReplyOverride!;
+        second.ReplyOverride = (connection, command) => command switch
+        {
+            _ when command.StartsWith("SET ") => "+QUEUED\r\n"u8.ToArray(),
+            "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
+            _ => secondReply(connection, command),
+        };
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel, retryPolicy: new()
+        {
+            MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+            MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins,
+        }, circuitBreaker: new());
+        await using var transaction = client.CreateTransaction();
+        var set = transaction.Strings.Set("key", "value");
+        await transaction.CommitAsync();
+
+        await Assert.That(await set).IsTrue();
+        await Assert.That(first.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(1);
+        await Assert.That(second.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(1);
+        await Assert.That(second.ReceivedCommands.Contains("SET key value")).IsTrue();
+    }
+
+    [Test]
+    public async Task PreDispatchRetirementDoesNotSpendTransactionUnitAttempt()
+    {
+        await using var first = Primary();
+        await using var second = Primary();
+        var execs = 0;
+        var healthy = second.ReplyOverride!;
+        // The first EXEC accepted by the replacement loses its reply, so the unit needs its one permitted resend.
+        second.ReplyOverride = (connection, command) =>
+        {
+            if (command != "EXEC" || Interlocked.Increment(ref execs) != 1) return healthy(connection, command);
+            second.CloseConnections();
+            return null;
+        };
+        var events = new ConcurrentDictionary<string, long>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.command.retries")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "respire.command.retry.outcome") events.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+        });
+        listener.Start();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await Connect(sentinel,
+            retryPolicy: new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero }, circuitBreaker: new());
+        var (circuit, _) = Prepare(client, first);
+        using var clock = new AdmissionGateClock();
+        CircuitClock(circuit) = clock;
+        await using var transaction = client.CreateTransaction();
+        var value = transaction.Strings.GetString("healthy");
+        clock.Arm();
+        var execution = Task.Run(async () => await transaction.CommitAsync());
+        try
+        {
+            await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref port, second.Port);
+            await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
+        }
+        finally { clock.Release(); }
+
+        // The retired frame was rejected before acceptance: it is neither an attempt nor a resend.
+        await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(await value).IsEqualTo("healthy");
+        await Assert.That(first.ReceivedCommands.Contains("MULTI")).IsFalse();
+        await Assert.That(execs).IsEqualTo(2);
+        await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
+        await Assert.That(events.GetValueOrDefault("succeeded")).IsEqualTo(1L);
+        await Assert.That(events.ContainsKey("exhausted")).IsFalse();
+    }
+
+    [Test]
     public async Task TransactionCursorContinuationDoesNotRerouteAfterRetirement()
     {
         await using var first = Primary();
@@ -905,7 +1013,7 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     private static async Task<RespireClient> Connect(FakeRespServer sentinel, TimeSpan? commandTimeout = null, int connections = 1,
-        bool clientSideCache = false)
+        bool clientSideCache = false, RespireRetryPolicy? retryPolicy = null, RespireCircuitBreakerOptions? circuitBreaker = null)
     {
         var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -913,8 +1021,9 @@ public sealed class SentinelCircuitDispatchTests
             Connections = connections, Protocol = clientSideCache ? RespProtocol.Resp3 : RespProtocol.Resp2,
             ClientSideCache = clientSideCache ? new() : null, ThreadPoolMonitoring = false,
             ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = commandTimeout ?? TimeSpan.FromSeconds(5),
-            CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25,
+            CircuitBreaker = circuitBreaker ?? new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25,
                 HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },
+            RetryPolicy = retryPolicy,
         });
         await SentinelTestSetup.WaitForStartupAsync(client);
         return client;

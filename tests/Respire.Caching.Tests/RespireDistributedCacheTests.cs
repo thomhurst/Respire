@@ -1329,6 +1329,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         await stallObserved;
         await Assert.That(failure).IsNotNull();
+        // Exact-connection fencing closes the old socket; wait for the replacement's handshake.
+        _ = await timeoutClient.Core.Multiplexer.GetHealthyConnectionAsync(CancellationToken.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var replacementClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
         await Assert.That(replacementClientId).IsNotEqualTo(originalClientId);
     }

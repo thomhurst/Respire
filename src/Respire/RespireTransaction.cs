@@ -33,6 +33,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     // A queued cursor continuation is server-local, so a retired generation cannot replay it elsewhere.
     private bool _hasCursorContinuation;
     private bool _completed;
+    private RetryCategorySet _retryCategories;
 
     // The transport records the accepting socket after any pre-admission maintenance reroute.
     internal RespireConnection? ExecutingConnection { get; set; }
@@ -516,6 +517,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             var sentinelTelemetryStarted = false;
+            var retryUnit = CanRetryUnit(core);
+            var unitAttempts = 0;
+            var retryTelemetry = retryUnit ? new UnitRetryTelemetry(_retryCategories.Label) : null;
+            Action? onUnitAccepted = retryTelemetry is null ? null : retryTelemetry.Accepted;
             try
             {
                 var cluster = core.Cluster;
@@ -539,8 +544,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }
                         else telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     }
-                    RespValue reply;
+                    RespValue reply = default;
                     CircuitAdmission admission = default;
+                    var outcome = CommandWriteOutcome.DefinitelyUnwritten;
+                    TimeSpan? retryDelay = null;
+                    var unitAttemptCounted = false;
                     try
                     {
                         // The entire MULTI/EXEC sequence owns one endpoint permit. Pin transport
@@ -574,11 +582,27 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         try { connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession); }
                         catch { observation.UseEndpoint(null); throw; }
                         sendAttempted = true;
-                        reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
-                                cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
-                                transaction: this, observation: observation, mutationFence: mutationFence,
-                                pinToConnection: core.Circuits is not null, writeObservation: RetryContext?.WriteObservation)
-                            .ConfigureAwait(false);
+                        if (retryUnit)
+                        {
+                            unitAttempts++;
+                            unitAttemptCounted = true;
+                            var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
+                                cancellationToken, deadline, this, observation, mutationFence,
+                                pinToConnection: core.Circuits is not null,
+                                onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
+                            // Acceptance runs under the transport write gate; publish only after leaving it.
+                            retryTelemetry!.PublishAccepted();
+                            outcome = attempted.WriteOutcome;
+                            reply = attempted.GetResult();
+                        }
+                        else
+                        {
+                            reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
+                                    cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
+                                    transaction: this, observation: observation, mutationFence: mutationFence,
+                                    pinToConnection: core.Circuits is not null, writeObservation: RetryContext?.WriteObservation)
+                                .ConfigureAwait(false);
+                        }
                         admission.Success();
                         connection = ExecutingConnection ?? connection;
                         if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull
@@ -591,6 +615,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     {
                         // Retirement rejected every frame before dispatch. Release this permit
                         // as ignored; the replacement endpoint owns its own health outcome.
+                        // Nothing was accepted, so the rejected frame spends no unit attempt.
+                        if (unitAttemptCounted) unitAttempts--;
                         observation.Handled(retirement);
                         connection = target;
                         deadline = rerouted;
@@ -611,11 +637,50 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     catch (Exception error)
                     {
                         admission.Failed(error, cancellationToken);
-                        throw;
+                        if (!retryUnit || unitAttempts == 0 || !TryGetUnitRetryDelay(error, outcome, out var delay)) throw;
+                        observation.Handled(error);
+                        retryDelay = delay;
                     }
                     finally { admission.Dispose(); }
+                    Exception? unitResponseError = null;
+                    if (retryUnit && retryDelay is null)
+                    {
+                        // EXEC can contain both successful members and transient errors. Apply the
+                        // whole frame's write evidence and every member's category before publishing any result.
+                        if (TryGetUnitResponseRetryDelay(in reply, outcome, out var delay, out unitResponseError))
+                        {
+                            reply.Dispose();
+                            observation.Handled(unitResponseError!);
+                            retryDelay = delay;
+                        }
+                    }
+                    if (retryDelay is { } wait)
+                    {
+                        for (;;)
+                        {
+                            if (wait != TimeSpan.Zero) await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+                            acquisition = new CommandAcquisitionScope(cancellationToken, deadline, timeout);
+                            acquisition.CheckDeadline("MULTI/EXEC", core);
+                            try
+                            {
+                                connection = await _client.GetUnitRetryConnectionAsync(acquisition.Token, observation).ConfigureAwait(false);
+                                break;
+                            }
+                            catch (Exception error)
+                            {
+                                // A failed replacement sent nothing, but spends an attempt as in the immediate owner.
+                                unitAttempts++;
+                                if (!TryGetUnitRetryDelay(error, CommandWriteOutcome.DefinitelyUnwritten, out wait)) throw;
+                                observation.Handled(error);
+                                acquisition.Dispose();
+                            }
+                        }
+                        continue;
+                    }
                     if (!reply.IsError || cluster is null)
                     {
+                        if (retryTelemetry is { AcceptedResends: > 0 })
+                            RespireTelemetry.RecordCommandRetry(_retryCategories.Label, unitResponseError is not null ? "exhausted" : "succeeded");
                         return reply;
                     }
 
@@ -668,6 +733,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
             catch (Exception error)
             {
+                if (retryTelemetry is { AcceptedResends: > 0 }) RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "exhausted");
                 Exception failure = error;
                 if (error is OperationCanceledException canceled && acquisition.HasCancellation)
                 {
@@ -702,8 +768,67 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 acquisition.Dispose();
                 discovery?.Finish();
             }
+
+            bool TryGetUnitRetryDelay(Exception error, CommandWriteOutcome outcome, out TimeSpan delay)
+                => core.CommandRetries!.TryGetUnitDelay(error, outcome, _retryCategories, unitAttempts,
+                    deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue,
+                    cancellationToken, out delay);
+
+            bool TryGetUnitResponseRetryDelay(in RespValue reply, CommandWriteOutcome outcome,
+                out TimeSpan delay, out Exception? responseError)
+            {
+                delay = default;
+                responseError = null;
+                if (reply.IsError)
+                {
+                    responseError = ResponseReader.ServerError(in reply, "MULTI/EXEC");
+                    return TryGetUnitRetryDelay(responseError, outcome, out delay);
+                }
+                if (reply.Type != RespDataType.Array) return false;
+                var elements = reply.AsArray();
+                for (var i = 0; i < Math.Min(elements.Length, _ops.Count); i++)
+                {
+                    ref readonly var element = ref elements[i];
+                    if (!element.IsError) continue;
+                    var error = ResponseReader.ServerError(in element, _ops[i].Operation);
+                    responseError ??= error;
+                    if (!TryGetUnitRetryDelay(error, outcome, out delay)) continue;
+                    responseError = error;
+                    return true;
+                }
+                return false;
+            }
         }
     }
+
+    // Allocate only when retries are enabled; the default commit path retains its allocation shape.
+    private sealed class UnitRetryTelemetry(RespireCommandRetryCategory category)
+    {
+        private int _unpublished;
+
+        internal int AcceptedResends { get; private set; }
+
+        // Runs under the connection write gate: mutate state only. Meter listeners run in PublishAccepted.
+        internal void Accepted()
+        {
+            // Acceptance and execution evidence differ: an accepted frame can die before writing.
+            AcceptedResends++;
+            Interlocked.Increment(ref _unpublished);
+        }
+
+        internal void PublishAccepted()
+        {
+            for (var count = Interlocked.Exchange(ref _unpublished, 0); count > 0; count--)
+                RespireTelemetry.RecordCommandRetry(category, "attempted");
+        }
+    }
+
+    // Only a complete unit that can be rebuilt from its retained frame is resent. WATCH state,
+    // import fieldsets, Cluster routing and server-local cursor pages cannot follow a new connection.
+    private bool CanRetryUnit(ClientCore core)
+        => core.CommandRetries is not null && core.Cluster is null && this is RespireTransaction
+            && _watchConnection is null && !ConnectionPolicy.IsImportSession && !_hasCursorContinuation
+            && _ops.Count != 0;
 
     /// <summary>
     /// Discards an uncommitted transaction, faults its queued pendings, and releases its resources.
@@ -779,6 +904,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
         if (CursorCommandMetadata.IsServerCursorContinuation(in command)) _hasCursorContinuation = true;
         RetryContext?.RecordCategory(command.RetryCategory);
+        _retryCategories.Add(command.RetryCategory);
         var pending = new RespirePending<T>();
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))

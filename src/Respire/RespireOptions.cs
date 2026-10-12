@@ -406,14 +406,18 @@ public sealed record RespireOptions
     public RespireClientSideCacheOptions? ClientSideCache { get; init; }
 
     /// <summary>
-    /// Opt-in retries for buffered immediate commands on standalone, Sentinel and Cluster clients.
+    /// Opt-in retries for buffered immediate commands on standalone, Sentinel and Cluster clients,
+    /// and complete unwatched transactions on standalone and Sentinel clients.
     /// Null disables retries.
     /// </summary>
     /// <remarks>One deadline spans all attempts. Caller-supplied commands, scripts and functions retry only
-    /// with a declared category. Watched transaction helpers replay whole callbacks when every queued
-    /// category permits the commit's write outcome. Standalone and Sentinel batches retry as complete
-    /// units only when every member's category is permitted. Cluster batches, direct transaction commits
-    /// and streams do not replay.
+    /// with a declared category. Every transaction member must permit replay of the whole unit.
+    /// Watched transaction helpers replay whole callbacks when every queued category permits the
+    /// commit's write outcome. Standalone and Sentinel batches retry as complete units only when
+    /// every member's category is permitted. Direct watched commits, Cluster batches and transactions,
+    /// hash import sessions, cursor continuations and streams retain their existing behavior.
+    /// A lost EXEC reply can mean execution;
+    /// permitting accumulating writes accepts repeated transaction effects.
     /// Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
     public RespireRetryPolicy? RetryPolicy { get; init; }
 

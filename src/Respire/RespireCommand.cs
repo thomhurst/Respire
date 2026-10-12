@@ -73,8 +73,11 @@ public readonly struct RespireCommand
     /// The declaration is the caller's statement about the complete invocation; Respire does not
     /// validate it against the command name or its arguments. It takes effect only when
     /// <see cref="RespireOptions.RetryPolicy"/> permits that category. Declaring a write category
-    /// accepts repeated effects after a possible execution. Blocking commands, scripts and functions
-    /// sent through this escape hatch, fire-and-forget sends, Cluster batches and direct transaction commits do not retry.
+    /// accepts repeated effects after a possible execution. Immediate blocking commands, scripts and
+    /// functions sent through this escape hatch, fire-and-forget sends and Cluster batches do not retry. Unwatched
+    /// standalone and Sentinel transactions retry as complete units only when every member permits
+    /// replay. Watched transactions, Cluster transactions, hash import sessions and cursor
+    /// continuations are excluded. A lost EXEC reply does not prove the transaction was aborted.
     /// Watched transaction helpers inspect queued declarations before replaying the whole callback.
     /// In a standalone or Sentinel batch, the category joins the complete unit's retry decision; a
     /// replay resends every member, so a write category accepts repeated effects for this member.

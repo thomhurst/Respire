@@ -172,6 +172,62 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
+    [Arguments("result", true)]
+    [Arguments("result", false)]
+    [Arguments("span", true)]
+    [Arguments("span", false)]
+    [Arguments("string", true)]
+    [Arguments("string", false)]
+    [Arguments("integer", true)]
+    [Arguments("integer", false)]
+    [Arguments("typed", true)]
+    [Arguments("typed", false)]
+    public async Task ImmediateFunctionRetriesRespectOneAttemptBudget(string shape, bool readOnly)
+    {
+        var events = new ConcurrentDictionary<string, long>();
+        using var listener = RetryListener(events);
+        var calls = 0;
+        var command = readOnly ? "FCALL_RO reader 1 key" : "FCALL reader 1 key";
+        await using var server = Standalone((received, _) => received == command
+            ? Count(ref calls, TryAgain) : null);
+        await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server) with
+        {
+            RetryPolicy = new()
+            {
+                MaxAttempts = 3, InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating,
+            },
+        });
+        var category = readOnly ? RespireCommandRetryCategory.ReadOnly : RespireCommandRetryCategory.WriteAccumulating;
+        var function = RespireFunction.Create("reader", readOnly).WithRetryCategory(category);
+        await Assert.That(async () =>
+        {
+            switch (shape)
+            {
+                case "result":
+                    using (await client.Functions.ExecuteAsync(function, ["key"])) { }
+                    break;
+                case "span":
+                    using (await client.Functions.ExecuteSpanAsync(function, ["key"], [])) { }
+                    break;
+                case "string":
+                    await client.Functions.ExecuteStringAsync(function, ["key"]);
+                    break;
+                case "integer":
+                    await client.Functions.ExecuteIntegerAsync(function, ["key"]);
+                    break;
+                case "typed":
+                    await client.Functions.ExecuteAsync<string>(function, ["key"]);
+                    break;
+            }
+        }).ThrowsExactly<RespireServerException>();
+        await Assert.That(calls).IsEqualTo(3);
+        await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(2L);
+        await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(1L);
+        await Assert.That(events.GetValueOrDefault("succeeded")).IsEqualTo(0L);
+    }
+
+    [Test]
     [Arguments(RespireCommandRetryCategory.ReadOnly, false)]
     [Arguments(RespireCommandRetryCategory.WriteLastWins, true)]
     public async Task SentinelReadOnlyRetryWritesToTheNewlyDiscoveredPrimary(RespireCommandRetryCategory maximum, bool retries)

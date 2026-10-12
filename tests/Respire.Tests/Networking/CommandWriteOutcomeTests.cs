@@ -223,6 +223,33 @@ public class CommandWriteOutcomeTests
     }
 
     [Test]
+    public async Task TransactionAcceptanceIsReportedEvenWhenFrameDiesUnwritten()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply) { SuppressReply = _ => true };
+        GatedTransport? transport = null;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new() { TestingStreamFactory = async (host, port, token) =>
+                transport = await GatedTransport.ConnectAsync(host, port, 0, token) });
+        var selected = connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await transport!.WriteEntered.Task.WaitAsync(Guard);
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = { new("127.0.0.1", server.Port) } });
+        await using var transaction = client.CreateTransaction();
+        var accepted = 0;
+        var queued = connection.SendTransactionAttemptAsync(FakeRespServer.PingFrame, 1,
+            default, default, transaction, default, default, pinToConnection: true,
+            onAccepted: () => accepted++).AsTask();
+        // The first write is parked, so the transaction remains in the unselected active buffer.
+        await Assert.That(accepted).IsEqualTo(1);
+        await connection.DisposeAsync().AsTask().WaitAsync(Guard);
+        var initial = await selected.WaitAsync(Guard);
+        var attempt = await queued.WaitAsync(Guard);
+        await Assert.That(attempt.WriteOutcome).IsEqualTo(CommandWriteOutcome.DefinitelyUnwritten);
+        await Assert.That(() => initial.GetResult()).Throws<RespireConnectionException>();
+        await Assert.That(() => attempt.GetResult()).Throws<RespireConnectionException>();
+        await Assert.That(accepted).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(0, 1)]
     [Arguments(7, 1)]
     [Arguments(14, 1)]

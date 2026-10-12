@@ -282,6 +282,21 @@ public sealed partial class RespireClient
         return await send(state, attempt).ConfigureAwait(false);
     }
 
+    // A complete unit resends on the current primary, selected as for the immediate owner. An
+    // open circuit rejects before the replacement wait; the unit's admission rechecks it.
+    internal async ValueTask<RespireConnection> GetUnitRetryConnectionAsync(CancellationToken token,
+        RespireTelemetry.ErrorObservation observation)
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        if (!_core.TryGetReadyPrimaryMultiplexer(out var multiplexer))
+        {
+            await _core.EnsureConnectedAsync(token, observation).ConfigureAwait(false);
+            multiplexer = _core.Multiplexer;
+        }
+        if (_core.Circuits is not null) RejectOpenCircuit(token);
+        return await multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
+    }
+
     internal bool CanRetryDeclared(RespireCommandRetryCategory category)
         => _core.CommandRetries is not null && category != RespireCommandRetryCategory.Never;
 

@@ -43,7 +43,8 @@ public sealed class RespireFunction
     /// Immediate calls retry only when <see cref="RespireOptions.RetryPolicy"/> permits the category.
     /// A failed attempt is treated as possibly executed. Declare a write category only when repeating
     /// every effect of the call, with the same keys and arguments, is acceptable. Deferred calls never
-    /// resend individually.
+    /// resend individually. Eligible unwatched standalone and Sentinel transactions can replay
+    /// the complete unit when every member's category permits it.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
     public RespireFunction WithRetryCategory(RespireCommandRetryCategory category)

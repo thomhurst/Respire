@@ -89,8 +89,8 @@ public class FunctionCommandTests
         _ = tx.Functions.Execute(function, ["{b}"]);
         await Assert.That(() => tx.Functions.Execute(function, ["{a}"])).Throws<InvalidOperationException>();
         var prefixed = client.WithKeyPrefix("{same}:");
-        _ = FunctionCommands.CallCommand((RespireClient)prefixed, function, ["{a}", "{b}"], []);
-        var noKeys = FunctionCommands.CallCommand(client, function, [], ["{argument}"]);
+        _ = FunctionCommands.CallCommand((RespireClient)prefixed, function, ["{a}", "{b}"], [], deferred: false);
+        var noKeys = FunctionCommands.CallCommand(client, function, [], ["{argument}"], deferred: false);
         await Assert.That(noKeys.TryGetClusterSlot(out _)).IsFalse();
     }
 

@@ -51,6 +51,24 @@ internal sealed partial class RespireConnection
         }
     }
 
+    /// <summary>
+    /// Sends MULTI, the queued commands and EXEC as one logical attempt with one write outcome.
+    /// The reply and failure contracts match <see cref="SendTransactionAsync"/>.
+    /// </summary>
+    internal ValueTask<CommandAttemptResult> SendTransactionAttemptAsync(
+        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken,
+        CommandDeadline commandDeadline, RespireTransactionBase transaction, RespireTelemetry.ErrorObservation observation,
+        ClientSideCacheCoordinator.MutationFence mutationFence, bool pinToConnection, Action? onAccepted)
+    {
+        // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
+        try { ValidateTransactionCapacity(commandCount); }
+        catch { observation.UseEndpoint(null); throw; }
+        observation.UseEndpoint(new(Host, Port), cancellationToken);
+        return SendAttemptAsync(new TransactionCommand(serializedCommands, includeMulti: true, transaction, mutationFence, onAccepted),
+            cancellationToken, "MULTI/EXEC", commandDeadline, repliesBeforeFinal: commandCount + 1, firstQueueReply: 1,
+            pinToConnection: pinToConnection, errorObservation: observation);
+    }
+
     /// <summary>Observes an ASKING prelude and its streamed SET as one logical attempt.</summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

@@ -57,7 +57,8 @@ public sealed class RespireScript
     /// category. A failed attempt is treated as possibly executed, because the script may have run
     /// before its reply was lost. Declare a write category only when repeating every effect of the
     /// script, with the same keys and arguments, is acceptable. Batches and transactions never resend
-    /// an individual script.
+    /// an individual script. Eligible unwatched standalone and Sentinel transactions can replay
+    /// the complete unit when every member's category permits it.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
     public RespireScript WithRetryCategory(RespireCommandRetryCategory category)
