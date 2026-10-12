@@ -3972,9 +3972,28 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
-        // A longer receive budget (or receive suppression) must not postpone write checks.
-        if (_gatheredWriteTimeout is { } writeTimeout && delay > writeTimeout) delay = writeTimeout;
+        delay = GetGatheredWriteWatchdogDelay(delay);
         return Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
+    }
+
+    internal TimeSpan GetGatheredWriteWatchdogDelay(TimeSpan delay)
+    {
+        if (_gatheredWriteTimeout is not { } writeTimeout) return delay;
+        var timestamp = Volatile.Read(ref _flushProgress.GatheredWriteDeadlineTimestamp);
+        var writeDelay = writeTimeout;
+        if (timestamp != 0)
+        {
+            var effectiveTimeout = MaintenanceTimeout(writeTimeout, Environment.TickCount64, out var window, out _);
+            writeDelay = GetWatchdogDelay(effectiveTimeout, Stopwatch.GetElapsedTime(timestamp));
+            if (window > 0)
+            {
+                // A completion push or window expiry can restore the shorter normal bound.
+                var checkMilliseconds = Math.Clamp(writeTimeout.TotalMilliseconds / 4, 10, 1000);
+                writeDelay = TimeSpan.FromMilliseconds(Math.Min(writeDelay.TotalMilliseconds, Math.Min(window, checkMilliseconds)));
+            }
+        }
+        // Idle scans use the normal bound; active scans use its remaining allowance.
+        return delay < writeDelay ? delay : writeDelay;
     }
 
     internal static TimeSpan GetWatchdogDelay(TimeSpan timeout, TimeSpan elapsed)

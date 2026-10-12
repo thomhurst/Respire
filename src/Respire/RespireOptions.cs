@@ -692,7 +692,9 @@ public sealed record RespireOptions
     /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, <c>keyPrefix</c>, <c>pubSubPrefix</c>, and Sentinel credentials/TLS.
     /// Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
-    /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
+    /// <c>connectionIdleReadTimeoutMs</c>, <c>gatheredWriteStallTimeoutMs</c> (-1 disables the
+    /// gathered-write bound; omitted inherits <c>connectionIdleReadTimeoutMs</c>),
+    /// <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false),
     /// <c>allowAdmin</c> (true or false), <c>keyPrefix</c>, and <c>pubSubPrefix</c>.

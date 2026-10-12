@@ -18,6 +18,17 @@ public class ConnectionStringParsingTests
     }
 
     [Test]
+    [Arguments(-2)]
+    [Arguments(int.MinValue)]
+    [Arguments(0)]
+    public async Task GatheredWriteTimeoutUriRejectsInvalidBounds(int milliseconds)
+    {
+        var error = await Assert.That(() => RespireOptions.Parse($"redis://localhost?gatheredWriteStallTimeoutMs={milliseconds}"))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(error!.Message).Contains(nameof(RespireOptions.GatheredWriteStallTimeout));
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments("4")]
     [Arguments("resp4")]
