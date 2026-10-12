@@ -57,11 +57,11 @@ read routing. Declare the risk of the complete invocation explicitly:
 ```csharp
 var read = RespireCommand.Create("MYMODULE.GET")
     .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
-using var result = await client.ExecuteAsync(read, ["key"]);
+using var result = await redis.ExecuteAsync(read, ["key"]);
 
 var script = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true)
     .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
-var value = await client.Scripts.ExecuteStringAsync(script, ["key"]);
+var value = await redis.Scripts.ExecuteStringAsync(script, ["key"]);
 
 var function = RespireFunction.Create("reader", readOnly: true)
     .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
@@ -84,6 +84,11 @@ Set `RespireFailoverGroupOptions.RetryPolicy` and run operations through
 `RespireFailoverGroup.ExecuteAsync`:
 
 ```csharp
+RespireFailoverCandidate[] candidates =
+[
+    new(new RespireOptions { Endpoints = { new("primary.example", 6379) } }, Priority: 0),
+    new(new RespireOptions { Endpoints = { new("standby.example", 6379) } }, Priority: 1),
+];
 await using var group = await RespireFailoverGroup.ConnectAsync(candidates, new RespireFailoverGroupOptions
 {
     RetryPolicy = new RespireRetryPolicy { MaxAttempts = 3 },
