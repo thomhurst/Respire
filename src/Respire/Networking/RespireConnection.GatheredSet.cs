@@ -35,7 +35,7 @@ internal sealed partial class RespireConnection
                 frameLength = checked(_activeBuffer.Count - mark + command.Payload.Count);
             }
             catch { _activeBuffer.TruncateTo(mark); throw; }
-            if (_responseTimeout is not null && !_activeBuffer.HasBorrowedPayloads)
+            if (_gatheredWriteTimeout is not null && !_activeBuffer.HasBorrowedPayloads)
             {
                 // Arm when ownership is accepted, even if a preceding copied buffer is stalled.
                 // Further enqueues must not postpone a stall already being watched.

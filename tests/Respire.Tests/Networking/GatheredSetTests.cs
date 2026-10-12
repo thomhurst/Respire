@@ -309,8 +309,10 @@ public sealed class GatheredSetTests
     [Arguments("deadline")]
     [Arguments("peer-close")]
     [Arguments("dispose")]
+    [Arguments("cancel", true)]
+    [Arguments("deadline", true)]
     [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
-    public async Task BackpressuredPeerPreservesCallerPayloadThroughEveryFailureBoundary(string boundary)
+    public async Task BackpressuredPeerPreservesCallerPayloadThroughEveryFailureBoundary(string boundary, bool receiveOnly = false)
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
@@ -319,6 +321,8 @@ public sealed class GatheredSetTests
             Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(500) : null,
+            ConnectionIdleReadTimeout = receiveOnly ? TimeSpan.FromMilliseconds(200) : null,
+            GatheredWriteStallTimeout = receiveOnly ? Timeout.InfiniteTimeSpan : null,
         });
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
@@ -347,6 +351,13 @@ public sealed class GatheredSetTests
             if (boundary == "cancel") await cancellation.CancelAsync();
             // Cancellation's native completion reservation is observable while the write stays parked.
             await WaitForNativeCompletionAsync(connection, guard.Token);
+            if (receiveOnly)
+            {
+                // Explicitly disabling write bounds must survive multiple receive intervals.
+                await Task.Delay(600, guard.Token);
+                await Assert.That(connection.IsConnected).IsTrue();
+                await Assert.That(ReadBorrowedWatch(connection).Timestamp).IsEqualTo(0);
+            }
             var remaining = connection.CaptureTimeoutDiagnostics().PendingWriteBytes;
             Console.WriteLine($"GATHER_WRITE_BOUNDARY {boundary}: pending write bytes {remaining}");
             await Assert.That(remaining > 0).IsTrue();
@@ -381,8 +392,14 @@ public sealed class GatheredSetTests
     [Arguments("cancel", true)]
     [Arguments("deadline", true)]
     [Arguments("watchdog", true)]
+    [Arguments("cancel", false, true)]
+    [Arguments("deadline", false, true)]
+    [Arguments("watchdog", false, true)]
+    [Arguments("cancel", true, true)]
+    [Arguments("deadline", true, true)]
+    [Arguments("watchdog", true, true)]
     [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
-    public async Task ConfiguredWatchdogReleasesBorrowedMemoryWhenPeerNeverResumes(string boundary, bool pausedConsumer)
+    public async Task ConfiguredWatchdogReleasesBorrowedMemoryWhenPeerNeverResumes(string boundary, bool pausedConsumer, bool independent = false)
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = pausedConsumer ? null : reads.Task };
@@ -391,7 +408,8 @@ public sealed class GatheredSetTests
             Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
-            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(1),
+            ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromSeconds(1),
+            GatheredWriteStallTimeout = independent ? TimeSpan.FromSeconds(1) : null,
         });
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -463,7 +481,11 @@ public sealed class GatheredSetTests
     [Arguments("deadline")]
     [Arguments("watchdog")]
     [Arguments("resume")]
-    public async Task ConfiguredWatchdogReleasesBorrowedMemoryQueuedBehindCopiedWrite(string boundary)
+    [Arguments("cancel", true)]
+    [Arguments("deadline", true)]
+    [Arguments("watchdog", true)]
+    [Arguments("resume", true)]
+    public async Task ConfiguredWatchdogReleasesBorrowedMemoryQueuedBehindCopiedWrite(string boundary, bool independent = false)
     {
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
@@ -475,7 +497,8 @@ public sealed class GatheredSetTests
             // A resumed 5 MiB copied send can remain pending while Linux drains it, especially
             // under coverage. Give that positive control a finite drain budget; stalled-peer
             // controls retain the short timeout that proves prompt ownership release.
-            ConnectionIdleReadTimeout = TimeSpan.FromSeconds(boundary == "resume" ? 5 : 1),
+            ConnectionIdleReadTimeout = independent ? TimeSpan.FromMinutes(1) : TimeSpan.FromSeconds(boundary == "resume" ? 5 : 1),
+            GatheredWriteStallTimeout = independent ? TimeSpan.FromSeconds(boundary == "resume" ? 5 : 1) : null,
         });
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -496,16 +519,41 @@ public sealed class GatheredSetTests
         await Assert.That(connection.CaptureTimeoutDiagnostics().PendingWriteBytes > payload.Length).IsTrue();
         await Assert.That(ReadBorrowedWatch(connection).Buffers).IsEqualTo(1);
         await Assert.That(ReadBorrowedWatch(connection).Timestamp != 0).IsTrue();
+        var gate = typeof(RespireConnection).GetField("_writeGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection)!;
+        var enter = gate.GetType().GetMethod("Enter")!;
+        var exit = gate.GetType().GetMethod("Exit")!;
+        Task<bool> additional;
+        Task<bool> small;
+        long timestampBefore;
+        (int Buffers, long Timestamp) watchAfter;
+        enter.Invoke(gate, null);
+        try
+        {
+            // Inspect under the admission gate so a completed send cannot race the comparison.
+            // The preceding copied frame remains parked on the real socket.
+            timestampBefore = ReadBorrowedWatch(connection).Timestamp;
+            small = client.SetAsync("queued-small", "unchanged").AsTask();
+            additional = client.SetAsync("queued-additional", new byte[512 * 1024]).AsTask();
+            watchAfter = ReadBorrowedWatch(connection);
+        }
+        finally { exit.Invoke(gate, null); }
         if (boundary == "cancel") await cancellation.CancelAsync();
         try
         {
+            await Assert.That(watchAfter.Timestamp).IsEqualTo(timestampBefore);
+            await Assert.That(watchAfter.Buffers).IsEqualTo(1);
             if (boundary == "resume")
             {
                 reads.TrySetResult();
                 await Assert.That(await pending.WaitAsync(guard.Token)).IsTrue();
                 await copied.WaitAsync(guard.Token);
+                await Assert.That(await small.WaitAsync(guard.Token)).IsTrue();
+                await Assert.That(await additional.WaitAsync(guard.Token)).IsTrue();
                 await Assert.That(server.ReceivedArguments[0][2].All(value => value == 0)).IsTrue();
                 await Assert.That(server.ReceivedArguments[1][2].All(value => value == (byte)'a')).IsTrue();
+                await Assert.That(server.ReceivedCommands[2]).IsEqualTo("SET queued-small unchanged");
+                await Assert.That(server.ReceivedArguments[3][2].All(value => value == 0)).IsTrue();
                 // Both write owners have finished. Inspect the quiescent watch directly rather
                 // than making successful drainage depend on a one-second scheduling budget.
                 await Assert.That(ReadBorrowedWatch(connection).Buffers).IsEqualTo(0);
@@ -529,6 +577,8 @@ public sealed class GatheredSetTests
             // Always consume the preceding command, including when the regression times out.
             await client.DisposeAsync();
             try { await copied; } catch (RespireException) { }
+            try { await small; } catch (RespireException) { }
+            try { await additional; } catch (RespireException) { }
             reads.TrySetResult();
         }
     }
@@ -543,15 +593,38 @@ public sealed class GatheredSetTests
     }
 
     [Test]
+    [Arguments(-1)]
+    [Arguments(60000)]
+    [ParallelLimiter<TimingSensitive>]
+    public async Task ReceiveTimeoutStillAppliesWithIndependentWriteBound(int writeMilliseconds)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply) { SuppressReply = _ => true };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions
+            {
+                ResponseTimeout = TimeSpan.FromMilliseconds(100),
+                GatheredWriteStallTimeout = TimeSpan.FromMilliseconds(writeMilliseconds),
+            });
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("received no data");
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     [ParallelLimiter<TimingSensitive>] // Real socket backpressure and watchdog deadlines.
-    public async Task CompletedBorrowedWriteDoesNotLeaveAnIdleWatchdogArmed()
+    public async Task CompletedBorrowedWriteDoesNotLeaveAnIdleWatchdogArmed(bool independent)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
-            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200), CommandTimeout = null,
+            ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromMilliseconds(200), CommandTimeout = null,
+            GatheredWriteStallTimeout = independent ? TimeSpan.FromMilliseconds(200) : null,
         });
         var connection = client.Core.Multiplexer.GetConnection();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));

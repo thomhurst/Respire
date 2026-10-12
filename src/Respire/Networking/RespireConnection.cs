@@ -85,6 +85,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly TaskCompletionSource _stallWatchReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _watchdogCancellation;
     private readonly TimeSpan? _responseTimeout;
+    private readonly TimeSpan? _gatheredWriteTimeout;
     private readonly TimeSpan? _commandTimeout;
     private readonly long _stalledDeliveryMilliseconds;
     private readonly long _teardownRescueBudgetMilliseconds;
@@ -316,6 +317,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
+        _gatheredWriteTimeout = options.EffectiveGatheredWriteStallTimeout;
         _commandTimeout = options.CommandTimeout;
         _stalledDeliveryMilliseconds = Math.Max(1L, (long)options.StalledDeliveryThreshold.TotalMilliseconds);
         _teardownRescueBudgetMilliseconds = Math.Max(1L, (long)options.RetirementDrainFallbackTimeout.TotalMilliseconds);
@@ -333,9 +335,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // retiring this connection, the proxy would never complete and disposal would hang.
         _receiveTask = ReceiveLoopAsync();
         _flushTask = Task.Run(FlushLoopAsync);
-        if (_responseTimeout is { } responseTimeout)
+        if ((_responseTimeout ?? _gatheredWriteTimeout) is { } livenessTimeout)
         {
-            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation.Token);
+            _watchdogTask = WatchLivenessAsync(livenessTimeout, _watchdogCancellation.Token);
         }
 
         if (_commandTimeout is { } commandTimeout)
@@ -366,6 +368,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options), "CommandTimeout must be at least one millisecond.");
+        }
+
+        if (options.GatheredWriteStallTimeout is { } invalidWriteTimeout
+            && invalidWriteTimeout != Timeout.InfiniteTimeSpan && invalidWriteTimeout < MinWatchdogDelay)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "GatheredWriteStallTimeout must be at least one millisecond, Timeout.InfiniteTimeSpan, or null.");
         }
 
         var isUnixSocket = port == 0;
@@ -2699,7 +2708,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     // because the bytes are already on the socket and this thread still completes
                     // the buffer's waiters.
                     Volatile.Write(ref _sending, false);
-                    if (_responseTimeout is not null && sending.HasBorrowedPayloads)
+                    if (_gatheredWriteTimeout is not null && sending.HasBorrowedPayloads)
                         CompleteGatheredWriteWatch();
                     sending.CompleteWrite();
                     sending.Reset();
@@ -3726,16 +3735,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// Marks the connection dead and closes the socket, waking any blocked receive. Idempotent.
     /// The receive loop's exit path fails all in-flight commands — it is the ring's only consumer.
     /// </summary>
-    private async Task WatchReceiveAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    private async Task WatchLivenessAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         try
         {
             while (true)
             {
                 // Consumer backpressure and blocking replies suppress only receive liveness checks.
-                if (TryAbortStalledGatheredWrite(timeout)) return;
+                if (_gatheredWriteTimeout is { } writeTimeout && TryAbortStalledGatheredWrite(writeTimeout)) return;
 
-                if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
+                if (_responseTimeout is null || Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                 {
                     await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
                     continue;
@@ -3961,8 +3970,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         return rescued;
     }
 
-    private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
-        => Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
+    private Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        // A longer receive budget (or receive suppression) must not postpone write checks.
+        if (_gatheredWriteTimeout is { } writeTimeout && delay > writeTimeout) delay = writeTimeout;
+        return Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
+    }
 
     internal static TimeSpan GetWatchdogDelay(TimeSpan timeout, TimeSpan elapsed)
         => elapsed < timeout ? timeout - elapsed : TimeSpan.Zero;
@@ -4366,6 +4379,12 @@ internal sealed record RespireConnectionOptions
     /// Null disables the watchdog.
     /// </summary>
     public TimeSpan? ResponseTimeout { get; init; }
+
+    /// <inheritdoc cref="RespireOptions.GatheredWriteStallTimeout"/>
+    public TimeSpan? GatheredWriteStallTimeout { get; init; }
+
+    internal TimeSpan? EffectiveGatheredWriteStallTimeout => GatheredWriteStallTimeout == Timeout.InfiniteTimeSpan
+        ? null : GatheredWriteStallTimeout ?? ResponseTimeout;
 
     /// <summary>
     /// Client-side cap on how long each command waits for its response. Commands are stamped

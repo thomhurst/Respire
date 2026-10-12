@@ -7,6 +7,17 @@ namespace Respire.Tests;
 public class ConnectionStringParsingTests
 {
     [Test]
+    [Arguments(-1)]
+    [Arguments(1)]
+    [Arguments(2000)]
+    public async Task GatheredWriteTimeoutUriOverridesReceiveBudget(int milliseconds)
+    {
+        var options = RespireOptions.Parse($"redis://localhost?connectionIdleReadTimeoutMs=1000&gatheredWriteStallTimeoutMs={milliseconds}");
+        await Assert.That(options.ConnectionIdleReadTimeout).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(options.GatheredWriteStallTimeout).IsEqualTo(TimeSpan.FromMilliseconds(milliseconds));
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments("4")]
     [Arguments("resp4")]

@@ -43,6 +43,7 @@ internal static class RespireConfiguration
         UseTls = section.GetValue("UseTls", options.UseTls),
         TlsOptions = Tls(section.GetSection("TlsOptions"), options.TlsOptions),
         ConnectionIdleReadTimeout = OptionalTimeSpan(section, "ConnectionIdleReadTimeout", options.ConnectionIdleReadTimeout),
+        GatheredWriteStallTimeout = OptionalTimeSpan(section, "GatheredWriteStallTimeout", options.GatheredWriteStallTimeout),
         CommandTimeout = OptionalTimeSpan(section, "CommandTimeout", options.CommandTimeout),
         ThreadPoolMonitoring = section.GetValue("ThreadPoolMonitoring", options.ThreadPoolMonitoring),
         ThreadPoolWarningThreshold = section.GetValue("ThreadPoolWarningThreshold", options.ThreadPoolWarningThreshold),

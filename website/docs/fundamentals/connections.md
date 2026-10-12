@@ -9,6 +9,43 @@ Use a URI for the common case or `RespireOptions` when the connection needs expl
 
 For opt-in standalone or Cluster data-node admission, configure [circuit breakers](../guides/circuit-breakers.md).
 
+## Independent liveness bounds
+
+`ConnectionIdleReadTimeout` aborts a connection when replies are pending and no bytes arrive.
+Null (default) disables receive checks. `GatheredWriteStallTimeout` bounds stalled borrowed
+large-SET memory independently, from queue admission through the whole owning buffer's send.
+
+| GatheredWriteStallTimeout | Borrowed-write behavior |
+| --- | --- |
+| `null` (default) | Inherits `ConnectionIdleReadTimeout`; both null disables both bounds. |
+| Finite, at least 1 ms | Uses this write budget regardless of the receive budget. |
+| `Timeout.InfiniteTimeSpan` | Disables only the write bound. |
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    ConnectionIdleReadTimeout = TimeSpan.FromSeconds(30),
+    GatheredWriteStallTimeout = TimeSpan.FromSeconds(5),
+};
+```
+
+For a URI, use `connectionIdleReadTimeoutMs` and `gatheredWriteStallTimeoutMs`; `-1` disables
+the write bound. The dependency injection builder and Aspire options configuration expose both
+properties. Zero, sub-millisecond finite values, and other negative values are rejected.
+
+A paused bulk-stream consumer suppresses only receive checks. Completed socket sends, including
+copied sends ahead of queued borrowed memory, advance write progress. Adding commands does not
+postpone an existing stall. Maintenance notifications can relax either enabled budget to
+`MaintenanceRelaxedTimeout` while the maintenance window remains active; disabled bounds remain disabled.
+
+A write stall closes the whole connection, so other pending commands can fail. Redis may have
+received part or all of the SET; its execution is uncertain. Cancellation or a command deadline
+does not abandon an accepted frame. Keep binary input unchanged until public completion,
+including exceptional completion: the completion barrier still waits for the kernel to release
+caller memory. With the write bound disabled, a parked peer can retain memory until reading
+resumes, the socket fails, or the client is disposed. See [large binary SET ownership](../commands/strings-and-keys.md).
+
 ## Connect immediately
 
 ```csharp
