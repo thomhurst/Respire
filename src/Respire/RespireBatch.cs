@@ -510,7 +510,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     op.DiscardReply();
                 }
                 DeferredOperation.SetAttempts(operations, attempts);
-                if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
+                await core.DelayUnitRetryAsync(delay, token).ConfigureAwait(false);
             }
         }
         catch (Exception error)

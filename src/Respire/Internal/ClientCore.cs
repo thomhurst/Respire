@@ -73,6 +73,25 @@ internal sealed class ClientCore : IAsyncDisposable
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
+    // Canceled once by disposal and never disposed, so linking to its token cannot throw.
+    private readonly CancellationTokenSource _lifetime = new();
+
+    /// <summary>
+    /// Waits for a whole-unit retry backoff. Disposal ends the wait at once with
+    /// <see cref="ObjectDisposedException"/>, instead of holding the unit until the delay elapses.
+    /// </summary>
+    internal async Task DelayUnitRetryAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        if (delay == TimeSpan.Zero) return;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        try { await Task.Delay(delay, linked.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException)
+        {
+            // Report the caller's own token, as an unlinked delay would.
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ObjectDisposedException(typeof(RespireClient).FullName);
+        }
+    }
 
     public ClientCore(RespireOptions options)
     {
@@ -770,6 +789,7 @@ internal sealed class ClientCore : IAsyncDisposable
             Disposed = true;
             cleanupQueue = _coordinationCleanupQueue;
         }
+        await _lifetime.CancelAsync().ConfigureAwait(false);
         // A closed client cannot send queued releases, so cancel its background cleanup before
         // tearing down the transports. Dispose semaphore permits before the client when possible.
         if (cleanupQueue is not null)
