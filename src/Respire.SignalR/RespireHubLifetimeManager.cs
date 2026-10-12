@@ -783,10 +783,14 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
     private static string GenerateInvocationId()
     {
+        // stackalloc-audit[14acfe71f9fa28ec]: init: Guid.TryWriteBytes writes all 16 bytes into the 16-byte buffer;
+        // read: TryToBase64Chars reads those 16 bytes; failure: TryWriteBytes cannot fail for 16 bytes.
         Span<byte> buffer = stackalloc byte[16];
         var success = Guid.NewGuid().TryWriteBytes(buffer);
         Debug.Assert(success);
         // 16 * 4/3 = 21.333 which means base64 encoding will use 22 characters of actual data and 2 characters of padding ('=')
+        // stackalloc-audit[14acfe71f9fa28ec]: init: TryToBase64Chars writes all 24 chars of a 16-byte encoding;
+        // read: new string reads base64[..^2], 22 of the written chars; failure: 24 chars always fit 16 bytes.
         Span<char> base64 = stackalloc char[24];
         success = Convert.TryToBase64Chars(buffer, base64, out var written);
         Debug.Assert(success);

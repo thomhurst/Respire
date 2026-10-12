@@ -84,6 +84,9 @@ public sealed class RespireScript
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         var byteCount = Encoding.UTF8.GetByteCount(source);
         byte[]? rented = null;
+        // stackalloc-audit[11684c5fb1348cd7]: init: Ascii.FromUtf16 or Encoding.UTF8.GetBytes encodes all byteCount bytes;
+        // read: SHA1 hashes utf8[..byteCount], the encoded bytes; failure: an encoder throw exits through finally
+        // before hashing, and the rented array is cleared on return.
         var utf8 = byteCount <= StackallocThreshold
             ? stackalloc byte[byteCount]
             : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
@@ -99,9 +102,13 @@ public sealed class RespireScript
                 Encoding.UTF8.GetBytes(source, utf8);
             }
 
+            // stackalloc-audit[11684c5fb1348cd7]: init: SHA1.HashData writes the full 20-byte digest;
+            // read: the loop reads hash[0..20) after it is written; failure: a hashing exception propagates before the loop.
             Span<byte> hash = stackalloc byte[SHA1.HashSizeInBytes];
             SHA1.HashData(utf8[..byteCount], hash);
 
+            // stackalloc-audit[11684c5fb1348cd7]: init: the loop writes both hex characters for each of the 20 hash bytes, all 40 chars;
+            // read: new string(hex) reads the 40 written chars; failure: nothing between the writes and the read can throw.
             Span<char> hex = stackalloc char[SHA1.HashSizeInBytes * 2];
             for (var i = 0; i < hash.Length; i++)
             {

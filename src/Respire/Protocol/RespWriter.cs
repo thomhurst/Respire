@@ -235,6 +235,9 @@ internal ref struct RespWriter
     {
         var oldHeaderLength = _position - mark;
         var byteCount = checked(encodedPrefixLength + Encoding.UTF8.GetByteCount(suffix));
+        // stackalloc-audit[9e91996f2eb37eca]: init: byte 0, the TryFormat digits, and the CRLF at digits + 1 and + 2 are written;
+        // read: header[..headerLength], where headerLength = digits + 3, covers only those bytes; failure: a 24-byte
+        // buffer always holds an int, and a growth or copy throw leaves the header unread.
         Span<byte> header = stackalloc byte[MaxIntegerLineLength];
         header[0] = RespConstants.BulkStringPrefix;
         Utf8Formatter.TryFormat(byteCount, header[1..], out var digits);
@@ -271,6 +274,8 @@ internal ref struct RespWriter
         {
             // Preserve the bulk-string fallback's 24-byte header reservation.
             // Reserving the maximum complete integer frame can grow a buffer early.
+            // stackalloc-audit[2a1fbc78f602e773]: init: TryFormat writes payloadLength digits of the long;
+            // read: WriteBulkString reads payload[..payloadLength]; failure: 20 bytes always hold a long, and a false result would report zero digits.
             Span<byte> payload = stackalloc byte[20];
             Utf8Formatter.TryFormat(value, payload, out var payloadLength);
             WriteBulkString(payload[..payloadLength]);

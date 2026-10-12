@@ -11,7 +11,8 @@
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
         <ProjectReference Include="..\..\src\Respire.Json\Respire.Json.csproj" />
         <ProjectReference Include="..\..\src\Respire.Search\Respire.Search.csproj" />
-        <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj"
+                          OutputItemType="_LocalInitializationAuditAssembly" />
     </ItemGroup>
 
     <ItemGroup>
@@ -37,6 +38,35 @@
         <EmbeddedResource Include="../../src/**/*.cs" Exclude="../../src/**/bin/**;../../src/**/obj/**"
                           LogicalName="LibrarySource/%(RecursiveDir)%(Filename)%(Extension)" />
     </ItemGroup>
+
+    <!--
+      Local-initialization audit (#1065): build every shipped package for both frameworks and
+      stage its compiled assembly, so the IL inventory also sees NuGet content sources and
+      source-generator output that the embedded-source audit cannot. Build order only; nothing
+      is referenced or restored into this project.
+    -->
+    <ItemGroup>
+        <_LocalInitializationAuditPackage Include="$([MSBuild]::Unescape($(_RespirePackageProjectList)))" />
+        <ProjectReference Include="@(_LocalInitializationAuditPackage->'../../src/%(Identity)/%(Identity).csproj')"
+                          SetTargetFramework="TargetFramework=net8.0" ReferenceOutputAssembly="false" Private="false"
+                          OutputItemType="_LocalInitializationAuditAssembly" PrivateAssets="all" ExcludeAssets="all" />
+        <ProjectReference Include="@(_LocalInitializationAuditPackage->'../../src/%(Identity)/%(Identity).csproj')"
+                          SetTargetFramework="TargetFramework=net10.0" ReferenceOutputAssembly="false" Private="false"
+                          OutputItemType="_LocalInitializationAuditAssembly" PrivateAssets="all" ExcludeAssets="all" />
+    </ItemGroup>
+
+    <Target Name="StageLocalInitializationAuditAssemblies" AfterTargets="CopyFilesToOutputDirectory">
+        <ItemGroup>
+            <_LocalInitializationAuditStaged Include="@(_LocalInitializationAuditAssembly)" Condition="'%(Extension)' == '.dll'"
+                                             Framework="$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('%(FullPath)'))))" />
+        </ItemGroup>
+        <Error Condition="'@(_LocalInitializationAuditStaged)' == ''" Text="No package assemblies were produced for the local-initialization audit." />
+        <Copy SourceFiles="@(_LocalInitializationAuditStaged)"
+              DestinationFiles="@(_LocalInitializationAuditStaged->'$(OutDir)local-initialization-audit/%(Framework)/%(Filename)%(Extension)')"
+              SkipUnchangedFiles="true">
+            <Output TaskParameter="CopiedFiles" ItemName="FileWrites" />
+        </Copy>
+    </Target>
 
     <Target Name="EmbedInspectionConfigurations" BeforeTargets="AssignTargetPaths">
         <PropertyGroup>

@@ -194,6 +194,9 @@ public sealed class RespireFusionCacheDistributedLocker : IFusionCacheDistribute
     private static void AppendIdentity(IncrementalHash hash, string value)
     {
         // This persisted identity format must remain stable; changing it orphans fencing counters.
+        // stackalloc-audit[480e587616fe2a7f]: init: the length prefix writes bytes 0..4, and each chunk writes count * 2 bytes;
+        // read: AppendData reads buffer[..4] and buffer[..(count * 2)], the bytes just written; failure: a hashing throw
+        // propagates without further reads.
         Span<byte> buffer = stackalloc byte[256];
         BinaryPrimitives.WriteInt32BigEndian(buffer, value.Length);
         hash.AppendData(buffer[..4]);
