@@ -111,6 +111,8 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         if (_prefix is null && _string is null) return prefixes.Matches(_bytes.Span);
         var length = WireLength;
         byte[]? rented = null;
+        // stackalloc-audit[7d544854f6f47cb4]: init: WriteWirePayload writes the key payload and returns its length;
+        // read: Matches reads encoded[..written], the written bytes; failure: a writer throw exits through finally before any read.
         Span<byte> encoded = length <= 256 ? stackalloc byte[length] : (rented = ArrayPool<byte>.Shared.Rent(length));
         try
         {

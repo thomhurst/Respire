@@ -1,0 +1,132 @@
+name: Local initialization benchmarks
+
+# Attribute-only SkipLocalsInit comparison for #1065. Both trees are the pinned PR head; the
+# only source difference is the attribute (see scripts/local_initialization_sources.py and
+# docs/LOCAL_INITIALIZATION.md). Timing phases run without JIT instrumentation; listings are
+# captured afterwards in separate diagnostic runs.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-initialization-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-local-initialization-benchmarks'
+    name: Attribute-only single operations (net10.0, PGO ${{ matrix.tiered-pgo }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # The disabled leg is diagnostic: it tests whether a regression follows Dynamic PGO
+        # profile and block-layout differences. It never gates, and it is not acceptance evidence.
+        tiered-pgo: [enabled, disabled]
+    env:
+      FRAMEWORK: net10.0
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Check derivation and gate controls
+        run: python3 -m unittest discover -s candidate/scripts/tests -p 'test_local_initialization_sources.py' -v
+      - name: Isolate the attribute and use the default BenchmarkDotNet job
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 candidate/scripts/local_initialization_sources.py baseline candidate \
+            --head-sha "$HEAD_SHA" --manifest source-manifest.json
+          python3 - <<'PY'
+          from pathlib import Path
+          fixture = Path('candidate/benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs').read_text()
+          job = '[SimpleJob(warmupCount: 3, iterationCount: 10)]'
+          assert fixture.count(job) == 1, 'Review the benchmark job configuration before changing the fixture'
+          for source in ('baseline', 'candidate'):
+              Path(source, 'benchmarks/Respire.Benchmarks/ProtocolBenchmarks.cs').write_text(fixture.replace(job, ''))
+          PY
+      - name: Measure ten operations with bracketing controls
+        shell: bash
+        env:
+          DOTNET_TieredPGO: ${{ matrix.tiered-pgo == 'disabled' && '0' || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOTNET_TieredPGO}" ]]; then unset DOTNET_TieredPGO; fi
+          for phase in baseline-validation candidate-validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Default
+            if [[ "$phase" == candidate* ]]; then source=candidate; fi
+            if [[ "$phase" == *validation ]]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                --filter '*ProtocolBenchmarks.DecodeAsciiBulkString' '*ProtocolBenchmarks.ReadAsciiBulkString' \
+                '*ProtocolBenchmarks.DecodeUnicodeBulkString' '*ProtocolBenchmarks.ReadUnicodeBulkString' \
+                '*ProtocolBenchmarks.FormatAsciiBulkString' '*ProtocolBenchmarks.FormatLargeAsciiBulkString' \
+                '*ProtocolBenchmarks.FormatUnicodeBulkString' '*ProtocolBenchmarks.FormatLargeUnicodeBulkString' \
+                '*ProtocolBenchmarks.BuildGetCommand' '*ProtocolBenchmarks.BuildSetCommand' \
+                --job "$job" --exporters json markdown --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+            test "$(head -n 1 "$GITHUB_WORKSPACE/$phase.log")" = "$HEAD_SHA"
+          done
+      - name: Capture caller and runtime-callee listings separately from timing
+        shell: bash
+        env:
+          DOTNET_TieredPGO: ${{ matrix.tiered-pgo == 'disabled' && '0' || '' }}
+          DOTNET_JitDisasm: >-
+            Utf8String:GetString ResponseReader:StringOrNull RespValue:AsString RespValue:ToString
+            Encoding:GetString UTF8Encoding:GetChars UTF8Encoding:GetString Utf8Utility:* Ascii:*
+          DOTNET_JitDisasmDiffable: '0'
+          DOTNET_JitDisasmSummary: '1'
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOTNET_TieredPGO}" ]]; then unset DOTNET_TieredPGO; fi
+          mkdir -p "$GITHUB_WORKSPACE/listings"
+          for source in baseline candidate; do
+            for row in ReadUnicodeBulkString FormatLargeUnicodeBulkString; do
+              (
+                cd "$source"
+                DOTNET_JitStdOutFile="$GITHUB_WORKSPACE/listings/$source-$row.asm" \
+                  dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+                  --filter "*ProtocolBenchmarks.$row" --job Short --inProcess \
+                  --artifacts "$GITHUB_WORKSPACE/listings/$source-$row"
+              ) > "$GITHUB_WORKSPACE/listings/$source-$row.log" 2>&1 || echo "::warning::Listing capture failed for $source $row"
+            done
+          done
+      - name: Apply the bracketing gate
+        shell: bash
+        env:
+          REPORT_ONLY: ${{ matrix.tiered-pgo == 'disabled' && '--report-only' || '' }}
+          LABEL: (PGO ${{ matrix.tiered-pgo }})
+        run: |
+          set -euo pipefail
+          python3 candidate/scripts/assert_local_initialization_benchmarks.py results \
+            --manifest source-manifest.json --label "$LABEL" --summary "$GITHUB_STEP_SUMMARY" $REPORT_ONLY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: local-initialization-pgo-${{ matrix.tiered-pgo }}
+          path: |
+            results/
+            listings/
+            *.log
+            source-manifest.json
+            source-manifest.patch
+          retention-days: 30

@@ -42,6 +42,8 @@ internal static class ClusterHash
     {
         var byteCount = Encoding.UTF8.GetByteCount(key);
         byte[]? rented = null;
+        // stackalloc-audit[21cd7a0556be61dc]: init: Encoding.UTF8.GetBytes encodes all byteCount bytes;
+        // read: GetCrcSlot hashes bytes[..byteCount], the encoded bytes; failure: an encoder throw exits through finally before any read.
         var bytes = byteCount <= StackallocThreshold
             ? stackalloc byte[byteCount]
             : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
@@ -106,6 +108,8 @@ internal static class ClusterHash
     {
         var length = checked(first.Length + second.Length);
         char[]? rented = null;
+        // stackalloc-audit[083562931e8ebb2c]: init: the two CopyTo calls fill tag[..first.Length] and tag[first.Length..length];
+        // read: GetUtf8Slot reads tag[..length], exactly the copied chars; failure: a copy throw exits through finally before any read.
         Span<char> tag = length <= StackallocThreshold ? stackalloc char[length]
             : (rented = ArrayPool<char>.Shared.Rent(length));
         try
@@ -191,6 +195,8 @@ internal static class ClusterHash
             var tags = new ushort[SlotCount];
             Array.Fill(tags, ushort.MaxValue);
             var remaining = SlotCount;
+            // stackalloc-audit[08445d51344a36f0]: init: every iteration writes both bytes before use;
+            // read: Contains and GetCrcSlot read those 2 bytes; failure: the only throw is after the loop and reads nothing.
             Span<byte> candidateBytes = stackalloc byte[RemovalLeaseTagLength];
             for (var candidate = 0; candidate < ushort.MaxValue && remaining > 0; candidate++)
             {

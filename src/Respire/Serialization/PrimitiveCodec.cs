@@ -287,6 +287,8 @@ internal static class PrimitiveCodec
                 throw InvalidValue<char>();
             }
 
+            // stackalloc-audit[9e859ea3b8fd6f68]: init: GetChars decodes exactly one char, as GetCharCount just verified;
+            // read: character[0], that char; failure: a DecoderFallbackException is rethrown as invalid data without reading.
             Span<char> character = stackalloc char[1];
             _ = StrictUtf8.GetChars(payload, character);
             return character[0];

@@ -167,6 +167,8 @@ internal sealed class KeyPrefix
             // Replace the cached trailing replacement character with the complete pair.
             var prefixLength = Bytes.Length - 3;
             Bytes.AsSpan(0, prefixLength).CopyTo(destination);
+            // stackalloc-audit[818fbc8c2390d0f2]: init: the collection initializer writes both chars;
+            // read: Encoding.UTF8.GetBytes reads the 2 chars; failure: an indexing throw happens before the allocation is read.
             Span<char> pair = stackalloc char[2] { Text![^1], key![0] };
             var written = Encoding.UTF8.GetBytes(pair, destination[prefixLength..]);
             return prefixLength + written + Encoding.UTF8.GetBytes(key.AsSpan(1), destination[(prefixLength + written)..]);

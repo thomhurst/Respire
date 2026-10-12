@@ -156,6 +156,8 @@ public abstract class RespireValueCodec : IRespireValueCodec
         var encoded = payload[HeaderLength..];
         if (algorithm == 0 ? encoded.Length != length : encoded.Length >= length)
             throw new InvalidDataException("Codec payload length does not match its frame.");
+        // stackalloc-audit[810944128b7f8231]: init: WriteChecksum stores all 8 bytes (a UInt64 or the first 8 hash bytes);
+        // read: SequenceEqual compares exactly those 8 bytes; failure: a hashing exception propagates before any read.
         Span<byte> checksum = stackalloc byte[8];
         WriteChecksum(encoded, checksum, payload[4]);
         if (!checksum.SequenceEqual(payload.Slice(10, 8)))
@@ -190,6 +192,8 @@ public abstract class RespireValueCodec : IRespireValueCodec
             BinaryPrimitives.WriteUInt64LittleEndian(destination, XxHash3.HashToUInt64(payload));
             return;
         }
+        // stackalloc-audit[61a1d8bd3d0c869a]: init: SHA256.HashData writes the full 32-byte digest;
+        // read: only hash[..8] is copied out; failure: a hashing exception propagates before the copy.
         Span<byte> hash = stackalloc byte[32];
         SHA256.HashData(payload, hash);
         hash[..8].CopyTo(destination);
