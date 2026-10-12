@@ -78,7 +78,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         var observation = Acquire(key, options, tags);
         try
         {
-            var cache = await SelectCacheAsync(observation, cancellationToken).ConfigureAwait(false);
+            var cache = await SelectCacheAsync(observation, tags, reads: true, cancellationToken).ConfigureAwait(false);
             return await cache.GetOrCreateAsync(key, state, underlyingDataCallback,
                 observation is null || !ReferenceEquals(cache, observation.Cache) ? WithoutLocalCache(options) : options,
                 tags, cancellationToken).ConfigureAwait(false);
@@ -97,7 +97,8 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         var observation = Acquire(key, options, tags);
         try
         {
-            var cache = await SelectCacheAsync(observation, cancellationToken).ConfigureAwait(false);
+            // SetAsync never reads L2, so a fallback context needs no tag metadata.
+            var cache = await SelectCacheAsync(observation, tags, reads: false, cancellationToken).ConfigureAwait(false);
             await cache.SetAsync(key, value,
                 observation is null || !ReferenceEquals(cache, observation.Cache) ? WithoutLocalCache(options) : options,
                 tags, cancellationToken).ConfigureAwait(false);
@@ -223,9 +224,10 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                             static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
                     }
 
-                    observation.Cache = CreateContext(observation, new TagReplayBackend(_distributed, _clock));
-                    observation.TagReplay = Task.WhenAll(_removedTags.Select(pair =>
-                        ReplayTagAsync(observation.Cache, pair.Key, pair.Value)));
+                    observation.Cache = CreateContext(observation, new TagReplayBackend(this));
+                    var replays = _removedTags.Select(pair => ReplayTagAsync(observation.Cache, pair.Key, pair.Value));
+                    observation.TagReplay = Task.WhenAll(_tagMessage is null ? replays
+                        : replays.Append(SeedTagMetadataAsync(observation.Cache, tags)));
                     // HEXISTS is a typed, cache-eligible hash read. It establishes actual OPTIN
                     // tracking before L2 is read, without duplicating the serialized payload.
                     observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
@@ -264,9 +266,10 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         return false;
     }
 
-    private async ValueTask<HybridCache> SelectCacheAsync(Observation? observation, CancellationToken cancellationToken)
+    private async ValueTask<HybridCache> SelectCacheAsync(Observation? observation, IEnumerable<string>? readTags,
+        bool reads, CancellationToken cancellationToken)
     {
-        if (observation is null) return FallbackCache();
+        if (observation is null) return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
         try
         {
             await observation.Tracking.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -277,9 +280,13 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         {
             // Tracking failure must never turn an ordinary L2 request into an unobserved L1 hit.
             Retire(observation);
-            return FallbackCache();
+            return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
         }
-        lock (_gate) return observation.Retired || !CanUseTagLocalCache ? FallbackCache() : observation.Cache;
+        lock (_gate)
+        {
+            if (!observation.Retired && CanUseTagLocalCache) return observation.Cache;
+        }
+        return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
     }
 
     private void Release(Observation? observation)
@@ -618,13 +625,25 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         private sealed class ReplayScope(Action restore) : IDisposable { public void Dispose() => restore(); }
     }
 
-    private sealed class TagReplayBackend(RespireDistributedCache distributed, TagReplayClock clock) : IBufferDistributedCache
+    private sealed class TagReplayBackend(RespireCoherentHybridCache owner) : IBufferDistributedCache
     {
+        private readonly RespireDistributedCache distributed = owner._distributed;
+        private readonly TagReplayClock clock = owner._clock;
+
         public byte[]? Get(string key) => distributed.Get(key);
         public Task<byte[]?> GetAsync(string key, CancellationToken token = default) => distributed.GetAsync(key, token);
         public bool TryGet(string key, IBufferWriter<byte> destination) => distributed.TryGet(key, destination);
         public ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
-            => distributed.TryGetAsync(key, destination, token);
+            => owner.TagMarkerReadDelayForTesting is { } delay && key.StartsWith(TagMarkerPrefix, StringComparison.Ordinal)
+                ? DelayedTryGetAsync(delay, key, destination, token)
+                : distributed.TryGetAsync(key, destination, token);
+
+        private async ValueTask<bool> DelayedTryGetAsync(Func<CancellationToken, Task> delay, string key,
+            IBufferWriter<byte> destination, CancellationToken token)
+        {
+            await delay(token).ConfigureAwait(false);
+            return await distributed.TryGetAsync(key, destination, token).ConfigureAwait(false);
+        }
         public void Set(string key, byte[] value, DistributedCacheEntryOptions options)
         { if (!clock.IsReplaying) distributed.Set(key, value, options); }
         public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)

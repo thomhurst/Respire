@@ -1,9 +1,13 @@
+using System.Buffers.Binary;
 using Microsoft.Extensions.Caching.Hybrid;
 
 namespace Respire.Caching.Hybrid;
 
 internal sealed partial class RespireCoherentHybridCache
 {
+    // Microsoft's L2 key prefix for tag invalidation markers, and its reserved wildcard tag.
+    private const string TagMarkerPrefix = "__MSFT_HCT__";
+    private const string WildcardTag = "*";
     private readonly Guid _tagSender = Guid.NewGuid();
     private readonly CancellationTokenSource _tagLifetime = new();
     private readonly TaskCompletionSource<bool> _tagStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -18,6 +22,9 @@ internal sealed partial class RespireCoherentHybridCache
 
     /// <summary>Gap messages the tag worker has fully applied. Tests synchronize on it.</summary>
     internal long TagGapsConsumed => Interlocked.Read(ref _tagGapsConsumed);
+
+    /// <summary>Delays the tag marker reads that Microsoft's contexts issue, so tests can hold them pending.</summary>
+    internal Func<CancellationToken, Task>? TagMarkerReadDelayForTesting { get; set; }
 
     private void StartTagPropagation(RespireHybridCacheCoherenceOptions options)
     {
@@ -129,8 +136,60 @@ internal sealed partial class RespireCoherentHybridCache
     private bool CanUseTagLocalCache => _tagMessage is null
         || (Volatile.Read(ref _tagReady) == 1 && Volatile.Read(ref _tagContinuityLost) == 0);
 
-    private HybridCache FallbackCache() => _tagMessage is null ? _unobserved
-        : CreateContext(null, new TagReplayBackend(_distributed, _clock));
+    private async ValueTask<HybridCache> FallbackCacheAsync(IEnumerable<string>? tags, bool reads,
+        CancellationToken cancellationToken)
+    {
+        if (_tagMessage is null) return _unobserved;
+        var cache = CreateContext(null, new TagReplayBackend(this));
+        if (reads) await SeedTagMetadataAsync(cache, tags).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return cache;
+    }
+
+    // Microsoft.Extensions.Caching.Hybrid 10.10.0 checks a payload tag whose invalidation time is
+    // still loading against the reader's start time instead of the payload's creation time, and it
+    // ignores a wildcard marker that is still loading (dotnet/extensions#7786). A new context that
+    // reads L2 before its own marker reads complete can then return an entry already removed by tag.
+    // New contexts are how this cache reloads authoritative tag metadata, so load the request tags'
+    // and the wildcard's markers first and replay them. The context then has completed metadata.
+    private async Task SeedTagMetadataAsync(HybridCache cache, IEnumerable<string>? tags)
+    {
+        string[] seeded = [WildcardTag, .. (tags ?? []).Where(tag => tag != WildcardTag).Distinct(StringComparer.Ordinal)];
+        var markers = await Task.WhenAll(seeded.Select(ReadTagMarkerAsync)).ConfigureAwait(false);
+        var replays = new Task[seeded.Length];
+        lock (_gate)
+        {
+            for (var i = 0; i < seeded.Length; i++)
+            {
+                // A replay overwrites the context's time for its tag. Under the gate, a newer remembered
+                // invalidation (recorded before the worker or a local removal replays it) is never lost.
+                var timestamp = markers[i];
+                if (_removedTags.TryGetValue(seeded[i], out var remembered) && remembered > timestamp) timestamp = remembered;
+                replays[i] = ReplayTagAsync(cache, seeded[i], timestamp);
+            }
+        }
+        await Task.WhenAll(replays).ConfigureAwait(false);
+    }
+
+    private async Task<DateTimeOffset> ReadTagMarkerAsync(string tag)
+    {
+        try
+        {
+            var marker = await _distributed.GetAsync(TagMarkerPrefix + tag).ConfigureAwait(false);
+            if (marker is null) return DateTimeOffset.MinValue;
+            if (marker.Length == sizeof(long))
+            {
+                var ticks = BinaryPrimitives.ReadInt64LittleEndian(marker);
+                if (ticks >= DateTimeOffset.MinValue.UtcTicks && ticks <= DateTimeOffset.MaxValue.UtcTicks)
+                    return new DateTimeOffset(ticks, TimeSpan.Zero);
+            }
+        }
+        catch (Exception)
+        {
+            // Fall through to the fail-closed result below.
+        }
+        // Like Microsoft's own reader, treat a malformed or unreadable marker as removed now.
+        return _clock.GetUtcNow();
+    }
 
     private IEnumerable<string>? PrepareTags(IEnumerable<string>? tags)
     {

@@ -374,6 +374,39 @@ public partial class RespireHybridCacheCoherenceTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task NewContextsLoadTagMetadataBeforeTheyReadL2(bool fallback, bool wildcard)
+    {
+        var channel = "tags:" + NewKey();
+        var tag = NewKey();
+        var key = NewKey();
+        await using var writer = BuildProvider(false);
+        await using var reader = BuildProvider(true, configure: TagOptions(channel));
+        var write = writer.GetRequiredService<HybridCache>();
+        var read = reader.GetRequiredService<HybridCache>();
+        // Hold Microsoft's own marker reads pending, as a late continuation on a loaded runner does.
+        // While a marker read is pending, Microsoft 10.10.0 validates a payload tag against the read's
+        // start time and skips the wildcard check, so an unseeded context would return "old".
+        Coherent(reader).TagMarkerReadDelayForTesting = token => Task.Delay(TimeSpan.FromMilliseconds(250), token);
+        await write.SetAsync(key, "old", LongLived, [tag]);
+        // This L2-only writer omits publication: only the shared marker records the removal.
+        await write.RemoveByTagAsync(wildcard ? "*" : tag);
+        var options = new HybridCacheEntryOptions
+        {
+            LocalCacheExpiration = TimeSpan.FromHours(1),
+            Expiration = TimeSpan.FromHours(1),
+            Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite
+                | (fallback ? HybridCacheEntryFlags.DisableLocalCache : HybridCacheEntryFlags.None),
+        };
+        var value = await read.GetOrCreateAsync(key, _ => ValueTask.FromResult("fresh"), options, [tag]);
+        await Assert.That(value).IsEqualTo("fresh");
+        await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(fallback ? 0 : 1);
+    }
+
+    [Test]
     public async Task SubscriberReconnectDropsCachedTagMetadataAcrossAMissedInvalidation()
     {
         var channel = "tags:" + NewKey();
