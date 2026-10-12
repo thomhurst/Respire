@@ -644,18 +644,23 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         // One AddAsync owns one command timeout, so the legacy fallback spends only what the probe left.
         var deadline = LogicalCommandRetry.CreateDeadline(client.Core.Options.CommandTimeout);
         string? id;
+        var attempts = new IdempotentAppendAttempts(observation);
         try
         {
             id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAddIdempotent, key, arguments),
-                cancellationToken, observation).ConfigureAwait(false);
+                cancellationToken, attempts.Observation).ConfigureAwait(false);
         }
-        catch (RespireServerException error) when (error.Message == "ERR Invalid stream ID specified as stream command argument")
+        catch (RespireServerException error) when (error.Message == "ERR Invalid stream ID specified as stream command argument"
+            && !attempts.EarlierAttemptMayHaveExecuted)
         {
             // Servers before Redis 8.6 parse IDMP as an invalid entry ID and reject XADD before
             // executing it. Ordinary XADD keeps its conservative accumulating retry category.
             // All caller-supplied trim IDs are validated, and our entry ID is always *, so this
             // specific parse error identifies unsupported IDMP. Other errors must reach the caller.
             // Never cache capability: the next call or retry can reach a different server version.
+            // The rejection proves only that its own attempt was unwritten. If an earlier IDMP
+            // attempt of this append may have executed (for example on a newer primary that lost
+            // its reply before a failover), a plain resend could duplicate it, so the error stands.
             observation.Handled(error);
             var plain = new RespireValue[arguments.Length - idempotencyArgumentCount];
             arguments.AsSpan(0, idempotencyOffset).CopyTo(plain);
@@ -664,6 +669,47 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
                 .ConfigureAwait(false);
         }
         return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
+    }
+
+    /// <summary>
+    /// Forwards one IDMP append's retry bookkeeping to its caller observation, and records whether
+    /// a failed attempt before the final reply could have executed. A server error reply proves
+    /// Redis rejected that XADD, and an open circuit rejects before dispatch. Any other retried
+    /// failure (connection loss, timeout, retirement, or a retry whose error a socket owns) may
+    /// have appended the entry.
+    /// </summary>
+    private sealed class IdempotentAppendAttempts(RespireTelemetry.ErrorObservation caller) : IDispatchObservation
+    {
+        private int _mayHaveExecuted;
+
+        internal RespireTelemetry.ErrorObservation Observation => new(this, 0);
+
+        internal bool EarlierAttemptMayHaveExecuted => Volatile.Read(ref _mayHaveExecuted) != 0;
+
+        public bool IsOpen(long generation) => caller.IsOpen;
+        public int Attempts(long generation) => caller.Attempts;
+        public RespireEndpoint? Endpoint(long generation) => caller.Endpoint;
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint) => caller.UseEndpoint(endpoint);
+
+        public void SetAttempts(long generation, int attempts)
+        {
+            if (attempts > caller.Attempts) MayHaveExecuted();
+            caller.SetAttempts(attempts);
+        }
+
+        public void Retry(long generation)
+        {
+            MayHaveExecuted();
+            caller.Retry();
+        }
+
+        public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
+        {
+            if (error is not (RespireServerException or RespireCircuitOpenException)) MayHaveExecuted();
+            return caller.TryHandled(error, endpoint, overrideEndpoint);
+        }
+
+        private void MayHaveExecuted() => Volatile.Write(ref _mayHaveExecuted, 1);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

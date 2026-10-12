@@ -229,6 +229,43 @@ public class StreamIdempotentRetryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UnsupportedRetryFallsBackOnlyWhenEarlierAttemptsWereRejected(bool earlierMayHaveExecuted)
+    {
+        // The first IDMP attempt reaches a newer server, then the retry reaches an older one.
+        var adds = 0;
+        await using var server = XAddServer(supportsIdempotency: false);
+        var olderReply = server.ReplyOverride!;
+        server.ReplyOverride = (index, command) => !earlierMayHaveExecuted && command.StartsWith("XADD", StringComparison.Ordinal)
+            && Volatile.Read(ref adds) == 1 ? "-LOADING Redis is loading the dataset in memory\r\n"u8.ToArray() : olderReply(index, command);
+        server.SuppressReply = command =>
+        {
+            if (!command.StartsWith("XADD", StringComparison.Ordinal) || Interlocked.Increment(ref adds) != 1 || !earlierMayHaveExecuted)
+                return false;
+            // The attempt may have executed before its reply was lost.
+            server.CloseConnections();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+
+        var append = client.Streams.AddAsync("s", ("f", "v")).AsTask();
+        if (earlierMayHaveExecuted)
+        {
+            await Assert.That(async () => await append.WaitAsync(Limit)).ThrowsExactly<RespireServerException>();
+            await Assert.That(XAdds(server).Length).IsEqualTo(2);
+            await Assert.That(XAdds(server).All(add => add[2].AsSpan().SequenceEqual("IDMP"u8))).IsTrue();
+        }
+        else
+        {
+            // Positive control: a server error reply proves the earlier attempt was unwritten.
+            await Assert.That(await append.WaitAsync(Limit)).IsEqualTo((RespireStreamId)"1-0");
+            var identities = XAdds(server).Select(add => add[2].AsSpan().SequenceEqual("IDMP"u8)).ToArray();
+            await Assert.That(identities).IsEquivalentTo(new[] { true, true, false }, CollectionOrdering.Matching);
+        }
+    }
+
+    [Test]
     public async Task ConfirmedSupportDoesNotHideLaterErrors()
     {
         var reject = false;
