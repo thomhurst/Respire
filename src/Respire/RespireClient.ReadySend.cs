@@ -14,7 +14,7 @@ public sealed partial class RespireClient
     // Callers retain their response-specific streaming exclusions.
     private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
-        => !RespireTelemetry.Source.HasListeners()
+        => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
             && (!RespireTelemetry.IsOperationEnabled(operation) || !ScriptingEngineInfo.IsScriptingCommand(operation))
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);

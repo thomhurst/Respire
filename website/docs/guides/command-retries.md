@@ -2,11 +2,33 @@
 title: Command retry policy
 ---
 
-`RespireRetryPolicy` defines the safety and delay settings for immediate-command
-retry dispatch. This release supplies the policy foundation only. There is no
-`RespireOptions` switch or client view that activates automatic command retries
-yet. Dispatch integration is tracked by [#1215](https://github.com/thomhurst/Respire/issues/1215)
-and its native sub-issues. Existing commands keep their current dispatch behavior.
+Set `RespireOptions.RetryPolicy` to enable retries for buffered immediate commands
+on standalone clients. The default is `null`, which retains native optimized
+dispatch and performs no automatic retries.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new("localhost", 6379) },
+    RetryPolicy = new RespireRetryPolicy
+    {
+        MaxAttempts = 3,
+        MaxCommandRetryCategory = RespireCommandRetryCategory.ReadOnly,
+    },
+});
+```
+
+Public typed reads, conversions, and generated catalog commands share one retry
+owner. Arguments are copied before asynchronous dispatch, so later caller memory
+changes cannot change a resend. Each attempt consumes immutable transport write
+evidence. One deadline and cancellation budget span connection selection, all
+sends, and backoff. Cache mutation fences and coalesced cache producers retain
+their logical ownership across all attempts and final conversion. Cancelled native
+responses retain their fences until their FIFO reply slots retire.
+
+Only plain `SET key value` is refined to `WriteLastWins`; option-sensitive SET,
+ZADD (including INCR), and XADD retain their conservative audited categories.
+Increasing retry risk can repeat effects and cannot recover the original reply.
 
 ## Policy settings
 
@@ -57,13 +79,23 @@ server errors, including `BUSY` and `CLUSTERDOWN`, are not selected by this foun
 
 A circuit rejection never authorizes a resend to that endpoint, even though the
 command was not submitted. A `READONLY` retry requires dispatch to refresh its
-primary route. Future failover-group retries must select the group's current active
-member for each attempt. These route, ownership, and telemetry integrations are
-remaining work under #1215; this policy alone performs no sends and emits no retry
-events.
+primary route. Standalone dispatch selects the current multiplexer on every attempt.
+Sentinel, Cluster, explicit raw/script requests, and failover-group policy integration
+remain tracked by [#1215](https://github.com/thomhurst/Respire/issues/1215).
 
-The immediate-command integration must retain arguments, payloads, replies, cache
-mutation barriers, coalesced producer identity, and final publication ownership across
-attempts. Deferred batches and transactions must remain conservative: resending an
+Replica read routing, streams, fire-and-forget operations, deferred batch/transaction members, connection
+protocol commands, cursor continuations, and commands categorized as `Never` do not
+use this retry owner. Caller-supplied raw names never acquire retry permission from
+their diagnostic name. Use an audited `RespireCommands` descriptor for generated
+buffered commands.
+
+The `respire.command.retries` counter records `respire.command.retry.category` and
+`respire.command.retry.outcome`. `attempted` counts accepted resends, while `succeeded`
+and `exhausted` report one terminal outcome per producer that accepted a resend.
+Failed circuit admission does not invent an attempt. Coalesced waiters do not duplicate
+producer retry events. Handled attempt failures and final caller errors retain their
+separate error owners. Exporter exceptions cannot change retry decisions or replies.
+
+Deferred batches and transactions remain conservative: resending an
 individual member can violate complete-unit ownership or atomicity. Whole-unit retry
 work stays tracked by [#1216](https://github.com/thomhurst/Respire/issues/1216).

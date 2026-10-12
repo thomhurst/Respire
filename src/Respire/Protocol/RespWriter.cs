@@ -354,6 +354,9 @@ internal interface IRespCommand
 
     ReadCommandKind ReadKind { get; }
 
+    /// <summary>Audited execution risk; diagnostic names never grant replay permission.</summary>
+    RespireCommandRetryCategory RetryCategory => RespireCommandRetryCategory.Never;
+
     int CursorArgumentIndex => -1;
 
     /// <summary>Returns cache mutation metadata for the command.</summary>

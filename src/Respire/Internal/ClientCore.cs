@@ -39,6 +39,7 @@ internal sealed class ClientCore : IAsyncDisposable
     }
     public readonly RespireOptions Options;
     internal readonly StandaloneCircuitRegistry? Circuits;
+    internal readonly CommandRetryPolicy? CommandRetries;
     internal readonly HedgedReadBudget? HedgedReads;
     public readonly ILogger? Logger;
     private CorrectionCoordinator? _corrections;
@@ -77,6 +78,9 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         _ownedPools = new(_hubGate);
         Options = options;
+        var retries = options.RetryPolicy is { } retry ? new CommandRetryPolicy(retry) : null;
+        CommandRetries = !options.UseCluster && string.IsNullOrWhiteSpace(options.SentinelPrimaryName)
+            && retries is { IsEnabled: true } ? retries : null;
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;

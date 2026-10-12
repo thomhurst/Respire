@@ -405,6 +405,11 @@ public sealed record RespireOptions
     /// </summary>
     public RespireClientSideCacheOptions? ClientSideCache { get; init; }
 
+    /// <summary>Opt-in retries for buffered immediate commands on standalone clients. Null disables retries.</summary>
+    /// <remarks>One deadline spans all attempts. Batches, transactions, streams, scripts and topology routing
+    /// retain their existing behavior. Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
+    public RespireRetryPolicy? RetryPolicy { get; init; }
+
     /// <summary>Optional factory for Respire diagnostic logs.</summary>
     public ILoggerFactory? LoggerFactory { get; init; }
 
@@ -481,6 +486,7 @@ public sealed record RespireOptions
             || ClientAvailabilityZone is not null, nameof(ClientAvailabilityZone), "is required for AZ-affinity reads");
         HedgedReads?.Validate();
         CircuitBreaker?.Validate();
+        RetryPolicy?.Validate();
         Require(CircuitBreaker is null || ReplicaEndpoints.Count == 0,
             nameof(CircuitBreaker), "requires standalone, Sentinel or Cluster routing without configured replica endpoints");
         Require(
