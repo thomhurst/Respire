@@ -49,6 +49,7 @@ jobs:
             tests/Respire.FusionCache.Tests \
             tests/Respire.SignalR.Tests \
             tests/Respire.VectorData.Tests \
+            tests/Respire.AI.Tests \
             tests/Respire.Streaming.Tests
           do
             if [[ "$project" == tests/Respire.Tests ]]; then

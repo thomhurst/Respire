@@ -21,6 +21,7 @@
     <Project Path="samples/Respire.Samples.VectorData/Respire.Samples.VectorData.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Respire.AI/Respire.AI.csproj" />
     <Project Path="src/Aspire.Respire/Aspire.Respire.csproj" />
     <Project Path="src/Aspire.Respire.DistributedCaching/Aspire.Respire.DistributedCaching.csproj" />
     <Project Path="src/Aspire.Respire.HybridCaching/Aspire.Respire.HybridCaching.csproj" />
@@ -52,6 +53,7 @@
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Respire.AI.Tests/Respire.AI.Tests.csproj" />
     <Project Path="tests/Respire.Hangfire.Acceptance.Tests/Respire.Hangfire.Acceptance.Tests.csproj" />
     <Project Path="tests/Respire.Orleans.Acceptance.Tests/Respire.Orleans.Acceptance.Tests.csproj" />
     <Project Path="tests/Aspire.Respire.IntegrationTests/Aspire.Respire.IntegrationTests.csproj" />
