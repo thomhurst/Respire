@@ -30,13 +30,24 @@ internal sealed class StandaloneCircuitRegistry(RespireCircuitBreakerOptions opt
         {
             if (!_circuits.TryGetValue(endpoint, out var entry))
             {
-                _circuits.Add(endpoint, entry = new(new(endpoint, options)));
+                _circuits.Add(endpoint, entry = new(new(endpoint, options, reportMetrics: true)));
                 _trimPending = true;
             }
             entry.LastUse = ++_lastUse;
-            if (!entry.Circuit.TryAcquire(out var permit, out var retryAfter))
-                throw new RespireCircuitOpenException(endpoint, retryAfter);
+            // TryAcquire can publish to a reentrant metric listener. Protect this entry
+            // from idle eviction before that listener can admit work on other endpoints.
             entry.ActiveAdmissions++;
+            CircuitPermit permit;
+            try
+            {
+                if (!entry.Circuit.TryAcquire(out permit, out var retryAfter))
+                    throw new RespireCircuitOpenException(endpoint, retryAfter);
+            }
+            catch
+            {
+                entry.ActiveAdmissions--;
+                throw;
+            }
             TrimInactive();
             return new(permit, this, entry);
         }

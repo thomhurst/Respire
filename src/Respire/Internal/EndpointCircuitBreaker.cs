@@ -15,6 +15,7 @@ internal sealed class EndpointCircuitBreaker
     private readonly Lock _gate = new();
     private readonly RespireCircuitBreakerOptions _options;
     private readonly TimeProvider _clock;
+    private readonly bool _reportMetrics;
     private readonly Sample[] _samples;
     private readonly long[] _probes;
     private readonly int[] _freeProbeSlots;
@@ -25,13 +26,16 @@ internal sealed class EndpointCircuitBreaker
     private int _head, _sampleCount, _failureCount, _activeProbes, _successfulProbes;
     private long _generation, _openedAt, _nextPermitId;
 
-    public EndpointCircuitBreaker(RespireEndpoint endpoint, RespireCircuitBreakerOptions options, TimeProvider? clock = null)
+    public EndpointCircuitBreaker(RespireEndpoint endpoint, RespireCircuitBreakerOptions options, TimeProvider? clock = null,
+        bool reportMetrics = false)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
         Endpoint = endpoint;
         _options = options;
         _clock = clock ?? TimeProvider.System;
+        // Only data-endpoint registries opt in; failover health probes retain their own metrics.
+        _reportMetrics = reportMetrics;
         _samples = new Sample[options.MaximumSampleCount];
         _probes = new long[options.HalfOpenProbeCount];
         _freeProbeSlots = new int[options.HalfOpenProbeCount];
@@ -50,6 +54,20 @@ internal sealed class EndpointCircuitBreaker
 
     public bool TryAcquire(out CircuitPermit permit, out TimeSpan? retryAfter)
     {
+        var acquired = TryAcquireCore(out permit, out retryAfter, out var openingTransition, out var recoveryTransition);
+        if (_reportMetrics)
+        {
+            RecordTransition(openingTransition);
+            RecordTransition(recoveryTransition);
+            if (!acquired) RespireTelemetry.RecordCircuitRejection(Endpoint);
+        }
+        return acquired;
+    }
+
+    private bool TryAcquireCore(out CircuitPermit permit, out TimeSpan? retryAfter,
+        out Transition? openingTransition, out Transition? recoveryTransition)
+    {
+        openingTransition = recoveryTransition = null;
         lock (_gate)
         {
             permit = default;
@@ -58,7 +76,7 @@ internal sealed class EndpointCircuitBreaker
             {
                 var now = _clock.GetTimestamp();
                 TrimHistory(now);
-                OpenIfThresholdReached(now);
+                openingTransition = OpenIfThresholdReached(now);
             }
             if (_state == EndpointCircuitState.Open)
             {
@@ -68,6 +86,9 @@ internal sealed class EndpointCircuitBreaker
                     retryAfter = _options.OpenDuration - elapsed;
                     return false;
                 }
+                // Admission can outlast OpenDuration after opening (for example a suspended
+                // thread). Preserve both changes rather than overwriting the opening event.
+                recoveryTransition = new(_state, EndpointCircuitState.HalfOpen);
                 _state = EndpointCircuitState.HalfOpen;
                 _generation++;
                 ClearHistory();
@@ -100,6 +121,13 @@ internal sealed class EndpointCircuitBreaker
     // capacity; elapsed time alone never reclaims an incomplete permit.
     public void Complete(ref CircuitPermit permit, CircuitOutcome outcome)
     {
+        CompleteCore(ref permit, outcome, out var transition);
+        if (_reportMetrics) RecordTransition(transition);
+    }
+
+    private void CompleteCore(ref CircuitPermit permit, CircuitOutcome outcome, out Transition? transition)
+    {
+        transition = null;
         if (outcome is not (CircuitOutcome.Success or CircuitOutcome.Failure or CircuitOutcome.Ignored))
             throw new ArgumentOutOfRangeException(nameof(outcome));
         if (permit.Owner is null) return;
@@ -129,10 +157,11 @@ internal sealed class EndpointCircuitBreaker
                 _activeProbes--;
                 if (outcome == CircuitOutcome.Failure)
                 {
-                    Open(_clock.GetTimestamp());
+                    transition = Open(_clock.GetTimestamp());
                 }
                 else if (outcome == CircuitOutcome.Success && ++_successfulProbes == _probes.Length)
                 {
+                    transition = new(_state, EndpointCircuitState.Closed);
                     _state = EndpointCircuitState.Closed;
                     _generation++;
                     _successfulProbes = 0;
@@ -147,15 +176,23 @@ internal sealed class EndpointCircuitBreaker
             _samples[(_head + _sampleCount) % _samples.Length] = new(now, failure);
             _sampleCount++;
             if (failure) _failureCount++;
-            OpenIfThresholdReached(now);
+            transition = OpenIfThresholdReached(now);
         }
     }
 
-    private void OpenIfThresholdReached(long now)
+    // Listener callbacks run after the state, generation and permit bookkeeping are consistent,
+    // outside the circuit gate. Concurrent operations may deliver transitions out of order.
+    private void RecordTransition(Transition? transition)
+    {
+        if (transition is { } change) RespireTelemetry.RecordCircuitTransition(Endpoint, change.From, change.To);
+    }
+
+    private Transition? OpenIfThresholdReached(long now)
     {
         if (_failureCount >= _options.MinimumFailureCount
             && (double)_failureCount / _sampleCount >= _options.FailureRateThreshold)
-            Open(now);
+            return Open(now);
+        return null;
     }
 
     private long NextPermitId()
@@ -165,8 +202,9 @@ internal sealed class EndpointCircuitBreaker
         return _nextPermitId;
     }
 
-    private void Open(long now)
+    private Transition Open(long now)
     {
+        var transition = new Transition(_state, EndpointCircuitState.Open);
         _state = EndpointCircuitState.Open;
         _openedAt = now;
         _generation++;
@@ -174,6 +212,7 @@ internal sealed class EndpointCircuitBreaker
         Array.Clear(_probes);
         for (var i = 0; i < _freeProbeSlots.Length; i++) _freeProbeSlots[i] = i;
         _freeProbeCount = _freeProbeSlots.Length;
+        return transition;
     }
 
     private void TrimHistory(long now)
@@ -191,6 +230,7 @@ internal sealed class EndpointCircuitBreaker
 
     private void ClearHistory() => _head = _sampleCount = _failureCount = 0;
     private readonly record struct Sample(long Timestamp, bool Failure);
+    private readonly record struct Transition(EndpointCircuitState From, EndpointCircuitState To);
 
     internal sealed class CompletionTicket
     {

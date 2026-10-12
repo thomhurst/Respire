@@ -168,6 +168,36 @@ does not remove accepted FIFO placeholders; their replies still drain. Canceled 
 admissions do not reserve capacity forever: later commands can fill the complete recovery batch,
 after the open delay when a submitted transport failure reopened the node.
 
+## Circuit metrics
+
+The `Respire` meter reports data-endpoint circuit activity when
+`RespireMetricGroups.Resiliency` is selected and a listener enables the instrument:
+
+| Counter | Unit | Counting |
+| --- | --- | --- |
+| `respire.circuit.transitions` | `{transition}` | One measurement per state change, with `respire.circuit.state.from` and `respire.circuit.state.to` set to `closed`, `open`, or `half_open` |
+| `respire.circuit.rejections` | `{operation}` | One measurement per rejected admission attempt, while open or while all half-open probe slots are taken |
+
+Both counters identify the data endpoint with `server.address` and `server.port`
+(omitted for the default port, 6379), plus `db.system.name=redis` and
+`redis.client.library=Respire:<version>`. They contain no command keys, payloads,
+exception messages, or credentials. Circuit creation in the closed state is not a
+transition. Idle history eviction emits no transition and retains no telemetry state;
+a later circuit for that endpoint starts with fresh history. These counters use the
+registry's existing endpoint identities and retention limits, without another endpoint cache.
+
+Batch execution counts each rejected entry. A rejected transaction commit counts once
+for its single MULTI/EXEC permit, regardless of its queued command count. WATCH setup
+has its own admission and can produce a separate rejection. Cancellation and validation
+before admission do not count as circuit rejection. Successful admissions do not emit
+either counter. The generic `redis.client.errors` counter can also report the surfaced
+exception; it measures error handling rather than circuit admission.
+
+The failover group's health-probe circuit keeps its existing `respire.failover.*`
+metrics only. It does not emit these data-endpoint counters. A failover member's
+application commands can emit them when its own `CircuitBreaker` option is enabled.
+See [observability](../integrations/observability.md#endpoint-circuit-metrics) for subscription details.
+
 ## Current scope
 
 This option covers standalone and Sentinel immediate typed, raw, interpolated, fire-and-forget, cache-miss,
@@ -193,5 +223,5 @@ They cannot move to another primary to bypass circuit rejection or retirement.
 
 Configuration with standalone replica endpoints is rejected. This option does not change
 `RespireFailoverGroup` probe/failback behavior. The wider
-[resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for retry and
-telemetry integration.
+[resilience work](https://github.com/thomhurst/Respire/issues/863) remains open for
+[retry composition](https://github.com/thomhurst/Respire/issues/1256).
