@@ -16,7 +16,9 @@ public class LocalInitializationAuditTests
 {
     /// <summary>
     /// The reviewed SkipLocalsInit scopes per assembly. Empty: no package suppresses local
-    /// initialization, because no measured scope has yet shown a benefit without regression.
+    /// initialization. The JIT listings and timing in docs/LOCAL_INITIALIZATION.md show that the
+    /// attribute removes at most one or two prologue stores on the measured paths, with no
+    /// benefit beyond process-to-process Dynamic PGO variance.
     /// </summary>
     private static readonly HashSet<string> ReviewedSkipLocalsInitScopes = new(StringComparer.Ordinal);
 
