@@ -917,8 +917,14 @@ internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
-    public RespireCommandRetryCategory RetryCategory => expiry.IsNone && when == SetWhen.Always && !returnOld
-        ? RespireCommandRetryCategory.WriteLastWins : Verbs.Set.RetryCategory;
+    // NX replays cannot repeat the write; XX replays overwrite like a plain SET.
+    public RespireCommandRetryCategory RetryCategory => !expiry.IsNone || returnOld ? Verbs.Set.RetryCategory
+        : when switch
+        {
+            SetWhen.Always or SetWhen.Exists => RespireCommandRetryCategory.WriteLastWins,
+            SetWhen.NotExists => RespireCommandRetryCategory.WriteChecked,
+            _ => Verbs.Set.RetryCategory,
+        };
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
         key.GetWriteSizeHint(), value.GetWriteSizeHint(), CommandWriteSizeHint.SetOptions);

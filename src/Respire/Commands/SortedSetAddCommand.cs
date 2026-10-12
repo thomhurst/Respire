@@ -10,7 +10,11 @@ internal readonly struct SortedSetAddCommand(
 {
     public ReadCommandKind ReadKind => ReadCommandKind.None;
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.ZAdd.CacheMetadata;
-    public RespireCommandRetryCategory RetryCategory => Verbs.ZAdd.RetryCategory;
+    // Only exact NX or XX refines risk; INCR, CH, GT and LT keep the conservative verb category.
+    public RespireCommandRetryCategory RetryCategory => increment ? Verbs.ZAdd.RetryCategory
+        : options == RespireSortedSetAddOptions.Nx ? RespireCommandRetryCategory.WriteChecked
+        : options == RespireSortedSetAddOptions.Xx ? RespireCommandRetryCategory.WriteLastWins
+        : Verbs.ZAdd.RetryCategory;
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.ZAdd.CacheMetadata.Policy;
     public bool TryGetPrimaryKey(out RespireValue primaryKey) { primaryKey = key; return true; }
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);

@@ -26,12 +26,18 @@ sends, and backoff. Cache mutation fences and coalesced cache producers retain
 their logical ownership across all attempts and final conversion. Cancelled native
 responses retain their fences until their FIFO reply slots retire.
 
-Only plain `SET key value` is refined to `WriteLastWins`; option-sensitive SET,
-ZADD (including INCR), and XADD retain their conservative audited categories.
-A checked write such as `SET NX` is not refined either: its repeated condition can
-report a different result after its first effect. An overwrite can replace an
-intervening update. Increasing retry risk can repeat effects and cannot recover
-the original reply.
+Typed SET and ZADD refine their category only for audited option sets:
+
+- `SET key value` and `SET key value XX` are `WriteLastWins`.
+- `SET key value NX` is `WriteChecked`, the same as `SETNX`.
+- `ZADD key XX` is `WriteLastWins`, and `ZADD key NX` is `WriteChecked`.
+
+SET with an expiry, `KEEPTTL` or `GET`, ZADD with `INCR`, `CH`, `GT` or `LT`, and
+XADD keep their conservative audited categories. A checked write cannot repeat
+its effect, but a replay can report a different result, such as "not set" for a
+write that the first attempt applied. An overwrite can replace an intervening
+update. Increasing retry risk can repeat effects and cannot recover the original
+reply.
 
 ## Topologies
 
