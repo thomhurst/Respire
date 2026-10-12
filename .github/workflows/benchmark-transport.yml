@@ -25,7 +25,8 @@ jobs:
     # Each metric mode measures twenty-four cases, two launches and both bracket controls.
     # The disabled leg exceeded 45 minutes during the final baseline control.
     # Retain the full sampling profile and allow every bracket to finish.
-    timeout-minutes: 60
+    # Separate Short selection controls add eight two-launch cases per bracket.
+    timeout-minutes: 90
     services:
       redis:
         image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
@@ -105,6 +106,8 @@ jobs:
           for fixture in TransportBatchDiagnostics BatchReplyGate TransportBatchTraceReport; do
             cp "candidate/benchmarks/Respire.Benchmarks/$fixture.cs" baseline/benchmarks/Respire.Benchmarks/
           done
+          cp candidate/benchmarks/Respire.Benchmarks/SelectionLaunchDiagnoser.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/benchmarks/Respire.Benchmarks/SelectionEvidenceToolchain.cs baseline/benchmarks/Respire.Benchmarks/
           git -C baseline rev-parse HEAD > baseline.commit
           git -C candidate rev-parse HEAD > candidate.commit
           dotnet --info > runtime-info.log
@@ -119,6 +122,10 @@ jobs:
             (
               cd "$source"
               git rev-parse HEAD
+              export RESPIRE_BENCH_REVISION="$(git rev-parse HEAD)"
+              export RESPIRE_BENCH_FIXTURE_REVISION="$(git -C "$GITHUB_WORKSPACE/candidate" rev-parse HEAD)"
+              export RESPIRE_BENCH_PHASE="$phase"
+              export RESPIRE_SELECTION_EVIDENCE="$GITHUB_WORKSPACE/results/$phase/selection"
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
                 --transport-case-count "$GITHUB_WORKSPACE/$phase.case-count" "$job"
               /usr/bin/time -f '%U %S %P' -o "$GITHUB_WORKSPACE/$phase.cpu" \
@@ -127,6 +134,31 @@ jobs:
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
+      - name: Run separate selection causal controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Select an allowed CPU; never assume CPU zero belongs to this runner.
+          export RESPIRE_SELECTION_AFFINITY="$(python -c 'import os; cpu=min(os.sched_getaffinity(0)); assert cpu < 63; print(1 << cpu)')"
+          export RESPIRE_SELECTION_CONTROLS=1
+          export RESPIRE_SELECTION_PURPOSE=diagnostic
+          export RESPIRE_BENCH_FIXTURE_REVISION="$(git -C candidate rev-parse HEAD)"
+          for phase in baseline-a candidate baseline-b; do
+            source=baseline
+            if [ "$phase" = candidate ]; then source=candidate; fi
+            (
+              cd "$source"
+              export RESPIRE_BENCH_REVISION="$(git rev-parse HEAD)"
+              export RESPIRE_BENCH_PHASE="selection-$phase"
+              export RESPIRE_SELECTION_EVIDENCE="$GITHUB_WORKSPACE/results/selection-$phase/selection"
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter '*TransportAcceptanceBenchmarks.SelectConnection*' --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/selection-$phase"
+            ) > "$GITHUB_WORKSPACE/selection-$phase.log" 2>&1
+          done
+      - name: Require selection launch provenance and raw samples
+        shell: bash
+        run: python candidate/scripts/benchmarks/VerifySelectionEvidence.py "$GITHUB_WORKSPACE"
       - name: Require completed measurements
         shell: python
         run: |

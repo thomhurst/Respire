@@ -19,6 +19,33 @@ if (args is ["--transport-batch-trace-report", var trace, var report])
     return;
 }
 
+// Short diagnostic jobs share a sampling profile. Change only one factor per control.
+// They never replace the public Medium baseline/candidate/baseline comparison.
+if (Environment.GetEnvironmentVariable("RESPIRE_SELECTION_CONTROLS") == "1")
+{
+    var reference = Job.ShortRun.WithLaunchCount(2);
+    var affinity = long.Parse(Environment.GetEnvironmentVariable("RESPIRE_SELECTION_AFFINITY")
+        ?? throw new ArgumentException("Selection controls require an allowed CPU affinity mask."),
+        System.Globalization.CultureInfo.InvariantCulture);
+    config = config.AddJob(reference.WithId("selection-reference"))
+        .AddJob(reference.WithId("selection-tiering-off").WithEnvironmentVariable("DOTNET_TieredCompilation", "0"))
+        .AddJob(reference.WithId("selection-pinned").WithAffinity(new IntPtr(affinity)))
+        .AddJob(reference.WithId("selection-no-subtraction").WithEvaluateOverhead(false));
+}
+
+// Opt-in evidence runs keep every public benchmark body and its setup unchanged.
+if (Environment.GetEnvironmentVariable("RESPIRE_SELECTION_EVIDENCE") is { Length: > 0 } evidence)
+{
+    var toolchain = Environment.Version.Major switch
+    {
+        8 => BenchmarkDotNet.Toolchains.CsProj.CsProjCoreToolchain.NetCoreApp80,
+        10 => BenchmarkDotNet.Toolchains.CsProj.CsProjCoreToolchain.NetCoreApp10_0,
+        _ => throw new ArgumentException("Selection evidence supports net8.0/net10.0 only."),
+    };
+    config = config.AddJob(Job.Default.WithToolchain(
+        new Respire.Benchmarks.SelectionEvidenceToolchain(toolchain, evidence)).AsMutator());
+}
+
 // Discover parameter and argument combinations without running setup or measurements.
 if (args is ["--transport-case-count", var destination, var preset])
 {
