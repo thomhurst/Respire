@@ -37,6 +37,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     // The transport records the accepting socket after any pre-admission maintenance reroute.
     internal RespireConnection? ExecutingConnection { get; set; }
 
+    private protected virtual WatchedTransactionRetryContext? RetryContext => null;
+
     private IBatchStringCommands? _strings;
     private IBatchKeyCommands? _keys;
     private IBatchServerCommands? _server;
@@ -278,8 +280,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             out telemetryOperation) : default;
         RespireConnection? connection = ConnectionPolicy.PinnedConnection;
         var timeout = core.Options.CommandTimeout;
-        var deadline = timeout is { } duration
-            ? CommandDeadline.After(Math.Max(1L, (long)duration.TotalMilliseconds)) : default;
+        var deadline = RetryContext?.Deadline ?? (timeout is { } duration
+            ? CommandDeadline.After(Math.Max(1L, (long)duration.TotalMilliseconds)) : default);
         Exception? operationError = null;
         Exception? importError = null;
         var importTransactionStarted = false;
@@ -575,7 +577,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
                                 transaction: this, observation: observation, mutationFence: mutationFence,
-                                pinToConnection: core.Circuits is not null)
+                                pinToConnection: core.Circuits is not null, writeObservation: RetryContext?.WriteObservation)
                             .ConfigureAwait(false);
                         admission.Success();
                         connection = ExecutingConnection ?? connection;
@@ -776,6 +778,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         }
 
         if (CursorCommandMetadata.IsServerCursorContinuation(in command)) _hasCursorContinuation = true;
+        RetryContext?.RecordCategory(command.RetryCategory);
         var pending = new RespirePending<T>();
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))
@@ -942,6 +945,9 @@ public sealed class RespireTransaction : RespireTransactionBase
 /// </summary>
 public sealed class RespireWatchedTransaction : RespireTransactionBase
 {
+    internal WatchedTransactionRetryContext? HelperRetryContext { get; set; }
+    private protected override WatchedTransactionRetryContext? RetryContext => HelperRetryContext;
+
     internal RespireWatchedTransaction(RespireClient client)
         : base(client, watchConnection: null)
     {

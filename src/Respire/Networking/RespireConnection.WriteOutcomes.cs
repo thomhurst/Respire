@@ -80,7 +80,7 @@ internal sealed partial class RespireConnection
     // One observation belongs to exactly one logical attempt and is never pooled or reset. It
     // stores immutable frame coordinates, not a borrowed PendingResponse or its short task token.
     // Thus a consumed, retired or recycled source cannot change another attempt's evidence.
-    private sealed class CommandWriteObservation
+    internal sealed class CommandWriteObservation
     {
         private RespireConnection? _connection;
         private long _start;

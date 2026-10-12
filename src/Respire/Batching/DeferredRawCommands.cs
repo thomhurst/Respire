@@ -67,7 +67,8 @@ internal static class DeferredRawCommands
             readKind: descriptor.ReadKind, cursorArgumentIndex: cursorArgumentIndex,
             hasExplicitCacheMutation: descriptor.HasExplicitCacheMutation,
             cacheMetadata: descriptor.Verb.CacheMetadata.IsInitialized
-                ? descriptor.Verb.CacheMetadata : ClientCacheCommandMetadata.Get(descriptor.Name.ToUpperInvariant()));
+                ? descriptor.Verb.CacheMetadata : ClientCacheCommandMetadata.Get(descriptor.Name.ToUpperInvariant()),
+            retryCategory: descriptor.DeclaredRetryCategory);
     }
 
     private static string Normalize(string name)

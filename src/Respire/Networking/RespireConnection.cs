@@ -1538,7 +1538,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default, bool includeMulti = true,
         CommandDeadline commandDeadline = default, RespireTransactionBase? transaction = null,
         RespireTelemetry.ErrorObservation observation = default,
-        ClientSideCacheCoordinator.MutationFence mutationFence = default, bool pinToConnection = false)
+        ClientSideCacheCoordinator.MutationFence mutationFence = default, bool pinToConnection = false,
+        CommandWriteObservation? writeObservation = null)
     {
         // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
         try { ValidateTransactionCapacity(commandCount, includeMulti); }
@@ -1548,7 +1549,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands, includeMulti, transaction, mutationFence), repliesBeforeFinal: commandCount + prefixReplies,
             firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
-            commandDeadline, observation: observation, pinToConnection: pinToConnection);
+            commandDeadline, observation: observation, pinToConnection: pinToConnection, writeObservation: writeObservation);
     }
 
     internal void ValidateTransactionCapacity(int commandCount, bool includeMulti = true)

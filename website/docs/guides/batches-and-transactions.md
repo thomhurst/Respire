@@ -265,9 +265,9 @@ When client-side caching is enabled, a successful WATCH invalidates the watched 
 and prevents earlier reads from restoring cached values. Reads started after transaction creation
 therefore fetch fresh state even if tracking invalidations from earlier writes are still in transit.
 
-## Automatic WATCH conflict retries
+## Automatic watched transaction retries
 
-`RunTransactionWithReadsAsync` creates a fresh watched transaction for every attempt and retries only
+`RunTransactionWithReadsAsync` creates a fresh watched transaction for every attempt and retries
 when `EXEC` reports a WATCH conflict. The callback reads inputs and queues writes; the helper
 commits and disposes the transaction. `MaxAttempts` includes the first attempt and defaults
 to five. Exhaustion throws `RespireTransactionConflictException` with its `Attempts` count.
@@ -313,12 +313,38 @@ most 2,147,483,647 milliseconds. The failed transaction is disposed before the d
 cancellation interrupts delays and subsequent attempts. Invalid delays and backoff exceptions
 propagate. `ExponentialBackoff` doubles the delay ceiling per conflict up to `maxDelay`,
 then picks a random delay from zero to that ceiling to spread concurrent retries.
-Callback exceptions, network failures, timeouts, cancellation, Redis errors, and
-Cluster routing rejections are not retried. A lost commit reply remains ambiguous and may
-represent an executed transaction. Errors in an executed result array remain on its pendings.
+
+Both helpers also use the built-in client's `RespireOptions.RetryPolicy` for selected transient
+failures during WATCH setup, callback execution, or commit. With no retry policy, those failures
+propagate. Each retry replays WATCH, the whole callback (including fresh reads), and EXEC on a
+new attempt. The failed attempt is disposed before either kind of backoff. Custom `IRespireClient`
+implementations retain their own timeout behavior and do not expose this transient retry policy.
+
+The two budgets are independent: `RespireTransactionRetryOptions.MaxAttempts` bounds WATCH-conflict
+attempts, while `RespireOptions.RetryPolicy.MaxAttempts` bounds transient attempts, including the
+initial attempt. A conflict does not reset the transient budget, and a transient failure does not
+consume the conflict budget. Transient delays use the retry policy's backoff and jitter. One
+`CommandTimeout` deadline and the caller's cancellation cover setup, callbacks, commits, and both
+kinds of backoff. Callbacks must honor the supplied token; caller cancellation retains the original
+caller token when it surfaces.
+
+Every queued member must permit replay for the commit's transport write outcome. A definitely
+unwritten commit can retry known categories under any enabled policy. Unknown commands and scripts
+remain `Never` unless explicitly declared with `WithRetryCategory`. A lost EXEC reply is **not a
+WATCH abort**: the transaction may have executed, so replay requires permission for every member's
+possible repeated effects. For example, replaying a transaction containing INCR requires
+`MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating`. That explicit permission
+accepts duplicate increments and lost original results; WATCH does not provide exactly-once execution.
+
+Direct `RespireWatchedTransaction.CommitAsync` is never replayed, even with a retry policy. Its WATCH
+state and caller reads belong to the original attempt. Use a helper callback for supported transient
+retries. Timeouts, cancellation, unselected callback/server errors, and Cluster routing rejections
+propagate. Errors in an executed result array remain on its pendings and do not replay the transaction.
 
 The `Respire` meter emits `respire.transaction.watch.conflicts` for each discarded attempt
 and `respire.transaction.watch.retries` for additional attempts started after conflicts.
+Transient helper retries emit `respire.command.retries` with `attempted`, `succeeded`, or `exhausted`
+outcomes and the attempt's highest queued retry category (read-only for an empty attempt).
 Diagnostics listener failures do not interrupt the operation.
 
 ## Cluster WATCH transactions

@@ -410,7 +410,8 @@ public sealed record RespireOptions
     /// Null disables retries.
     /// </summary>
     /// <remarks>One deadline spans all attempts. Caller-supplied commands, scripts and functions retry only
-    /// with a declared category. Batches, transactions and streams retain their existing behavior.
+    /// with a declared category. Watched transaction helpers replay whole callbacks when every queued
+    /// category permits the commit's write outcome. Batches, direct transaction commits and streams do not replay.
     /// Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
     public RespireRetryPolicy? RetryPolicy { get; init; }
 
