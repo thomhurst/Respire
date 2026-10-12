@@ -13,6 +13,31 @@ namespace Respire.Tests.Networking;
 public class StandaloneCommandRetryTests
 {
     [Test]
+    [Arguments("LOADING", RespireRetryableErrors.Loading, true)]
+    [Arguments("TRYAGAIN", RespireRetryableErrors.TryAgain, true)]
+    [Arguments("MASTERDOWN", RespireRetryableErrors.MasterDown, true)]
+    [Arguments("READONLY", RespireRetryableErrors.ReadOnly, true)]
+    [Arguments("LOADING", RespireRetryableErrors.TryAgain, false)]
+    [Arguments("TRYAGAIN", RespireRetryableErrors.None, false)]
+    [Arguments("BUSY", RespireRetryableErrors.Loading, false)]
+    [Arguments("CLUSTERDOWN", RespireRetryableErrors.TryAgain, false)]
+    public async Task PublicReadHonorsIndividualTransientErrorSelection(string code, RespireRetryableErrors selection, bool retries)
+    {
+        var reads = 0;
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command == "GET key"
+            ? Interlocked.Increment(ref reads) == 1 ? System.Text.Encoding.ASCII.GetBytes($"-{code} busy\r\n") : "$5\r\nvalue\r\n"u8.ToArray()
+            : Setup(command);
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, RetryableErrors = selection } });
+        if (retries) await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        else await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireServerException>();
+        await Assert.That(reads).IsEqualTo(retries ? 2 : 1);
+        // A later command confirms that the failure did not poison the next reply slot.
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("converted")]

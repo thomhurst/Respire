@@ -148,6 +148,11 @@ acceptance criteria, dependencies, and current status:
   raw, script and function requests, and failover-group operations. Whole batch/transaction retries remain
   open in [#1216](https://github.com/thomhurst/Respire/issues/1216), and the full circuit composition in
   [#1256](https://github.com/thomhurst/Respire/issues/1256).
+  Immediate retry correctness and performance acceptance remains open in
+  [#1499](https://github.com/thomhurst/Respire/issues/1499) and
+  [#1215](https://github.com/thomhurst/Respire/issues/1215). Public fault tests and
+  healthy policy comparisons provide evidence; enabled topology/cache overhead and
+  complete composition coverage still require acceptance. No zero-overhead claim is made.
   [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance
   acceptance remains open in [#1214](https://github.com/thomhurst/Respire/issues/1214), with causal
   allocation and selection measurements tracked by [#1474](https://github.com/thomhurst/Respire/issues/1474).
