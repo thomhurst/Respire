@@ -383,9 +383,11 @@ activity and restores the prior ambient activity, including when a listener thro
 An uncooperative handler retains its activity
 until that attempt actually completes, just as it retains its handler scope.
 
-The remaining reliable worker features are tracked independently:
-[producer retry deduplication (#892)](https://github.com/thomhurst/Respire/issues/892).
-The full feature remains open in [#891](https://github.com/thomhurst/Respire/issues/891).
+For producers, [idempotent stream appends](command-retries.md#idempotent-stream-appends)
+automatically attach stable per-call identities to eligible retry-enabled typed `XADD`
+calls on Redis 8.6 or later. Deduplication lasts only within the stream's configured
+retention limits; older servers retain ordinary `XADD` retry safety. Producer deduplication
+does not prevent consumer redelivery, so handlers must still be idempotent.
 
 Use `RespireFakeServer` from `Respire.Testing` with its `CreateOptions()` client to test handlers
 without Docker. It supports this worker's group creation, blocking reads, `XAUTOCLAIM`,

@@ -168,7 +168,7 @@ A command timeout abandons the response wait while an accepted command may still
 
 One tracker rejects overlapping `UpdateAsync` calls with `InvalidOperationException`, including while encoding or awaiting Redis. After success or a failure other than an uncertain command timeout, the tracker accepts another update. Keep properties stable while encoding; custom accessors still run normally. Separate trackers, clients and external writers are not synchronized. The snapshot is a caller-owned assumption about persisted values, not a server-side concurrency token. External mutations or field expiration do not update it; recreate a tracker from a fresh full model when resynchronization is needed.
 
-Scalar codecs, key templates, generated Redis hash I/O, field TTL and change tracking are delivered for [the object mapper work](https://github.com/thomhurst/Respire/issues/895). [JSON mapping](generated-json-mappers.md) and [Search schemas](generated-search-schemas.md), including binary hash vector properties with field expiry and change tracking, are also available. Final performance acceptance remains separately tracked there.
+Scalar codecs, key templates, generated Redis hash I/O, field TTL and change tracking are delivered for [the completed object mapper work](https://github.com/thomhurst/Respire/issues/895). [JSON mapping](generated-json-mappers.md) and [Search schemas](generated-search-schemas.md), including binary hash vector properties with field expiry and change tracking, are also available.
 
 ## Native AOT conformance sample
 
@@ -179,4 +179,8 @@ field TTL, tracked partial updates, hash and JSON partial reads, and generated S
 with vector queries. Compiler and linker warnings fail publishing. Reflection-based JSON
 serialization is disabled; generated metadata supplies every JSON operation. See the sample
 README for publishing commands and its codec-only mode. Native AOT correctness checks do
-not establish [benchmark parity](https://github.com/thomhurst/Respire/issues/1301).
+not establish benchmark parity. The separate
+[mapper comparison workflow](https://github.com/thomhurst/Respire/blob/main/.github/workflows/benchmark-mapper.yml)
+measures generated hash, JSON and Search conversion/metadata operations between two
+handwritten control runs on .NET 10. Its results apply to the measured models and input
+shapes; they do not establish Redis network, query, Native AOT or cold-start performance.

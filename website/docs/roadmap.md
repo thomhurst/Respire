@@ -57,7 +57,6 @@ Server and protocol requirements vary by feature; each linked guide describes it
   explicit attempt-fenced acknowledgement, automatic idle recovery, delivery limits,
   atomic dead-letter completion, graceful draining, capability-aware `CLAIM`/`XNACK`/`XACKDEL`,
   bounded group metrics and W3C trace propagation.
-  Producer deduplication remains tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
 - [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): retry-enabled
   typed `XADD` calls attach a per-client producer identity on Redis 8.6+, so a resend after a
   lost reply cannot duplicate the entry.
@@ -73,6 +72,11 @@ Server and protocol requirements vary by feature; each linked guide describes it
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
 - [Generated JSON mappers](guides/generated-json-mappers.md) with reflection-free scalar codecs,
   model key templates, and typed RedisJSON document and property operations.
+- [Generated hash codecs](guides/generated-hash-codecs.md) with scalar model conversion, key templates,
+  Redis hash writes/full reads, explicit partial reads, field TTL and change tracking.
+  The [Native AOT sample](guides/generated-hash-codecs.md#native-aot-conformance-sample) covers
+  hash, JSON and Search mapping on .NET 8 and .NET 10; mapper comparisons measure generated
+  operations against bracketed handwritten controls on .NET 10.
 - [Generated Search schemas](guides/generated-search-schemas.md) for mapped hash and JSON properties,
   with vector codecs, compile-time diagnostics and a public VectorStore metadata seam.
 
@@ -110,6 +114,13 @@ Server and protocol requirements vary by feature; each linked guide describes it
   samples with local Docker Compose topologies. CI builds both samples on .NET 8 and .NET 10;
   their [topology smoke workflow](https://github.com/thomhurst/Respire/blob/main/samples/TopologySmoke.md)
   verifies Cluster slot routing and Sentinel primary promotion.
+
+The [higher-level capabilities epic](https://github.com/thomhurst/Respire/issues/860) is delivered:
+stream workers, idempotent stream producers, maintenance-aware failover groups, coherent
+HybridCache L1 invalidation and generated object mapping are available above. The
+[field-level caching investigation](guides/keyspace-notifications.md#field-level-cache-decision)
+concluded that subkey notifications cannot replace `CLIENT TRACKING` under the existing
+cache consistency contract. No notification-based coherent field cache is offered.
 
 ## Planned work
 
@@ -187,14 +198,6 @@ acceptance criteria, dependencies, and current status:
   stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
   messaging, caching, and other libraries that currently depend on StackExchange.Redis.
-- [Higher-level capabilities](https://github.com/thomhurst/Respire/issues/860): stream workers,
-  source-generated object mapping and field-level caching research.
-  [Stream workers](./guides/stream-workers) include serving-server capability discovery for
-  CLAIM recovery, delayed fenced XNACK release, and optional XACKDEL ACKED completion.
-  [Generated hash codecs](./guides/generated-hash-codecs) provide scalar model conversion, key templates,
-  Redis hash writes/full reads, explicit partial reads, field TTL and change tracking. The remaining
-  [object mapper work](https://github.com/thomhurst/Respire/issues/895) includes
-  final AOT/performance acceptance.
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison.
 

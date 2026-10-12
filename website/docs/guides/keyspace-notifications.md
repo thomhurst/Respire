@@ -109,6 +109,21 @@ cannot use `SubKeySpaceEvent`. Older Redis versions can acknowledge reserved cha
 but do not generate subkey notifications; subscription success is not feature detection.
 See the [Redis subkey format specification](https://redis.io/docs/latest/develop/pubsub/subkeyspace-notifications/).
 
+## Field-level cache decision
+
+The [completed investigation](https://github.com/thomhurst/Respire/issues/896) decided
+against replacing `CLIENT TRACKING` with subkey notifications in Respire's coherent
+response cache. The Redis 8.8 investigation found that subkey events do not cover
+whole-key mutations or JSON paths. Notifications on a separate Pub/Sub connection do
+not fence an in-flight read's cache insertion. Disconnects, buffer drops and Cluster ownership changes also require cache
+continuity handling beyond subscription routing.
+
+The [archived report](https://github.com/thomhurst/Respire/blob/d30260306be7cfb440bfbc7d5f7b1fc8e186d5a6/docs/SUBKEY_CACHE_SPIKE.md)
+records the Redis 8.8 source review and Redis 8.8.3 runtime evidence. This decision does
+not rule out an application cache with an explicitly best-effort contract. Respire's
+[partial hash cache](../fundamentals/client-side-caching.md#partial-hash-reads)
+continues to depend on whole-key tracking invalidations.
+
 ## Delivery, pressure, and Redis Cluster
 
 Subscription return is an acknowledgement barrier. Enumeration uses the existing bounded
