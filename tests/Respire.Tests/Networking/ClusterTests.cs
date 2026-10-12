@@ -346,6 +346,70 @@ public class ClusterTests
     }
 
     [Test]
+    [Arguments("none")]
+    [Arguments("transient")]
+    [Arguments("moved")]
+    public async Task ReadFrom_RetryEnabledBatchRecordsFreshCursorIssuer(string retry)
+    {
+        byte[]? topology = null;
+        RespireClient? client = null;
+        var firstPages = 0;
+        await using var replacement = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        byte[] Topology(int replicaPort, string replicaId) => Encoding.ASCII.GetBytes(
+            $"*1\r\n*4\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{replicaPort}\r\n${replicaId.Length}\r\n{replicaId}\r\n");
+        byte[]? Page(string command, bool issuer)
+        {
+            if (command == "CLUSTER SLOTS") return Volatile.Read(ref topology);
+            if (command == "HSCAN key 7 NOVALUES") return "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray();
+            if (command != "HSCAN key 0 NOVALUES") return null;
+            if (!issuer || retry == "none" || Interlocked.Increment(ref firstPages) != 1)
+                return "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
+            if (retry == "moved")
+            {
+                // Move the slot's only replica before the retry revalidates its fresh-cursor pin.
+                Volatile.Write(ref topology, Topology(replacement.Port, "replacement-id"));
+                ReplicaRoutes(client!)[ClusterHash.GetSlot("key")]!.MarkValidated(TimeSpan.Zero);
+            }
+            return "-TRYAGAIN busy\r\n"u8.ToArray();
+        }
+        replica.ReplyOverride = (_, command) => Page(command, issuer: true);
+        replacement.ReplyOverride = (_, command) => Page(command, issuer: false);
+        topology = Topology(replica.Port, "replica-id");
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Volatile.Read(ref topology) : null;
+        client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+        });
+        await using var owner = client;
+        await using var reads = client.WithReadFrom(RespireReadFrom.Replica);
+        async Task<ulong> ReadPageAsync(ulong cursor)
+        {
+            using var batch = reads.CreateBatch();
+            var page = batch.Hashes.ScanFieldsPage("key", cursor);
+            await batch.ExecuteAsync();
+            return page.Result.Cursor;
+        }
+
+        await Assert.That(await ReadPageAsync(0)).IsEqualTo(7UL);
+        await Assert.That(await ReadPageAsync(7)).IsEqualTo(0UL);
+
+        var issuer = retry == "moved" ? replacement : replica;
+        var other = retry == "moved" ? replica : replacement;
+        await Assert.That(issuer.ReceivedCommands.Count(command => command == "HSCAN key 7 NOVALUES")).IsEqualTo(1);
+        await Assert.That(other.ReceivedCommands.Contains("HSCAN key 7 NOVALUES")).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HSCAN ", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "HSCAN key 0 NOVALUES"))
+            .IsEqualTo(retry == "transient" ? 2 : 1);
+    }
+
+    [Test]
     public async Task ReadFrom_TouchKeepsTypedAndRawCallsOnPrimary()
     {
         await using var replica = new FakeRespServer(8, FakeRespServer.OkReply);

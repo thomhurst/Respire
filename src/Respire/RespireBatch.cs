@@ -434,7 +434,11 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                         if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                             slot = await cluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
                         if (attempt > 1) await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
-                        connection = await _client.AcquireConnectionAsync(slot, token, readFrom, operations[0].Observation).ConfigureAwait(false);
+                        // Retry groups hold no continuations, but a fresh cursor page must still record
+                        // the server that issues its cursor. Each attempt revalidates that pin, so the next
+                        // page finds the server that answered the final attempt.
+                        (connection, _) = await AcquireGroupConnectionsAsync(slot, operations, readFrom, token,
+                            operations[0].Observation).ConfigureAwait(false);
                         DeferredOperation.SetAttempts(operations, operations[0].Observation.Attempts);
                         DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
                     }
