@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -640,6 +641,8 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        // One AddAsync owns one command timeout, so the legacy fallback spends only what the probe left.
+        var deadline = LogicalCommandRetry.CreateDeadline(client.Core.Options.CommandTimeout);
         string? id;
         try
         {
@@ -657,10 +660,34 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             var plain = new RespireValue[arguments.Length - idempotencyArgumentCount];
             arguments.AsSpan(0, idempotencyOffset).CopyTo(plain);
             arguments.AsSpan(idempotencyOffset + idempotencyArgumentCount).CopyTo(plain.AsSpan(idempotencyOffset));
-            id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAdd, key, plain),
-                cancellationToken, observation).ConfigureAwait(false);
+            id = await AddWithinDeadlineAsync(new Cmd1N(Verbs.XAdd, key, plain), deadline, cancellationToken, observation)
+                .ConfigureAwait(false);
         }
         return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<string?> AddWithinDeadlineAsync(Cmd1N command, CommandDeadline deadline,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        if (!deadline.IsSet)
+            return await client.StringOrNullAsync("XADD", command, cancellationToken, observation).ConfigureAwait(false);
+        var commandTimeout = client.Core.Options.CommandTimeout!.Value;
+        var remaining = deadline.RemainingMilliseconds;
+        if (remaining == 0) throw new RespireTimeoutException("XADD", commandTimeout);
+        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, TimeSpan.FromMilliseconds(remaining));
+        try
+        {
+            return await client.StringOrNullAsync("XADD", command, timeout.Token, observation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (RespireConnection.IsDeadlineCancellation(error, timeout.Token, cancellationToken))
+        {
+            throw new RespireTimeoutException("XADD", commandTimeout, error, RespireTimeoutDiagnostics.Capture());
+        }
+        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
     }
 
     internal static Cmd1N BuildAddCommand(

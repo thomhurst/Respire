@@ -275,6 +275,22 @@ public class StreamIdempotentRetryTests
     }
 
     [Test]
+    public async Task LegacyFallbackSharesTheProbeCommandTimeout()
+    {
+        await using var server = XAddServer(supportsIdempotency: false);
+        // Each XADD fits within CommandTimeout alone, but the probe and fallback together do not.
+        server.DelayCommand("XADD", 700);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+
+        await Assert.That(async () => await client.Streams.AddAsync("s", ("f", "v")).AsTask().WaitAsync(Limit))
+            .ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(XAdds(server).Length).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task EmptyProducerIdIsRejected()
     {
         await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [new("localhost")], StreamProducerId = "" }))
