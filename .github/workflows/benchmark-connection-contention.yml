@@ -22,8 +22,9 @@ jobs:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
       candidate-sha: ${{ github.sha }}
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
-      # Issue #973 requires comparison with the original pre-padding control, rather
-      # than a main revision that already contains the earlier optimization attempts.
+      # Issue #1465 reproduces the public GET regression against the original
+      # pre-padding control from #973, before bisecting changes on the command path.
+      # Keep this full control SHA pinned for the same-runner A/candidate/B comparison.
       control-sha: ${{ github.event.label.name == 'run-connection-contention-original-benchmarks' && '2ffc95573cf3aefa156a35c4af19f5cdf90b26f8' || '' }}
       fixture: benchmarks/Respire.Benchmarks/ConnectionContentionBenchmarks.cs
       filter: '*ConnectionContentionBenchmarks*'
@@ -31,6 +32,8 @@ jobs:
       expected-methods: GetPipeline,ConcurrentGetPipelines
       # Explicit improvement comparisons require separated intervals for both public
       # workloads. Ordinary comparisons still report measurements without a speedup claim.
+      # The original-baseline reproduction can fail this gate; its latency, allocation,
+      # and process CPU artifacts remain evidence for #1465, not a reason to rerun the head.
       improvement-methods: ${{ (github.event.label.name == 'run-connection-contention-improvement-benchmarks' || github.event.label.name == 'run-connection-contention-original-benchmarks' || github.event.pull_request.number == 1152) && 'GetPipeline,ConcurrentGetPipelines' || '' }}
       artifact-prefix: connection-contention-comparison
 
