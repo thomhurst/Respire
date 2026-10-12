@@ -267,7 +267,7 @@ public class ClusterRetirementTests
         };
         var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
         var pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-            ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null])!).AsTask();
+            ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null, default(CommandDeadline)])!).AsTask();
         Publish(router, new("127.0.0.1", second.Port), "second", 2);
         try
         {
@@ -368,7 +368,7 @@ public class ClusterRetirementTests
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                 using var reply = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                    ["SET", router, command, timeout.Token, null, true, null])!;
+                    ["SET", router, command, timeout.Token, null, true, null, default(CommandDeadline)])!;
             }
             else if (path == "pinned")
             {
@@ -484,7 +484,7 @@ public class ClusterRetirementTests
                 case "tracked":
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     using (await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null])!) { }
+                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null, default(CommandDeadline)])!) { }
                     break;
                 case "batch":
                     var batch = client.CreateBatch();
@@ -596,7 +596,7 @@ public class ClusterRetirementTests
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                 using var response = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                    ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null])!;
+                    ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null, true, null, default(CommandDeadline)])!;
                 await Assert.That(response.AsString()).IsEqualTo("OK");
             }
             else await Assert.That(await client.SetAsync("key", "value", cancellationToken: timeout.Token)).IsTrue();
@@ -812,7 +812,7 @@ public class ClusterRetirementTests
             {
                 var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                 using var reply = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                    ["SET", router, command, caller.Token, null, true, null])!;
+                    ["SET", router, command, caller.Token, null, true, null, default(CommandDeadline)])!;
             }
             else
             {
@@ -911,7 +911,7 @@ public class ClusterRetirementTests
                     Action onRedirect = () => rebased++;
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     var pending = (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null])!;
+                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect, true, null, default(CommandDeadline)])!;
                     using (var reply = await pending) await Assert.That(reply.AsString()).IsEqualTo("OK");
                     await Assert.That(rebased).IsEqualTo(1);
                     break;
@@ -1030,7 +1030,7 @@ public class ClusterRetirementTests
             var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
             Action onRedirect = () => rebased.Add(true);
             pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
-                ["SET", router, command, timeout.Token, onRedirect, true, null])!).AsTask();
+                ["SET", router, command, timeout.Token, onRedirect, true, null, default(CommandDeadline)])!).AsTask();
         }
         else pending = client.SendAsync("SET", command, timeout.Token).AsTask();
         var signal = typeof(RespireConnection).GetField("_capacitySignal", Private)!.GetValue(old)!;
