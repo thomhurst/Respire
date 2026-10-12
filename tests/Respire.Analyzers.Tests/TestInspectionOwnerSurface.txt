@@ -236,7 +236,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 96
+# Count: Respire.Networking.RespireConnection | 97
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -257,6 +257,7 @@ Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, Can
 Respire.Networking.RespireConnection | method EnsureServerClientIdAsync(CancellationToken) : ValueTask<long>
 # Legacy test-only hook retained as baseline, not precedent for new hooks.
 Respire.Networking.RespireConnection | method ExpireOldestCommandForTesting() : bool
+Respire.Networking.RespireConnection | method GetGatheredWriteWatchdogDelay(TimeSpan) : TimeSpan
 Respire.Networking.RespireConnection | method GetReroutedCommandDeadline(CommandDeadline) : CommandDeadline
 Respire.Networking.RespireConnection | method GetWatchdogDelay(TimeSpan, TimeSpan) : TimeSpan
 Respire.Networking.RespireConnection | method HasStalledBulkStream(TimeSpan) : bool

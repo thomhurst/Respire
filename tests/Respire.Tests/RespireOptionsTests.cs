@@ -202,6 +202,7 @@ public class RespireOptionsTests
     [Arguments(nameof(RespireOptions.ConnectTimeout))]
     [Arguments(nameof(RespireOptions.CommandTimeout))]
     [Arguments(nameof(RespireOptions.ConnectionIdleReadTimeout))]
+    [Arguments(nameof(RespireOptions.GatheredWriteStallTimeout))]
     [Arguments(nameof(RespireOptions.ReceiveBufferSize))]
     [Arguments(nameof(RespireOptions.WriteBufferSize))]
     [Arguments(nameof(RespireOptions.MaxInflightCommands))]
@@ -221,6 +222,7 @@ public class RespireOptionsTests
                 ConnectionIdleReadTimeout = TimeSpan.Zero,
             },
             nameof(RespireOptions.ReceiveBufferSize) => ValidOptions() with { ReceiveBufferSize = 0 },
+            nameof(RespireOptions.GatheredWriteStallTimeout) => ValidOptions() with { GatheredWriteStallTimeout = TimeSpan.Zero },
             nameof(RespireOptions.WriteBufferSize) => ValidOptions() with { WriteBufferSize = 0 },
             nameof(RespireOptions.MaxInflightCommands) => ValidOptions() with { MaxInflightCommands = 0 },
             nameof(RespireOptions.SubscriptionBufferSize) => ValidOptions() with { SubscriptionBufferSize = 0 },

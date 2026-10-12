@@ -14,6 +14,8 @@ Server and protocol requirements vary by feature; each linked guide describes it
 
 - [Connections](fundamentals/connections.md) through Redis-style URIs, StackExchange.Redis connection
   strings, or `RespireOptions`, with lazy/eager connection, TLS, and automatic pipelining.
+- [Independent liveness bounds](fundamentals/connections.md#independent-liveness-bounds) for
+  receive progress and borrowed large-SET writes, with compatible defaults and safe input reuse.
 - [RESP3 preference](fundamentals/connections.md#protocol-negotiation) with bounded RESP2 fallback,
   explicit protocol overrides, and typed reply normalization.
 - [Redis Cluster](fundamentals/connections.md#redis-cluster-endpoint-identity) routing with periodic
