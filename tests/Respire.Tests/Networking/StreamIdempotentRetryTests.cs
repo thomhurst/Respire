@@ -1,6 +1,8 @@
 using System.Text;
+using Respire.Internal;
 using Respire.Testing;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -146,7 +148,7 @@ public class StreamIdempotentRetryTests
     }
 
     [Test]
-    public async Task OlderServersFallBackOnceToOrdinaryXAdd()
+    public async Task OlderServersFallBackForEachAppendToOrdinaryXAdd()
     {
         await using var server = XAddServer(supportsIdempotency: false);
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
@@ -156,7 +158,74 @@ public class StreamIdempotentRetryTests
             .IsEqualTo((RespireStreamId?)"1-0");
 
         var adds = XAdds(server).Select(add => string.Join(' ', add.Take(3).Select(Encoding.ASCII.GetString))).ToArray();
-        await Assert.That(adds).IsEquivalentTo(new[] { "XADD s IDMP", "XADD s *", "XADD s MAXLEN" });
+        await Assert.That(adds).IsEquivalentTo(new[] { "XADD s IDMP", "XADD s *", "XADD s MAXLEN", "XADD s MAXLEN" });
+        await Assert.That(XAdds(server)[2].Any(argument => argument.AsSpan().SequenceEqual("IDMP"u8))).IsTrue();
+        await Assert.That(XAdds(server)[3].Any(argument => argument.AsSpan().SequenceEqual("IDMP"u8))).IsFalse();
+    }
+
+    [Test]
+    [Arguments("ERR rejected")]
+    [Arguments("ERR syntax error")]
+    [Arguments("ERR The ID specified in XADD is equal or smaller than the target stream top item")]
+    [Arguments("ERR syntax error, IDMP requires a non-empty producer ID")]
+    public async Task UnrelatedFirstErrorDoesNotResendOrDisableIdentity(string error)
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        var normalReply = server.ReplyOverride!;
+        var reject = true;
+        server.ReplyOverride = (index, command) => reject && command.StartsWith("XADD", StringComparison.Ordinal)
+            ? Encoding.ASCII.GetBytes($"-{error}\r\n") : normalReply(index, command);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+
+        await Assert.That(async () => await client.Streams.AddAsync("s", ("f", "v"))).ThrowsExactly<RespireServerException>();
+        await Assert.That(XAdds(server).Length).IsEqualTo(1);
+        reject = false;
+        await client.Streams.AddAsync("s", ("f", "v"));
+        await Assert.That(XAdds(server).Length).IsEqualTo(2);
+        await Assert.That(XAdds(server).All(add => add[2].AsSpan().SequenceEqual("IDMP"u8))).IsTrue();
+    }
+
+    [Test]
+    public async Task CapabilityChangesAreDetectedOnEachAppend()
+    {
+        await using var server = XAddServer(supportsIdempotency: false);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+        var olderReply = server.ReplyOverride!;
+        await client.Streams.AddAsync("s", ("f", "v"));
+        // Simulate an upgrade, then a downgrade, at the same endpoint.
+        server.ReplyOverride = (index, command) => command.StartsWith("XADD", StringComparison.Ordinal)
+            ? "$3\r\n1-0\r\n"u8.ToArray() : olderReply(index, command);
+        await client.Streams.AddAsync("s", ("f", "v"));
+        server.ReplyOverride = olderReply;
+        await client.Streams.AddAsync("s", ("f", "v"));
+
+        var identities = XAdds(server).Select(add => add[2].AsSpan().SequenceEqual("IDMP"u8)).ToArray();
+        await Assert.That(identities).IsEquivalentTo(new[] { true, false, true, true, false }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MixedClusterVersionsDoNotShareCapability(bool newerFirst)
+    {
+        await using var older = XAddServer(supportsIdempotency: false);
+        await using var newer = XAddServer(supportsIdempotency: true);
+        const string olderKey = "{older}:s", newerKey = "{newer}:s";
+        var olderSlot = ClusterHash.GetSlot(olderKey);
+        var newerSlot = ClusterHash.GetSlot(newerKey);
+        var map = Encoding.ASCII.GetBytes($"*2\r\n*3\r\n:{olderSlot}\r\n:{olderSlot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{older.Port}\r\n*3\r\n:{newerSlot}\r\n:{newerSlot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{newer.Port}\r\n");
+        await using var seed = new FakeRespServer(map, map);
+        await using var client = await RespireClient.ConnectAsync(Options(seed, RespireCommandRetryCategory.WriteChecked) with { UseCluster = true });
+
+        await client.Streams.AddAsync(newerFirst ? newerKey : olderKey, ("f", "v"));
+        await client.Streams.AddAsync(newerFirst ? olderKey : newerKey, ("f", "v"));
+        await client.Streams.AddAsync(newerKey, ("f", "v"));
+
+        await Assert.That(XAdds(older).Length).IsEqualTo(2);
+        await Assert.That(XAdds(older)[0][2].AsSpan().SequenceEqual("IDMP"u8)).IsTrue();
+        await Assert.That(XAdds(older)[1][2].AsSpan().SequenceEqual("*"u8)).IsTrue();
+        await Assert.That(XAdds(newer).Length).IsEqualTo(2);
+        await Assert.That(XAdds(newer).All(add => add[2].AsSpan().SequenceEqual("IDMP"u8))).IsTrue();
     }
 
     [Test]

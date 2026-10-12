@@ -42,20 +42,14 @@ internal sealed class ClientCore : IAsyncDisposable
     internal readonly StandaloneCircuitRegistry? Circuits;
     internal readonly CommandRetryPolicy? CommandRetries;
     // Automatic XADD idempotency (#892): null unless the retry policy could resend a possibly
-    // executed checked write. Support is learned once per client: 0 unknown, 1 IDMP, -1 rejected.
+    // executed checked write. Capability is checked by each append on its actual serving node.
     private readonly string? _streamProducerId;
-    private int _streamIdempotencySupport;
 
     internal bool TryGetStreamProducerId([NotNullWhen(true)] out string? producerId)
     {
         producerId = _streamProducerId;
-        return producerId is not null && Volatile.Read(ref _streamIdempotencySupport) >= 0;
+        return producerId is not null;
     }
-
-    internal bool IsStreamIdempotencyConfirmed => Volatile.Read(ref _streamIdempotencySupport) > 0;
-
-    internal void RecordStreamIdempotencySupport(bool supported)
-        => Volatile.Write(ref _streamIdempotencySupport, supported ? 1 : -1);
     internal readonly HedgedReadBudget? HedgedReads;
     public readonly ILogger? Logger;
     private CorrectionCoordinator? _corrections;

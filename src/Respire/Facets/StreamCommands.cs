@@ -616,7 +616,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
     }
 
     // Retry-enabled clients attach a fresh message identity under the client's producer unless the
-    // caller chose idempotency or an explicit entry ID, or the server already rejected IDMP.
+    // caller chose idempotency or an explicit entry ID.
     private bool TryAttachIdempotency(in StreamAddOptions options, out StreamAddOptions attached)
     {
         attached = options;
@@ -640,25 +640,25 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         int idempotencyOffset, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var core = client.Core;
         string? id;
         try
         {
             id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAddIdempotent, key, arguments),
                 cancellationToken, observation).ConfigureAwait(false);
-            if (!core.IsStreamIdempotencyConfirmed) core.RecordStreamIdempotencySupport(supported: true);
         }
-        catch (RespireServerException error) when (error.Code == RespireErrorCodes.Err && !core.IsStreamIdempotencyConfirmed)
+        catch (RespireServerException error) when (error.Message == "ERR Invalid stream ID specified as stream command argument")
         {
             // Servers before Redis 8.6 parse IDMP as an invalid entry ID and reject XADD before
             // executing it. Ordinary XADD keeps its conservative accumulating retry category.
+            // All caller-supplied trim IDs are validated, and our entry ID is always *, so this
+            // specific parse error identifies unsupported IDMP. Other errors must reach the caller.
+            // Never cache capability: the next call or retry can reach a different server version.
             observation.Handled(error);
             var plain = new RespireValue[arguments.Length - 3];
             arguments.AsSpan(0, idempotencyOffset).CopyTo(plain);
             arguments.AsSpan(idempotencyOffset + 3).CopyTo(plain.AsSpan(idempotencyOffset));
             id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAdd, key, plain),
                 cancellationToken, observation).ConfigureAwait(false);
-            core.RecordStreamIdempotencySupport(supported: false);
         }
         return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
     }

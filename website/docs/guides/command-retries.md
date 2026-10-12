@@ -74,14 +74,18 @@ RespireStreamId id = await client.Streams.AddAsync("orders", ("status", "paid"))
 
 Calls that set `StreamAddOptions.Idempotency` or an explicit entry ID keep the caller's
 choice. Explicit `IDMP` and `IDMPAUTO` are also `WriteChecked`. Batch and transaction
-`Streams.Add` members do not receive an automatic identity. Generated catalog
+`Streams.Add` members do not receive an automatic identity: without explicit
+idempotency they remain `WriteAccumulating` and are not retried after possible
+execution at a `WriteChecked` maximum. Generated catalog
 `RespireCommands.Stream.XADD` calls keep `WriteAccumulating` for every argument list.
 
 A server that does not support `IDMP` rejects the option before it runs XADD. The
-first such rejection on a client resends that call as plain XADD, with its
-`WriteAccumulating` category, and later calls on that client send plain XADD directly.
-After a successful `IDMP` append, the client no longer falls back, and later
-errors reach the caller. Redis keeps deduplication history only within each stream's
+specific `ERR Invalid stream ID specified as stream command argument` rejection
+resends that call as plain XADD, with its `WriteAccumulating` category. Other errors
+reach the caller without a fallback. Each call attempts IDMP independently, so
+Cluster shards, Sentinel failovers and rolling upgrades do not share stale
+capability state. Older servers therefore receive one rejected IDMP attempt per
+append before the ordinary XADD. Redis keeps deduplication history only within each stream's
 `IDMP-DURATION` and `IDMP-MAXSIZE` limits (see `Streams.ConfigureAsync`). A retry that
 arrives after its identity expires or is evicted appends again.
 

@@ -75,9 +75,11 @@ public class RetryCategoryMetadataTests
             var words = Encoding.ASCII.GetString(verb.Bulk).Split("\r\n")
                 .Where((_, index) => (index & 1) != 0);
             var name = string.Join(' ', words);
-            // Fixed-option verbs absent from the catalog have no execution-specific audit.
+            // IDMP has an execution-specific audit; plain/catalog XADD remains accumulating.
+            // Other fixed-option verbs absent from the catalog have no execution-specific audit.
             var expected = catalog.TryGetValue(name, out var descriptor)
                 ? descriptor.RetryCategory : RespireCommandRetryCategory.Never;
+            if (field.Name == nameof(Verbs.XAddIdempotent)) expected = RespireCommandRetryCategory.WriteChecked;
             await Assert.That(verb.RetryCategory).IsEqualTo(expected);
         }
     }
