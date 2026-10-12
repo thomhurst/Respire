@@ -432,6 +432,7 @@ public partial class StreamWorkerTests
     public async Task IdleRecoveryRetriesFailedDeliveriesWithoutAnotherQueue(string failure)
     {
         var calls = 0;
+        var clock = new RespireFakeClock();
         var state = new State { Handle = (_, _) =>
         {
             if (Interlocked.Increment(ref calls) == 1)
@@ -439,18 +440,22 @@ public partial class StreamWorkerTests
                     : ValueTask.FromResult(RespireStreamWorkerResult.Nack);
             return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
         } };
-        await using var fixture = await Fixture.CreateAsync(prefix: true, state: state, options: new()
+        await using var fixture = await Fixture.CreateAsync(prefix: true, state: state, clock: clock, options: new()
         {
             MinimumIdleTime = TimeSpan.FromMilliseconds(200), RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
         });
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        // Delivery publication precedes the handler; scope disposal confirms its failure was processed.
+        await UntilAsync(() => Task.FromResult(Volatile.Read(ref state.DisposedScopes) == 1));
         await Task.Delay(50);
-        await Assert.That(calls).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref calls)).IsEqualTo(1);
+        // Keep the entry ineligible during the assertion, regardless of thread scheduling delays.
+        clock.Advance(TimeSpan.FromMilliseconds(200));
         await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         await UntilAsync(async () => (await fixture.View.Streams.PendingSummaryAsync("events", "workers")).Count == 0);
-        await Assert.That(calls).IsEqualTo(2);
+        await Assert.That(Volatile.Read(ref calls)).IsEqualTo(2);
         await Assert.That(state.Peak).IsEqualTo(1);
     }
 
