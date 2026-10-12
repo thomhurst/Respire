@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
     <PackageReference Include="StackExchange.Redis" />
     <PackageReference Include="Testcontainers.Redis" />
   </ItemGroup>
