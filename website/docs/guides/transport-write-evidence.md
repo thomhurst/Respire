@@ -538,20 +538,20 @@ Report summaries expose missing type/stack samples and lost events. Conversion
 fails on dropped events, missing boundaries, mismatched process identity, or no
 usable type/stack evidence. Unsampled objects remain unavailable for attribution.
 
-For local diagnostics, commit measured source, build the benchmark project through
-the unchanged agent guard, point `REDIS_HOST` and `REDIS_PORT` at an owned test
-server, then run:
+For local diagnostics, commit measured source, point `REDIS_HOST` and `REDIS_PORT`
+at an owned test server, then run:
 
 ```powershell
-& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
-    'build', 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj', '-c', 'Release', '-f', 'net10.0')
 pwsh scripts/Invoke-TransportBatchDiagnostics.ps1 -OutputDirectory ../batch-evidence
 ```
 
-The script captures two separate processes for each 32/100-command,
-one/two-connection case in both metric modes. Use `-Framework net8.0` after a
-net8.0 build for correctness/diagnostic validation. This is not a local benchmark
-suite. The label-triggered transport workflow remains net10.0 only and copies the
+The script rebuilds the selected framework through the unchanged agent guard
+before capturing evidence, so an old DLL cannot receive the current revision
+stamp. It rejects revision or measured-source changes during the rebuild. It
+captures two separate processes for each 32/100-command, one/two-connection case
+in both metric modes. Use `-Framework net8.0` for correctness/diagnostic
+validation. This is not a local benchmark suite. The label-triggered transport
+workflow remains net10.0 only and copies the
 same diagnostic sources to both pinned libraries. It runs all public timings
 first, then captures baseline/candidate/baseline diagnostic processes with the
 same case/launch coverage. Artifacts retain `metadata.json`, `allocations.nettrace`,

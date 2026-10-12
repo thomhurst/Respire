@@ -249,6 +249,10 @@ jobs:
       - name: Run Python probe regression tests
         run: python3 -m unittest discover -s scripts/probes -v
 
+      - name: Verify batch diagnostic build provenance
+        shell: pwsh
+        run: ./scripts/Test-TransportBatchDiagnostics.ps1
+
       - name: Verify worktree cleanup safety
         shell: pwsh
         run: |
