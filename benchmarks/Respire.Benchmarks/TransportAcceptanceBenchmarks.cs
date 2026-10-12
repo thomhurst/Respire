@@ -30,6 +30,8 @@ public class TransportAcceptanceBenchmarks
     [Params(1, 2)]
     public int Connections { get; set; }
 
+    internal RespireClient DiagnosticClient => _client;
+
     [GlobalSetup]
     public async Task Setup()
     {

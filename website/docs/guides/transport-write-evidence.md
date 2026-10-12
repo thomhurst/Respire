@@ -488,3 +488,74 @@ Full-GC process ranges below retain 5,767,168 bytes of caller arrays in every sa
 | baseline-b | 2 | after-dispose | 22 | 8357736–9391720 | 24528–24528 | 74043392–101466112 | 262402048–339402752 |
 
 POH fragmentation is zero in every sample. Phase CPU user/system seconds and utilization: baseline-a: 749.45 642.06 153%; candidate: 791.86 688.88 154%; baseline-b: 767.04 650.13 153%.
+
+## Standalone batch allocation attribution (#1479)
+
+`StandaloneBatch` does not call `WaitForFinalFrameWriteAsync`. The historical enabled
+one-connection/100 measurements of 30015.758 and 30016.531 B/op, versus controls
+30013.080–30014.564 B/op, remain unattributed. The disabled two-connection/100
+second-launch drop also remains unattributed. Those artifacts have no allocation
+stacks or suspension counts, so they cannot establish which object, pool miss,
+reply schedule, or background activity caused either difference. The final-frame
+builder change is not a demonstrated batch cause. These differences are not
+classified as noise, and totals from different fixtures are not subtracted.
+
+The diagnostic command adds evidence for future launches independently of public
+timing. It runs the existing public fixture, including its raw multiplexer, ordinary
+client, circuit client, setup traffic and selected error metric mode. A second
+client supplies only the explicitly named receive-gate controls. Every invocation
+records the full library revision, fixture/library assembly SHA-256, metric mode,
+case, PID, runtime and launch. The trace report embeds that identity and preserves
+allocation timestamps, thread IDs, sampled types, object sizes and resolved stacks.
+
+| Control | Causal boundary | Attribution supported |
+| --- | --- | --- |
+| `construction` | Queue the same INCR commands; retain batches and dispose after the boundary | Batch/facet creation, pending/operation construction and growing operation arrays, without sending or reply completion |
+| `public-task` | Call the unchanged public `StandaloneBatch` method | Natural reply scheduling, including the fixture's `Task<long>` and its observed incomplete-at-call count |
+| `fixture-pooled-valuetask` | Same batch construction and execution with a warmed pooling builder on the diagnostic wrapper | Remove the unpooled fixture Task while retaining transport and pending work; identify wrapper allocation stacks rather than subtracting process totals |
+| `gated-first` | First batch on a new diagnostic client; hold real received bytes before parsing | Prove execution is incomplete before releasing replies; new-client startup is visible, not a promise of an empty process-wide pool |
+| `gated-pool-demand` | Construct outside the boundary, then hold 128 batch executions concurrently | Require simultaneously live completion/builder state; observe pool-growth allocations independently of construction. At most 12,800 commands fit the unchanged default 16,384-command limit |
+| `gated-direct` / `gated-task` | Hold replies for each batch, then release and consume execution and pending results | Distinguish direct execution from an added Task wrapper under a forced reply suspension |
+| `idle-before` / `idle-after` | Keep the original fixture connected for 250 ms without batch traffic | Expose sampled background/collector activity; absence of a sample does not prove zero background allocation |
+
+The socket gate forwards real writes unchanged and holds bytes after the socket
+read, before the RESP parser. Its own TaskCompletionSource, linked cancellation,
+wait timer and stream state are diagnostic overhead with identifiable stacks.
+Gate tests exercise 32/100 commands on one/two connections, repeated use, FIFO
+pending results, and disposal while a read is held. The direct public controls
+continue to use the normal socket transport. No production transport code changes.
+
+Allocation ticks sample objects, not every allocation. `allocationIntervalBytes`
+is allocation since a tick, including other types and potentially an earlier
+control; it must never be charged to the sampled type. `sampledObjectBytes` is the
+sampled object's size. Process-counter observations include tracing, collector,
+controller, and background work. Construction counters report collections during
+the synchronous no-inline boundary and make no zero-allocation assertion. Internal
+reply-suspension and pool-miss counts are not instrumented: each gated execution
+proves at least one incomplete reply path, while stacks identify sampled builders.
+Report summaries expose missing type/stack samples and lost events. Conversion
+fails on dropped events, missing boundaries, mismatched process identity, or no
+usable type/stack evidence. Unsampled objects remain unavailable for attribution.
+
+For local diagnostics, commit measured source, build the benchmark project through
+the unchanged agent guard, point `REDIS_HOST` and `REDIS_PORT` at an owned test
+server, then run:
+
+```powershell
+& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
+    'build', 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj', '-c', 'Release', '-f', 'net10.0')
+pwsh scripts/Invoke-TransportBatchDiagnostics.ps1 -OutputDirectory ../batch-evidence
+```
+
+The script captures two separate processes for each 32/100-command,
+one/two-connection case in both metric modes. Use `-Framework net8.0` after a
+net8.0 build for correctness/diagnostic validation. This is not a local benchmark
+suite. The label-triggered transport workflow remains net10.0 only and copies the
+same diagnostic sources to both pinned libraries. It runs all public timings
+first, then captures baseline/candidate/baseline diagnostic processes with the
+same case/launch coverage. Artifacts retain `metadata.json`, `allocations.nettrace`,
+`allocations.jsonl`, and per-launch logs under `results/batch-allocation`.
+Diagnostic launch numbers identify their own processes; they are not the earlier
+BenchmarkDotNet timing launch numbers. These traces cannot retrospectively explain
+the historical deltas or automatically establish aggregate performance acceptance.
+The final #1474 audit owns that decision; #1214 and #862 remain open.
