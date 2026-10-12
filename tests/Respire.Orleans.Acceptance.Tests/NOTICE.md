@@ -10,6 +10,11 @@ see `LICENSE.upstream`.
 repository's Redis Testcontainers fixture. The production providers come from
 the pinned NuGet packages: no provider implementation is copied or replaced.
 
+The project updates all three central `PackageVersion` items to **10.2.2**.
+Repository defaults are **10.4.0**, but those defaults do not change this
+assessment's provider or runtime versions. Renovate excludes these project pins;
+changing them requires a new source inventory and compatibility assessment.
+
 | Local scenario | Upstream scenario/source under the pinned commit |
 | --- | --- |
 | `Membership_ReadRow_Insert_Read` | `MembershipTable_ReadRow_Insert_Read` in `test/Orleans.Runtime.Internal.Tests/MembershipTests/MembershipTableTestsBase.cs` |

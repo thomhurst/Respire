@@ -7,6 +7,12 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Keep the source inventory and recorded results on their assessed provider version. -->
+    <PackageVersion Update="Microsoft.Orleans.Clustering.Redis" Version="10.2.2" />
+    <PackageVersion Update="Microsoft.Orleans.Persistence.Redis" Version="10.2.2" />
+    <PackageVersion Update="Microsoft.Orleans.Reminders.Redis" Version="10.2.2" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Include="xunit.assert" />
