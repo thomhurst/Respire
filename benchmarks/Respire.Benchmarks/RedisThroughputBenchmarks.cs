@@ -1,7 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
-using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
 using DotNet.Testcontainers.Containers;
@@ -10,8 +9,8 @@ using Testcontainers.Redis;
 
 namespace Respire.Benchmarks;
 
+// The job comes from the command line, so the benchmark runs on the host runtime.
 [MemoryDiagnoser]
-[SimpleJob(RuntimeMoniker.Net80, warmupCount: 1, iterationCount: 3)]
 [Config(typeof(Config))]
 public class RedisThroughputBenchmarks
 {
@@ -20,11 +19,26 @@ public class RedisThroughputBenchmarks
     private ConnectionMultiplexer _stackExchangeRedis = null!;
     private IDatabase _stackExchangeDb = null!;
     
-    [Params(1, 10)]
+    // BenchmarkDotNet has no command-line override for [Params], so the workflow
+    // passes its inputs through RESPIRE_THROUGHPUT_CLIENTS and RESPIRE_THROUGHPUT_OPERATIONS.
+    [ParamsSource(nameof(ConcurrentClientCounts))]
     public int ConcurrentClients { get; set; }
     
-    [Params(100)]
+    [ParamsSource(nameof(OperationCounts))]
     public int OperationsPerClient { get; set; }
+
+    public static IEnumerable<int> ConcurrentClientCounts() => ReadCounts("RESPIRE_THROUGHPUT_CLIENTS", "1,10,50");
+
+    public static IEnumerable<int> OperationCounts() => ReadCounts("RESPIRE_THROUGHPUT_OPERATIONS", "100");
+
+    private static int[] ReadCounts(string variable, string fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(variable);
+        return (string.IsNullOrWhiteSpace(value) ? fallback : value)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(count => int.Parse(count, System.Globalization.CultureInfo.InvariantCulture))
+            .ToArray();
+    }
     
     private class Config : ManualConfig
     {

@@ -75,44 +75,36 @@ jobs:
           fi
       
       - name: Run Redis Throughput Benchmarks
+        env:
+          RESPIRE_THROUGHPUT_CLIENTS: ${{ steps.params.outputs.concurrent_clients }}
+          RESPIRE_THROUGHPUT_OPERATIONS: ${{ steps.params.outputs.operations }}
         run: |
           cd benchmarks/Respire.Benchmarks
           
-          # Parse concurrent clients parameter
-          IFS=',' read -ra CLIENTS <<< "${{ steps.params.outputs.concurrent_clients }}"
-          for client_count in "${CLIENTS[@]}"; do
-            echo "Running with $client_count concurrent clients..."
-            dotnet run -c Release -f ${{ matrix.framework }} -- \
-              --filter "*RedisThroughputBenchmarks*" \
-              --exporters json markdown html \
-              --artifacts ./BenchmarkDotNet.Artifacts/$client_count \
-              --iterationCount 5 \
-              --warmupCount 3 \
-              -- --ConcurrentClients=$client_count --OperationsPerClient=${{ steps.params.outputs.operations }}
-          done
+          # One run covers every client count; the benchmark reads its params from the environment.
+          dotnet run -c Release -f ${{ matrix.framework }} -- \
+            --filter "*RedisThroughputBenchmarks*" \
+            --exporters json markdown html \
+            --artifacts ./BenchmarkDotNet.Artifacts \
+            --iterationCount 5 \
+            --warmupCount 3
       
       - name: Generate throughput report
         run: |
-          cat > benchmarks/Respire.Benchmarks/throughput-report.md << 'EOF'
-          # Redis Throughput Benchmark Report
-          
-          ## Configuration
-          - Framework: ${{ matrix.framework }}
-          - Concurrent Clients: ${{ steps.params.outputs.concurrent_clients }}
-          - Operations per Client: ${{ steps.params.outputs.operations }}
-          - Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          
-          ## Results Summary
-          EOF
-          
-          # Append individual results
-          for dir in benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/*/results; do
-            if [ -d "$dir" ]; then
-              echo "### $(basename $(dirname $dir)) Concurrent Clients" >> benchmarks/Respire.Benchmarks/throughput-report.md
-              find "$dir" -name "*.md" -exec cat {} \; >> benchmarks/Respire.Benchmarks/throughput-report.md
-              echo "" >> benchmarks/Respire.Benchmarks/throughput-report.md
-            fi
-          done
+          report=benchmarks/Respire.Benchmarks/throughput-report.md
+          {
+            echo "# Redis Throughput Benchmark Report"
+            echo ""
+            echo "## Configuration"
+            echo "- Framework: ${{ matrix.framework }}"
+            echo "- Concurrent Clients: ${{ steps.params.outputs.concurrent_clients }}"
+            echo "- Operations per Client: ${{ steps.params.outputs.operations }}"
+            echo "- Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo ""
+            echo "## Results Summary"
+            echo ""
+            cat benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/results/*-report-github.md
+          } > "$report"
       
       - name: Generate GitHub Summary
         run: |
@@ -139,44 +131,6 @@ jobs:
             
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
-          
-          # Process each client count result
-          IFS=',' read -ra CLIENTS <<< "${{ steps.params.outputs.concurrent_clients }}"
-          for client_count in "${CLIENTS[@]}"; do
-            RESULTS_DIR="benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/$client_count/results"
-            if [ -d "$RESULTS_DIR" ]; then
-              echo "### 👥 Results with $client_count Concurrent Client(s)" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              
-              for file in "$RESULTS_DIR"/*.md; do
-                if [ -f "$file" ]; then
-                  # Extract summary table
-                  echo '```' >> $GITHUB_STEP_SUMMARY
-                  cat "$file" | grep -A 20 "^|" | head -25 >> $GITHUB_STEP_SUMMARY
-                  echo '```' >> $GITHUB_STEP_SUMMARY
-                  echo "" >> $GITHUB_STEP_SUMMARY
-                  
-                  # Try to extract key performance metrics
-                  if grep -q "Respire" "$file"; then
-                    echo "#### 🏆 Performance Highlights" >> $GITHUB_STEP_SUMMARY
-                    echo "" >> $GITHUB_STEP_SUMMARY
-                    
-                    # Extract Respire vs StackExchange comparison if available
-                    respire_mean=$(grep "Respire" "$file" | head -1 | awk '{print $3}')
-                    stackexchange_mean=$(grep "StackExchange" "$file" | head -1 | awk '{print $3}')
-                    
-                    if [ ! -z "$respire_mean" ] && [ ! -z "$stackexchange_mean" ]; then
-                      echo "- **Respire Mean Time**: $respire_mean" >> $GITHUB_STEP_SUMMARY
-                      echo "- **StackExchange.Redis Mean Time**: $stackexchange_mean" >> $GITHUB_STEP_SUMMARY
-                    fi
-                  fi
-                  
-                  break
-                fi
-              done
-              echo "" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
           
           # Add comparison insights
           echo "### 💡 Benchmark Insights" >> $GITHUB_STEP_SUMMARY
