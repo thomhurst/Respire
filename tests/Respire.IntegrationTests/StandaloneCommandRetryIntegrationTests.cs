@@ -156,7 +156,7 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
         await observer.Keys.DeleteAsync(key);
     }
 
-    private sealed class LostReply(string operation)
+    internal sealed class LostReply(string operation)
     {
         private static byte[] EncodeVerb(string operation)
         {
@@ -167,12 +167,16 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
         internal volatile bool Armed;
         internal int Sends;
         internal int Dropped;
+        internal RespireEndpoint Endpoint;
+        internal Func<CancellationToken, Task>? BeforeDrop;
+        internal readonly TaskCompletionSource RouteReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     // Receive the real server reply before discarding it. This proves that the initial
     // command executed and separates reply loss from a definitely unwritten transport failure.
-    private sealed class DropReplyStream(NetworkStream transport, LostReply fault) : Stream
+    internal sealed class DropReplyStream(NetworkStream transport, LostReply fault, RespireEndpoint endpoint = default) : Stream
     {
+        private int _targetWritten;
         public override bool CanRead => true;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
@@ -186,13 +190,31 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             var read = await transport.ReadAsync(buffer, cancellationToken);
-            if (read != 0 && fault.Armed && Interlocked.CompareExchange(ref fault.Dropped, 1, 0) == 0)
+            if (read != 0 && fault.Armed && Volatile.Read(ref _targetWritten) != 0
+                && Interlocked.CompareExchange(ref fault.Dropped, 1, 0) == 0)
+            {
+                try
+                {
+                    if (fault.BeforeDrop is not null) await fault.BeforeDrop(cancellationToken);
+                    fault.RouteReady.TrySetResult();
+                }
+                catch (Exception error)
+                {
+                    fault.RouteReady.TrySetException(error);
+                    throw;
+                }
                 throw new IOException("Injected loss after receiving the executed command's reply.");
+            }
             return read;
         }
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (fault.Armed && buffer.Span.IndexOf(fault.Verb) >= 0) Interlocked.Increment(ref fault.Sends);
+            if (fault.Armed && buffer.Span.IndexOf(fault.Verb) >= 0)
+            {
+                fault.Endpoint = endpoint;
+                Volatile.Write(ref _targetWritten, 1);
+                Interlocked.Increment(ref fault.Sends);
+            }
             return transport.WriteAsync(buffer, cancellationToken);
         }
         protected override void Dispose(bool disposing)
