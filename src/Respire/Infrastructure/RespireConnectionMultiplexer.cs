@@ -1410,11 +1410,20 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RecordRetiredConnectionIdentity(connection);
             Volatile.Write(ref _retirementDrained, true);
-            if (Volatile.Read(ref _disposed) == 0)
-                await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
-            else if (HasPendingCorrectionFences)
-                throw new OperationCanceledException(
-                    "Disposal prevented retirement from fencing failed Redis connections.", _abortCancellation.Token);
+            // Identity collection has finished. No fence entry is needed without obligations;
+            // disposal can otherwise race its guard even though retirement is already safe.
+            if (HasPendingCorrectionFences)
+            {
+                try
+                {
+                    await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
+                }
+                catch (CorrectionFenceDisposedException error) when (Volatile.Read(ref _disposed) != 0)
+                {
+                    throw new OperationCanceledException(
+                        "Disposal prevented retirement from fencing failed Redis connections.", error, _abortCancellation.Token);
+                }
+            }
             completion.TrySetResult();
         }
         catch (Exception ex)

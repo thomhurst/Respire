@@ -538,6 +538,30 @@ public class TransportRetirementTests
     }
 
     [Test]
+    public async Task RetirementWithoutFenceObligationsDoesNotEnterFenceGate()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
+        var connection = multiplexer.GetConnection();
+        await connection.DisposeAsync();
+        await connection.RetireAsync();
+        var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer)
+            .GetField("_retiredFenceGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(multiplexer)!;
+        await gate.WaitAsync();
+        try
+        {
+            // Hold the fence entry boundary. Retirement without IDs must finish without it,
+            // so concurrent disposal cannot fail an unnecessary fence-entry guard.
+            await multiplexer.RetireAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(multiplexer.HasPendingCorrectionFences).IsFalse();
+            await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL", StringComparison.Ordinal)))
+                .IsFalse();
+        }
+        finally { gate.Release(); }
+    }
+
+    [Test]
     public async Task RetirementAfterDisposalSharesAlreadyCompletedCleanup()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
