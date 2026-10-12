@@ -148,10 +148,16 @@ public class FencedLockTests(RedisTestContainer fixture)
         var pair = Keys();
         var coordination = new RespireCoordination(client);
         await using var owner = await coordination.TryAcquireFencedLockAsync(
-            pair.Key, pair.Counter, TimeSpan.FromMilliseconds(300));
+            pair.Key, pair.Counter, Lease);
+        await Assert.That(owner.Acquired).IsTrue();
 
-        await using var acquired = await coordination.AcquireFencedLockAsync(pair.Key, pair.Counter, Lease)
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var waiting = coordination.AcquireFencedLockAsync(pair.Key, pair.Counter, Lease).AsTask();
+        await Assert.That(waiting.IsCompleted).IsFalse();
+        // Start the short expiry after acquisition; a busy runner can exceed 300 ms acquiring.
+        using var expiry = await client.ExecuteAsync(RespireCommands.Key.PEXPIRE, (RespireValue)pair.Key, 300);
+        await Assert.That(expiry.AsInteger()).IsEqualTo(1);
+
+        await using var acquired = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(acquired.FencingToken).IsEqualTo(owner.Lock.FencingToken + 1);
     }
 
