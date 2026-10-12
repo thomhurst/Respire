@@ -27,3 +27,5 @@ jobs:
       redis-server: true
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      retained-memory-group-field: policy
+      retained-memory-group-values: Default,Disabled,Enabled

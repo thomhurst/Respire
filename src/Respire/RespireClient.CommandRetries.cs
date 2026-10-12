@@ -160,11 +160,8 @@ public sealed partial class RespireClient
         {
             return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, category, _core.Options.CommandTimeout,
                 (Client: this, Operation: operation, Cluster: cluster, Command: command, NoRedirect: noRedirect, Observation: observation),
-                static (state, attempt) => attempt.Number > 1
-                    ? state.Client.SendClusterRetryAttemptAsync(state.Operation, state.Cluster, state.Command, state.NoRedirect, attempt,
-                        state.Observation)
-                    : state.Client.SendClusterAsync(state.Operation, state.Cluster, state.Command, attempt.Token,
-                        noRedirect: state.NoRedirect, retryDeadline: attempt.Deadline, observation: state.Observation),
+                static (state, attempt) => state.Client.SendClusterAttemptAsync(state.Operation, state.Cluster, state.Command,
+                    state.NoRedirect, attempt, state.Observation),
                 observation, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -178,14 +175,27 @@ public sealed partial class RespireClient
         }
     }
 
-    // Initialization alone does not wait for an established socket's replacement.
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespValue> SendClusterRetryAttemptAsync<TCommand>(string operation, ClusterRouter cluster,
+    // Every attempt takes this path. Initialization alone does not wait for an established socket's
+    // replacement, so later attempts first give the routed owner a bounded chance to reconnect.
+    private ValueTask<RespValue> SendClusterAttemptAsync<TCommand>(string operation, ClusterRouter cluster,
         TCommand command, bool noRedirect, LogicalCommandRetry.Attempt attempt, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        await cluster.WaitForRouteReplacementAsync(slot, attempt.Token).ConfigureAwait(false);
+        var wait = attempt.Number > 1
+            ? cluster.WaitForRouteReplacementAsync(command.TryGetClusterSlot(out var slot) ? slot : null, attempt.Token)
+            : default;
+        return wait.IsCompletedSuccessfully
+            ? SendClusterAsync(operation, cluster, command, attempt.Token,
+                noRedirect: noRedirect, retryDeadline: attempt.Deadline, observation: observation)
+            : SendClusterAfterRouteReplacementAsync(wait, operation, cluster, command, noRedirect, attempt, observation);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> SendClusterAfterRouteReplacementAsync<TCommand>(ValueTask wait, string operation,
+        ClusterRouter cluster, TCommand command, bool noRedirect, LogicalCommandRetry.Attempt attempt,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        await wait.ConfigureAwait(false);
         return await SendClusterAsync(operation, cluster, command, attempt.Token,
             noRedirect: noRedirect, retryDeadline: attempt.Deadline, observation: observation).ConfigureAwait(false);
     }

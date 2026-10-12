@@ -529,17 +529,40 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
     }
 
-    // A logical retry waits for the routed owner's replacement socket, as the standalone owner does,
+    // A logical retry waits briefly for the routed owner's replacement socket, as the standalone owner does,
     // instead of spending its attempt on a lost one. Uninitialized and retired owners stay with discovery.
-    internal async ValueTask WaitForRouteReplacementAsync(int? slot, CancellationToken cancellationToken)
+    internal ValueTask WaitForRouteReplacementAsync(int? slot, CancellationToken cancellationToken)
     {
+        // Normal routing sends a keyless command to any connected master.
+        if (slot is null && TryGetConnectedNode() is not null) return default;
         var node = (slot is { } value ? RoutingSnapshot[value].Primary : null) ?? Volatile.Read(ref _seed);
-        if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return;
-        // An open circuit rejects before the wait, and again at dispatch admission.
+        if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return default;
+        // An open circuit rejects before the wait, and again at dispatch admission. The ignored
+        // permit releases half-open probe capacity without completing the probe or recording a sample.
         _circuits?.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
-        try { _ = await node.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false); }
-        catch (RespireConnectionRetiredException) { /* Retirement moves selection back to discovery. */ }
+        return WaitForRouteReplacementCoreAsync(slot, node, cancellationToken);
     }
+
+    // The owner's disconnect already requested a topology refresh. Stop waiting when that refresh
+    // moves the route, when another master can serve a keyless command, or after one refresh
+    // spacing window. Normal routing then clears a stale owner and refreshes through other masters.
+    private async ValueTask WaitForRouteReplacementCoreAsync(int? slot, RespireConnectionMultiplexer node,
+        CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (node is { IsConnected: false, IsRetired: false } && IsRouteReplacementPending(slot, node)
+            && Stopwatch.GetElapsedTime(started) < RouteReplacementWait)
+        {
+            await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static readonly TimeSpan RouteReplacementWait = ClusterTopologyRefreshScheduler.PrimaryDisconnectSpacing;
+
+    private bool IsRouteReplacementPending(int? slot, RespireConnectionMultiplexer node)
+        => slot is { } value
+            ? ReferenceEquals(RoutingSnapshot[value].Primary, node)
+            : TryGetConnectedNode() is null;
 
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
