@@ -66,6 +66,7 @@ internal static class DeferredRawCommands
             cacheMutation: descriptor.CacheMutation,
             readKind: descriptor.ReadKind, cursorArgumentIndex: cursorArgumentIndex,
             hasExplicitCacheMutation: descriptor.HasExplicitCacheMutation,
+            retryCategory: descriptor.DeclaredRetryCategory,
             cacheMetadata: descriptor.Verb.CacheMetadata.IsInitialized
                 ? descriptor.Verb.CacheMetadata : ClientCacheCommandMetadata.Get(descriptor.Name.ToUpperInvariant()),
             retryCategory: descriptor.DeclaredRetryCategory);

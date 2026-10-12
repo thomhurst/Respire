@@ -193,6 +193,8 @@ Failed circuit admission does not invent an attempt. Coalesced waiters do not du
 producer retry events. Handled attempt failures and final caller errors retain their
 separate error owners. Exporter exceptions cannot change retry decisions or replies.
 
+### Batches
+
 Standalone and Sentinel batches use `RetryPolicy` to retry the complete pipeline.
 A batch is not atomic: Redis can execute some or all members before a failure.
 Replies remain pending until the retry decision is final, and only the final
@@ -213,9 +215,44 @@ backoff. Retry telemetry counts accepted resends and one terminal outcome per
 batch that accepted a resend, using its most conservative member category. A retry
 decision followed only by failed acquisition or admission produces no retry event.
 Hash import sessions and server cursor continuations do not retry. Cluster batches
-and direct transaction commits do not replay; watched transaction helpers retain
+do not replay; watched transaction helpers retain
 their complete-callback retries. Further whole-unit work remains tracked by
 [#1216](https://github.com/thomhurst/Respire/issues/1216).
+
+### Transactions
+
+On standalone and Sentinel clients, the same `RetryPolicy` retries an unwatched
+`RespireTransaction` as one complete unit. The client resends the retained `MULTI`, queued
+commands and `EXEC` frame together on the current primary. It never resends a subset of the
+members.
+
+The transport records one write outcome for the whole frame. A resend needs both a selected
+failure and permission for every member's category under that outcome. One member is
+enough to block the unit:
+
+- A unit that holds `INCR` stays at one send after a lost `EXEC` reply, unless
+  `MaxCommandRetryCategory` accepts `WriteAccumulating`. This applies even when the other
+  members are reads.
+- A raw member, script or function without a declared category is `Never` and blocks the
+  unit. A deferred raw member uses only the caller's declared category, as raw dispatch does.
+
+A lost `EXEC` reply counts as a possible execution, not as an abort. A selected queue error,
+such as `LOADING`, makes Redis discard the transaction with `EXECABORT`. The frame was still
+written, so the same category rule applies.
+
+The retry keeps one logical deadline and the caller's token across attempts and backoff.
+Member pendings complete once, from the final attempt. Telemetry reports `attempted`,
+`succeeded` and `exhausted` once per unit. The category tag names the riskiest member category.
+
+The client never resends these units:
+
+- Watched transactions. Their `WATCH` state belongs to the lost connection.
+  `RunTransactionAsync` can rebuild the whole callback; transient retries there are
+  tracked by [#1525](https://github.com/thomhurst/Respire/issues/1525).
+- Hash import sessions.
+- Units that hold a server-local cursor continuation.
+- Cluster transactions, tracked by [#1524](https://github.com/thomhurst/Respire/issues/1524).
+
 
 ## Correctness and performance evidence
 

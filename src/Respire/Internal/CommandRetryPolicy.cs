@@ -22,20 +22,31 @@ internal sealed class CommandRetryPolicy
     internal bool TryGetDelay(Exception failure, CommandWriteOutcome outcome, RespireCommandRetryCategory category,
         int completedAttempts, TimeSpan remaining, CancellationToken cancellationToken, out TimeSpan delay)
     {
-        ArgumentNullException.ThrowIfNull(failure);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(completedAttempts);
         delay = default;
-        if (!CanRetry(failure, outcome, category, completedAttempts, remaining, cancellationToken)) return false;
+        return CanRetry(failure, outcome, category, completedAttempts, remaining, cancellationToken)
+            && TryGetDelay(completedAttempts, remaining, out delay);
+    }
 
-        var candidate = GetDelay(completedAttempts, Random.Shared.NextDouble());
-        if (candidate >= remaining) return false;
-        delay = candidate;
-        return true;
+    // A complete unit (MULTI/EXEC) is resent only when every member category is individually
+    // eligible for the unit's single write outcome. One unaudited member blocks the whole unit.
+    internal bool TryGetUnitDelay(Exception failure, CommandWriteOutcome outcome, RetryCategorySet categories,
+        int completedAttempts, TimeSpan remaining, CancellationToken cancellationToken, out TimeSpan delay)
+    {
+        delay = default;
+        if (categories.IsEmpty || categories.Contains(RespireCommandRetryCategory.Never)) return false;
+        for (var category = RespireCommandRetryCategory.Always; category <= RespireCommandRetryCategory.ServerAdmin; category++)
+        {
+            if (categories.Contains(category)
+                && !CanRetry(failure, outcome, category, completedAttempts, remaining, cancellationToken)) return false;
+        }
+        return TryGetDelay(completedAttempts, remaining, out delay);
     }
 
     internal bool CanRetry(Exception failure, CommandWriteOutcome outcome, RespireCommandRetryCategory category,
         int completedAttempts, TimeSpan remaining, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(failure);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(completedAttempts);
         if (cancellationToken.IsCancellationRequested || remaining <= TimeSpan.Zero
             || completedAttempts >= _settings.MaxAttempts
             || _settings.MaxCommandRetryCategory == RespireCommandRetryCategory.Never
@@ -46,9 +57,14 @@ internal sealed class CommandRetryPolicy
         // and nested causes cannot upgrade either outcome to definitely unwritten.
         if (outcome is not (CommandWriteOutcome.Unknown or CommandWriteOutcome.DefinitelyUnwritten
             or CommandWriteOutcome.EffectMayHaveReachedServer)) return false;
-        if (outcome != CommandWriteOutcome.DefinitelyUnwritten && !PermitsPossibleExecution(category)) return false;
+        return outcome == CommandWriteOutcome.DefinitelyUnwritten || PermitsPossibleExecution(category);
+    }
 
-        return true;
+    private bool TryGetDelay(int completedAttempts, TimeSpan remaining, out TimeSpan delay)
+    {
+        var candidate = GetDelay(completedAttempts, Random.Shared.NextDouble());
+        delay = candidate < remaining ? candidate : default;
+        return candidate < remaining;
     }
 
     private bool IsSelectedFailure(Exception failure)
