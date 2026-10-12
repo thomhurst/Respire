@@ -515,13 +515,14 @@ public class StandaloneCommandRetryTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task DeferredMembersDoNotRetryIndependently(bool transactional)
+    public async Task DeferredMembersRetryOnlyAsCompleteUnits(bool transactional)
     {
         await using var server = Server();
         server.ReplyOverride = (_, command) => command switch
         {
             "GET key" => transactional ? "+QUEUED\r\n"u8.ToArray() : "-TRYAGAIN busy\r\n"u8.ToArray(),
-            "EXEC" => "*1\r\n-TRYAGAIN busy\r\n"u8.ToArray(),
+            "GET other" => transactional ? "+QUEUED\r\n"u8.ToArray() : "$2\r\nok\r\n"u8.ToArray(),
+            "EXEC" => "*2\r\n-TRYAGAIN busy\r\n$2\r\nok\r\n"u8.ToArray(),
             _ => Setup(command),
         };
         await using var client = await RespireClient.ConnectAsync(Options(server));
@@ -529,10 +530,18 @@ public class StandaloneCommandRetryTests
         await using var transaction = client.CreateTransaction();
         IRespireCommandQueue queue = transactional ? transaction : batch;
         var pending = queue.Strings.GetString("key");
+        var successful = queue.Strings.GetString("other");
         if (transactional) await transaction.CommitAsync();
         else await batch.TryExecuteAsync();
         await Assert.That(pending.Error).IsTypeOf<RespireServerException>();
-        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(transactional ? 1 : 3);
+        await Assert.That(await successful).IsEqualTo("ok");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(3);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET other")).IsEqualTo(3);
+        if (transactional)
+        {
+            await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(3);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "EXEC")).IsEqualTo(3);
+        }
     }
 
     [Test]

@@ -215,8 +215,8 @@ backoff. Retry telemetry counts accepted resends and one terminal outcome per
 batch that accepted a resend, using its most conservative member category. A retry
 decision followed only by failed acquisition or admission produces no retry event.
 Hash import sessions and server cursor continuations do not retry. Cluster batches
-do not replay; watched transaction helpers retain
-their complete-callback retries. Further whole-unit work remains tracked by
+do not replay; watched transaction helpers retain their complete-callback retries.
+Further whole-unit work remains tracked by
 [#1216](https://github.com/thomhurst/Respire/issues/1216).
 
 ### Transactions
@@ -259,7 +259,6 @@ The client never resends these units:
 - Hash import sessions.
 - Units that hold a server-local cursor continuation.
 - Cluster transactions, tracked by [#1524](https://github.com/thomhurst/Respire/issues/1524).
-
 
 ## Correctness and performance evidence
 
