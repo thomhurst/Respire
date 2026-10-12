@@ -14,7 +14,8 @@ STAGES = ('before-connect', 'connected-idle', 'after-first-reuse', 'after-dispos
 
 class BenchmarkRetentionTests(unittest.TestCase):
     def run_summary(self, missing=None, invalid=None, stages=STAGES, stress=False,
-                    missing_stress=None, invalid_stress=None):
+                    missing_stress=None, invalid_stress=None, dimensions=(),
+                    missing_dimension=None, scope_drift=None, collapse_scopes=False):
         workflow = Path(__file__).resolve().parents[2] / '.github/workflows/benchmark-compare.yml'
         section = workflow.read_text().split('      - name: Require complete results and summarize both controls\n')[1]
         script = section.split('        run: |\n')[1].split('      - uses:')[0]
@@ -39,6 +40,15 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                 continue
                             snapshot = {'stage': stage, 'managedBytes': 100 + index,
                                         'pohBytes': 10, 'pohFragmentedBytes': 0, 'workingSetBytes': 500}
+                            if dimensions:
+                                snapshot.update(owner=method, policy=str(coalesce))
+                                snapshot['managedBytes'] += 1000 if coalesce else 0
+                                if missing_dimension == (phase, stage):
+                                    del snapshot['owner']
+                                if scope_drift == (phase, stage) and coalesce:
+                                    snapshot['policy'] = 'unexpected'
+                                if collapse_scopes:
+                                    snapshot['policy'] = 'same'
                             if invalid == (phase, stage):
                                 snapshot['managedBytes'] = -1
                             snapshots.append('RECEIVE_MEMORY ' + json.dumps(snapshot))
@@ -59,6 +69,7 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                EVENT_BASE_SHA='b' * 40, RETAINED_MEMORY='true',
                                RETAINED_MEMORY_STAGES=','.join(stages), GITHUB_STEP_SUMMARY=str(root / 'step.md'))
             environment['LARGE_SET_STRESS'] = str(stress).lower()
+            environment['RETAINED_MEMORY_DIMENSIONS'] = ','.join(dimensions)
             result = subprocess.run([sys.executable, 'summary.py'], cwd=root, env=environment,
                                     capture_output=True, text=True)
             summary = root / 'comparison.md'
@@ -106,6 +117,30 @@ class BenchmarkRetentionTests(unittest.TestCase):
             with self.subTest(field=field):
                 result, _ = self.run_summary(stress=True, invalid_stress=('candidate', field, value))
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_retention_dimensions_preserve_distinct_process_sizes(self):
+        result, summary = self.run_summary(dimensions=('owner', 'policy'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for phase in PHASES:
+            self.assertIn(f'| {phase} | connected-idle | owner=ColdStringMiss, policy=False | 1 | 101 |', summary)
+            self.assertIn(f'| {phase} | connected-idle | owner=ColdStringMiss, policy=True | 1 | 1101 |', summary)
+
+    def test_missing_retention_dimension_is_rejected(self):
+        result, _ = self.run_summary(dimensions=('owner', 'policy'),
+                                     missing_dimension=('candidate', 'after-first-reuse'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing retention dimension', result.stderr)
+
+    def test_retention_scope_drift_is_rejected(self):
+        result, _ = self.run_summary(dimensions=('owner', 'policy'),
+                                     scope_drift=('candidate', 'after-first-reuse'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Retention parameters changed: candidate/after-first-reuse', result.stderr)
+
+    def test_collapsed_retention_scopes_are_rejected(self):
+        result, _ = self.run_summary(dimensions=('owner', 'policy'), collapse_scopes=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Incomplete retention parameters', result.stderr)
 
 
 if __name__ == '__main__':
