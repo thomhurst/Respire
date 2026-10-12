@@ -50,7 +50,7 @@ internal sealed class BatchFunctionCommands(IPendingSink sink) : IBatchFunctionC
         => ExecuteSpan(function, keys.AsSpan(), args.AsSpan());
     public RespirePending<RespireResult> ExecuteSpan(RespireFunction function, ReadOnlySpan<RespireKey> keys, ReadOnlySpan<RespireValue> args)
     {
-        var command = FunctionCommands.CallCommand(sink.Client, function, keys, args);
+        var command = FunctionCommands.CallCommand(sink.Client, function, keys, args, deferred: true);
         return sink.Add<BatchScriptCommand, RespireResult>(function.Operation, command, keys,
             static (client, value) => RespireResult.CreateOwned(in value, client.Core.Options.Serializer));
     }
@@ -64,7 +64,7 @@ internal sealed class BatchFunctionCommands(IPendingSink sink) : IBatchFunctionC
         => Call(function, keys, args, static (_, value) => ResponseReader.StringOrNull(in value));
     private RespirePending<T> Call<T>(RespireFunction function, RespireKey[]? keys, RespireValue[]? args, Func<RespireClient, RespValue, T> convert)
     {
-        var command = FunctionCommands.CallCommand(sink.Client, function, keys.AsSpan(), args.AsSpan());
+        var command = FunctionCommands.CallCommand(sink.Client, function, keys.AsSpan(), args.AsSpan(), deferred: true);
         return sink.Add<BatchScriptCommand, T>(function.Operation, command, keys.AsSpan(), convert);
     }
     public RespirePending<string> Load(string source, bool replace = false)

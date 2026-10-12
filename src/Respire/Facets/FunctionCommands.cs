@@ -105,7 +105,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         RespireKey[]? keys, RespireValue[]? args, CancellationToken cancellationToken,
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation observation)
     {
-        var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan());
+        var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan(), deferred: false);
         using var result = await ExecuteWithRetriesAsync(function, command, cancellationToken, observation)
             .ConfigureAwait(false);
         return convert(result);
@@ -117,7 +117,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
-            var command = CallCommand(client, function, keys, args);
+            var command = CallCommand(client, function, keys, args, deferred: false);
             return owner.Attach(ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation));
         }
         catch (Exception error)
@@ -274,8 +274,11 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         return pattern.ToString();
     }
 
+    // Only a deferred member carries its category, for the complete-unit decision. An immediate call's
+    // logical loop (ExecuteWithRetriesAsync) is its one retry owner; a category on the command would
+    // also enable the immediate-command loop and multiply sends.
     internal static BatchScriptCommand CallCommand(RespireClient client, RespireFunction function,
-        ReadOnlySpan<RespireKey> keys, ReadOnlySpan<RespireValue> args)
+        ReadOnlySpan<RespireKey> keys, ReadOnlySpan<RespireValue> args, bool deferred)
     {
         ArgumentNullException.ThrowIfNull(function);
         var tail = client.BuildScriptTailFromSpans(keys, args);
@@ -289,7 +292,8 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         // A retried call must resend the bytes of its first attempt.
         if (client.CanRetryDeclared(function.RetryCategory))
             for (var index = 0; index < tail.Length; index++) tail[index] = tail[index].Snapshot();
-        return new(function.Verb, function.Name, tail, keys.Length, function.RetryCategory);
+        return new(function.Verb, function.Name, tail, keys.Length,
+            deferred ? function.RetryCategory : RespireCommandRetryCategory.Never);
     }
 
     public ValueTask<string> LoadAsync(string source, bool replace = false, CancellationToken cancellationToken = default)
