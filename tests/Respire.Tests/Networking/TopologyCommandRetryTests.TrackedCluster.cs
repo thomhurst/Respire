@@ -169,6 +169,42 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
+    public async Task TrackedClusterOverlappingProducersKeepCallerSnapshotsIndependent()
+    {
+        var firstReads = 0;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TrackedClusterNode(command => command switch
+        {
+            "GET first" => Interlocked.Increment(ref firstReads) == 1 ? TryAgain : "$5\r\nfirst\r\n"u8.ToArray(),
+            "GET second" => "$6\r\nsecond\r\n"u8.ToArray(),
+            _ => null,
+        });
+        await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+        });
+        server.GateCommand("GET first", release.Task);
+        var firstKey = "first"u8.ToArray();
+        var secondKey = "second"u8.ToArray();
+        var first = client.GetStringAsync((RespireKey)firstKey).AsTask();
+        var second = client.GetStringAsync((RespireKey)secondKey).AsTask();
+        try
+        {
+            "third"u8.CopyTo(firstKey);
+            "fourth"u8.CopyTo(secondKey);
+            release.TrySetResult();
+            await Assert.That(await first).IsEqualTo("first");
+            await Assert.That(await second).IsEqualTo("second");
+            await Assert.That(firstReads).IsEqualTo(2);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "GET second")).IsEqualTo(1);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT CACHING YES")).IsEqualTo(3);
+            await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(0);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test]
     public async Task TrackedClusterRepeatedProducersKeepPayloadsAndTerminalMetricsIndependent()
     {
         using var configuration = new MetricConfigurationScope();

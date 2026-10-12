@@ -218,14 +218,27 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var frame = SnapshotCommand.Create(in command, captureCacheMetadata: false);
-        var state = new ImmediateRetryState(command.RetryCategory);
-        return LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, state.Category, _core.Options.CommandTimeout,
-            (Client: this, Operation: operation, Cluster: cluster,
-                Command: new ImmediateRetryCommand<TCommand>(command, frame, state, track: false),
-                OnRedirect: onRedirect, Track: track, Observation: observation),
-            static (retry, attempt) => retry.Client.SendTrackedClusterRetryAttemptAsync(retry.Operation, retry.Cluster,
-                retry.Command, retry.OnRedirect, retry.Track, attempt, retry.Observation), observation, cancellationToken);
+        var state = ImmediateRetryState.Rent(in command);
+        return SendTrackedClusterRetryCoreAsync(operation, cluster,
+            new ImmediateRetryCommand<TCommand>(command, state, track: false), state,
+            cancellationToken, onRedirect, track, observation);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> SendTrackedClusterRetryCoreAsync<TCommand>(string operation, ClusterRouter cluster,
+        TCommand command, ImmediateRetryState state, CancellationToken cancellationToken, Action? onRedirect, bool track,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, state.Category, _core.Options.CommandTimeout,
+                (Client: this, Operation: operation, Cluster: cluster, Command: command,
+                    OnRedirect: onRedirect, Track: track, Observation: observation),
+                static (retry, attempt) => retry.Client.SendTrackedClusterRetryAttemptAsync(retry.Operation, retry.Cluster,
+                    retry.Command, retry.OnRedirect, retry.Track, attempt, retry.Observation), observation, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally { state.Return(); }
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
