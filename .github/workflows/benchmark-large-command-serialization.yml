@@ -13,16 +13,23 @@ concurrency:
 
 jobs:
   compare:
-    if: github.event.label.name == 'run-large-command-serialization-benchmarks'
+    if: >-
+      github.event.label.name == 'run-large-command-serialization-benchmarks' ||
+      github.event.label.name == 'run-large-command-original-benchmarks'
     uses: ./.github/workflows/benchmark-compare.yml
     with:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
       candidate-sha: ${{ github.sha }}
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      # Issue #976 measures both shipped mechanisms against the first parent of #1190.
+      control-sha: ${{ github.event.label.name == 'run-large-command-original-benchmarks' && '034e018795424ec9d08412c6725152e0838ef30c' || '' }}
       fixture: benchmarks/Respire.Benchmarks/LargeCommandSerializationBenchmarks.cs
       filter: '*LargeCommandSerializationBenchmarks*'
       expected-case-count: 6
       expected-methods: Set10KiB,Set1MiB,Set5MiB,LargeThenSmallPipeline,ConcurrentSmallSetPipelines,SustainedSet5MiB
+      improvement-methods: ${{ github.event.label.name == 'run-large-command-original-benchmarks' && 'Set10KiB,Set1MiB,Set5MiB' || '' }}
+      # Each fixture process owns Redis, isolating database and allocator state.
+      redis-server: false
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-sustained,after-dispose
       large-set-stress: true
