@@ -915,7 +915,7 @@ internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
-    // NX replays cannot repeat the write; XX replays overwrite like a plain SET.
+    // NX replays check the condition again; XX replays overwrite like a plain SET.
     public RespireCommandRetryCategory RetryCategory => !expiry.IsNone || returnOld ? Verbs.Set.RetryCategory
         : when switch
         {

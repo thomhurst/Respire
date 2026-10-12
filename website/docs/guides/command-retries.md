@@ -33,11 +33,12 @@ Typed SET and ZADD refine their category only for audited option sets:
 - `ZADD key XX` is `WriteLastWins`, and `ZADD key NX` is `WriteChecked`.
 
 SET with an expiry, `KEEPTTL` or `GET`, ZADD with `INCR`, `CH`, `GT` or `LT`, and
-XADD keep their conservative audited categories. A checked write cannot repeat
-its effect, but a replay can report a different result, such as "not set" for a
-write that the first attempt applied. An overwrite can replace an intervening
-update. Increasing retry risk can repeat effects and cannot recover the original
-reply.
+XADD keep their conservative audited categories. A checked write checks its
+condition again, which may prevent another write. If another caller removes the
+key or member between attempts, `SET NX` or `ZADD NX` can write again. A replay
+can report a different result, such as "not set" for a write that the first
+attempt applied. An overwrite can replace an intervening update. Increasing
+retry risk can repeat effects and cannot recover the original reply.
 
 Generated catalog commands, such as `RespireCommands.String.SET`, do not inspect
 their caller arguments. They use the descriptor's category for every argument
