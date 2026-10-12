@@ -544,20 +544,43 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     // The owner's disconnect already requested a topology refresh. Stop waiting when that refresh
-    // moves the route, when another master can serve a keyless command, or after one refresh
-    // spacing window. Normal routing then clears a stale owner and refreshes through other masters.
+    // moves the route, or when another master can serve a keyless command. After one refresh
+    // spacing window, also stop if another master is known: normal routing then clears a stale
+    // owner and refreshes through it. A lone owner has no alternative, so its retry keeps waiting.
     private async ValueTask WaitForRouteReplacementCoreAsync(int? slot, RespireConnectionMultiplexer node,
         CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
-        while (node is { IsConnected: false, IsRetired: false } && IsRouteReplacementPending(slot, node)
-            && Stopwatch.GetElapsedTime(started) < RouteReplacementWait)
+        while (IsRouteReplacementPending(slot, node)
+            && (Stopwatch.GetElapsedTime(started) < RouteReplacementWait || !HasAlternateMaster(node)))
         {
+            // Probing through GetConnection schedules a reconnect for each lost socket, as
+            // GetHealthyConnectionAsync does. Retirement and an exhausted reconnect policy go to routing.
+            try
+            {
+                _ = node.GetConnection();
+                return;
+            }
+            catch (RespireConnectionException error) when (error is not RespireReconnectLimitException && !node.IsRetired)
+            {
+                // The replacement socket is still connecting.
+            }
+            catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
+            {
+                return;
+            }
             await Task.Delay(25, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private static readonly TimeSpan RouteReplacementWait = ClusterTopologyRefreshScheduler.PrimaryDisconnectSpacing;
+
+    private bool HasAlternateMaster(RespireConnectionMultiplexer node)
+    {
+        foreach (var master in RoutingSnapshot.Masters)
+            if (!ReferenceEquals(master, node) && !master.IsRetired) return true;
+        return false;
+    }
 
     private bool IsRouteReplacementPending(int? slot, RespireConnectionMultiplexer node)
         => slot is { } value

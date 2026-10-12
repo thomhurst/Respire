@@ -357,6 +357,28 @@ public class TopologyCommandRetryTests
     }
 
     [Test]
+    public async Task ClusterRetryWaitsForALoneOwnerThatReconnectsSlowly()
+    {
+        // With no other master, nothing can take the slot over. A reconnect slower than the
+        // refresh window must not turn the retry into "No healthy connections".
+        var reads = 0;
+        await using var server = ClusterNode((command, current) =>
+        {
+            if (command != "GET key") return null;
+            if (Interlocked.Increment(ref reads) > 1) return Value;
+            current.CloseConnections();
+            return null;
+        });
+        await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(1500), MaxDelay = TimeSpan.FromMilliseconds(1500), JitterRatio = 0 },
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+        });
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(reads).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task FailoverGroupRetryUsesTheNewlyActiveMember()
     {
         var down = 0;
