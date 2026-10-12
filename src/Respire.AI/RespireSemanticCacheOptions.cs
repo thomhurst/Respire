@@ -20,6 +20,10 @@ public sealed record RespireSemanticCacheOptions
     /// <summary>Absolute lifetime from insertion. Hits do not renew expiry. Defaults to one hour.</summary>
     public TimeSpan TimeToLive { get; init; } = TimeSpan.FromHours(1);
 
+    /// <summary>Returns provider responses on non-cancellation cache failures and reports failures through Trace. Defaults to true.</summary>
+    /// <remarks>False propagates embedding, cache lookup, serialization and insertion errors. Provider errors and cancellation always propagate.</remarks>
+    public bool FailOpen { get; init; } = true;
+
     /// <summary>Selects an exact user/tenant scope. Null bypasses caching. Defaults to a shared scope.</summary>
     /// <remarks>Model, generation options and all messages preceding the final user prompt are isolated automatically.</remarks>
     public Func<IReadOnlyList<ChatMessage>, ChatOptions?, string?> ScopeSelector { get; init; } = static (_, _) => "";

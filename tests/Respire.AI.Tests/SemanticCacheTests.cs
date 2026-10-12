@@ -171,6 +171,118 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task FinalPromptAnnotationsBypassReadsAndWrites(int protocol)
+    {
+        await using var scenario = await Create(protocol);
+        var original = await scenario.Ask("near");
+        foreach (var prompt in new[] { "near paraphrase", "far" })
+        {
+            var content = new TextContent(prompt) { Annotations = [new AIAnnotation()] };
+            var response = await scenario.Chat.GetResponseAsync([new(ChatRole.User, [content])]);
+            response.Text.Should().NotBe(original.Text);
+            content.Annotations.Should().ContainSingle();
+        }
+        scenario.Embeddings.Calls.Should().Be(1);
+        (await scenario.Ask("near")).Text.Should().Be(original.Text);
+        (await scenario.Ask("far")).Text.Should().Be("response 4");
+        scenario.Provider.Calls.Should().Be(4);
+    }
+
+    [Test, Arguments(2, true), Arguments(3, true), Arguments(2, false), Arguments(3, false)]
+    public async Task DroppedIndexIsRecreated(int protocol, bool deleteDocuments)
+    {
+        await using var scenario = await Create(protocol);
+        var original = await scenario.Ask("near");
+        var keys = new List<RespireKey>();
+        await foreach (var key in scenario.Redis.Keys.ScanAsync(match: scenario.Prefix + "*")) keys.Add(key);
+        await scenario.Redis.Search.DropIndexAsync(scenario.Prefix + "index", deleteDocuments);
+        var response = await scenario.Ask("near");
+        if (deleteDocuments) response.Text.Should().NotBe(original.Text);
+        else
+        {
+            // Existing hashes are scanned asynchronously into the recreated index, so the first search can miss.
+            (await scenario.Redis.Hashes.GetBytesAsync(keys.Single(), "response")).Should().NotBeNull();
+            scenario.Provider.Calls.Should().BeInRange(1, 2);
+        }
+        await scenario.Redis.Search.GetIndexInfoAsync(scenario.Prefix + "index");
+        if (deleteDocuments)
+        {
+            (await scenario.Ask("near paraphrase")).Text.Should().Be(response.Text);
+            scenario.Provider.Calls.Should().Be(2);
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task EmbeddingFailureFallsBackWithoutCachingAndCancellationPropagates(int protocol)
+    {
+        await using var scenario = await Create(protocol);
+        scenario.Embeddings.Failure = new InvalidOperationException("embedding failed");
+        (await scenario.Ask("near")).Text.Should().Be("response 1");
+        scenario.Embeddings.Failure = new OperationCanceledException("embedding cancelled");
+        Func<Task> cancelled = () => scenario.Ask("near");
+        await cancelled.Should().ThrowAsync<OperationCanceledException>();
+        scenario.Provider.Calls.Should().Be(1);
+        scenario.Embeddings.Failure = null;
+        (await scenario.Ask("near")).Text.Should().Be("response 2");
+        (await scenario.Ask("near")).Text.Should().Be("response 2");
+    }
+
+    [Test, Arguments(2, true), Arguments(3, true), Arguments(2, false), Arguments(3, false)]
+    public async Task ResponseSerializationFailureFollowsFailurePolicy(int protocol, bool failOpen)
+    {
+        await using var scenario = await Create(protocol, new() { Dimensions = 2, FailOpen = failOpen });
+        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "valid answer"))
+        {
+            AdditionalProperties = new() { ["unsupported"] = (Action)(() => { }) },
+        };
+        scenario.Provider.ResponseFactory = () => response;
+        if (failOpen) (await scenario.Ask("near")).Should().BeSameAs(response);
+        else
+        {
+            Func<Task> request = () => scenario.Ask("near");
+            await request.Should().ThrowAsync<NotSupportedException>();
+        }
+        scenario.Provider.ResponseFactory = null;
+        (await scenario.Ask("near")).Text.Should().Be("response 2");
+    }
+
+    [Test, Arguments(2, true, true), Arguments(3, true, true), Arguments(2, false, true), Arguments(3, false, true),
+        Arguments(2, true, false), Arguments(3, true, false), Arguments(2, false, false), Arguments(3, false, false)]
+    public async Task RedisLookupAndInsertionFailuresFollowFailurePolicy(int protocol, bool failOpen, bool denyLookup)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString));
+        var username = "semantic-" + Guid.NewGuid().ToString("N");
+        using (var created = await admin.ExecuteAsync("ACL", denyLookup
+            ? ["SETUSER", username, "on", ">test-password", "~*", "+@all", "-ft.search"]
+            : ["SETUSER", username, "on", ">test-password", "~*", "+@all", "-eval", "-evalsha"])) { }
+        try
+        {
+            var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+            {
+                Username = username, Password = "test-password", Protocol = (RespProtocol)protocol,
+            });
+            await using var scenario = new Scenario(redis, new()
+            {
+                Dimensions = 2, FailOpen = failOpen, CacheName = Guid.NewGuid().ToString("N"),
+            });
+            if (failOpen) (await scenario.Ask("near")).Text.Should().Be("response 1");
+            else
+            {
+                Func<Task> request = () => scenario.Ask("near");
+                await request.Should().ThrowAsync<RespireServerException>();
+            }
+            scenario.Provider.Calls.Should().Be(denyLookup && !failOpen ? 0 : 1);
+            var keys = new List<RespireKey>();
+            await foreach (var key in admin.Keys.ScanAsync(match: scenario.Prefix + "*")) keys.Add(key);
+            keys.Should().BeEmpty();
+        }
+        finally
+        {
+            using var removed = await admin.ExecuteAsync("ACL", ["DELUSER", username]);
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task SeparateMiddlewareInstancesShareEntriesAndDoNotOwnDependencies(int protocol)
     {
         await using var scenario = await Create(protocol);
@@ -205,7 +317,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task InvalidEmbeddingsFailBeforeCallingProvider(int protocol)
     {
-        await using var scenario = await Create(protocol);
+        await using var scenario = await Create(protocol, new() { Dimensions = 2, FailOpen = false });
         foreach (var vector in new float[][] { [1], [0, 0], [float.NaN, 0], [float.PositiveInfinity, 0] })
         {
             scenario.Embeddings.Vector = vector;
@@ -327,11 +439,13 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         public float[]? Vector { get; set; }
         public bool Disposed { get; private set; }
         public bool ReturnEmpty { get; set; }
+        public Exception? Failure { get; set; }
         public string ModelId { get; set; } = "fake-embedding";
         public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(IEnumerable<string> values,
             EmbeddingGenerationOptions? options = null, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (Failure is not null) throw Failure;
             Calls++;
             LastInput = values.Single();
             return Task.FromResult(ReturnEmpty ? new GeneratedEmbeddings<Embedding<float>>([])

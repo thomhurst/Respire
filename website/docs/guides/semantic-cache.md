@@ -64,6 +64,9 @@ schemas or hashes. Entries expire; empty indexes remain until you remove them
 through Search administration. Use a separate Redis database or namespace for
 cache lifecycle management. Cache creation needs `FT.CREATE`; lookups need
 `FT.SEARCH` and `HGET`; writes use `EVALSHA`/`EVAL`, `HSET` and `PEXPIRE`.
+Concurrent index creation also uses `FT.INFO` to confirm an existing index.
+If a lookup finds that the index was dropped, the middleware recreates it and
+retries the search once. Other failures follow the configured failure policy.
 
 ## Scope and opt out
 
@@ -151,10 +154,14 @@ on each hit. Portable response messages, model ID, response ID, finish reason,
 timestamps and usage are retained. `RawRepresentation` fields are omitted, as in
 upstream JSON serialization. Usage and IDs describe the original generation;
 they do not represent a new provider call on a cache hit. Arbitrary additional
-properties need types supported by upstream AI JSON metadata. Unsupported
-serialization, Redis failures and embedding/provider failures propagate; the
-middleware does not silently fail open. Cancelled or failed provider calls never
-insert responses.
+properties need types supported by upstream AI JSON metadata. By default,
+`FailOpen = true` reports non-cancellation embedding, Redis and serialization
+failures through `System.Diagnostics.Trace` warnings. A failed lookup calls the
+provider without storing the response; a failed insertion returns the successful
+provider response. Configure a Trace listener to capture these warnings. Set
+`FailOpen = false` to propagate cache failures instead. Provider failures and
+cancellation always propagate, including cancellation during insertion. Cancelled
+or failed provider calls never insert responses.
 
 The real Redis contracts use a fake embedding generator and chat provider on
 RESP2 and RESP3. They cover hits, misses, the inclusive distance boundary, exact

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -22,7 +23,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
     private readonly SemaphoreSlim _indexGate = new(1, 1);
     private readonly string _prefix;
     private readonly string _index;
-    private bool _indexReady;
+    private volatile bool _indexReady;
 
     internal RespireSemanticCachingChatClient(IChatClient inner, IRespireClient client,
         IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator, RespireSemanticCacheOptions options) : base(inner)
@@ -49,41 +50,79 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         if (userScope is null)
             return await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
 
-        var scope = GetScope(conversation, options, userScope);
-        var embeddings = await _embeddingGenerator.GenerateAsync([conversation[^1].Text], cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (embeddings.Count != 1)
-            throw new InvalidOperationException("The embedding generator must return exactly one embedding.");
-        var vector = EncodeVector(embeddings[0].Vector);
-        await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
-        var result = await _client.Search.VectorSearchAsync(_index,
-            new("vector", vector, 1) { Filter = RespireSearchQueryBuilder.Tag("scope", scope) },
-            new() { ReturnFields = ["vector_score"], Limit = (0, 1) }, cancellationToken).ConfigureAwait(false);
-
-        foreach (var document in result.Documents)
+        string scope;
+        byte[] vector;
+        try
         {
-            if (!document.Id.StartsWith(_prefix, StringComparison.Ordinal))
-                throw new InvalidOperationException("Semantic search returned a key outside the cache namespace.");
-            if (!document.Fields.TryGetValue("vector_score", out var scoreText)
-                || !double.TryParse(scoreText, NumberStyles.Float, CultureInfo.InvariantCulture, out var distance)
-                || !double.IsFinite(distance))
-                throw new InvalidOperationException("Semantic search returned an invalid cosine distance.");
-            if (distance > _options.DistanceThreshold) continue;
-            // Re-read the hash so an entry that expires between Search and retrieval is a miss.
-            var json = await _client.Hashes.GetBytesAsync(document.DocumentKey, "response", cancellationToken).ConfigureAwait(false);
-            if (json is not null)
-                return (ChatResponse?)JsonSerializer.Deserialize(json, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponse)))
-                    ?? throw new InvalidOperationException("The cached chat response is null.");
+            scope = GetScope(conversation, options, userScope);
+            var cached = await LookupAsync(conversation[^1].Text, scope, cancellationToken).ConfigureAwait(false);
+            if (cached.Response is not null) return cached.Response;
+            vector = cached.Vector;
+        }
+        catch (Exception error) when (_options.FailOpen && error is not OperationCanceledException)
+        {
+            Trace.TraceWarning("Semantic cache lookup failed: {0}", error);
+            cancellationToken.ThrowIfCancellationRequested();
+            return await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
         }
 
         var response = await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
         if (CanStore(response))
         {
-            var json = JsonSerializer.SerializeToUtf8Bytes(response, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponse)));
-            using var inserted = await _client.Scripts.ExecuteAsync(Insert,
-                [_prefix + Guid.NewGuid().ToString("N")],
-                [scope, vector, json, _options.TimeToLive.Ticks / TimeSpan.TicksPerMillisecond], cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var json = JsonSerializer.SerializeToUtf8Bytes(response, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponse)));
+                using var inserted = await _client.Scripts.ExecuteAsync(Insert,
+                    [_prefix + Guid.NewGuid().ToString("N")],
+                    [scope, vector, json, _options.TimeToLive.Ticks / TimeSpan.TicksPerMillisecond], cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (_options.FailOpen && error is not OperationCanceledException)
+            {
+                Trace.TraceWarning("Semantic cache insertion failed: {0}", error);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
         }
         return response;
+    }
+
+    private async Task<(ChatResponse? Response, byte[] Vector)> LookupAsync(string prompt, string scope, CancellationToken cancellationToken)
+    {
+        var embeddings = await _embeddingGenerator.GenerateAsync([prompt], cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (embeddings.Count != 1)
+            throw new InvalidOperationException("The embedding generator must return exactly one embedding.");
+        var vector = EncodeVector(embeddings[0].Vector);
+        await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
+        RespireSearchResult result;
+        try
+        {
+            result = await SearchAsync().ConfigureAwait(false);
+        }
+        catch (RespireServerException error) when (IsMissingIndex(error))
+        {
+            _indexReady = false;
+            await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
+            // Retry once only. Repeated index loss and all other errors follow the failure policy.
+            result = await SearchAsync().ConfigureAwait(false);
+        }
+
+        ValueTask<RespireSearchResult> SearchAsync() => _client.Search.VectorSearchAsync(_index,
+            new("vector", vector, 1) { Filter = RespireSearchQueryBuilder.Tag("scope", scope) },
+            new() { ReturnFields = ["vector_score"], Limit = (0, 1) }, cancellationToken);
+
+        if (result.Documents.Count == 0) return (null, vector);
+        var document = result.Documents[0];
+        if (!document.Id.StartsWith(_prefix, StringComparison.Ordinal))
+            throw new InvalidOperationException("Semantic search returned a key outside the cache namespace.");
+        if (!document.Fields.TryGetValue("vector_score", out var scoreText)
+            || !double.TryParse(scoreText, NumberStyles.Float, CultureInfo.InvariantCulture, out var distance)
+            || !double.IsFinite(distance))
+            throw new InvalidOperationException("Semantic search returned an invalid cosine distance.");
+        if (distance > _options.DistanceThreshold) return (null, vector);
+        // Re-read the hash so an entry that expires between Search and retrieval is a miss.
+        var json = await _client.Hashes.GetBytesAsync(document.DocumentKey, "response", cancellationToken).ConfigureAwait(false);
+        if (json is null) return (null, vector);
+        return ((ChatResponse?)JsonSerializer.Deserialize(json, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponse)))
+            ?? throw new InvalidOperationException("The cached chat response is null."), vector);
     }
 
     // DelegatingChatClient forwards streaming directly; it never reads, embeds or populates the cache.
@@ -96,7 +135,8 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         if (messages.Count == 0 || messages[^1].Role != ChatRole.User || string.IsNullOrWhiteSpace(messages[^1].Text))
             return true;
         if (messages.Any(message => !IsPlainText(message))
-            || messages[^1].Contents.Any(content => content.AdditionalProperties is { Count: > 0 }))
+            || messages[^1].Contents.Any(content => content.AdditionalProperties is { Count: > 0 }
+                || content.Annotations is { Count: > 0 }))
             return true;
         return options is not null && (options.GetType() != typeof(ChatOptions)
             || options.Tools is { Count: > 0 } || options.RawRepresentationFactory is not null
@@ -165,6 +205,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
 
     private async Task EnsureIndexAsync(CancellationToken cancellationToken)
     {
+        if (_indexReady) return;
         await _indexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -182,14 +223,20 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
                         }],
                 }, cancellationToken).ConfigureAwait(false);
             }
-            catch (RespireServerException error) when (error.Message.Contains("Index already exists", StringComparison.Ordinal))
+            catch (RespireServerException)
             {
-                // Other middleware instances sharing this versioned namespace create the same schema.
+                // Verify the index exists instead of depending on the server's duplicate-index wording.
+                await _client.Search.GetIndexInfoAsync(_index, cancellationToken).ConfigureAwait(false);
             }
             _indexReady = true;
         }
         finally { _indexGate.Release(); }
     }
+
+    private static bool IsMissingIndex(RespireServerException error)
+        => error.Message.Contains("Unknown Index name", StringComparison.OrdinalIgnoreCase)
+            || error.Code == "SEARCH_INDEX_NOT_FOUND"
+            || error.Message.Contains("no such index", StringComparison.OrdinalIgnoreCase);
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 
