@@ -10,7 +10,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord>
     /// <summary>Fuses full-text and FLOAT32 vector rankings using server-side FT.HYBRID and reciprocal rank fusion.</summary>
     /// <remarks>Requires Redis Search with FT.HYBRID (Redis 8.4+). Scores are unchanged server RRF scores, higher is better.
     /// The minimum fusion window is 20 and expands to cover Skip + top. ScoreThreshold is a minimum score on the selected page.
-    /// Retrieval has the same batching and snapshot limitations as SearchAsync. JSON expression filters remain unsupported.</remarks>
+    /// Retrieval has the same batching and snapshot limitations as SearchAsync. Filters apply to both ranking legs.</remarks>
     public async IAsyncEnumerable<VectorSearchResult<TRecord>> HybridSearchAsync<TInput>(TInput searchValue, ICollection<string> keywords, int top,
         HybridSearchOptions<TRecord>? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default) where TInput : notnull
     {
@@ -24,8 +24,6 @@ public sealed partial class RespireVectorStoreCollection<TRecord>
         var skip = options?.Skip ?? 0;
         if (skip < 0 || options?.ScoreThreshold is { } threshold && !double.IsFinite(threshold))
             throw new ArgumentOutOfRangeException(nameof(options));
-        if (_jsonMapper is not null && options?.Filter is not null)
-            throw new NotSupportedException("Expression filters and filtered retrieval are unsupported for JSON storage.");
         var text = SelectText(options?.AdditionalProperty);
         var vector = SelectVector(options?.VectorProperty);
         ReadOnlyMemory<float> values = searchValue switch

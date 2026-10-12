@@ -73,9 +73,16 @@ internal sealed class JsonConformanceMapper<TRecord> : RespireVectorDataJsonMapp
                 },
             }).ToArray();
         var data = definition.Properties.OfType<VectorStoreDataProperty>().ToArray();
-        DataFields = data.Select(property => new RespireSearchField("$." + property.Name,
-            property.Type == typeof(string) ? RespireSearchFieldType.Text : RespireSearchFieldType.Numeric,
-            Alias: property.Name)).ToArray();
+        DataFields = data.Where(property => property.IsFullTextIndexed).Select(property =>
+            new RespireSearchField("$." + property.Name, RespireSearchFieldType.Text, Alias: property.Name)).ToArray();
+        FilterFields = data.Where(property => property.IsIndexed).Select(property =>
+            new RespireVectorDataFilterField(property.Name, "filter_" + property.Name, property.Type switch
+            {
+                var type when type == typeof(string) => RespireVectorDataFilterKind.String,
+                var type when type == typeof(string[]) || type == typeof(List<string>) => RespireVectorDataFilterKind.StringCollection,
+                var type when type == typeof(bool) => RespireVectorDataFilterKind.Boolean,
+                _ => RespireVectorDataFilterKind.Numeric,
+            }) { JsonPath = "$." + property.Name }).ToArray();
         TextFields = data.Where(property => property.IsFullTextIndexed)
             .Select(property => new RespireVectorDataTextField(property.Name, property.Name)).ToArray();
     }
@@ -83,6 +90,7 @@ internal sealed class JsonConformanceMapper<TRecord> : RespireVectorDataJsonMapp
     public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; }
     public override IReadOnlyList<RespireSearchField> DataFields { get; }
     public override IReadOnlyList<RespireVectorDataTextField> TextFields { get; }
+    public override IReadOnlyList<RespireVectorDataFilterField> FilterFields { get; }
     public override string GetKey(TRecord record) => (string)_key(record)!;
 }
 
@@ -94,4 +102,5 @@ internal sealed class JsonConformanceMapper<TRecord> : RespireVectorDataJsonMapp
 [JsonSerializable(typeof(HybridSearchTests<string>.VectorAndStringRecord<string>))]
 [JsonSerializable(typeof(HybridSearchTests<string>.MultiTextStringRecord<string>))]
 [JsonSerializable(typeof(EmbeddingGenerationTests<string>.RawRecord))]
+[JsonSerializable(typeof(FilterTests<string>.FilterRecord))]
 internal partial class JsonModelsContext : JsonSerializerContext;

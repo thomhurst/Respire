@@ -21,14 +21,21 @@ public abstract class RespireVectorDataJsonMapper<TRecord> : RespireVectorDataMa
     /// <summary>Explicit metadata used for both writes and reads.</summary>
     public JsonTypeInfo<TRecord> JsonTypeInfo { get; }
 
+    /// <summary>Explicit CLR properties (including dotted member paths), JSON source paths and query aliases for filters.</summary>
+    /// <remarks>These add separate encoded index fields under the reserved root property <c>__respire_filters</c>.
+    /// Original serialized properties are preserved. Do not repeat filter aliases in DataFields.
+    /// Recreate existing indexes and upsert existing records when adding filter mappings.</remarks>
+    public virtual IReadOnlyList<RespireVectorDataFilterField> FilterFields => [];
+
     internal byte[] Write(TRecord record) => JsonSerializer.SerializeToUtf8Bytes(record, JsonTypeInfo);
 
-    internal TRecord Read(ReadOnlySpan<byte> json, bool includeVectors, string[][] vectorPaths)
+    internal TRecord Read(ReadOnlySpan<byte> json, bool includeVectors, string[][] vectorPaths, bool removeFilters = false)
     {
-        if (includeVectors) return Deserialize(json);
+        if (includeVectors && !removeFilters) return Deserialize(json);
         var root = JsonNode.Parse(json, documentOptions: new() { MaxDepth = JsonTypeInfo.Options.MaxDepth }) as JsonObject
             ?? throw new JsonException("A vector record must be a JSON object.");
-        foreach (var path in vectorPaths)
+        if (removeFilters) root.Remove(RespireVectorDataJsonFilters.RootProperty);
+        foreach (var path in includeVectors ? [] : vectorPaths)
         {
             JsonObject? parent = root;
             for (var i = 0; i < path.Length - 1 && parent is not null; i++)
@@ -46,17 +53,19 @@ public abstract class RespireVectorDataJsonMapper<TRecord> : RespireVectorDataMa
 
 internal static class RespireVectorDataJsonPaths
 {
-    internal static void ValidateMetadata(JsonTypeInfo metadata, string[] path)
+    internal static JsonPropertyInfo ValidateMetadata(JsonTypeInfo metadata, string[] path)
     {
+        JsonPropertyInfo? property = null;
         for (var i = 0; i < path.Length; i++)
         {
-            var property = metadata.Kind == JsonTypeInfoKind.Object
+            property = metadata.Kind == JsonTypeInfoKind.Object
                 ? metadata.Properties.FirstOrDefault(property => property.Name == path[i] && property.Get is not null)
                 : null;
             if (property is null)
                 throw new ArgumentException($"JSON schema path '$.{string.Join('.', path)}' must select a serialized property in the supplied metadata.", nameof(path));
             if (i < path.Length - 1) metadata = metadata.Options.GetTypeInfo(property.PropertyType);
         }
+        return property!;
     }
 
     // Deliberately restrict schema paths to properties so omission and validation select exactly the indexed value.

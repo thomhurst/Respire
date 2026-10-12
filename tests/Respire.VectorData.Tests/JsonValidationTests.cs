@@ -43,17 +43,17 @@ public class JsonValidationTests
     }
 
     [Test]
-    public async Task JsonExpressionFiltersRejectBeforeIo()
+    public async Task UnsupportedJsonExpressionFiltersRejectBeforeIo()
     {
         await using var client = RespireClient.Create("redis://127.0.0.1:1");
         using var store = new RespireVectorStore(client);
         store.RegisterMapper(new JsonMovieMapper());
         using var collection = store.GetJsonCollection<JsonMovie>("movies");
-        Func<Task> retrieval = () => Collect(collection.GetAsync(movie => true, top: 1));
+        Func<Task> retrieval = () => Collect(collection.GetAsync(movie => movie.Details.Title.StartsWith("x"), top: 1));
         Func<Task> search = () => Collect(collection.SearchAsync(new float[] { 1, 0 }, 1,
-            new() { VectorProperty = movie => movie.Vector, Filter = movie => true }));
-        await retrieval.Should().ThrowAsync<NotSupportedException>().WithMessage("*JSON storage*");
-        await search.Should().ThrowAsync<NotSupportedException>().WithMessage("*JSON storage*");
+            new() { VectorProperty = movie => movie.Vector, Filter = movie => movie.Details.Title.StartsWith("x") }));
+        await retrieval.Should().ThrowAsync<NotSupportedException>().WithMessage("*Unsupported filter expression*");
+        await search.Should().ThrowAsync<NotSupportedException>().WithMessage("*Unsupported filter expression*");
     }
 
     // Null/empty batch assertions preserve BasicModelTests contracts at the revision in JsonCollectionTests.

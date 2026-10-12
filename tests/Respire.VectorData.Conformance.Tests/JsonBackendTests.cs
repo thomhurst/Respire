@@ -12,13 +12,11 @@ namespace Respire.VectorData.Conformance.Tests;
 public sealed class JsonBackendTests(RedisServerFixture server)
 {
     // Explicit capability boundaries. Never catch an applicable failure or mark it skipped.
-    // Basic methods below require JSON expression filtering, including the three count-based batch tests.
+    // Filtered ordering remains unsupported for both backends. Evidence is documented in the feature guide.
     private static readonly HashSet<string> BasicExclusions =
     [
-        "GetAsync_with_filter", "GetAsync_with_filter_by_true", "GetAsync_with_filter_and_OrderBy",
+        "GetAsync_with_filter_and_OrderBy",
         "GetAsync_with_filter_and_multiple_OrderBys", "GetAsync_with_filter_and_OrderBy_and_Skip",
-        "UpsertAsync_does_nothing_for_empty_batch", "DeleteAsync_does_nothing_for_non_existing_key",
-        "DeleteAsync_does_nothing_for_empty_batch", "SearchAsync_with_Filter",
     ];
 
     public static IEnumerable<object[]> Cases()
@@ -28,10 +26,12 @@ public sealed class JsonBackendTests(RedisServerFixture server)
             ("Basic", typeof(BasicModelTests<string>), BasicExclusions),
             ("NoData", typeof(NoDataModelTests<string>), []),
             ("MultiVector", typeof(MultiVectorModelTests<string>), []),
+            ("Filter", typeof(FilterTests<string>),
+                ["Equal_with_string_sql_injection_in_name", "Equal_with_string_containing_special_characters"]),
             ("Distance", typeof(DistanceFunctionTests<string>),
                 ["CosineSimilarity", "DotProductSimilarity", "EuclideanDistance", "HammingDistance", "ManhattanDistance"]),
             ("Index", typeof(IndexKindTests<string>), []),
-            ("Hybrid", typeof(HybridSearchTests<string>), ["HybridSearchAsync_with_filter"]),
+            ("Hybrid", typeof(HybridSearchTests<string>), []),
         ];
         foreach (var (name, type, exclusions) in suites)
         foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
@@ -72,6 +72,9 @@ public sealed class JsonBackendTests(RedisServerFixture server)
             case "MultiVector":
                 var multi = new MultiVectorFixture(store);
                 fixtures = [multi]; tests = new MultiVectorTests(multi); break;
+            case "Filter":
+                var filter = new FilterFixture(store);
+                fixtures = [filter]; tests = new FilterTestsAdapter(filter); break;
             case "Distance":
                 var distance = new DistanceFixture(store);
                 fixtures = [distance]; tests = new DistanceTests(distance); break;
@@ -88,7 +91,7 @@ public sealed class JsonBackendTests(RedisServerFixture server)
         var initialized = new List<VectorStoreFixture>();
         try
         {
-            // A fresh fixture per row replaces upstream's shared-fixture reseeding, which uses JSON filters.
+            // A fresh fixture per row isolates writes and deletion contracts from other upstream methods.
             // Track before initialization so a seed/index failure still closes the owned client.
             foreach (var fixture in fixtures)
             {
@@ -115,6 +118,11 @@ public sealed class JsonBackendTests(RedisServerFixture server)
     private sealed class BasicFixture(TestStore store) : BasicModelTests<string>.Fixture { public override TestStore TestStore => store; }
     private sealed class NoDataFixture(TestStore store) : NoDataModelTests<string>.Fixture { public override TestStore TestStore => store; }
     private sealed class MultiVectorFixture(TestStore store) : MultiVectorModelTests<string>.Fixture { public override TestStore TestStore => store; }
+    private sealed class FilterFixture(TestStore store) : FilterTests<string>.Fixture
+    {
+        public override TestStore TestStore => store;
+        public override bool TestDynamic => false;
+    }
     private sealed class DistanceFixture(TestStore store) : DistanceFunctionTests<string>.Fixture { public override TestStore TestStore => store; }
     private sealed class IndexFixture(TestStore store) : IndexKindTests<string>.Fixture { public override TestStore TestStore => store; }
     private sealed class TextFixture(TestStore store) : HybridSearchTests<string>.VectorAndStringFixture { public override TestStore TestStore => store; }
@@ -124,6 +132,7 @@ public sealed class JsonBackendTests(RedisServerFixture server)
     private sealed class BasicTests(BasicModelTests<string>.Fixture fixture) : BasicModelTests<string>(fixture);
     private sealed class NoDataTests(NoDataModelTests<string>.Fixture fixture) : NoDataModelTests<string>(fixture);
     private sealed class MultiVectorTests(MultiVectorModelTests<string>.Fixture fixture) : MultiVectorModelTests<string>(fixture);
+    private sealed class FilterTestsAdapter(FilterTests<string>.Fixture fixture) : FilterTests<string>(fixture);
     private sealed class DistanceTests(DistanceFunctionTests<string>.Fixture fixture) : DistanceFunctionTests<string>(fixture);
     private sealed class IndexTests(IndexKindTests<string>.Fixture fixture) : IndexKindTests<string>(fixture)
     {

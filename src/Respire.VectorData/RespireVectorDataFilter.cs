@@ -132,9 +132,17 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
     {
         expression = Strip(expression);
         type = expression.Type;
-        if (expression is MemberExpression member && member.Expression == _record)
+        var members = new Stack<string>();
+        var source = expression;
+        while (source is MemberExpression member)
         {
-            field = fields.FirstOrDefault(candidate => candidate.PropertyName == member.Member.Name)
+            members.Push(member.Member.Name);
+            source = member.Expression!;
+        }
+        if (source == _record && members.Count > 0)
+        {
+            var name = string.Join('.', members);
+            field = fields.FirstOrDefault(candidate => candidate.PropertyName == name)
                 ?? throw Unsupported(expression, "Property has no explicit filter mapping.");
             return true;
         }
@@ -154,7 +162,7 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         throw new NotSupportedException($"Property type '{type}' does not match filter mapping '{field.PropertyName}'.");
     }
 
-    private static bool NumericType(Type type) => type == typeof(byte) || type == typeof(sbyte) || type == typeof(short)
+    internal static bool NumericType(Type type) => type == typeof(byte) || type == typeof(sbyte) || type == typeof(short)
         || type == typeof(ushort) || type == typeof(int) || type == typeof(uint) || type == typeof(float) || type == typeof(double);
 
     private static void ValidateCollection(RespireVectorDataFilterField field, Type type)

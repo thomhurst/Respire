@@ -48,14 +48,15 @@ public class HybridValidationTests
     }
 
     [Test]
-    public async Task JsonFilterAndAmbiguousVectorFailBeforeIo()
+    public async Task UnmappedJsonFilterAndAmbiguousVectorFailBeforeIo()
     {
         await using var client = RespireClient.Create("redis://127.0.0.1:1");
         using var store = new RespireVectorStore(client);
         store.RegisterMapper(new JsonMovieMapper());
         using var collection = store.GetJsonCollection<JsonMovie>("movies");
-        Func<Task> filter = () => Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["apples"], 1, new() { Filter = movie => movie.Id == "x" }));
-        await filter.Should().ThrowAsync<NotSupportedException>().WithMessage("*JSON*");
+        Func<Task> filter = () => Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["apples"], 1,
+            new() { VectorProperty = movie => movie.Vector, Filter = movie => movie.Id == "x" }));
+        await filter.Should().ThrowAsync<NotSupportedException>().WithMessage("*no explicit filter mapping*");
         Func<Task> ambiguous = () => Collect(collection.HybridSearchAsync(new float[] { 1, 0 }, ["apples"], 1));
         await ambiguous.Should().ThrowAsync<InvalidOperationException>().WithMessage("*multiple vector*");
         using var cancelled = new CancellationTokenSource();

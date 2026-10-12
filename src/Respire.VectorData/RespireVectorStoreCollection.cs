@@ -29,6 +29,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
     private readonly RespireVectorDataVectorField[] _vectors;
     private readonly RespireSearchField[] _fields;
     private readonly RespireVectorDataFilterField[] _filterFields;
+    private readonly RespireVectorDataJsonFilters? _jsonFilters;
     private readonly RespireVectorDataTextField[] _textFields;
     private volatile bool _disposed;
 
@@ -85,7 +86,12 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             if (!names.Add(field.Alias ?? field.Identifier)) throw new ArgumentException("Schema field names must be unique.", nameof(mapper));
             fields.Add(field);
         }
-        _filterFields = mapper is RespireVectorDataHashMapper<TRecord> hashMapper ? hashMapper.FilterFields.ToArray() : [];
+        _filterFields = mapper switch
+        {
+            RespireVectorDataHashMapper<TRecord> hashMapper => hashMapper.FilterFields.ToArray(),
+            RespireVectorDataJsonMapper<TRecord> jsonMapper => jsonMapper.FilterFields.ToArray(),
+            _ => [],
+        };
         foreach (var filter in _filterFields)
         {
             ArgumentNullException.ThrowIfNull(filter);
@@ -94,12 +100,16 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             if (!Enum.IsDefined(filter.Kind) || !names.Add(filter.StorageName) || !properties.Add(filter.PropertyName))
                 throw new ArgumentException("Filter fields require unique schema/property names and a supported kind.", nameof(mapper));
             var tag = filter.Kind is RespireVectorDataFilterKind.String or RespireVectorDataFilterKind.StringCollection;
-            fields.Add(new(filter.StorageName, tag ? RespireSearchFieldType.Tag : RespireSearchFieldType.Numeric)
+            var identifier = _jsonMapper is null ? filter.StorageName : RespireVectorDataJsonFilters.IndexPath(filter);
+            fields.Add(new(identifier, tag ? RespireSearchFieldType.Tag : RespireSearchFieldType.Numeric,
+                Alias: _jsonMapper is null ? null : filter.StorageName)
             {
                 CaseSensitive = tag,
                 Options = ["INDEXMISSING"],
             });
         }
+        if (_jsonMapper is not null && _filterFields.Length > 0)
+            _jsonFilters = new(_jsonMapper.JsonTypeInfo, _filterFields);
         _fields = fields.ToArray();
         _textFields = mapper.TextFields.ToArray();
         var textProperties = new HashSet<string>(StringComparer.Ordinal);
@@ -158,7 +168,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
                 _client.Json.Commands.GetAsync(RecordKey(key), ["."], cancellationToken), nameof(GetAsync), Name).ConfigureAwait(false);
             if (json.IsNull) return null;
             if (options?.IncludeVectors == true) RespireVectorDataJsonPaths.ValidateVectors(json.AsBytes(), _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
-            return _jsonMapper.Read(json.AsSpan(), options?.IncludeVectors == true, _vectorPaths);
+            return _jsonMapper.Read(json.AsSpan(), options?.IncludeVectors == true, _vectorPaths, removeFilters: _jsonFilters is not null);
         }
         using var result = await RespireVectorDataOperations.ExecuteAsync(
             _client.ExecuteAsync(RespireCommands.Hash.HGETALL, [RecordKey(key)], cancellationToken: cancellationToken),
@@ -220,6 +230,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         if (_jsonMapper is not null)
         {
             var json = _jsonMapper.Write(record);
+            if (_jsonFilters is not null) json = _jsonFilters.Write(json);
             RespireVectorDataJsonPaths.ValidateVectors(json, _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
             using var replaced = await RespireVectorDataOperations.ExecuteAsync(
                 _client.Scripts.ExecuteAsync(ReplaceJson, [key], [json], cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
@@ -260,7 +271,6 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
         if (top <= 0) throw new ArgumentOutOfRangeException(nameof(top));
-        if (_jsonMapper is not null) throw new NotSupportedException("Expression filters and filtered retrieval are unsupported for JSON storage.");
         var skip = options?.Skip ?? 0;
         if (skip < 0) throw new ArgumentOutOfRangeException(nameof(options));
         if (options?.OrderBy is not null) throw new NotSupportedException("Filtered retrieval ordering is unsupported.");
@@ -283,8 +293,6 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         ArgumentNullException.ThrowIfNull(searchValue);
         cancellationToken.ThrowIfCancellationRequested();
         if (top <= 0) throw new ArgumentOutOfRangeException(nameof(top));
-        if (_jsonMapper is not null && options?.Filter is not null)
-            throw new NotSupportedException("Expression filters and filtered retrieval are unsupported for JSON storage.");
         var filter = options?.Filter is { } expression ? new RespireVectorDataFilter<TRecord>(_filterFields).Translate(expression) : (RespireSearchExpression?)null;
         var skip = options?.Skip ?? 0;
         if (skip < 0) throw new ArgumentOutOfRangeException(nameof(options));
