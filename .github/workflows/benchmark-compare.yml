@@ -67,6 +67,10 @@ on:
         description: Comma-separated values of the group field; each needs every stage in every phase
         default: ''
         type: string
+      retained-memory-dimensions:
+        description: Optional comma-separated snapshot fields to summarize independently, such as owner,policy
+        default: ''
+        type: string
       large-set-stress:
         description: Require bounded public 5 MiB SET stress counters in every phase
         default: false
@@ -81,6 +85,14 @@ on:
         type: boolean
       redis-server:
         description: Start a pinned Redis service for fixtures that use a real server
+        default: false
+        type: boolean
+      retry-topologies:
+        description: Start Sentinel and a single Cluster primary beside the Redis service
+        default: false
+        type: boolean
+      default-policy-only:
+        description: Restrict compatible retry fixtures to default dispatch for historical controls
         default: false
         type: boolean
 
@@ -99,7 +111,7 @@ jobs:
     services:
       redis:
         image: ${{ inputs.redis-server && 'mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6' || '' }}
-        ports: ['6379:6379']
+        ports: ['6379:6379', '26379:26379', '6380:6380']
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -108,6 +120,9 @@ jobs:
     env:
       REDIS_HOST: ${{ inputs.redis-server && '127.0.0.1' || '' }}
       REDIS_PORT: 6379
+      SENTINEL_PORT: 26379
+      CLUSTER_PORT: 6380
+      RESPIRE_BENCH_DEFAULT_ONLY: ${{ inputs.default-policy-only }}
       EVENT_BASE_SHA: ${{ inputs.event-base-sha }}
       HEAD_SHA: ${{ inputs.candidate-sha }}
       EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
@@ -124,6 +139,7 @@ jobs:
       RETAINED_MEMORY_STAGES: ${{ inputs.retained-memory-stages }}
       RETAINED_MEMORY_GROUP_FIELD: ${{ inputs.retained-memory-group-field }}
       RETAINED_MEMORY_GROUP_VALUES: ${{ inputs.retained-memory-group-values }}
+      RETAINED_MEMORY_DIMENSIONS: ${{ inputs.retained-memory-dimensions }}
       LARGE_SET_STRESS: ${{ inputs.large-set-stress }}
     steps:
       # Load infrastructure from the workflow revision, independently of benchmark source revisions.
@@ -180,6 +196,42 @@ jobs:
           ref: ${{ steps.revisions.outputs.baseline-sha }}
           path: baseline
           persist-credentials: false
+      - name: Start retry comparison topologies
+        if: inputs.retry-topologies
+        shell: bash
+        env:
+          REDIS_CONTAINER: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          test -n "$REDIS_CONTAINER"
+          docker exec -i "$REDIS_CONTAINER" sh -c 'cat > /tmp/retry-sentinel.conf' <<'CONF'
+          port 26379
+          protected-mode no
+          sentinel monitor mymaster 127.0.0.1 6379 1
+          sentinel down-after-milliseconds mymaster 30000
+          CONF
+          docker exec "$REDIS_CONTAINER" redis-server /tmp/retry-sentinel.conf --sentinel --daemonize yes
+          docker exec -i "$REDIS_CONTAINER" sh -c 'cat > /tmp/retry-cluster.conf' <<'CONF'
+          port 6380
+          bind 0.0.0.0
+          protected-mode no
+          cluster-enabled yes
+          cluster-config-file /tmp/retry-cluster-nodes.conf
+          cluster-announce-ip 127.0.0.1
+          cluster-announce-port 6380
+          cluster-announce-bus-port 16380
+          appendonly no
+          save ""
+          CONF
+          docker exec "$REDIS_CONTAINER" redis-server /tmp/retry-cluster.conf --daemonize yes
+          docker exec "$REDIS_CONTAINER" redis-cli -p 6380 CLUSTER ADDSLOTSRANGE 0 16383
+          for attempt in {1..30}; do
+            if docker exec "$REDIS_CONTAINER" redis-cli -p 26379 ping | grep -qx PONG && \
+               docker exec "$REDIS_CONTAINER" redis-cli -p 6380 CLUSTER INFO | tr -d '\r' | grep -qx 'cluster_state:ok'; then exit 0; fi
+            sleep 1
+          done
+          echo 'Retry comparison topologies did not become ready.' >&2
+          exit 1
       - name: Verify pinned sources and use an identical fixture
         shell: python
         run: |
@@ -327,6 +379,35 @@ jobs:
                               values.append(str(int(statistics.median(item[field] for item in samples))))
                           group_cell = f' {group} |' if groups else ''
                           lines.append(f"| {phase} |{group_cell} {stage} | {len(samples)} | {' | '.join(values)} |")
+              dimensions = list(filter(None, os.environ.get('RETAINED_MEMORY_DIMENSIONS', '').split(',')))
+              if dimensions:
+                  assert len(dimensions) == len(set(dimensions)), 'Duplicate retention dimensions'
+                  lines.extend(['', '## Retained memory by fixture parameters', '',
+                                'Each row is a full-GC whole-process snapshot for one owner/policy combination, not a per-command allocation or a leak diagnosis.', '',
+                                '| Phase | Stage | Parameters | Samples | Managed bytes | POH bytes | POH fragmented bytes | Working-set bytes |',
+                                '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |'])
+                  expected_scopes = None
+                  for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+                      snapshots = [json.loads(line.removeprefix('RECEIVE_MEMORY '))
+                                   for line in Path(f'{phase}.log').read_text().splitlines()
+                                   if line.startswith('RECEIVE_MEMORY ')]
+                      for stage in stages:
+                          scope_samples = {}
+                          for item in snapshots:
+                              if item['stage'] != stage:
+                                  continue
+                              assert all(isinstance(item.get(field), str) and item[field] for field in dimensions), 'Missing retention dimension'
+                              scope = tuple(item[field] for field in dimensions)
+                              scope_samples.setdefault(scope, []).append(item)
+                          assert len(scope_samples) == expected_count, f'Incomplete retention parameters: {phase}/{stage}'
+                          if expected_scopes is None:
+                              expected_scopes = set(scope_samples)
+                          assert set(scope_samples) == expected_scopes, f'Retention parameters changed: {phase}/{stage}'
+                          for scope, samples in sorted(scope_samples.items()):
+                              values = [str(int(statistics.median(item[field] for item in samples)))
+                                        for field in ('managedBytes', 'pohBytes', 'pohFragmentedBytes', 'workingSetBytes')]
+                              label = ', '.join(f'{field}={value}' for field, value in zip(dimensions, scope))
+                              lines.append(f"| {phase} | {stage} | {label} | {len(samples)} | {' | '.join(values)} |")
           if os.environ.get('LARGE_SET_STRESS', 'false').lower() == 'true':
               lines.extend(['', '## Bounded public SET stress', '',
                             'Each fixture process sends 64 public 5 MiB SET commands between the connected and after-sustained snapshots. Counts exclude forced snapshot collections. Review every raw sample and retention stage before accepting performance.', '',

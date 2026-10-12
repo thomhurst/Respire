@@ -375,6 +375,34 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
+    public async Task ReusedRetryOwnerDoesNotChangeCanceledFramesAwaitingRetirement()
+    {
+        var firstSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = Server();
+        server.SuppressReply = command =>
+        {
+            if (command == "SET key first") { firstSeen.TrySetResult(); return true; }
+            if (command == "STRLEN second") { secondSeen.TrySetResult(); return true; }
+            return false;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        using var cancellation = new CancellationTokenSource();
+        var first = client.SetAsync("key", "first", cancellationToken: cancellation.Token).AsTask();
+        await firstSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.That(async () => await first).Throws<OperationCanceledException>();
+        // The first owner can now be reused, but its transport copy and fence remain in FIFO.
+        var second = client.Strings.LengthAsync("second").AsTask();
+        await secondSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await server.SendRawAsync("+OK\r\n:6\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+        await Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(6L);
+        await Assert.That(client.Core.ClientCache!.InspectForTests().ActiveMutationCount).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "SET key first")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task OneDeadlineSpansRetriesAndStopsAcceptedLateReplies()
     {
         await using var server = Server();
