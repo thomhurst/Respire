@@ -88,15 +88,20 @@ jobs:
           RESPIRE_VECTOR_CONFORMANCE_CONNECTION: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
         run: >-
           dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 --
-          --filter-not-trait 'Unsupported=*' --minimum-expected-tests 358 --fail-skips on --report-xunit-trx
+          --filter-not-trait 'Unsupported=*' --minimum-expected-tests 369 --fail-skips on --report-xunit-trx
           --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data-official"
+      - name: Enforce official suite completeness and reviewed backend exclusions
+        if: matrix.framework == 'net10.0'
+        run: >-
+          dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 --no-build --
+          --filter-class '*ConformanceCoverageTests' --minimum-expected-tests 9 --fail-skips on
       - name: Install NativeAOT prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
       - name: Publish native sample with trimming warnings as errors
         run: >-
           dotnet publish samples/Respire.Samples.VectorData -c Release -f ${{ matrix.framework }}
           -r linux-x64 -o "$GITHUB_WORKSPACE/artifacts/vector-data"
-      - name: Run native hash, generated JSON, vector and hybrid search smoke
+      - name: Run native hash, generated nested JSON, batch CRUD, Flat/HNSW and hybrid smoke on both protocols
         run: >-
           ./artifacts/vector-data/Respire.Samples.VectorData
           redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
