@@ -291,9 +291,9 @@ public sealed partial class RespireClient
     private async ValueTask<RespValue> SendCircuitTrackedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         bool sendAsking, bool track, RespireTelemetry.ErrorObservation observation,
-        RespireTelemetry.OperationScope telemetry = default) where TCommand : struct, IRespCommand
+        RespireTelemetry.OperationScope telemetry = default, CommandDeadline retryDeadline = default) where TCommand : struct, IRespCommand
     {
-        var commandDeadline = CreateCircuitDeadline();
+        var commandDeadline = retryDeadline.IsSet ? retryDeadline : CreateCircuitDeadline();
         RespValue response;
         try
         {

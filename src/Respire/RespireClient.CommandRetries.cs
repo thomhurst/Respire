@@ -190,6 +190,38 @@ public sealed partial class RespireClient
             noRedirect: noRedirect, retryDeadline: attempt.Deadline, observation: observation).ConfigureAwait(false);
     }
 
+    // The cache producer owns retries; each attempt retains the tracking prelude and the
+    // routing owner's redirect/rebase callbacks. The snapshot contains only the read command.
+    private ValueTask<RespValue> SendTrackedClusterWithRetriesAsync<TCommand>(string operation, ClusterRouter cluster,
+        TCommand command, CancellationToken cancellationToken, Action? onRedirect, bool track,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var frame = SnapshotCommand.Create(in command, captureCacheMetadata: false);
+        var state = new ImmediateRetryState(command.RetryCategory);
+        return LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, state.Category, _core.Options.CommandTimeout,
+            (Client: this, Operation: operation, Cluster: cluster,
+                Command: new ImmediateRetryCommand<TCommand>(command, frame, state, track: false),
+                OnRedirect: onRedirect, Track: track, Observation: observation),
+            static (retry, attempt) => retry.Client.SendTrackedClusterRetryAttemptAsync(retry.Operation, retry.Cluster,
+                retry.Command, retry.OnRedirect, retry.Track, attempt, retry.Observation), observation, cancellationToken);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> SendTrackedClusterRetryAttemptAsync<TCommand>(string operation, ClusterRouter cluster,
+        TCommand command, Action? onRedirect, bool track, LogicalCommandRetry.Attempt attempt,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        if (attempt.Number > 1)
+        {
+            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+            await cluster.WaitForRouteReplacementAsync(slot, attempt.Token).ConfigureAwait(false);
+            onRedirect?.Invoke();
+        }
+        return await SendTrackedClusterAsync(operation, cluster, command, attempt.Token, onRedirect, track,
+            observation, attempt.Deadline).ConfigureAwait(false);
+    }
+
     // Scripts and functions retry only with an explicit category.
     internal ValueTask<TResult> RunWithDeclaredRetriesAsync<TState, TResult>(string operation,
         RespireCommandRetryCategory category, TState state,
