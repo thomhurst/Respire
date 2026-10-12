@@ -490,8 +490,11 @@ for the existing native client, keeping the shared Redis list key:
 ```csharp
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
+using Respire;
 using Respire.DataProtection;
 
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var services = new ServiceCollection();
 services.AddDataProtection().PersistKeysToRespire(() => client, "app:keys");
 ```
 
