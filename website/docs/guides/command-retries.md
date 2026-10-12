@@ -179,3 +179,41 @@ separate error owners. Exporter exceptions cannot change retry decisions or repl
 Deferred batches and transactions remain conservative: resending an
 individual member can violate complete-unit ownership or atomicity. Whole-unit retry
 work stays tracked by [#1216](https://github.com/thomhurst/Respire/issues/1216).
+
+## Correctness and performance evidence
+
+The immediate-command implementation is available. Aggregate acceptance in
+[#1215](https://github.com/thomhurst/Respire/issues/1215) and the retry epic
+[#862](https://github.com/thomhurst/Respire/issues/862) remains open. Availability
+does not establish zero overhead or complete resilience across every composition.
+
+| Contract | Acceptance coverage |
+| --- | --- |
+| Category and transport evidence | `CommandRetryPolicyTests` checks the permission and failure matrix; `StandaloneCommandRetryTests` sends public catalog commands across every retryable category before a write. |
+| Lost replies and effects | `StandaloneCommandRetryIntegrationTests` discards replies received from real Redis, then checks stored values, counters, checked-write results and configuration. Declared raw, script and function requests require explicit accumulating risk. |
+| Topology ownership | `TopologyCommandRetryTests` checks Sentinel rediscovery, Cluster MOVED/ASK ownership, the newly active failover-group member, and counter effects after a lost reply across all three owners. |
+| Deadline, cancellation and caching | Standalone fault tests check backoff cancellation, one command deadline, coalesced producer publication and mutation fences through FIFO retirement. Cluster tests bound redirects and retries by one deadline. |
+| Metrics and reuse | Standalone tests distinguish internal attempt errors from final errors. Topology tests repeat declared raw, script, function and Cluster operations, checking one terminal retry outcome despite a throwing exporter. |
+
+Run correctness tests on both net8.0 and net10.0. Fake server tests exercise actual
+public commands and controlled transport failures; the real Redis tests establish
+server effects. A fake topology test alone does not prove real Redis failover behavior.
+
+`CommandRetryBenchmarks` adds twelve healthy-path cases: typed and catalog reads,
+declared scripts and failover-group operations, each with a null policy, a disabled
+policy (`MaxAttempts = 1`) and an enabled policy. Inputs and group delegates are
+prepared outside measurement. The `run-command-retry-benchmarks` PR label starts
+a pinned net10.0 baseline/candidate/baseline comparison using the identical fixture
+on both revisions. Reports include latency confidence intervals, allocations and
+managed/POH/process retention before connection, at idle, after bounded churn and
+after disposal. Retention snapshots describe the whole benchmark process, including
+two client connections; they are not per-command allocation measurements.
+
+The comparison measures policy modes on the current implementation. It does not
+reconstruct pre-retry dispatch. It also does not cover enabled healthy Sentinel,
+Cluster, function or cache-producer paths. Their existing routing/cache comparisons
+do not establish the incremental cost of enabling retries. Until those measurements
+and the corresponding composition evidence are reviewed, no zero-allocation or
+no-measurable-cost claim is made. A successful workflow validates complete reports,
+not performance acceptance. Record measured intervals and unmet acceptance on the
+PR; do not close #1215 or #862 while their aggregate requirements remain unmet.

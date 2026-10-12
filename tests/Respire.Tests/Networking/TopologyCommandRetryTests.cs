@@ -380,6 +380,156 @@ public class TopologyCommandRetryTests
             .ThrowsExactly<ArgumentOutOfRangeException>();
     }
 
+    [Test]
+    [Arguments("Cluster", false)]
+    [Arguments("Cluster", true)]
+    [Arguments("Sentinel", false)]
+    [Arguments("Sentinel", true)]
+    [Arguments("Group", false)]
+    [Arguments("Group", true)]
+    public async Task LostIncrementReplyRequiresExplicitRiskAcrossOwners(string topology, bool allowDuplicate)
+    {
+        var counter = 0;
+        var events = new ConcurrentDictionary<string, long>();
+        using var listener = RetryListener(events);
+        FakeRespServer? endpoint = null;
+        byte[]? Reply(string command)
+        {
+            if (command == "GET counter") return Encoding.ASCII.GetBytes($"${counter.ToString().Length}\r\n{counter}\r\n");
+            if (command != "INCR counter") return null;
+            var value = Interlocked.Increment(ref counter);
+            if (value == 1) { endpoint!.CloseConnections(); return null; }
+            return Encoding.ASCII.GetBytes($":{value}\r\n");
+        }
+        await using var server = topology == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Primary(command =>
+            topology == "Group" && command == "PING" && Volatile.Read(ref counter) > 0 ? "-ERR down\r\n"u8.ToArray() : Reply(command));
+        endpoint = server;
+        await using var replacement = Primary(Reply);
+        await using var sentinel = Sentinel(() => server.Port);
+        var policy = new RespireRetryPolicy
+        {
+            MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+            MaxCommandRetryCategory = allowDuplicate ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly,
+        };
+        // Group members have no policy: only the group owns these retries.
+        await using var group = topology == "Group"
+            ? await RespireFailoverGroup.ConnectAsync([Candidate(server, 0), Candidate(replacement, 1)], GroupOptions() with { RetryPolicy = policy }) : null;
+        await using var client = group is null
+            ? await RespireClient.ConnectAsync((topology == "Cluster" ? ClusterOptions(server) : SentinelOptions(sentinel)) with { RetryPolicy = policy })
+            : null;
+        ValueTask<long> Increment() => group is null ? client!.IncrementAsync("counter")
+            : group.ExecuteAsync(async (member, token) =>
+            {
+                try { return await member.IncrementAsync("counter", cancellationToken: token); }
+                catch (RespireConnectionException)
+                {
+                    // Drive a probe/selection at the failed attempt boundary, without timing assumptions.
+                    await group.ForTests.ProbeAsync(0, token);
+                    await group.ForTests.SelectActiveAsync();
+                    throw;
+                }
+            }, RespireCommandRetryCategory.WriteAccumulating);
+        if (allowDuplicate) await Assert.That(await Increment()).IsEqualTo(2L);
+        else await Assert.That(async () => await Increment()).Throws<RespireConnectionException>();
+        // Read through an independent public client, rather than trusting resend counts.
+        await using var observer = await RespireClient.ConnectAsync(StandaloneOptions(server) with { RetryPolicy = null });
+        await Assert.That(await observer.GetStringAsync("counter")).IsEqualTo(allowDuplicate ? "2" : "1");
+        await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(allowDuplicate ? 1L : 0L);
+        await Assert.That(events.GetValueOrDefault("succeeded")).IsEqualTo(allowDuplicate ? 1L : 0L);
+        await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(0L);
+    }
+
+    [Test]
+    [Arguments("raw", false)]
+    [Arguments("raw", true)]
+    [Arguments("script", false)]
+    [Arguments("script", true)]
+    [Arguments("function", false)]
+    [Arguments("function", true)]
+    [Arguments("Cluster", false)]
+    [Arguments("Cluster", true)]
+    public async Task ReusedOwnersPublishOneTerminalOutcomeDespiteThrowingListener(string shape, bool exhaust)
+    {
+        var events = new ConcurrentDictionary<string, long>();
+        using var listener = RetryListener(events);
+        using var throwing = new MeterListener();
+        throwing.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Name == "respire.command.retries") meter.EnableMeasurementEvents(instrument);
+        };
+        throwing.SetMeasurementEventCallback<long>(static (_, _, _, _) => throw new InvalidOperationException("exporter failed"));
+        throwing.Start();
+        var calls = 0;
+        byte[]? Reply(string command)
+        {
+            if (!(command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key")) return null;
+            return Interlocked.Increment(ref calls) % 2 == 1 || exhaust ? TryAgain : Value;
+        }
+        await using var server = shape == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Standalone((command, _) => Reply(command));
+        await using var client = await RespireClient.ConnectAsync((shape == "Cluster" ? ClusterOptions(server) : StandaloneOptions(server)) with
+        { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        var function = RespireFunction.Create("reader", readOnly: true).WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        async ValueTask<string?> Read()
+        {
+            if (shape == "script") return await client.Scripts.ExecuteStringAsync(script, ["key"]);
+            if (shape == "function") return await client.Functions.ExecuteStringAsync(function, ["key"]);
+            if (shape == "Cluster") return await client.GetStringAsync("key");
+            using var result = await client.ExecuteAsync(RespireCommand.Create("GET").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), ["key"]);
+            return result.AsString();
+        }
+        for (var i = 0; i < 32; i++)
+        {
+            if (exhaust) await Assert.That(async () => await Read()).ThrowsExactly<RespireServerException>();
+            else await Assert.That(await Read()).IsEqualTo("value");
+        }
+        await Assert.That(calls).IsEqualTo(64);
+        await Assert.That(events["attempted"]).IsEqualTo(32L);
+        await Assert.That(events[exhaust ? "exhausted" : "succeeded"]).IsEqualTo(32L);
+        await Assert.That(events.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("raw")]
+    [Arguments("script")]
+    [Arguments("function")]
+    [Arguments("Cluster")]
+    public async Task CancelledAttemptCannotPublishIntoTheNextLogicalCommand(string shape)
+    {
+        CancellationTokenSource? cancellation = null;
+        var reads = 0;
+        byte[]? Reply(string command)
+        {
+            if (!(command == "GET key" || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key")) return null;
+            Interlocked.Increment(ref reads);
+            if (cancellation is not null) { cancellation.Cancel(); return TryAgain; }
+            return Value;
+        }
+        await using var server = shape == "Cluster" ? ClusterNode((command, _) => Reply(command)) : Standalone((command, _) => Reply(command));
+        await using var client = await RespireClient.ConnectAsync(shape == "Cluster" ? ClusterOptions(server) : StandaloneOptions(server));
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        var function = RespireFunction.Create("reader", readOnly: true).WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        async ValueTask<string?> Read(CancellationToken token)
+        {
+            if (shape == "script") return await client.Scripts.ExecuteStringAsync(script, ["key"], cancellationToken: token);
+            if (shape == "function") return await client.Functions.ExecuteStringAsync(function, ["key"], cancellationToken: token);
+            if (shape == "Cluster") return await client.GetStringAsync("key", token);
+            using var result = await client.ExecuteAsync(RespireCommand.Create("GET").WithRetryCategory(RespireCommandRetryCategory.ReadOnly), ["key"], cancellationToken: token);
+            return result.AsString();
+        }
+        for (var i = 0; i < 16; i++)
+        {
+            using var source = new CancellationTokenSource();
+            cancellation = source;
+            var error = await Failure(async () => await Read(source.Token));
+            await Assert.That(error).IsTypeOf<OperationCanceledException>();
+            await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(source.Token);
+            cancellation = null;
+            await Assert.That(await Read(default)).IsEqualTo("value");
+        }
+        await Assert.That(reads).IsEqualTo(32);
+    }
+
     private static byte[] Count(ref int counter, byte[] reply)
     {
         Interlocked.Increment(ref counter);

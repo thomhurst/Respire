@@ -91,6 +91,8 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
     [Test]
     [Arguments("script", false, false)]
     [Arguments("script", true, true)]
+    [Arguments("function", false, false)]
+    [Arguments("function", true, true)]
     [Arguments("declared", false, false)]
     [Arguments("declared", true, true)]
     [Arguments("undeclared", true, false)]
@@ -105,7 +107,13 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
             .WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
         // A cached script keeps the fault on EVALSHA, without a NOSCRIPT fallback exchange.
         await observer.Scripts.LoadAsync(script);
-        var fault = new LostReply(shape == "script" ? "EVALSHA" : "INCR");
+        var library = RespireFunctionLibrary.Create("""
+            #!lua name=retry_acceptance
+            redis.register_function('retry_increment', function(keys,args) return redis.call('INCR',keys[1]) end)
+            """, replace: true);
+        var function = library.Function("retry_increment").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
+        if (shape == "function") await observer.Functions.LoadAsync(library);
+        var fault = new LostReply(shape switch { "script" => "EVALSHA", "function" => "FCALL", _ => "INCR" });
         await using var client = await RespireClient.ConnectAsync(options with
         {
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero,
@@ -128,6 +136,7 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
             switch (shape)
             {
                 case "script": (await client.Scripts.ExecuteIntegerAsync(script, [key])).Should().Be(2); break;
+                case "function": (await client.Functions.ExecuteIntegerAsync(function, [key])).Should().Be(2); break;
                 case "declared":
                     using (var result = await client.ExecuteAsync(
                         RespireCommand.Create("INCR").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating), [key]))
