@@ -184,8 +184,21 @@ public class ProviderScenarios(RedisTestContainer redis)
 
     private async Task Compare(Func<IConnectionMultiplexer, Task> scenario, string? gap = null, Type? exceptionType = null)
     {
-        await using var shim = RespireConnectionMultiplexer.Create(RespireOptions.Parse(redis.ConnectionString) with { Connections = 1 });
-        using var control = await ConnectionMultiplexer.ConnectAsync(redis.StackExchangeConnectionString);
+        var shimOptions = RespireOptions.Parse(redis.ConnectionString) with { Connections = 1 };
+        var controlOptions = ConfigurationOptions.Parse(redis.StackExchangeConnectionString);
+        controlOptions.Protocol = shimOptions.Protocol switch
+        {
+            RespProtocol.Resp2 => RedisProtocol.Resp2,
+            RespProtocol.Resp3 => RedisProtocol.Resp3,
+            _ => null
+        };
+        await using var shim = RespireConnectionMultiplexer.Create(shimOptions);
+        using var control = await ConnectionMultiplexer.ConnectAsync(controlOptions);
+        if (controlOptions.Protocol is not null)
+        {
+            var clientInfo = (string)(await control.GetDatabase().ExecuteAsync("CLIENT", "INFO"))!;
+            Assert.Contains($"resp={(int)shimOptions.Protocol}", clientInfo.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        }
         _control = control;
         foreach (var connection in new IConnectionMultiplexer[] { control, shim })
         {
