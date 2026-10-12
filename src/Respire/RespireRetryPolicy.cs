@@ -4,8 +4,9 @@ namespace Respire;
 /// <remarks>
 /// Assign to RespireOptions.RetryPolicy to enable buffered immediate-command retries, or to
 /// RespireFailoverGroupOptions.RetryPolicy to retry failover-group operations.
-/// It does not recover a lost reply or provide exactly-once execution. Batches and
-/// transactions require a separate policy that owns the complete unit.
+/// RunTransactionAsync and RunTransactionWithReadsAsync also use RespireOptions.RetryPolicy
+/// to replay complete watched callbacks. It does not recover a lost reply or provide exactly-once
+/// execution. Batches and direct transaction commits are not replayed.
 /// </remarks>
 public sealed record RespireRetryPolicy
 {

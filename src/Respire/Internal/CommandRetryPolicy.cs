@@ -25,6 +25,17 @@ internal sealed class CommandRetryPolicy
         ArgumentNullException.ThrowIfNull(failure);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(completedAttempts);
         delay = default;
+        if (!CanRetry(failure, outcome, category, completedAttempts, remaining, cancellationToken)) return false;
+
+        var candidate = GetDelay(completedAttempts, Random.Shared.NextDouble());
+        if (candidate >= remaining) return false;
+        delay = candidate;
+        return true;
+    }
+
+    internal bool CanRetry(Exception failure, CommandWriteOutcome outcome, RespireCommandRetryCategory category,
+        int completedAttempts, TimeSpan remaining, CancellationToken cancellationToken)
+    {
         if (cancellationToken.IsCancellationRequested || remaining <= TimeSpan.Zero
             || completedAttempts >= _settings.MaxAttempts
             || _settings.MaxCommandRetryCategory == RespireCommandRetryCategory.Never
@@ -37,9 +48,6 @@ internal sealed class CommandRetryPolicy
             or CommandWriteOutcome.EffectMayHaveReachedServer)) return false;
         if (outcome != CommandWriteOutcome.DefinitelyUnwritten && !PermitsPossibleExecution(category)) return false;
 
-        var candidate = GetDelay(completedAttempts, Random.Shared.NextDouble());
-        if (candidate >= remaining) return false;
-        delay = candidate;
         return true;
     }
 

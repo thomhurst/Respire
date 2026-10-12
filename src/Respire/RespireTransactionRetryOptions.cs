@@ -3,7 +3,8 @@ namespace Respire;
 /// <summary>Bounds optimistic transaction retries after Redis reports a WATCH conflict.</summary>
 public sealed record RespireTransactionRetryOptions
 {
-    /// <summary>Maximum number of attempts, including the initial attempt. Must be positive. Defaults to five.</summary>
+    /// <summary>Maximum WATCH-conflict attempts, including the initial attempt. Must be positive. Defaults to five.</summary>
+    /// <remarks>Transient retries use RespireOptions.RetryPolicy.MaxAttempts independently and do not consume this budget.</remarks>
     public int MaxAttempts { get; init; } = 5;
 
     /// <summary>Optional delay after a conflict, receiving its one-based attempt number. Null means no delay.</summary>
