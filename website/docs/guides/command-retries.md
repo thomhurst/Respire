@@ -178,7 +178,7 @@ and Sentinel dispatch selects the current generation. The full circuit and retry
 composition, including half-open contention and failover switches, remains tracked by
 [#1256](https://github.com/thomhurst/Respire/issues/1256).
 
-Replica read routing, streams, fire-and-forget operations, individual deferred batch/transaction
+Replica read routing (except Cluster batch slot groups, described below), streams, fire-and-forget operations, individual deferred batch/transaction
 members (batches retry only as complete units, described below), connection
 protocol commands, cursor continuations, and
 commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
@@ -206,6 +206,9 @@ Cluster batches retry each slot group independently as a complete unit. A transi
 resends every member of that group, including successful members, while other groups keep
 their results. Routing still handles MOVED, ASK and retirement rejections within an attempt.
 A retry waits for the slot owner's replacement before selecting its connection again.
+A read-only group under a replica read policy retries on the replica route. A fresh cursor
+page (cursor `0`) in that group records the server that answered its final attempt, so the
+next page continues on the server that issued the cursor.
 A batch is not atomic: Redis can execute some or all members before a failure.
 Replies remain pending until the retry decision is final, and only the final
 attempt's results are published. A selected transient failure permits a resend
