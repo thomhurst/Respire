@@ -485,8 +485,8 @@ function arguments/results and cache fixture work; none becomes zero by assertio
 [Follow-up run 38255514678](https://github.com/thomhurst/Respire/actions/runs/38255514678)
 was requested for head `7b5b4b5ec2b02b5b303efa718373256885c80768` and remains
 unassessed in this audit. The pooling merge retained obsolete tracked-Cluster
-constructor calls and failed local compilation; the aggregate audit adapts that
-path to pooled ownership and returns its rental in `finally`. The earlier pinned
+constructor calls and failed local compilation; [#1519](https://github.com/thomhurst/Respire/pull/1519)
+adapts that path to pooled ownership and returns its rental in `finally`. The earlier pinned
 measurements above do not measure this repair or prove its end-to-end performance.
 
 The audit extends `CommandRetryOwnerBenchmarks` with `ClusterCacheProducer`:
@@ -497,7 +497,7 @@ reports retain their original fifteen/five cases and standalone cache scope.
 The `run-command-retry-audit-benchmarks` label requests a net10.0 MediumRun
 A/candidate/B comparison, with the identical fixture and all owner/policy retention
 dimensions. It pins compilable control `a19b9590235f6d2ad0f0e7d41dfafccbbb9b5394`,
-before tracked retries and pooling, because the pooling merge cannot compile.
+before tracked retries and pooling; current main already contains those changes.
 This control includes intervening changes and does not isolate their individual
 costs. The new tracked case and the pooling repair need completed measurement
 assessment; no asynchronous result is awaited or inferred here.

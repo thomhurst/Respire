@@ -60,9 +60,9 @@ jobs:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
       candidate-sha: ${{ github.sha }}
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
-      # The pooling merge's tracked-Cluster constructor calls do not compile.
-      # Pin the last compilable main before tracked retries/pooling. This includes
-      # intervening changes and is not an isolated pooling or dispatch ablation.
+      # Current main already contains tracked retries/pooling. Pin a compilable
+      # control before those changes. Intervening changes remain included, so this
+      # is not an isolated pooling or dispatch ablation.
       control-sha: a19b9590235f6d2ad0f0e7d41dfafccbbb9b5394
       fixture: benchmarks/Respire.Benchmarks/CommandRetryOwnerBenchmarks.cs
       filter: '*CommandRetryOwnerBenchmarks*'
