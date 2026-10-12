@@ -38,11 +38,14 @@ internal sealed class BoundedResponseArrayPool<T> : ArrayPool<T>
     {
         ArgumentOutOfRangeException.ThrowIfNegative(minimumLength);
         if (minimumLength == 0) return Array.Empty<T>();
-        if (minimumLength > _maximumLength) return new T[minimumLength];
+        // Misses skip zeroing like ArrayPool<T>.Shared: pooled arrays are already
+        // returned dirty, so callers only read what they wrote. The runtime still
+        // zeroes reference-containing T (RespValue) and arrays under 2 KB.
+        if (minimumLength > _maximumLength) return GC.AllocateUninitializedArray<T>(minimumLength);
         var index = BucketIndex(minimumLength);
         // Do not borrow a larger bucket on exhaustion: its retention budget and
         // speculative capacity remain independent of small-reply pressure.
-        return _buckets[index].TryPop(out var array) ? array : new T[16 << index];
+        return _buckets[index].TryPop(out var array) ? array : GC.AllocateUninitializedArray<T>(16 << index);
     }
 
     public override void Return(T[] array, bool clearArray = false)

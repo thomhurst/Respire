@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Respire.Networking;
 
@@ -35,8 +36,7 @@ internal sealed class LockFreeStack<T> where T : class
     private sealed class Stripe
     {
         public readonly Node[] Nodes;
-        public long AvailableHead;
-        public long FreeHead;
+        public LockFreeStackHeads Heads;
 
         public Stripe(int capacity)
         {
@@ -46,8 +46,8 @@ internal sealed class LockFreeStack<T> where T : class
                 Nodes[i].Next = i + 1 < Nodes.Length ? i + 1 : EmptyIndex;
             }
 
-            Volatile.Write(ref AvailableHead, PackHead(0, EmptyIndex));
-            Volatile.Write(ref FreeHead, PackHead(0, 0));
+            Volatile.Write(ref Heads.AvailableHead, PackHead(0, EmptyIndex));
+            Volatile.Write(ref Heads.FreeHead, PackHead(0, 0));
         }
     }
 
@@ -88,13 +88,13 @@ internal sealed class LockFreeStack<T> where T : class
 
     private static bool TryPush(Stripe stripe, T item)
     {
-        if (!TryTakeNode(ref stripe.FreeHead, stripe.Nodes, out var nodeIndex))
+        if (!TryTakeNode(ref stripe.Heads.FreeHead, stripe.Nodes, out var nodeIndex))
         {
             return false;
         }
 
         Volatile.Write(ref stripe.Nodes[nodeIndex].Item, item);
-        PublishNode(ref stripe.AvailableHead, stripe.Nodes, nodeIndex);
+        PublishNode(ref stripe.Heads.AvailableHead, stripe.Nodes, nodeIndex);
         return true;
     }
 
@@ -121,7 +121,7 @@ internal sealed class LockFreeStack<T> where T : class
 
     private static bool TryPop(Stripe stripe, [NotNullWhen(true)] out T? item)
     {
-        if (!TryTakeNode(ref stripe.AvailableHead, stripe.Nodes, out var nodeIndex))
+        if (!TryTakeNode(ref stripe.Heads.AvailableHead, stripe.Nodes, out var nodeIndex))
         {
             item = null;
             return false;
@@ -131,7 +131,7 @@ internal sealed class LockFreeStack<T> where T : class
         // so plain reads/writes of Item are safe here.
         item = stripe.Nodes[nodeIndex].Item;
         stripe.Nodes[nodeIndex].Item = null;
-        PublishNode(ref stripe.FreeHead, stripe.Nodes, nodeIndex);
+        PublishNode(ref stripe.Heads.FreeHead, stripe.Nodes, nodeIndex);
         return item is not null;
     }
 
@@ -194,4 +194,16 @@ internal sealed class LockFreeStack<T> where T : class
         => _stripes.Length == 1
             ? 0
             : (Thread.GetCurrentProcessorId() & int.MaxValue) % _stripes.Length;
+}
+
+// Renters CAS AvailableHead then FreeHead; returners do the reverse, often on other
+// threads. Stripe objects are allocated back to back with their node arrays, so 128
+// bytes before, between and after the two heads keep them off any cache line (64 or
+// 128 bytes) shared with each other or with a neighbouring stripe. Declared outside
+// LockFreeStack<T> because the runtime rejects explicit layout on generic types.
+[StructLayout(LayoutKind.Explicit, Size = 384)]
+internal struct LockFreeStackHeads
+{
+    [FieldOffset(128)] public long AvailableHead;
+    [FieldOffset(256)] public long FreeHead;
 }

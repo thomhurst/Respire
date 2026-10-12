@@ -18,15 +18,18 @@ internal static class RespirePools
 
     internal const int MaxPooledResponsePayloadLength = 64 * 1024 * 1024;
 
+    // Typed as the sealed pool so wire-path Rent/Return calls bind directly instead of
+    // dispatching through the abstract ArrayPool<T> virtuals.
+
     /// <summary>Response payload storage handed to <see cref="RespValue"/> instances.</summary>
-    public static readonly ArrayPool<byte> ResponsePayloads = CreateResponsePayloadPool();
+    public static readonly BoundedResponseArrayPool<byte> ResponsePayloads = CreateResponsePayloadPool();
 
     /// <summary>Element storage for RESP array/map/set responses.</summary>
-    public static readonly ArrayPool<RespValue> ValueArrays = CreateValueArrayPool();
+    public static readonly BoundedResponseArrayPool<RespValue> ValueArrays = CreateValueArrayPool();
 
-    internal static ArrayPool<byte> CreateResponsePayloadPool()
+    internal static BoundedResponseArrayPool<byte> CreateResponsePayloadPool()
         => new BoundedResponseArrayPool<byte>(4096, 1024 * 1024, MaxPooledResponsePayloadLength);
 
-    internal static ArrayPool<RespValue> CreateValueArrayPool()
+    internal static BoundedResponseArrayPool<RespValue> CreateValueArrayPool()
         => new BoundedResponseArrayPool<RespValue>(64, 1024, 64 * 1024);
 }
