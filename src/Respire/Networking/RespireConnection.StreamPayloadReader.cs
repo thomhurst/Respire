@@ -31,6 +31,8 @@ internal sealed partial class RespireConnection
         internal ReadOnlyMemory<byte> ConsumedPrefix => _consumedPrefix;
         internal Exception? UnknownPositionReadError => _unknownPositionReadError;
 
+        // Consume and copy the previous result before starting another fill. Completed tasks
+        // can be reused and describe the current contents of the single owned buffer.
         internal Task<ReadOnlyMemory<byte>> StartRead(CancellationToken cancellationToken)
         {
             lock (_bufferOwnershipGate)
@@ -132,6 +134,7 @@ internal sealed partial class RespireConnection
                 chunk = _chunk;
                 _chunk = null;
                 activeFill = _activeFill;
+                _completedInlineFill = null;
             }
             // This registration only schedules callbacks; joining it cannot wait on user code.
             _sourceCancellationRegistration.Dispose();

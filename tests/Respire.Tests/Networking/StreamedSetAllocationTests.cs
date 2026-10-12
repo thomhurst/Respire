@@ -57,10 +57,6 @@ public sealed class StreamedSetAllocationTests
         using var source = new MemoryStream(payload);
         using var reader = new RespireConnection.StreamPayloadReader(source, payload.Length);
         var first = reader.StartRead(CancellationToken.None);
-        Console.WriteLine($"Exact fill diagnostic: task={first.GetType().FullName}; pid={Environment.ProcessId}; " +
-            $"runtime={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}; " +
-            $"revision={Environment.GetEnvironmentVariable("RESPIRE_DIAGNOSTIC_REVISION") ?? "uncommitted"}; " +
-            $"libraryMvid={typeof(RespireConnection).Assembly.ManifestModule.ModuleVersionId}");
         await Assert.That(first.Result.ToArray()).IsEquivalentTo(payload[..RespireConnection.StreamChunkSize]);
         var second = reader.StartRead(CancellationToken.None);
         await Assert.That(ReferenceEquals(first, second)).IsTrue();
