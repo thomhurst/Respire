@@ -239,24 +239,22 @@ public partial interface IHashCommands
 
 internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 {
+    // Hot single-field commands own only their preflight and pass an empty observation, so
+    // the default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<bool> SetAsync(
         RespireKey key, string field, RespireValue value,
         CancellationToken cancellationToken = default)
-    {
-        var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, field, value, cancellationToken, owner.Observation)); }
-        catch (Exception error) { owner.Fail(error); throw; }
-    }
+        => SetAlwaysAsync(key, field, value, cancellationToken);
 
-    private ValueTask<bool> SetBorrowedAsync(
-        RespireKey key, string field, RespireValue value,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => SetCoreAsync(key, field, value, SetWhen.Always, cancellationToken, observation);
+    private ValueTask<bool> SetAlwaysAsync(
+        RespireKey key, string field, RespireValue value, CancellationToken cancellationToken)
+        => client.FlagAsync("HSET", new Cmd3(Verbs.HSet, client.PreflightKey(in key), field, value), cancellationToken);
 
     public ValueTask<bool> SetAsync(
         RespireKey key, string field, RespireValue value, SetWhen when,
         CancellationToken cancellationToken = default)
     {
+        if (when == SetWhen.Always) return SetAlwaysAsync(key, field, value, cancellationToken);
         var owner = DispatchResponseSource<bool>.Start();
         try { return owner.Attach(SetBorrowedAsync(key, field, value, when, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -350,14 +348,7 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
             "HSET", new Cmd1N(Verbs.HSet, client.Key(in key), FieldValuePairs(fields)), cancellationToken, observation: observation);
 
     public ValueTask<string?> GetStringAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
-    {
-        var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(GetStringBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
-        catch (Exception error) { owner.Fail(error); throw; }
-    }
-
-    private ValueTask<string?> GetStringBorrowedAsync(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.StringOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
+        => client.StringOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.PreflightKey(in key), field), cancellationToken);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -388,14 +379,7 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         => client.TryDeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
-    {
-        var owner = DispatchResponseSource<byte[]?>.Start();
-        try { return owner.Attach(GetBytesBorrowedAsync(key, field, cancellationToken, owner.Observation)); }
-        catch (Exception error) { owner.Fail(error); throw; }
-    }
-
-    private ValueTask<byte[]?> GetBytesBorrowedAsync(RespireKey key, string field, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken, observation: observation);
+        => client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.PreflightKey(in key), field), cancellationToken);
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
     {

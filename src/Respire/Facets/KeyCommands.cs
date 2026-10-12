@@ -171,8 +171,12 @@ public partial interface IKeyCommands
 
 internal sealed partial class KeyCommands(RespireClient client, TimeProvider? scanTimeProvider = null) : IKeyCommands
 {
+    // Single-key DEL and EXISTS own only their preflight and pass an empty observation, so the
+    // default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
     {
+        if (keys.Length == 1)
+            return client.IntegerAsync("DEL", new Cmd1(Verbs.Del, client.PreflightKey(in keys[0])), CancellationToken.None);
         var owner = DispatchResponseSource<long>.Start();
         try { return owner.Attach(DeleteBorrowedAsync(keys, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -183,6 +187,8 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
     public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
+        if (keys.Length == 1)
+            return client.IntegerAsync("DEL", new Cmd1(Verbs.Del, client.PreflightKey(in keys[0])), cancellationToken);
         var owner = DispatchResponseSource<long>.Start();
         try { return owner.Attach(DeleteBorrowedAsync(keys, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -216,14 +222,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         => client.IntegerKeysAsync("UNLINK", Verbs.Unlink, keys, cancellationToken, observation: observation);
 
     public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
-    {
-        var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(ExistsBorrowedAsync(key, cancellationToken, owner.Observation)); }
-        catch (Exception error) { owner.Fail(error); throw; }
-    }
-
-    private ValueTask<bool> ExistsBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.FlagAsync("EXISTS", new Cmd1(Verbs.Exists, client.Key(in key)), cancellationToken, observation: observation);
+        => client.FlagAsync("EXISTS", new Cmd1(Verbs.Exists, client.PreflightKey(in key)), cancellationToken);
 
     public ValueTask<bool> ExpireAsync(
         RespireKey key,
