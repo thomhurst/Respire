@@ -33,6 +33,8 @@ public sealed partial class RespireClient
         RespireConnection? connection;
         // Acquisition throws only for cancellation or disposal, and both persist. The async
         // path acquires again, then observes and publishes that failure exactly as before.
+        // Both checks run before TryGetReadyConnection, so a throwing call selected no
+        // connection and advanced no round-robin; repeating it has no side effects.
         try { connection = cluster.TryAcquireReadyConnection(slot, cancellationToken); }
         catch (Exception) { connection = null; }
         if (connection is null)
@@ -55,8 +57,34 @@ public sealed partial class RespireClient
             this, operation, cluster, command, cancellationToken, sender, observation, slot, connection, response);
     }
 
-    // Cold routing and acquisition failures. Ready sends use ClusterReadyResponse, which mirrors the
-    // recovery below; keep the two in step.
+    /// <summary>How a ready cluster send handles a failed reply.</summary>
+    internal enum ClusterReplyFailure { Publish, Unwrap, ResumeRetired, ResumeRejected }
+
+    // The async slow path and ClusterReadyResponse share this decision and the resume below, so
+    // their filter order cannot drift.
+    private static ClusterReplyFailure ClassifyReadyClusterFailure(ClusterRouter cluster, Exception error, int? slot,
+        CancellationToken cancellationToken) => error switch
+    {
+        // A caller converter can throw a Redis-shaped exception after success.
+        // It must never be mistaken for a rejected command and replayed.
+        ClusterConverterException => ClusterReplyFailure.Unwrap,
+        RespireConnectionRetiredException when cluster.CanRetryRetirement(0, cancellationToken) => ClusterReplyFailure.ResumeRetired,
+        RespireServerException rejection when ClusterRouter.CanRecover(rejection, slot) => ClusterReplyFailure.ResumeRejected,
+        _ => ClusterReplyFailure.Publish,
+    };
+
+    private ValueTask<RespValue> ResumeReadyClusterSendAsync<TCommand>(ClusterReplyFailure failure, Exception error,
+        string operation, TCommand command, RespireConnection connection, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
+        where TCommand : struct, IRespCommand
+        => failure == ClusterReplyFailure.ResumeRetired
+            ? ResumeRetiredClusterSendAsync(operation, command, connection, (RespireConnectionRetiredException)error,
+                RespireReadFrom.Primary, cancellationToken, observation: observation)
+            : ResumeRejectedClusterSendAsync(operation, command, connection, (RespireServerException)error,
+                RespireReadFrom.Primary, cancellationToken, observation: observation);
+
+    // Cold routing and acquisition failures. Ready sends use ClusterReadyResponse; both share
+    // ClassifyReadyClusterFailure and ResumeReadyClusterSendAsync.
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
@@ -79,27 +107,22 @@ public sealed partial class RespireClient
             }
             else
             {
+                var failure = ClusterReplyFailure.Publish;
                 try
                 {
                     return await sender.Send(connection, operation, in command, cancellationToken, observation,
                         RespireTelemetry.CaptureOperationStart(operation)).ConfigureAwait(false);
                 }
-                catch (ClusterConverterException error)
+                catch (Exception error) when ((failure = ClassifyReadyClusterFailure(cluster, error, slot, cancellationToken))
+                    != ClusterReplyFailure.Publish)
                 {
-                    // A caller converter can throw a Redis-shaped exception after success.
-                    // It must never be mistaken for a rejected command and replayed.
-                    ExceptionDispatchInfo.Capture(error.InnerException!).Throw();
-                    throw;
-                }
-                catch (RespireConnectionRetiredException error) when (cluster.CanRetryRetirement(0, cancellationToken))
-                {
-                    response = await ResumeRetiredClusterSendAsync(operation, command, connection, error,
-                        RespireReadFrom.Primary, cancellationToken, observation: observation).ConfigureAwait(false);
-                }
-                catch (RespireServerException error) when (ClusterRouter.CanRecover(error, slot))
-                {
-                    response = await ResumeRejectedClusterSendAsync(operation, command, connection, error,
-                        RespireReadFrom.Primary, cancellationToken, observation: observation).ConfigureAwait(false);
+                    if (failure == ClusterReplyFailure.Unwrap)
+                    {
+                        ExceptionDispatchInfo.Capture(error.InnerException!).Throw();
+                        throw;
+                    }
+                    response = await ResumeReadyClusterSendAsync(failure, error, operation, command, connection,
+                        cancellationToken, observation).ConfigureAwait(false);
                 }
             }
 
@@ -126,7 +149,7 @@ public sealed partial class RespireClient
     /// Observes one ready cluster reply and replays it after a redirect or retirement, as the
     /// async slow path does. Pooled per command/result/sender triple; recycled after GetResult.
     /// </summary>
-    private sealed class ClusterReadyResponse<TCommand, TResult, TSend> : IValueTaskSource<TResult>
+    internal sealed class ClusterReadyResponse<TCommand, TResult, TSend> : IValueTaskSource<TResult>
         where TCommand : struct, IRespCommand
         where TSend : struct, IClusterReadySend<TResult>
     {
@@ -209,23 +232,22 @@ public sealed partial class RespireClient
                     var response = _response;
                     _response = default;
                     try { result = response.GetAwaiter().GetResult(); }
-                    catch (ClusterConverterException error)
+                    catch (Exception error)
                     {
-                        // A caller converter can throw a Redis-shaped exception after success.
-                        // It must never be mistaken for a rejected command and replayed.
-                        failure = error.InnerException!;
-                    }
-                    catch (RespireConnectionRetiredException error) when (_cluster!.CanRetryRetirement(0, _cancellationToken))
-                    {
-                        recovery = _client!.ResumeRetiredClusterSendAsync(_operation!, _command, _connection!, error,
-                            RespireReadFrom.Primary, _cancellationToken, observation: _observation);
-                        recover = true;
-                    }
-                    catch (RespireServerException error) when (ClusterRouter.CanRecover(error, _slot))
-                    {
-                        recovery = _client!.ResumeRejectedClusterSendAsync(_operation!, _command, _connection!, error,
-                            RespireReadFrom.Primary, _cancellationToken, observation: _observation);
-                        recover = true;
+                        switch (ClassifyReadyClusterFailure(_cluster!, error, _slot, _cancellationToken))
+                        {
+                            case ClusterReplyFailure.Publish:
+                                failure = error;
+                                break;
+                            case ClusterReplyFailure.Unwrap:
+                                failure = error.InnerException!;
+                                break;
+                            case var resume:
+                                recovery = _client!.ResumeReadyClusterSendAsync(resume, error, _operation!, _command,
+                                    _connection!, _cancellationToken, _observation);
+                                recover = true;
+                                break;
+                        }
                     }
                 }
             }
@@ -278,6 +300,8 @@ public sealed partial class RespireClient
 
         TResult IValueTaskSource<TResult>.GetResult(short token)
         {
+            // GetStatus validates the token first, so a stale token throws before the try and can
+            // never return this source to the pool twice. A matched token's stored failure still recycles it.
             if (_core.GetStatus(token) == ValueTaskSourceStatus.Pending)
                 throw new InvalidOperationException("The cluster response has not completed.");
             try { return _core.GetResult(token); }
@@ -300,7 +324,7 @@ public sealed partial class RespireClient
         }
     }
 
-    private interface IClusterReadySend<TResult>
+    internal interface IClusterReadySend<TResult>
     {
         ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
             in TCommand command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
@@ -329,6 +353,6 @@ public sealed partial class RespireClient
                 }, transferOwnership, cancellationToken, operation, observation: observation, durationStarted: durationStarted);
     }
 
-    private sealed class ClusterConverterException(Exception error)
+    internal sealed class ClusterConverterException(Exception error)
         : Exception("The command succeeded, but its result converter failed.", error);
 }
