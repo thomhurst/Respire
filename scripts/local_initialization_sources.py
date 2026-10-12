@@ -1,9 +1,8 @@
 """Derive an attribute-only SkipLocalsInit comparison from one pinned source tree (#1065).
 
-Both trees start as the same commit. If the commit already applies SkipLocalsInit in src/,
-the baseline drops exactly those attribute lines and the candidate keeps them. Otherwise the
-candidate adds a probe module attribute to the core Respire assembly and the baseline is
-unchanged. Either way the only source difference is the attribute.
+Both trees start as the same commit. The candidate adds a probe module attribute to the
+core Respire assembly and the baseline is unchanged. Shipped attributes are rejected:
+the protocol probe cannot establish timing coverage for every method in a proposed scope.
 """
 
 import argparse
@@ -38,17 +37,15 @@ def source_files(root):
 
 def derive(baseline, candidate):
     """Rewrites the baseline or candidate tree in place and returns the mode and changed paths."""
-    shipped = []
     for path in source_files(baseline):
-        text = path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8", newline="") as source:
+            text = source.read()
         if not MENTION.search(text):
             continue
-        stripped, count = strip_attributes(text)
+        _, count = strip_attributes(text)
         if count:
-            path.write_text(stripped, encoding="utf-8", newline="")
-            shipped.append(path.relative_to(baseline).as_posix())
-    if shipped:
-        return "shipped", shipped
+            raise ValueError(f"Uncovered shipped SkipLocalsInit scope in {path.relative_to(baseline)}; "
+                             "select benchmarks covering every affected method before measuring a proposal")
     (candidate / PROBE_PATH).write_text(PROBE, encoding="utf-8", newline="")
     return "probe", [PROBE_PATH.as_posix()]
 

@@ -34,18 +34,34 @@ class SourceDerivationTests(unittest.TestCase):
             self.assertIn("[module: System.Runtime.CompilerServices.SkipLocalsInit]", (candidate / changed[0]).read_text())
             self.assertFalse((baseline / changed[0]).exists())
 
-    def test_shipped_attributes_are_removed_from_baseline_only(self):
+    def test_shipped_attributes_fail_without_mutating_either_tree(self):
         with tempfile.TemporaryDirectory() as temp:
             baseline, candidate = Path(temp, "b"), Path(temp, "c")
             text = "class A\n{\n    [SkipLocalsInit]\n    void M() { }\n    [System.Runtime.CompilerServices.SkipLocalsInitAttribute()]\n    void N() { }\n}\n"
             for root in (baseline, candidate):
                 write(root, "src/Respire/A.cs", text)
                 write(root, "src/Respire.Json/B.cs", "[module: SkipLocalsInit]\n")
-            mode, changed = sources.derive(baseline, candidate)
-            self.assertEqual("shipped", mode)
-            self.assertCountEqual(["src/Respire.Json/B.cs", "src/Respire/A.cs"], changed)
-            self.assertNotIn("SkipLocalsInit", (baseline / "src/Respire/A.cs").read_text())
-            self.assertEqual(text, (candidate / "src/Respire/A.cs").read_text())
+            with self.assertRaisesRegex(ValueError, "Uncovered shipped"):
+                sources.derive(baseline, candidate)
+            for root in (baseline, candidate):
+                self.assertEqual(text.encode(), (root / "src/Respire/A.cs").read_bytes())
+
+    def test_core_module_scope_also_requires_coverage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            baseline, candidate = Path(temp, "b"), Path(temp, "c")
+            text = b"[module: SkipLocalsInit]\r\nclass A { }\r\n"
+            for root in (baseline, candidate):
+                write(root, "src/Respire/A.cs", text.decode())
+            with self.assertRaisesRegex(ValueError, "Uncovered shipped"):
+                sources.derive(baseline, candidate)
+            for root in (baseline, candidate):
+                self.assertEqual(text, (root / "src/Respire/A.cs").read_bytes())
+
+    def test_crlf_strip_preserves_remaining_bytes(self):
+        text = "class A\r\n{\r\n    [SkipLocalsInit]\r\n    void M() { }\r\n}\r\n"
+        stripped, count = sources.strip_attributes(text)
+        self.assertEqual(1, count)
+        self.assertEqual(text.replace("    [SkipLocalsInit]\r\n", ""), stripped)
 
     def test_attribute_sharing_a_line_fails_closed(self):
         with self.assertRaises(ValueError):

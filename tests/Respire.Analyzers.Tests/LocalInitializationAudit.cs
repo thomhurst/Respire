@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -189,7 +190,7 @@ internal static partial class LocalInitializationAudit
                 var body = pe.GetMethodBody(method.RelativeVirtualAddress);
                 var count = CountLocalloc(body.GetILBytes()!);
                 if (count != 0)
-                    sites.Add(new CompiledSite(assembly, framework, TypeName(reader, type) + "::" + reader.GetString(method.Name), count, body.LocalVariablesInitialized));
+                    sites.Add(new CompiledSite(assembly, framework, MethodName(reader, methodHandle), count, body.LocalVariablesInitialized));
             }
         }
         var targets = new List<string>();
@@ -211,7 +212,42 @@ internal static partial class LocalInitializationAudit
     private static string MethodName(MetadataReader reader, MethodDefinitionHandle handle)
     {
         var method = reader.GetMethodDefinition(handle);
-        return TypeName(reader, reader.GetTypeDefinition(method.GetDeclaringType())) + "::" + reader.GetString(method.Name);
+        var signature = method.DecodeSignature(new SignatureNames(), genericContext: (object?)null);
+        return TypeName(reader, reader.GetTypeDefinition(method.GetDeclaringType())) + "::" + reader.GetString(method.Name)
+            + "``" + signature.GenericParameterCount + "(" + string.Join(",", signature.ParameterTypes) + "):" + signature.ReturnType;
+    }
+
+    private sealed class SignatureNames : ISignatureTypeProvider<string, object?>
+    {
+        public string GetArrayType(string elementType, ArrayShape shape)
+            => elementType + "[" + shape.Rank + ";" + string.Join(",", shape.Sizes) + ";" + string.Join(",", shape.LowerBounds) + "]";
+        public string GetByReferenceType(string elementType) => elementType + "&";
+        public string GetFunctionPointerType(MethodSignature<string> signature)
+            => "fn[" + signature.Header.RawValue + ";" + signature.GenericParameterCount + ";" + signature.RequiredParameterCount
+                + "](" + string.Join(",", signature.ParameterTypes) + "):" + signature.ReturnType;
+        public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments)
+            => genericType + "<" + string.Join(",", typeArguments) + ">";
+        public string GetGenericMethodParameter(object? genericContext, int index) => "!!" + index;
+        public string GetGenericTypeParameter(object? genericContext, int index) => "!" + index;
+        public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired)
+            => unmodifiedType + (isRequired ? " modreq(" : " modopt(") + modifier + ")";
+        public string GetPinnedType(string elementType) => elementType + " pinned";
+        public string GetPointerType(string elementType) => elementType + "*";
+        public string GetPrimitiveType(PrimitiveTypeCode typeCode) => typeCode.ToString();
+        public string GetSZArrayType(string elementType) => elementType + "[]";
+        public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind)
+            => TypeName(reader, reader.GetTypeDefinition(handle));
+        public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
+        {
+            var type = reader.GetTypeReference(handle);
+            var name = reader.GetString(type.Name);
+            if (type.ResolutionScope.Kind == HandleKind.TypeReference)
+                return GetTypeFromReference(reader, (TypeReferenceHandle)type.ResolutionScope, rawTypeKind) + "+" + name;
+            var space = reader.GetString(type.Namespace);
+            return space.Length == 0 ? name : space + "." + name;
+        }
+        public string GetTypeFromSpecification(MetadataReader reader, object? genericContext, TypeSpecificationHandle handle, byte rawTypeKind)
+            => reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
     }
 
     private static string TypeName(MetadataReader reader, TypeDefinition type)

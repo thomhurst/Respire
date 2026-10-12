@@ -10,7 +10,7 @@ namespace Respire.Analyzers.Tests;
 /// <summary>
 /// Guards the local-initialization audit for #1065. Every package stack allocation needs its
 /// own justification for its current enclosing member, and the compiled assemblies must match
-/// the reviewed inventory and policy. See docs/LOCAL_INITIALIZATION.md.
+/// the reviewed inventory and policy.
 /// </summary>
 public class LocalInitializationAuditTests
 {
@@ -31,12 +31,12 @@ public class LocalInitializationAuditTests
         // DecodeValue wrote it. CreateVersion7: CopyTo writes bytes 0..6 and RandomNumberGenerator.Fill
         // writes 6..16 before the Guid reads all 16. HighNibble: Guid.TryWriteBytes writes all 16 bytes
         // before buffer[index] is read.
-        ["Respire|net8.0|System.Buffers.Text.Base64Url::Decode|1"] = "Polyfill Base64Url.Decode quantum",
-        ["Respire|net8.0|Polyfills.Polyfill::CreateVersion7|1"] = "Polyfill Guid.CreateVersion7 uuidBytes",
-        ["Respire|net8.0|Polyfills.Polyfill::HighNibble|1"] = "Polyfill Guid.Variant/Version buffer",
-        ["Respire.SignalR|net8.0|System.Buffers.Text.Base64Url::Decode|1"] = "Polyfill Base64Url.Decode quantum",
-        ["Respire.SignalR|net8.0|Polyfills.Polyfill::CreateVersion7|1"] = "Polyfill Guid.CreateVersion7 uuidBytes",
-        ["Respire.SignalR|net8.0|Polyfills.Polyfill::HighNibble|1"] = "Polyfill Guid.Variant/Version buffer",
+        ["Respire|net8.0|System.Buffers.Text.Base64Url::Decode``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Boolean,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64Url.Decode quantum",
+        ["Respire|net8.0|Polyfills.Polyfill::CreateVersion7``0(System.DateTimeOffset):System.Guid|1"] = "Polyfill Guid.CreateVersion7 uuidBytes",
+        ["Respire|net8.0|Polyfills.Polyfill::HighNibble``0(System.Guid,Int32):Int32|1"] = "Polyfill Guid.Variant/Version buffer",
+        ["Respire.SignalR|net8.0|System.Buffers.Text.Base64Url::Decode``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Boolean,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64Url.Decode quantum",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::CreateVersion7``0(System.DateTimeOffset):System.Guid|1"] = "Polyfill Guid.CreateVersion7 uuidBytes",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::HighNibble``0(System.Guid,Int32):Int32|1"] = "Polyfill Guid.Variant/Version buffer",
     };
 
     private static readonly string Flavor =
@@ -53,8 +53,7 @@ public class LocalInitializationAuditTests
 
     private static IEnumerable<(string Package, string Path, string Text)> PackageSources()
         => TestInspectionSource.ReadLibrarySources()
-            .Select(source => (Package: source.Path.Split('/')[1], Path: "src/" + source.Path["LibrarySource/".Length..], source.Text))
-            .Where(source => source.Package != "Respire.Analyzers");
+            .Select(source => (Package: source.Path.Split('/')[1], Path: "src/" + source.Path["LibrarySource/".Length..], source.Text));
 
     [Test]
     public async Task EveryPackageStackAllocationHasACurrentJustification()
@@ -63,6 +62,7 @@ public class LocalInitializationAuditTests
         await Assert.That(configurations.Length).IsEqualTo(4);
         var sources = PackageSources().ToArray();
         await Assert.That(sources.Length).IsGreaterThan(100);
+        await Assert.That(sources.Any(source => source.Package == "Respire.Analyzers")).IsTrue();
         var errors = sources.SelectMany(source => Validate(source.Path, source.Text, configurations)).ToArray();
         var sites = sources.Sum(source => FindSites(source.Path, source.Text, configurations).Length);
         // The audit found 39 sites when it was introduced; a sudden zero means the scan broke.
@@ -77,6 +77,8 @@ public class LocalInitializationAuditTests
         var assemblies = Directory.Exists(root) ? Directory.GetFiles(root, "*.dll", SearchOption.AllDirectories) : [];
         // 28 packages for each of net8.0 and net10.0, staged by the project file.
         await Assert.That(assemblies.Length).IsGreaterThanOrEqualTo(56);
+        await Assert.That(assemblies.Any(path => Path.GetFileName(path) == "Respire.Analyzers.dll"
+            && Path.GetFileName(Path.GetDirectoryName(path)) == "netstandard2.0")).IsTrue();
         var configurations = AuditConfigurations();
         var sourceSites = PackageSources()
             .SelectMany(source => FindSites(source.Path, source.Text, configurations).Select(site => (source.Package, Site: site)))
@@ -96,6 +98,9 @@ public class LocalInitializationAuditTests
             var own = compiled.Where(site => !IsImported(site.Method)).Sum(site => site.Count);
             var expected = sourceSites.Count(entry => entry.Package == assembly
                 && entry.Site.Configurations.Contains(framework + "/" + Flavor, StringComparer.Ordinal));
+            // The shipped analyzer has one netstandard2.0 build, with no framework-specific stack sites.
+            if (assembly == "Respire.Analyzers")
+                expected = sourceSites.Count(entry => entry.Package == assembly);
             if (own != expected)
                 errors.Add($"{assembly} ({framework}): {own} compiled localloc site(s) in repository code but {expected} audited source site(s). "
                     + "Generated or imported code may allocate on the stack:\n    "
@@ -277,6 +282,7 @@ public class LocalInitializationAuditTests
             public static class Probe
             {
                 public static int One() { Span<byte> a = stackalloc byte[8]; return a[0]; }
+                public static int One(int size) { Span<byte> a = stackalloc byte[size]; return a[0]; }
                 public static int Two(bool flag) { Span<byte> a = flag ? stackalloc byte[4] : stackalloc byte[8]; Span<long> b = stackalloc long[] { 1L << 40 }; return a[0] + (int)b[0]; }
                 public static int None(int x) { switch (x) { case 1: return 2; case 2: return 3; default: return 4; } }
             }
@@ -289,8 +295,11 @@ public class LocalInitializationAuditTests
             var result = compilation.Emit(path);
             await Assert.That(result.Success).IsTrue();
             var (sites, targets) = InspectAssembly(path, "net10.0");
-            await Assert.That(sites.Select(site => $"{site.Method} x{site.Count} {site.InitLocals}").ToArray())
-                .IsEquivalentTo(new[] { "Probe::One x1 False", "Probe::Two x3 False" });
+            var overloads = sites.Where(site => site.Method.StartsWith("Probe::One``", StringComparison.Ordinal)).ToArray();
+            await Assert.That(overloads.Length).IsEqualTo(2);
+            await Assert.That(overloads.Select(site => site.Method).Distinct().Count()).IsEqualTo(2);
+            await Assert.That(overloads.All(site => site.Count == 1 && !site.InitLocals)).IsTrue();
+            await Assert.That(sites.Single(site => site.Method.StartsWith("Probe::Two``", StringComparison.Ordinal)).Count).IsEqualTo(3);
             await Assert.That(targets).IsEquivalentTo(new[] { "module" });
         }
         finally
