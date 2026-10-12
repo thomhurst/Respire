@@ -41,20 +41,24 @@ IConnectionMultiplexer multiplexer = RespireConnectionMultiplexer.Create(
     RespireOptions.Parse("redis://localhost:6379/0"));
 var configuration = ConfigurationOptions.Parse("localhost:6379,defaultDatabase=0");
 
-siloBuilder.UseRedisClustering(options =>
+var builder = Host.CreateApplicationBuilder();
+builder.UseOrleans(siloBuilder =>
 {
-    options.ConfigurationOptions = configuration;
-    options.CreateMultiplexer = _ => Task.FromResult((multiplexer, true));
-});
-siloBuilder.AddRedisGrainStorageAsDefault(options =>
-{
-    options.ConfigurationOptions = configuration;
-    options.CreateMultiplexer = _ => Task.FromResult((multiplexer, true));
-});
-siloBuilder.UseRedisReminderService(options =>
-{
-    options.ConfigurationOptions = configuration;
-    options.CreateMultiplexer = _ => Task.FromResult((multiplexer, true));
+    siloBuilder.UseRedisClustering(options =>
+    {
+        options.ConfigurationOptions = configuration;
+        options.CreateMultiplexer = _ => Task.FromResult((multiplexer, true));
+    });
+    siloBuilder.AddRedisGrainStorageAsDefault(options =>
+    {
+        options.ConfigurationOptions = configuration;
+        options.CreateMultiplexer = _ => Task.FromResult((multiplexer, true));
+    });
+    siloBuilder.UseRedisReminderService(options =>
+    {
+        options.ConfigurationOptions = configuration;
+        options.CreateMultiplexer = _ => Task.FromResult((multiplexer, true));
+    });
 });
 ```
 
