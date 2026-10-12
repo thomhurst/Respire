@@ -215,14 +215,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         value = default;
         directFill = default;
         var headerEnd = pos + 1;
-        if (!RespParser.TryReadLine(buffer, ref headerEnd, out var lengthLine))
+        var headerStatus = RespParser.TryReadInt64Line(buffer, ref headerEnd, out var declaredLength);
+        if (headerStatus != RespParseStatus.Done)
         {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (!RespParser.TryParseInt64(lengthLine, out var declaredLength))
-        {
-            return RespParseStatus.InvalidData;
+            return headerStatus;
         }
 
         var type = typeByte switch
@@ -274,14 +270,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         value = default;
         directFill = default;
         var cursor = pos + 1;
-        if (!RespParser.TryReadLine(buffer, ref cursor, out var lengthLine))
+        var headerStatus = RespParser.TryReadInt64Line(buffer, ref cursor, out var declaredLength);
+        if (headerStatus != RespParseStatus.Done)
         {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (!RespParser.TryParseInt64(lengthLine, out var declaredLength))
-        {
-            return RespParseStatus.InvalidData;
+            return headerStatus;
         }
 
         pos = cursor;
@@ -346,14 +338,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         value = default;
         discard = typeByte == (byte)'|';
         var cursor = pos + 1;
-        if (!RespParser.TryReadLine(buffer, ref cursor, out var countLine))
+        var headerStatus = RespParser.TryReadInt64Line(buffer, ref cursor, out var declaredCount);
+        if (headerStatus != RespParseStatus.Done)
         {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (!RespParser.TryParseInt64(countLine, out var declaredCount))
-        {
-            return RespParseStatus.InvalidData;
+            return headerStatus;
         }
 
         if (declaredCount == -1)

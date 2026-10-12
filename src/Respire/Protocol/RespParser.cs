@@ -194,7 +194,7 @@ internal static class RespParser
         }
 
         var cursor = pos + 1;
-        if (!TryReadLine(buffer, ref cursor, out var line) || !TryParseInt64(line, out payloadLength))
+        if (TryReadInt64Line(buffer, ref cursor, out payloadLength) != RespParseStatus.Done)
         {
             return false;
         }
@@ -334,14 +334,10 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
-        if (!TryReadLine(buffer, ref pos, out var line))
+        var status = TryReadInt64Line(buffer, ref pos, out var integer);
+        if (status != RespParseStatus.Done)
         {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (!TryParseInt64(line, out var integer))
-        {
-            return RespParseStatus.InvalidData;
+            return status;
         }
 
         value = RespValue.Integer(integer);
@@ -377,22 +373,25 @@ internal static class RespParser
             return RespParseStatus.NeedMoreData;
         }
 
-        double result;
-        if (line.SequenceEqual("inf"u8))
+        // Finite doubles dominate; check the RESP3 special spellings only after a failed parse.
+        if (!Utf8Parser.TryParse(line, out double result, out var consumed) || consumed != line.Length)
         {
-            result = double.PositiveInfinity;
-        }
-        else if (line.SequenceEqual("-inf"u8))
-        {
-            result = double.NegativeInfinity;
-        }
-        else if (line.SequenceEqual("nan"u8))
-        {
-            result = double.NaN;
-        }
-        else if (!Utf8Parser.TryParse(line, out result, out var consumed) || consumed != line.Length)
-        {
-            return RespParseStatus.InvalidData;
+            if (line.SequenceEqual("inf"u8))
+            {
+                result = double.PositiveInfinity;
+            }
+            else if (line.SequenceEqual("-inf"u8))
+            {
+                result = double.NegativeInfinity;
+            }
+            else if (line.SequenceEqual("nan"u8))
+            {
+                result = double.NaN;
+            }
+            else
+            {
+                return RespParseStatus.InvalidData;
+            }
         }
 
         value = RespValue.Double(result);
@@ -419,14 +418,10 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
-        if (!TryReadLine(buffer, ref pos, out var lengthLine))
+        var status = TryReadInt64Line(buffer, ref pos, out var length);
+        if (status != RespParseStatus.Done)
         {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (!TryParseInt64(lengthLine, out var length))
-        {
-            return RespParseStatus.InvalidData;
+            return status;
         }
 
         return TryParseBulkValue(buffer, ref cursor, type, length, pos, out value, context);
@@ -438,14 +433,10 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
-        if (!TryReadLine(buffer, ref pos, out var countLine))
+        var headerStatus = TryReadInt64Line(buffer, ref pos, out var declaredCount);
+        if (headerStatus != RespParseStatus.Done)
         {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (!TryParseInt64(countLine, out var declaredCount))
-        {
-            return RespParseStatus.InvalidData;
+            return headerStatus;
         }
 
         if (declaredCount == -1)
@@ -602,4 +593,77 @@ internal static class RespParser
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static bool TryParseInt64(ReadOnlySpan<byte> line, out long value)
         => Utf8Parser.TryParse(line, out value, out var consumed) && consumed == line.Length;
+
+    // 18 decimal digits cannot overflow a long in either sign.
+    private const int MaxFastInt64Digits = 18;
+
+    /// <summary>
+    /// Reads a CRLF-terminated integer header line (lengths, counts, ":" integers) starting at
+    /// <paramref name="pos"/>. Advances <paramref name="pos"/> past the CRLF only on
+    /// <see cref="RespParseStatus.Done"/>. Results match <see cref="TryReadLine"/> followed by
+    /// <see cref="TryParseInt64"/>: NeedMoreData when no CRLF is buffered, InvalidData when the
+    /// line is not a whole Int64.
+    /// </summary>
+    /// <remarks>
+    /// The common shape, an optional '-' and 1-18 digits directly followed by CRLF, is
+    /// accumulated in one pass. Such a line contains no earlier CRLF and parses to the same
+    /// value, so anything else (a '+', more digits, other bytes, a partial line) defers to the
+    /// scanning path unchanged.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static RespParseStatus TryReadInt64Line(ReadOnlySpan<byte> buffer, ref int pos, out long value)
+    {
+        var i = pos;
+        var negative = (uint)i < (uint)buffer.Length && buffer[i] == (byte)'-';
+        if (negative)
+        {
+            i++;
+        }
+
+        var digitsStart = i;
+        var digitsLimit = Math.Min(buffer.Length, digitsStart + MaxFastInt64Digits);
+        ulong magnitude = 0;
+        while (i < digitsLimit)
+        {
+            var digit = (uint)(buffer[i] - (byte)'0');
+            if (digit > 9)
+            {
+                break;
+            }
+
+            magnitude = magnitude * 10 + digit;
+            i++;
+        }
+
+        if (i != digitsStart
+            && (uint)(i + 1) < (uint)buffer.Length
+            && buffer[i] == RespConstants.CarriageReturn
+            && buffer[i + 1] == RespConstants.LineFeed)
+        {
+            value = negative ? -(long)magnitude : (long)magnitude;
+            pos = i + 2;
+            return RespParseStatus.Done;
+        }
+
+        return TryReadInt64LineSlow(buffer, ref pos, out value);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static RespParseStatus TryReadInt64LineSlow(ReadOnlySpan<byte> buffer, ref int pos, out long value)
+    {
+        var cursor = pos;
+        if (!TryReadLine(buffer, ref cursor, out var line))
+        {
+            value = 0;
+            return RespParseStatus.NeedMoreData;
+        }
+
+        if (!TryParseInt64(line, out value))
+        {
+            return RespParseStatus.InvalidData;
+        }
+
+        pos = cursor;
+        return RespParseStatus.Done;
+    }
 }
