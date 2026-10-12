@@ -11,6 +11,29 @@ namespace Respire.VectorData.Tests;
 public class JsonFilterTests(ModernRedisTestContainer fixture)
 {
     [Test, Arguments(2), Arguments(3)]
+    public async Task CollectionFiltersRespectTightModelDepth(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        using var store = new RespireVectorStore(client, "json-filter-depth:" + Guid.NewGuid().ToString("N"));
+        var context = new JsonFilterContext(new System.Text.Json.JsonSerializerOptions { MaxDepth = 2 });
+        store.RegisterMapper(new JsonTypedFilterMapper(context.JsonTypedFilterRecord));
+        using var collection = store.GetJsonCollection<JsonTypedFilterRecord>("records");
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            await collection.UpsertAsync(new JsonTypedFilterRecord("one", 1, 1, null, true, ["tag"], []));
+            var included = await collection.GetAsync("one", new() { IncludeVectors = true });
+            included!.Tags.Should().Equal("tag");
+            included.Vector.Should().Equal(1, 0);
+            included.Extra.Should().BeNull();
+            (await collection.GetAsync("one"))!.Vector.Should().BeNull();
+            (await Collect(collection.GetAsync(r => r.Tags.Contains("tag"), 1, new() { IncludeVectors = true })))
+                .Should().ContainSingle().Which.Vector.Should().Equal(1, 0);
+        }
+        finally { await collection.EnsureCollectionDeletedAsync(); }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task NestedOrdinalStringsFilterRetrievalKnnAndHybrid(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
@@ -104,7 +127,8 @@ public sealed record JsonTypedFilterRecord(string Id, float Float, double Double
 [JsonSerializable(typeof(JsonTypedFilterRecord))]
 public partial class JsonFilterContext : JsonSerializerContext;
 
-internal sealed class JsonTypedFilterMapper() : RespireVectorDataJsonMapper<JsonTypedFilterRecord>(JsonFilterContext.Default.JsonTypedFilterRecord)
+internal sealed class JsonTypedFilterMapper(System.Text.Json.Serialization.Metadata.JsonTypeInfo<JsonTypedFilterRecord>? metadata = null)
+    : RespireVectorDataJsonMapper<JsonTypedFilterRecord>(metadata ?? JsonFilterContext.Default.JsonTypedFilterRecord)
 {
     public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => [new("Vector", "Vector", 2) { Algorithm = Respire.Search.RespireSearchVectorAlgorithm.Flat }];
     public override IReadOnlyList<RespireVectorDataFilterField> FilterFields =>

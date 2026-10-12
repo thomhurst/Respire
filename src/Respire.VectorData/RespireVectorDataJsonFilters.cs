@@ -20,7 +20,7 @@ internal sealed class RespireVectorDataJsonFilters
         _fields = fields.Select(field =>
         {
             var path = RespireVectorDataJsonPaths.Parse(field.JsonPath ?? "$." + field.StorageName);
-            var property = RespireVectorDataJsonPaths.ValidateMetadata(metadata, path);
+            var property = RespireVectorDataJsonPaths.ValidateMetadata(metadata, path, forFilter: true);
             var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
             var supported = field.Kind switch
             {
@@ -37,6 +37,9 @@ internal sealed class RespireVectorDataJsonFilters
 
     internal static string IndexPath(RespireVectorDataFilterField field) => $"$.{RootProperty}.{field.StorageName}";
 
+    // Normalized string collections occupy three levels: record, filter object, array.
+    internal static int DocumentMaxDepth(int modelMaxDepth) => Math.Max(modelMaxDepth == 0 ? 64 : modelMaxDepth, 3);
+
     internal byte[] Write(ReadOnlyMemory<byte> json)
     {
         using var document = JsonDocument.Parse(json, new() { MaxDepth = _maxDepth });
@@ -46,7 +49,7 @@ internal sealed class RespireVectorDataJsonFilters
         if (root.TryGetProperty(RootProperty, out _))
             throw new ArgumentException($"JSON records cannot contain reserved filter property '{RootProperty}'.", nameof(json));
         var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer, new() { MaxDepth = _maxDepth == 0 ? 64 : _maxDepth }))
+        using (var writer = new Utf8JsonWriter(buffer, new() { MaxDepth = DocumentMaxDepth(_maxDepth) }))
         {
             writer.WriteStartObject();
             foreach (var property in root.EnumerateObject()) property.WriteTo(writer);

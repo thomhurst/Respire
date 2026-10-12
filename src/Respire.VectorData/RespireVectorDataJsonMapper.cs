@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
 namespace Respire.VectorData;
@@ -32,7 +33,10 @@ public abstract class RespireVectorDataJsonMapper<TRecord> : RespireVectorDataMa
     internal TRecord Read(ReadOnlySpan<byte> json, bool includeVectors, string[][] vectorPaths, bool removeFilters = false)
     {
         if (includeVectors && !removeFilters) return Deserialize(json);
-        var root = JsonNode.Parse(json, documentOptions: new() { MaxDepth = JsonTypeInfo.Options.MaxDepth }) as JsonObject
+        var maxDepth = removeFilters
+            ? RespireVectorDataJsonFilters.DocumentMaxDepth(JsonTypeInfo.Options.MaxDepth)
+            : JsonTypeInfo.Options.MaxDepth;
+        var root = JsonNode.Parse(json, documentOptions: new() { MaxDepth = maxDepth }) as JsonObject
             ?? throw new JsonException("A vector record must be a JSON object.");
         if (removeFilters) root.Remove(RespireVectorDataJsonFilters.RootProperty);
         foreach (var path in includeVectors ? [] : vectorPaths)
@@ -53,19 +57,39 @@ public abstract class RespireVectorDataJsonMapper<TRecord> : RespireVectorDataMa
 
 internal static class RespireVectorDataJsonPaths
 {
-    internal static JsonPropertyInfo ValidateMetadata(JsonTypeInfo metadata, string[] path)
+    internal static JsonPropertyInfo ValidateMetadata(JsonTypeInfo metadata, string[] path, bool forFilter = false)
     {
         JsonPropertyInfo? property = null;
         for (var i = 0; i < path.Length; i++)
         {
+            if (forFilter) ValidateFilterSerialization(metadata, path);
             property = metadata.Kind == JsonTypeInfoKind.Object
                 ? metadata.Properties.FirstOrDefault(property => property.Name == path[i] && property.Get is not null)
                 : null;
             if (property is null)
                 throw new ArgumentException($"JSON schema path '$.{string.Join('.', path)}' must select a serialized property in the supplied metadata.", nameof(path));
+            if (forFilter)
+            {
+                if (property.CustomConverter is not null || property.NumberHandling is not (null or JsonNumberHandling.Strict))
+                    throw new ArgumentException($"JSON filter path '$.{string.Join('.', path)}' cannot use custom converters or non-strict number handling.", nameof(path));
+                var propertyMetadata = metadata.Options.GetTypeInfo(property.PropertyType);
+                ValidateFilterSerialization(propertyMetadata, path);
+                if (Nullable.GetUnderlyingType(property.PropertyType) is { } underlyingType)
+                    ValidateFilterSerialization(metadata.Options.GetTypeInfo(underlyingType), path);
+                if (property.PropertyType == typeof(string[]) || property.PropertyType == typeof(List<string>))
+                    ValidateFilterSerialization(metadata.Options.GetTypeInfo(typeof(string)), path);
+            }
             if (i < path.Length - 1) metadata = metadata.Options.GetTypeInfo(property.PropertyType);
         }
         return property!;
+    }
+
+    private static void ValidateFilterSerialization(JsonTypeInfo metadata, string[] path)
+    {
+        if (metadata.Converter.GetType().Assembly != typeof(JsonSerializer).Assembly
+            || metadata.NumberHandling is not (null or JsonNumberHandling.Strict)
+            || metadata.Options.NumberHandling != JsonNumberHandling.Strict)
+            throw new ArgumentException($"JSON filter path '$.{string.Join('.', path)}' cannot use custom converters or non-strict number handling.", nameof(path));
     }
 
     // Deliberately restrict schema paths to properties so omission and validation select exactly the indexed value.

@@ -167,7 +167,8 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             using var json = await RespireVectorDataOperations.ExecuteAsync(
                 _client.Json.Commands.GetAsync(RecordKey(key), ["."], cancellationToken), nameof(GetAsync), Name).ConfigureAwait(false);
             if (json.IsNull) return null;
-            if (options?.IncludeVectors == true) RespireVectorDataJsonPaths.ValidateVectors(json.AsBytes(), _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
+            if (options?.IncludeVectors == true) RespireVectorDataJsonPaths.ValidateVectors(json.AsBytes(), _vectors, _vectorPaths,
+                _jsonFilters is null ? _jsonMapper.JsonTypeInfo.Options.MaxDepth : RespireVectorDataJsonFilters.DocumentMaxDepth(_jsonMapper.JsonTypeInfo.Options.MaxDepth));
             return _jsonMapper.Read(json.AsSpan(), options?.IncludeVectors == true, _vectorPaths, removeFilters: _jsonFilters is not null);
         }
         using var result = await RespireVectorDataOperations.ExecuteAsync(
@@ -230,8 +231,8 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         if (_jsonMapper is not null)
         {
             var json = _jsonMapper.Write(record);
-            if (_jsonFilters is not null) json = _jsonFilters.Write(json);
             RespireVectorDataJsonPaths.ValidateVectors(json, _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
+            if (_jsonFilters is not null) json = _jsonFilters.Write(json);
             using var replaced = await RespireVectorDataOperations.ExecuteAsync(
                 _client.Scripts.ExecuteAsync(ReplaceJson, [key], [json], cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
             return;
