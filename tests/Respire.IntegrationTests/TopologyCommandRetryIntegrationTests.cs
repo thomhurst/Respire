@@ -22,6 +22,12 @@ public class TopologyCommandRetryIntegrationTests
     [Arguments("Sentinel", "function", true)]
     [Arguments("group", "typed", false)]
     [Arguments("group", "typed", true)]
+    [Arguments("group", "raw", false)]
+    [Arguments("group", "raw", true)]
+    [Arguments("group", "script", false)]
+    [Arguments("group", "script", true)]
+    [Arguments("group", "function", false)]
+    [Arguments("group", "function", true)]
     public async Task LostReplyAcrossRealPromotionPreservesReplicatedEffectAndExplicitRisk(string topology, string shape, bool allowDuplicate)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
@@ -131,15 +137,36 @@ public class TopologyCommandRetryIntegrationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task LostReplyAcrossRealClusterSlotMovePreservesEffectAndExplicitRisk(bool allowDuplicate)
+    [Arguments("typed", false)]
+    [Arguments("typed", true)]
+    [Arguments("raw", false)]
+    [Arguments("raw", true)]
+    [Arguments("script", false)]
+    [Arguments("script", true)]
+    [Arguments("function", false)]
+    [Arguments("function", true)]
+    public async Task LostReplyAcrossRealClusterSlotMovePreservesEffectAndExplicitRisk(string shape, bool allowDuplicate)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Topology = RespireContainerTopology.Cluster }, deadline.Token);
         var key = "retry-slot:" + Guid.NewGuid().ToString("N");
         var slot = ClusterHash.GetSlot(key);
-        var fault = new LostReply("INCR");
+        var script = RespireScript.Create("return redis.call('INCR', KEYS[1])")
+            .WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
+        var library = RespireFunctionLibrary.Create("""
+            #!lua name=cluster_topology_retry
+            redis.register_function('cluster_topology_increment', function(keys,args) return redis.call('INCR',keys[1]) end)
+            """, replace: true);
+        var function = library.Function("cluster_topology_increment").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
+        // Script/function code is node-local. Install it on every possible slot owner
+        // before arming the lost-reply fault, so code reload is not the failure under test.
+        foreach (var endpoint in fixture.DataEndpoints)
+        {
+            await using var node = await RespireClient.ConnectAsync(DirectOptions(endpoint), deadline.Token);
+            await node.Scripts.LoadAsync(script, deadline.Token);
+            await node.Functions.LoadAsync(library, deadline.Token);
+        }
+        var fault = new LostReply(shape switch { "script" => "EVALSHA", "function" => "FCALL", _ => "INCR" });
         RespireEndpoint replacement = default;
         RespireEndpoint former = default;
         fault.BeforeDrop = async token =>
@@ -169,7 +196,17 @@ public class TopologyCommandRetryIntegrationTests
         }, deadline.Token);
         fault.Armed = true;
         Exception? failure = null;
-        try { (await client.IncrementAsync(key, cancellationToken: deadline.Token)).Should().Be(2); }
+        try
+        {
+            var result = shape switch
+            {
+                "script" => await client.Scripts.ExecuteIntegerAsync(script, [key], cancellationToken: deadline.Token),
+                "function" => await client.Functions.ExecuteIntegerAsync(function, [key], cancellationToken: deadline.Token),
+                "raw" => await ExecuteDeclaredIncrementAsync(client, key, deadline.Token),
+                _ => await client.IncrementAsync(key, cancellationToken: deadline.Token),
+            };
+            result.Should().Be(2);
+        }
         catch (Exception error) { failure = error; }
         if (allowDuplicate) failure.Should().BeNull();
         else failure.Should().BeAssignableTo<RespireConnectionException>();
@@ -181,6 +218,13 @@ public class TopologyCommandRetryIntegrationTests
         keysOnFormer.Count.Should().Be(0);
         // A subsequent routed public read must agree with the independent node observer.
         (await client.GetStringAsync(key, deadline.Token)).Should().Be(allowDuplicate ? "2" : "1");
+    }
+
+    private static async ValueTask<long> ExecuteDeclaredIncrementAsync(IRespireClient client, string key, CancellationToken token)
+    {
+        using var result = await client.ExecuteAsync(RespireCommand.Create("INCR").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating),
+            [key], cancellationToken: token);
+        return result.AsInteger();
     }
 
     private static RespireOptions DirectOptions(RespireEndpoint endpoint) => new()

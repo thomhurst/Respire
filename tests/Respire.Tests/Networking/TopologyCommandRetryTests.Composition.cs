@@ -1,6 +1,4 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -15,7 +13,7 @@ public partial class TopologyCommandRetryTests
     public async Task FailedDiscoveryKeepsRoutingAndCommandRetryOwnershipSeparate(string topology)
     {
         using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence();
+        using var evidence = new TrackedCacheEvidence();
         var discoveries = 0;
         var fallbackReads = 0;
         await using var primary = Primary(command => command == "GET key" ? Value : null);
@@ -45,9 +43,51 @@ public partial class TopologyCommandRetryTests
 
     public static IEnumerable<(string, RespireCommandRetryCategory)> PossibleWriteCases()
     {
-        foreach (var shape in new[] { "Sentinel", "Cluster", "raw", "script", "function", "group" })
+        foreach (var shape in CompositionShapes())
         foreach (var category in Enum.GetValues<RespireCommandRetryCategory>())
             yield return (shape, category);
+    }
+
+    public static IEnumerable<string> CompositionShapes()
+        => ["Sentinel", "Cluster", "raw", "script", "function", "group",
+            "Sentinel/raw", "Sentinel/script", "Sentinel/function", "Cluster/raw", "Cluster/script", "Cluster/function"];
+
+    [Test]
+    [MethodDataSource(nameof(PossibleWriteCases))]
+    public async Task UnwrittenCommandsRespectTransportEvidenceAndLogicalOwnerRisk(string shape, RespireCommandRetryCategory category)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var evidence = new TrackedCacheEvidence();
+        var calls = 0;
+        var occupied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fixture = await CompositionFixture.ConnectAsync(shape,
+            command => IsCompositionRead(command) ? Count(ref calls, Value) : null,
+            new() { InitialBackoff = TimeSpan.Zero }, maxInflight: 1);
+        fixture.Server.SuppressReply = command =>
+        {
+            if (command != "ECHO occupy") return false;
+            occupied.TrySetResult();
+            return true;
+        };
+        var occupying = fixture.OccupyAsync().AsTask();
+        await occupied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var pending = fixture.ReadAsync(default, category).AsTask();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await Assert.That(calls).IsEqualTo(0);
+        fixture.Server.CloseConnections();
+        // Cluster, declared scripts/functions and group delegates intentionally expose
+        // unknown write evidence. Only standalone/Sentinel dispatch can prove unwritten.
+        var ownsTransportEvidence = !shape.StartsWith("Cluster", StringComparison.Ordinal)
+            && shape != "group" && RequestShape(shape) is not ("script" or "function");
+        var retries = category != RespireCommandRetryCategory.Never && (ownsTransportEvidence
+            || category is RespireCommandRetryCategory.Always or RespireCommandRetryCategory.Connection or RespireCommandRetryCategory.ReadOnly);
+        if (retries) await Assert.That(await pending.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+        else await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        await Assert.That(async () => { using var ignored = await occupying; }).Throws<RespireConnectionException>();
+        await Assert.That(calls).IsEqualTo(retries ? 1 : 0);
+        await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(retries ? 1 : 0);
+        await Assert.That(evidence.Retries.GetValueOrDefault("succeeded")).IsEqualTo(retries ? 1 : 0);
+        await Assert.That(evidence.Retries.GetValueOrDefault("exhausted")).IsEqualTo(0);
     }
 
     [Test]
@@ -55,7 +95,7 @@ public partial class TopologyCommandRetryTests
     public async Task PossibleWriteAdmissionPreservesDeclaredCategoryAcrossOwners(string shape, RespireCommandRetryCategory category)
     {
         using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence();
+        using var evidence = new TrackedCacheEvidence();
         var calls = 0;
         CompositionFixture? owner = null;
         await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
@@ -81,16 +121,11 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    [Arguments("Sentinel")]
-    [Arguments("Cluster")]
-    [Arguments("raw")]
-    [Arguments("script")]
-    [Arguments("function")]
-    [Arguments("group")]
+    [MethodDataSource(nameof(CompositionShapes))]
     public async Task CrossPathCancellationDuringBackoffPreservesTokenAndDoesNotResend(string shape)
     {
         using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence();
+        using var evidence = new TrackedCacheEvidence();
         var calls = 0;
         await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
             IsCompositionRead(command) ? Count(ref calls, TryAgain) : null,
@@ -116,14 +151,11 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    [Arguments("Sentinel")]
-    [Arguments("raw")]
-    [Arguments("script")]
-    [Arguments("function")]
+    [MethodDataSource(nameof(DeadlineShapes))]
     public async Task CrossPathOriginalDeadlineRejectsLateReplyAndRetiresItsFifoSlot(string shape)
     {
         using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence();
+        using var evidence = new TrackedCacheEvidence();
         var calls = 0;
         var lateReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
@@ -136,7 +168,7 @@ public partial class TopologyCommandRetryTests
         var elapsed = Stopwatch.StartNew();
         var pending = fixture.ReadAsync(default).AsTask();
         await evidence.ErrorObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.Server.GateCommand(shape switch { "script" => "EVALSHA", "function" => "FCALL_RO", _ => "GET key" }, lateReply.Task);
+        fixture.Server.GateCommand(RequestShape(shape) switch { "script" => "EVALSHA", "function" => "FCALL_RO", _ => "GET key" }, lateReply.Task);
         try
         {
             await Assert.That(async () => await pending).ThrowsExactly<RespireTimeoutException>();
@@ -153,16 +185,11 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    [Arguments("Sentinel")]
-    [Arguments("Cluster")]
-    [Arguments("raw")]
-    [Arguments("script")]
-    [Arguments("function")]
-    [Arguments("group")]
+    [MethodDataSource(nameof(CompositionShapes))]
     public async Task CrossPathSelectionAndReusedSourcesKeepAttemptAndFinalErrorOwnership(string shape)
     {
         using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence(throwAfterRecording: true);
+        using var evidence = new TrackedCacheEvidence(throwAfterRecording: true);
         var calls = 0;
         var exhaust = false;
         var unselected = false;
@@ -190,42 +217,9 @@ public partial class TopologyCommandRetryTests
         await Assert.That(evidence.FinalErrors).IsEqualTo(shape == "group" ? 97 : 33);
     }
 
-    [Test]
-    [Arguments("Sentinel", false)]
-    [Arguments("Sentinel", true)]
-    [Arguments("Cluster", false)]
-    [Arguments("Cluster", true)]
-    public async Task TopologyCoalescedProducerOwnsOneTerminalOutcomeAndCanBeReused(string shape, bool exhaust)
-    {
-        using var configuration = new MetricConfigurationScope();
-        using var evidence = new CompositionEvidence();
-        var calls = 0;
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var fixture = await CompositionFixture.ConnectAsync(shape, command =>
-            command == "GET key" ? Interlocked.Increment(ref calls) == 1 || exhaust ? TryAgain : Value : null,
-            new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero }, cache: true);
-        fixture.Server.GateCommand("GET key", release.Task);
-        var waiters = Enumerable.Range(0, 10).Select(_ => fixture.ReadAsync(default).AsTask()).ToArray();
-        release.TrySetResult();
-        if (exhaust)
-        {
-            foreach (var waiter in waiters)
-                await Assert.That(async () => await waiter).ThrowsExactly<RespireServerException>();
-        }
-        else
-        {
-            var values = await Task.WhenAll(waiters);
-            await Assert.That(values.All(value => value == "value")).IsTrue();
-        }
-        await Assert.That(calls).IsEqualTo(2);
-        await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(1);
-        await Assert.That(evidence.Retries.GetValueOrDefault(exhaust ? "exhausted" : "succeeded")).IsEqualTo(1);
-        var failedProducer = exhaust;
-        exhaust = false;
-        await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
-        await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
-        await Assert.That(calls).IsEqualTo(failedProducer ? 3 : 2);
-    }
+    public static IEnumerable<string> DeadlineShapes() => CompositionShapes().Where(shape => shape != "group");
+
+    private static string RequestShape(string shape) => shape.Split('/')[^1];
 
     private static bool IsCompositionRead(string command) => command == "GET key"
         || command.StartsWith("EVALSHA ", StringComparison.Ordinal) || command == "FCALL_RO reader 1 key";
@@ -236,9 +230,11 @@ public partial class TopologyCommandRetryTests
         internal FakeRespServer Server => server;
 
         internal static async Task<CompositionFixture> ConnectAsync(string shape, Func<string, byte[]?> reply,
-            RespireRetryPolicy policy, TimeSpan? timeout = null, bool cache = false)
+            RespireRetryPolicy policy, TimeSpan? timeout = null, int maxInflight = 16 * 1024)
         {
-            var server = shape == "Cluster" ? ClusterNode((command, _) => reply(command)) : Standalone((command, _) =>
+            var cluster = shape.StartsWith("Cluster", StringComparison.Ordinal);
+            var usesSentinel = shape.StartsWith("Sentinel", StringComparison.Ordinal);
+            var server = cluster ? ClusterNode((command, _) => reply(command)) : Standalone((command, _) =>
                 reply(command) ?? (command == "ROLE" ? RoleReply("master") : command.StartsWith("HELLO", StringComparison.Ordinal)
                     ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null));
             FakeRespServer? sentinel = null;
@@ -246,25 +242,18 @@ public partial class TopologyCommandRetryTests
             {
                 if (shape == "group")
                 {
-                    var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)], GroupOptions() with { RetryPolicy = policy });
+                    var candidate = Candidate(server, 0);
+                    var group = await RespireFailoverGroup.ConnectAsync(
+                        [candidate with { Options = candidate.Options with { MaxInflightCommands = maxInflight } }],
+                        GroupOptions() with { RetryPolicy = policy });
                     return new(server, null, null, group, shape);
                 }
-                if (shape == "Sentinel") sentinel = Sentinel(() => server.Port);
-                var options = shape switch
-                {
-                    "Sentinel" => SentinelOptions(sentinel!), "Cluster" => ClusterOptions(server), _ => StandaloneOptions(server),
-                };
-                if (cache && shape == "Cluster")
-                {
-                    var original = server.ReplyOverride;
-                    server.ReplyOverride = (id, command) => command.StartsWith("HELLO", StringComparison.Ordinal)
-                        ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : command == "CLIENT ID" ? ":1\r\n"u8.ToArray() : original!(id, command);
-                }
+                if (usesSentinel) sentinel = Sentinel(() => server.Port);
+                var options = usesSentinel ? SentinelOptions(sentinel!) : cluster ? ClusterOptions(server) : StandaloneOptions(server);
                 var client = await RespireClient.ConnectAsync(options with
                 {
                     RetryPolicy = policy, CommandTimeout = timeout ?? TimeSpan.FromSeconds(5), Connections = 1,
-                    Protocol = cache ? RespProtocol.Resp3 : RespProtocol.Resp2,
-                    ClientSideCache = cache ? new() { CoalesceConcurrentMisses = true } : null,
+                    MaxInflightCommands = maxInflight,
                 });
                 return new(server, client, sentinel, null, shape);
             }
@@ -280,13 +269,14 @@ public partial class TopologyCommandRetryTests
         {
             if (group is not null) return await group.ExecuteAsync((member, callerToken) => member.GetStringAsync("key", callerToken),
                 category, token);
-            if (shape == "script") return await client!.Scripts.ExecuteStringAsync(
+            var request = RequestShape(shape);
+            if (request == "script") return await client!.Scripts.ExecuteStringAsync(
                 RespireScript.Create("return redis.call('GET', KEYS[1])").WithRetryCategory(category),
                 ["key"], cancellationToken: token);
-            if (shape == "function") return await client!.Functions.ExecuteStringAsync(
+            if (request == "function") return await client!.Functions.ExecuteStringAsync(
                 RespireFunction.Create("reader", readOnly: true).WithRetryCategory(category),
                 ["key"], cancellationToken: token);
-            if (shape == "raw" || category != RespireCommandRetryCategory.ReadOnly)
+            if (request == "raw" || category != RespireCommandRetryCategory.ReadOnly)
             {
                 using var result = await client!.ExecuteAsync(RespireCommand.Create("GET").WithRetryCategory(category),
                     ["key"], cancellationToken: token);
@@ -294,6 +284,9 @@ public partial class TopologyCommandRetryTests
             }
             return await client!.GetStringAsync("key", token);
         }
+
+        internal ValueTask<RespireResult> OccupyAsync()
+            => (client ?? group!.ActiveClient).ExecuteAsync("ECHO", ["occupy"]);
 
         public async ValueTask DisposeAsync()
         {
@@ -304,41 +297,4 @@ public partial class TopologyCommandRetryTests
         }
     }
 
-    private sealed class CompositionEvidence : IDisposable
-    {
-        private readonly MeterListener _listener = new();
-        private long _internalErrors;
-        private long _finalErrors;
-        internal readonly ConcurrentDictionary<string, long> Retries = new();
-        internal readonly TaskCompletionSource ErrorObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal long InternalErrors => Interlocked.Read(ref _internalErrors);
-        internal long FinalErrors => Interlocked.Read(ref _finalErrors);
-
-        internal CompositionEvidence(bool throwAfterRecording = false)
-        {
-            _listener.InstrumentPublished = static (instrument, listener) =>
-            {
-                if (instrument.Meter.Name == "Respire" && instrument.Name is "respire.command.retries" or "redis.client.errors")
-                    listener.EnableMeasurementEvents(instrument);
-            };
-            _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
-            {
-                foreach (var tag in tags)
-                {
-                    if (instrument.Name == "respire.command.retries" && tag.Key == "respire.command.retry.outcome")
-                        Retries.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
-                    if (instrument.Name == "redis.client.errors" && tag.Key == "redis.client.errors.internal")
-                    {
-                        if (Equals(tag.Value, true)) Interlocked.Add(ref _internalErrors, value);
-                        else Interlocked.Add(ref _finalErrors, value);
-                        ErrorObserved.TrySetResult();
-                    }
-                }
-                if (throwAfterRecording) throw new InvalidOperationException("Injected listener failure.");
-            });
-            _listener.Start();
-        }
-
-        public void Dispose() => _listener.Dispose();
-    }
 }
