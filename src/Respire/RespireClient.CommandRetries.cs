@@ -61,8 +61,9 @@ public sealed partial class RespireClient
                     await _core.EnsureConnectedAsync(token, observation).ConfigureAwait(false);
                     // Initialization alone does not wait for an established socket's replacement.
                     // Do not spend the command attempt budget probing the same dead connection.
-                    // Circuit-aware selection retains immediate rejection of an open endpoint.
-                    connection = attempt > 1 && _core.Circuits is null
+                    // An open circuit still rejects before the wait, and again at admission below.
+                    if (attempt > 1 && _core.Circuits is not null) RejectOpenCircuit(token);
+                    connection = attempt > 1
                         ? await _core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
                         : GetCircuitAwareConnection(_core.Multiplexer, token);
                     observation.UseEndpoint(new(connection.Host, connection.Port), token);
@@ -125,6 +126,11 @@ public sealed partial class RespireClient
             catch (Exception) { /* A listener cannot replace the logical command outcome. */ }
         }
     }
+
+    // Waiting for a replacement records no availability samples. The ignored permit
+    // releases half-open probe capacity without completing the probe.
+    private void RejectOpenCircuit(CancellationToken token)
+        => _core.Circuits!.Acquire(_core.Multiplexer.ActiveConnectionEndpoint, token).Dispose();
 
     private void ThrowIfRetryStopped(string operation, CancellationToken token, CommandDeadline deadline)
     {

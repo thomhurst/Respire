@@ -39,6 +39,61 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
+    [Arguments("BITFIELD_RO")]
+    [Arguments("GEOSEARCH")]
+    public async Task SpecializedTypedReadsRetrySelectedServerErrors(string name)
+    {
+        var reads = 0;
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command.StartsWith(name + " ", StringComparison.Ordinal)
+            ? Interlocked.Increment(ref reads) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray()
+                : name == "GEOSEARCH" ? "*1\r\n$3\r\none\r\n"u8.ToArray() : "*1\r\n:7\r\n"u8.ToArray()
+            : Setup(command);
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        if (name == "GEOSEARCH")
+            await Assert.That((await client.Geo.SearchAsync("places", GeoSearchOrigin.FromMember("origin"),
+                GeoSearchShape.Circle(1)))[0].Member).IsEqualTo("one");
+        else
+            await Assert.That((await client.Bitmaps.FieldReadOnlyAsync("bits",
+                BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))))[0]).IsEqualTo(7L);
+        await Assert.That(reads).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task SpecializedTypedCommandsForwardAuditedRetryCategories()
+    {
+        var get = BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0));
+        await Assert.That(new BitFieldCommand(RespireCommands.Bitmap.BITFIELD_RO.Verb, "bits", [get]).RetryCategory)
+            .IsEqualTo(RespireCommandRetryCategory.ReadOnly);
+        await Assert.That(new BitFieldCommand(RespireCommands.Bitmap.BITFIELD.Verb, "bits", [get]).RetryCategory)
+            .IsEqualTo(RespireCommands.Bitmap.BITFIELD.Verb.RetryCategory);
+        await Assert.That(new BitOpCommand(RespireCommands.Bitmap.BITOP.Verb, "AND", "destination", ["source"]).RetryCategory)
+            .IsEqualTo(RespireCommands.Bitmap.BITOP.Verb.RetryCategory);
+        await Assert.That(new GeoAddCommand(RespireCommands.Geo.GEOADD.Verb, "places", SetWhen.Always, false, []).RetryCategory)
+            .IsEqualTo(RespireCommands.Geo.GEOADD.Verb.RetryCategory);
+    }
+
+    [Test]
+    public async Task CircuitAwareRetryWaitsForReplacementWithoutSpendingAttempts()
+    {
+        var reads = 0;
+        await using var server = Server();
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command != "GET key") return Setup(command);
+            if (Interlocked.Increment(ref reads) == 1) { server.CloseConnections(); return null; }
+            return "$5\r\nvalue\r\n"u8.ToArray();
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = new(),
+            RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
+        });
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(reads).IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DisabledPolicyPreservesOneSend(bool policyPresent)

@@ -550,6 +550,7 @@ internal readonly struct GeoSearchCommand(
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+    public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
     public ReadCommandKind ReadKind => verb.ReadKind;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -673,6 +674,7 @@ internal readonly struct GeoAddCommand(
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+    public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);

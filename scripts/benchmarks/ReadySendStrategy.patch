@@ -1,6 +1,6 @@
 diff --git b/src/Respire/RespireClient.ReadySend.cs a/src/Respire/RespireClient.ReadySend.cs
 new file mode 100644
-index 000000000..a8e871fce
+index 000000000..ccf4ef66f
 --- /dev/null
 +++ a/src/Respire/RespireClient.ReadySend.cs
 @@ -0,0 +1,216 @@
@@ -20,7 +20,7 @@ index 000000000..a8e871fce
 +    // Callers retain their response-specific streaming exclusions.
 +    private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
 +        where TCommand : struct, IRespCommand
-+        => !RespireTelemetry.Source.HasListeners()
++        => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
 +            && (!RespireTelemetry.IsOperationEnabled(operation) || !ScriptingEngineInfo.IsScriptingCommand(operation))
 +            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
 +            && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);
@@ -344,7 +344,7 @@ index b3f1ce4fd..e7f9e7bf6 100644
 -    // Callers retain their response-specific streaming exclusions.
 -    private bool CanUseDirectReplySource<TCommand>(string operation, in TCommand command)
 -        where TCommand : struct, IRespCommand
--        => !RespireTelemetry.Source.HasListeners()
+-        => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
 -            && (!RespireTelemetry.IsOperationEnabled(operation) || !ScriptingEngineInfo.IsScriptingCommand(operation))
 -            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
 -            && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);
