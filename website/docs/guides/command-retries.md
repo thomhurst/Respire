@@ -178,10 +178,12 @@ and Sentinel dispatch selects the current generation. The full circuit and retry
 composition, including half-open contention and failover switches, remains tracked by
 [#1256](https://github.com/thomhurst/Respire/issues/1256).
 
-Replica read routing (except Cluster batch slot groups, described below), streams, fire-and-forget operations, individual deferred batch/transaction
+Immediate replica reads, streams, fire-and-forget operations, individual deferred batch/transaction
 members (batches retry only as complete units, described below), connection
 protocol commands, cursor continuations, and
-commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
+commands categorized as `Never` do not use a retry owner. A Cluster batch slot group
+routed to replicas does use its group's retry owner; see [#1536](https://github.com/thomhurst/Respire/issues/1536)
+for a known cursor-affinity defect on that path. Caller-supplied raw names
 never acquire retry permission from their diagnostic name. Use an audited
 `RespireCommands` descriptor for generated buffered commands, or declare a category.
 
@@ -231,8 +233,12 @@ Hash import sessions and server cursor continuations do not retry. Cluster group
 counts started resends after route selection, excluding a group rejected entirely by open
 circuits, and one terminal outcome per retried group. Watched transaction helpers retain
 their complete-callback retries.
-Further whole-unit work remains tracked by
-[#1216](https://github.com/thomhurst/Respire/issues/1216).
+
+With retries enabled, a fresh Cluster cursor page (cursor `0`) routed to a replica takes the
+retry path without recording its issuing server, so the next page fails with a lost cursor.
+Until [#1536](https://github.com/thomhurst/Respire/issues/1536) is fixed, keep replica cursor
+scans out of retry-enabled Cluster batches. Acceptance status is in
+[whole-unit acceptance](#whole-unit-acceptance).
 
 ### Transactions
 
@@ -604,8 +610,53 @@ as generally zero-allocation. Tracked Cluster cache retry overhead now has a fix
 but no assessed completed result. Process retention does not prove ownership leaks or
 complete reclamation. A successful workflow validates reports, not acceptance.
 
-Aggregate acceptance remains open in [#1499](https://github.com/thomhurst/Respire/issues/1499),
-[#1215](https://github.com/thomhurst/Respire/issues/1215) and
-[#862](https://github.com/thomhurst/Respire/issues/862). Cluster batch and transaction
-whole-unit scope remains [#1216](https://github.com/thomhurst/Respire/issues/1216);
-full circuit composition remains [#1256](https://github.com/thomhurst/Respire/issues/1256).
+[#1499](https://github.com/thomhurst/Respire/issues/1499) and
+[#1215](https://github.com/thomhurst/Respire/issues/1215) are closed. The performance gaps
+above are still unmet, and this guide keeps them on record. The retry epic
+[#862](https://github.com/thomhurst/Respire/issues/862) stays open. Whole-unit status is below.
+Full circuit composition is still tracked by [#1256](https://github.com/thomhurst/Respire/issues/1256).
+
+### Whole-unit acceptance
+
+This audit checks [#1216](https://github.com/thomhurst/Respire/issues/1216) against its merged
+children on main `85614c077`: [#1521](https://github.com/thomhurst/Respire/issues/1521) (PR #1528),
+[#1523](https://github.com/thomhurst/Respire/issues/1523) (PR #1530),
+[#1524](https://github.com/thomhurst/Respire/issues/1524) (PR #1533) and
+[#1525](https://github.com/thomhurst/Respire/issues/1525) (PR #1529). The aggregate audit is
+[#1526](https://github.com/thomhurst/Respire/issues/1526).
+
+| #1216 criterion | Status | Evidence |
+| --- | --- | --- |
+| Replay only when every member's category and the write outcome permit it. Never resend a subset. | Met | `TransactionCommandRetryTests` (overwrite, accumulating, uncategorized raw, declared script/function), `BatchCommandRetryTests` (`MixedBatchRequiresPermissionForSuccessfulAccumulatingMember`, `NeverMemberPreventsWholeUnitReplay`), `TransactionTransientRetryTests.EveryQueuedMemberMustPermitReplay`. |
+| Preserve atomicity, deferred publication, FIFO ownership and payload lifetimes. | Met, with one defect | `SafeBatchReplaysEveryMemberAndPublishesOnlyFinalReplies`, `SnapshotAndMutationFenceSpanBackoffAndPublication`, `ConversionRunsOnlyAfterFinalRetryDecision`, `ClusterBatchRedirectDuringRetryKeepsOriginalArguments`. Fresh replica cursor pages lose affinity: [#1536](https://github.com/thomhurst/Respire/issues/1536). |
+| Classify mixed units conservatively, including partial writes, connection loss and late replies. | Met | `PartialTransportWriteNeverGrantsUnsafeReplay`, `AcquisitionFailureBeforeAnySendAllowsMixedUnitUnderReadOnlyPolicy`, `LostRepliesReplayOnlySafeCompleteUnits`, `SentinelBatchConnectionLossReplaysAllReadsOnNewPrimary`. |
+| Cancellation and deadlines settle each result once. Source and connection reuse see no stale state. | Met | `CallerCancellationStopsWholeUnitAndPreservesToken`, `OneDeadlineIncludesFirstAttemptAndLateRetryReplies`, `ExhaustionReportsOncePerUnitAcrossReusedResponseSources`, `CanceledAttemptRetainsNativeFenceAcrossSnapshotAndSourceReuse`, `BackoffBeyondDeadlineDoesNotResend`. |
+| Bounded WATCH-conflict attempts separate from transient attempts. Document the replay boundary. | Met | `RespireTransactionRetryOptions.MaxAttempts`, `ConflictsAndTransientFailuresUseIndependentBudgets`, `DirectWatchedCommitDoesNotReplayEvenWithAccumulatingPermission`, and the [watched transaction retries](./batches-and-transactions#automatic-watched-transaction-retries) guide. |
+| Failover switching and telemetry without duplicate observations. A lost `EXEC` reply is not an abort. | Met | `FailoverUnitRetryUsesNewActiveMember`, `UnitCircuitRejectionIsNeverRetried`, `ClusterUnitExhaustionHasOneTerminalRetryObservation`, `RetryTelemetryReportsOnlyAcceptedResends`, `LostExecReplyResendsReadOnlyUnitAndPublishesOnce`, `ClusterLostExecReplyChecksEveryMember`. |
+| Causal net8.0/net10.0 tests verify server effects, cleanup failures, disposal and interleaved commands. | **Unmet** | All unit tests use the fake server. There is no real Redis unit retry test, no standalone or Sentinel client disposal during unit backoff, no cleanup-failure case, and interleaving is covered only by a circuit-rejection regression. Tracked by [#1537](https://github.com/thomhurst/Respire/issues/1537). |
+| Zero allocation and no measurable healthy-path cost, with pinned bracketed comparisons. | **Pending** | See below. |
+
+`UnitRetryBenchmarks` measures a healthy two-member read-only batch and unwatched transaction on
+one hash slot. It runs on standalone, Sentinel and a single-primary Cluster, each with a null
+policy, a disabled policy (`MaxAttempts = 1`) and an enabled policy. The enabled policy owns a
+whole-unit retry on every topology, so the enabled rows measure the retry owner's healthy cost.
+The `run-unit-retry-benchmarks` PR label starts two pinned net10.0 MediumRun comparisons with the
+identical fixture and owner/policy retention by stage:
+
+- `unit-policies`: 18 cases, current base against the candidate. Compare Default, Disabled and
+  Enabled rows within each phase.
+- `unit-historical-default`: 6 Default cases against control `a30f0fba3`, the last main revision
+  before the whole-unit children. Intervening changes stay included, so this is not an isolated
+  retry ablation.
+
+A batch or transaction allocates its queue and pendings in every mode, so zero allocation here means
+Disabled and historical-Default rows allocate the same bytes as current Default. No completed run
+exists yet. The earlier transport comparison requested on PR #1530, run
+[38270087050](https://github.com/thomhurst/Respire/actions/runs/38270087050), had not completed
+at the time of this audit. A local Windows ShortRun (Docker Redis, standalone only) is not acceptance
+evidence. It reported 1.90 KB for Default batch and transaction, 1.92 to 1.93 KB for Disabled, and
+2.38 to 2.46 KB for Enabled. The completed CI runs must confirm or refute the Disabled difference.
+
+#1216 stays open until [#1536](https://github.com/thomhurst/Respire/issues/1536) and
+[#1537](https://github.com/thomhurst/Respire/issues/1537) close and the comparisons above are
+assessed.

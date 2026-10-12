@@ -229,6 +229,27 @@ are released. `await using` also covers early returns and exceptions while comma
 disposal is a no-op after commit. Committing an empty transaction succeeds as a no-op and sends
 nothing to Redis.
 
+## Transient retries for batches and transactions
+
+With `RespireOptions.RetryPolicy` set, batches and unwatched transactions retry as complete units.
+The client never resends only the failed members.
+
+- A standalone or Sentinel batch resends its whole pipeline. A Cluster batch retries each slot
+  group on its own. Pendings stay incomplete until the final retry decision, and only the final
+  attempt's results are published.
+- An unwatched transaction resends its retained `MULTI`, queued commands and `EXEC` together, on
+  standalone, Sentinel and Cluster clients. A lost `EXEC` reply counts as a possible execution,
+  not an abort.
+- A resend needs a selected transient failure, and the policy must permit every member's retry
+  category for the unit's write outcome. A single `INCR`, or a raw member without a declared
+  category, keeps the unit at one send unless you accept that risk explicitly.
+- Watched transactions retry only through the helpers in
+  [automatic watched transaction retries](#automatic-watched-transaction-retries). Hash import sessions
+  and units that continue a server-local cursor never retry.
+
+The [command retries guide](./command-retries#batches) describes the full rules, the telemetry,
+and the current acceptance status, including the open items.
+
 ## Optimistic concurrency
 
 Create the watched transaction first, read current values through the client, and queue only the

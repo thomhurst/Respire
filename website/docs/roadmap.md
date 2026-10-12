@@ -152,12 +152,15 @@ acceptance criteria, dependencies, and current status:
   (independently per slot group in Cluster). Watched transaction helpers now
   [replay complete callbacks](guides/batches-and-transactions.md#automatic-watched-transaction-retries)
   for permitted transient failures, with independent WATCH-conflict and transient budgets. Unwatched
-  standalone, Sentinel and Cluster transactions retry as complete units. Further retry acceptance remains
-  open in [#1216](https://github.com/thomhurst/Respire/issues/1216), and the full circuit composition in
-  [#1256](https://github.com/thomhurst/Respire/issues/1256).
-  Immediate retry correctness and performance acceptance remains open in
+  standalone, Sentinel and Cluster transactions retry as complete units. The
+  [whole-unit acceptance audit](./guides/command-retries#whole-unit-acceptance) keeps
+  [#1216](https://github.com/thomhurst/Respire/issues/1216) open: real Redis and lifetime coverage
+  ([#1537](https://github.com/thomhurst/Respire/issues/1537)), a Cluster replica cursor-affinity defect
+  ([#1536](https://github.com/thomhurst/Respire/issues/1536)) and the healthy-path unit comparisons are
+  unmet. The full circuit composition remains in [#1256](https://github.com/thomhurst/Respire/issues/1256).
   [#1499](https://github.com/thomhurst/Respire/issues/1499) and
-  [#1215](https://github.com/thomhurst/Respire/issues/1215). Public fault tests include discovery,
+  [#1215](https://github.com/thomhurst/Respire/issues/1215) are closed, but their performance gaps below
+  are still unmet. Public fault tests include discovery,
   backoff cancellation, deadlines, error ownership, tracked Cluster cache producers and pooled reuse.
   Real Redis tests check increment effects after Sentinel promotion, group switching and Cluster slot migration.
   The [completed policy comparison](./guides/command-retries#completed-policy-comparison) and
@@ -168,9 +171,12 @@ acceptance criteria, dependencies, and current status:
   and tracked Cluster cache overhead remain unmet. Complete reclamation and every lifetime race are not proven.
   The retry epic [#862](https://github.com/thomhurst/Respire/issues/862) remains open.
   No zero-overhead claim is made.
-  [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance
-  acceptance remains open in [#1214](https://github.com/thomhurst/Respire/issues/1214), with causal
-  allocation and selection measurements tracked by [#1474](https://github.com/thomhurst/Respire/issues/1474).
+  [Transport write outcomes](./guides/transport-write-evidence) are implemented.
+  [#1214](https://github.com/thomhurst/Respire/issues/1214) and
+  [#1474](https://github.com/thomhurst/Respire/issues/1474) are closed. Their final audit left
+  aggregate transport performance acceptance unmet, and that result still counts against #862's
+  healthy-path criterion. Automatic `XADD` producer identity stays separate in
+  [#892](https://github.com/thomhurst/Respire/issues/892).
 - [Error telemetry ownership hardening](https://github.com/thomhurst/Respire/issues/1046): strengthen
   stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,

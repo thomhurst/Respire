@@ -75,3 +75,47 @@ jobs:
       retained-memory: true
       retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
       retained-memory-dimensions: owner,policy
+
+  # Whole-unit batch and unwatched transaction retries (#1216). One label starts both
+  # the policy comparison on the current base and the pre-whole-unit historical control.
+  unit-policies:
+    if: github.event.label.name == 'run-unit-retry-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/UnitRetryBenchmarks.cs
+      filter: '*UnitRetryBenchmarks*'
+      expected-case-count: 18
+      expected-methods: Batch,Transaction
+      artifact-prefix: unit-retry-policies
+      job: Medium
+      redis-server: true
+      retry-topologies: true
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      retained-memory-dimensions: owner,policy
+
+  unit-historical-default:
+    if: github.event.label.name == 'run-unit-retry-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      # Last main revision before the whole-unit retry children (#1529, #1530, #1528, #1533).
+      # Intervening changes remain included; this is not an isolated retry ablation.
+      control-sha: a30f0fba3723e967b3ab580310e5de9051b32a79
+      fixture: benchmarks/Respire.Benchmarks/UnitRetryBenchmarks.cs
+      filter: '*UnitRetryBenchmarks*'
+      expected-case-count: 6
+      expected-methods: Batch,Transaction
+      artifact-prefix: unit-retry-historical-default
+      job: Medium
+      default-policy-only: true
+      redis-server: true
+      retry-topologies: true
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      retained-memory-dimensions: owner,policy
