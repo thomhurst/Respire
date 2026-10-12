@@ -14,8 +14,9 @@ For call sites that still pass `RedisKey`/`RedisValue` or consume `RedisResult`,
 use the [incremental migration boundary](./guides/stackexchange-interop).
 The boundary also includes a limited database adapter for the official distributed cache
 and DataProtection integrations, with [pinned Hangfire acceptance](./guides/hangfire-acceptance).
-General interface parity and combined Microsoft/SignalR/Hangfire acceptance
-remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
+General interface parity and combined Microsoft/Hangfire acceptance remain
+pending under [#889](https://github.com/thomhurst/Respire/issues/889). Microsoft's
+SignalR backplane is not supported on the adapter; use [`Respire.SignalR`](./integrations/signalr).
 
 The published comparison benchmarks and feature table below describe StackExchange.Redis
 3.3.1. The repository now pins 3.4.0; changing the dependency does not update those measurements.

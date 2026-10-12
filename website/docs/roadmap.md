@@ -126,8 +126,11 @@ with explicit exclusions and limitations. The cache/DataProtection inventory now
 covers 52 upstream cases across all six applicable test classes, excluding only
 the cache's two internal HybridCache detection rows. CI runs both protocols on
 both supported frameworks. General StackExchange.Redis interface
-parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
-[#889](https://github.com/thomhurst/Respire/issues/889).
+parity and combined Microsoft/Hangfire acceptance remain planned under
+[#889](https://github.com/thomhurst/Respire/issues/889). Running Microsoft's
+SignalR backplane on the adapter is not planned
+([#1268](https://github.com/thomhurst/Respire/issues/1268)); the native
+[`Respire.SignalR`](./integrations/signalr) backplane covers SignalR scale-out.
 
 The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) covers
 clustering membership and gateways, atomic grain persistence, and reminders

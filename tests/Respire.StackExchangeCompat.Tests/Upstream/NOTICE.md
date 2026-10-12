@@ -59,7 +59,8 @@ The broader compatibility project additionally tests buffer-cache operations,
 binary result shapes, native exception types, sync/async commands, batch and
 transaction ordering, shutdown, borrowed-client ownership, callback delivery and
 unsubscribe. Hangfire has its own [pinned upstream inventory](../../Respire.Hangfire.Acceptance.Tests/Upstream/NOTICE.md).
-SignalR queue-based conformance remains blocked by
-[#1268](https://github.com/thomhurst/Respire/issues/1268), tracked in
-[#1473](https://github.com/thomhurst/Respire/issues/1473). This inventory does not
-claim general StackExchange.Redis parity or close #1270/#889.
+SignalR queue-based conformance is not planned
+([#1268](https://github.com/thomhurst/Respire/issues/1268)): the adapter does not
+provide queue-returning subscriptions, so Microsoft's SignalR backplane is out of
+scope. SignalR scale-out uses the native `Respire.SignalR` backplane. This inventory
+does not claim general StackExchange.Redis parity or close #889.

@@ -22,7 +22,7 @@ does not establish every feature or general StackExchange.Redis interface parity
 | `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.12 on both frameworks | Public upstream cache and expiration classes, six service registration facts, buffer cache | `Respire.Caching` via `AddRespireDistributedCache` |
 | `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.12 on both frameworks | All four repository scenarios and the builder extension fact, shared persisted key rings | `Respire.DataProtection` via `PersistKeysToRespire` |
 | `Hangfire.Redis.StackExchange` | 1.12.0 | 93 upstream facts and two worker lifecycle cases; [exact exclusions](./hangfire-acceptance) | Keep the shim at the Hangfire boundary; use native typed facets in application code |
-| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Unsupported:** requires queue-returning subscriptions; [#1268](https://github.com/thomhurst/Respire/issues/1268) blocks upstream conformance | `Respire.SignalR` via `AddRespire` |
+| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Not supported:** requires queue-returning subscriptions, which the adapter will not provide ([#1268](https://github.com/thomhurst/Respire/issues/1268)) | `Respire.SignalR` via `AddRespire` |
 
 The cache/DataProtection upstream inventory covers **52 cases across six test
 classes**. Only the two rows of the cache's internal HybridCache detection test
@@ -43,10 +43,11 @@ variants; batches and transactions queue async commands until execution.
 
 SignalR's `ChannelMessageQueue` construction, message delivery/completion and
 owned unsubscribe require internal StackExchange.Redis APIs. Callback pub/sub
-support for Hangfire does not satisfy that contract. Combined SignalR conformance
-remains tracked by [#1473](https://github.com/thomhurst/Respire/issues/1473);
-[#1270](https://github.com/thomhurst/Respire/issues/1270) and
-[#889](https://github.com/thomhurst/Respire/issues/889) remain open.
+support for Hangfire does not satisfy that contract. The adapter does not reach
+into StackExchange.Redis internals, so the queue-returning `ISubscriber`
+overloads stay unsupported and Microsoft's SignalR backplane cannot run on the
+adapter. Use the native [`Respire.SignalR` backplane](../integrations/signalr)
+instead; it interoperates with servers that still run Microsoft's backplane.
 Orleans is assessed separately in the [Orleans compatibility guide](./orleans-compatibility).
 
 ```csharp
@@ -282,8 +283,8 @@ non-null `asyncState`, and all unlisted commands are explicitly
 unsupported. Unsupported members throw `NotSupportedException` with native
 API guidance rather than returning fabricated success. This adapter does not
 provide general StackExchange.Redis parity. Pinned Hangfire acceptance is
-documented [separately](./hangfire-acceptance); SignalR acceptance remains blocked
-under [#889](https://github.com/thomhurst/Respire/issues/889).
+documented [separately](./hangfire-acceptance). Microsoft's SignalR backplane is
+not supported; use [`Respire.SignalR`](../integrations/signalr).
 Floating-point and bounded/expiring string increment overloads and conditional
 sorted-set additions remain unsupported.
 
