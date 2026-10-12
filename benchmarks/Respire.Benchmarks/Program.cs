@@ -5,6 +5,21 @@ using BenchmarkDotNet.Jobs;
 var config = DefaultConfig.Instance
     .WithOptions(ConfigOptions.DisableOptimizationsValidator);
 
+if (args is ["--transport-stream-diagnostics", var streamDirectory, var streamRevision, var streamPhase,
+    var streamConnections, var streamCase, var streamLaunch, var streamIterations])
+{
+    await Respire.Benchmarks.TransportStreamDiagnostics.RunAsync(streamDirectory, streamRevision, streamPhase,
+        int.Parse(streamConnections), streamCase, int.Parse(streamLaunch), int.Parse(streamIterations));
+    return;
+}
+
+if (args is ["--transport-stream-trace-report", var streamTrace, var streamReport])
+{
+    Respire.Benchmarks.TransportBatchTraceReport.Write(streamTrace, streamReport,
+        Respire.Benchmarks.StreamDiagnosticEvents.ProviderName);
+    return;
+}
+
 if (args is ["--transport-batch-diagnostics", var directory, var revision, var phase,
     var connections, var count, var launch, var iterations])
 {
