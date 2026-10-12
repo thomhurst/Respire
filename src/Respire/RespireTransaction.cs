@@ -519,6 +519,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             var sentinelTelemetryStarted = false;
             var retryUnit = CanRetryUnit(core);
             var unitAttempts = 0;
+            var unitResendPending = false;
+            var routingAttempt = 0;
             var retryTelemetry = retryUnit ? new UnitRetryTelemetry(_retryCategories.Label) : null;
             Action? onUnitAccepted = retryTelemetry is null ? null : retryTelemetry.Accepted;
             try
@@ -528,7 +530,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 if (slot is null && cluster is { } flushCluster
                     && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                     slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
-                for (var attempt = 0; ; attempt++)
+                for (;;)
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
                     acquisition.Dispose();
@@ -586,12 +588,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         {
                             unitAttempts++;
                             unitAttemptCounted = true;
+                            var acceptedResendsBefore = retryTelemetry!.AcceptedResends;
                             var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, deadline, this, observation, mutationFence,
                                 pinToConnection: core.Circuits is not null,
-                                onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
+                                onAccepted: unitResendPending ? onUnitAccepted : null).ConfigureAwait(false);
                             // Acceptance runs under the transport write gate; publish only after leaving it.
-                            retryTelemetry!.PublishAccepted();
+                            retryTelemetry.PublishAccepted();
+                            if (retryTelemetry.AcceptedResends != acceptedResendsBefore) unitResendPending = false;
                             outcome = attempted.WriteOutcome;
                             reply = attempted.GetResult();
                         }
@@ -623,8 +627,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         continue;
                     }
                     catch (RespireConnectionRetiredException retirement) when (cluster is not null
-                        && ConnectionPolicy.CanRetryRetirement(cluster, attempt, cancellationToken))
+                        && ConnectionPolicy.CanRetryRetirement(cluster, routingAttempt, cancellationToken))
                     {
+                        if (unitAttemptCounted) unitAttempts--;
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         observation.Handled(retirement);
@@ -632,6 +637,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         connection = await cluster.GetReplacementConnectionAsync(null, slot, null, acquisition.Token, discovery, observation)
                             .ConfigureAwait(false);
                         discoveryPending = false;
+                        routingAttempt++;
                         continue;
                     }
                     catch (Exception error)
@@ -643,7 +649,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     }
                     finally { admission.Dispose(); }
                     Exception? unitResponseError = null;
-                    if (retryUnit && retryDelay is null)
+                    if (retryUnit && retryDelay is null && !(reply.IsError && cluster is not null
+                        && ClusterRouter.CanRecover(ResponseReader.ServerError(in reply, "MULTI/EXEC"), slot)))
                     {
                         // EXEC can contain both successful members and transient errors. Apply the
                         // whole frame's write evidence and every member's category before publishing any result.
@@ -663,7 +670,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             acquisition.CheckDeadline("MULTI/EXEC", core);
                             try
                             {
-                                connection = await _client.GetUnitRetryConnectionAsync(acquisition.Token, observation).ConfigureAwait(false);
+                                if (cluster is not null)
+                                {
+                                    await cluster.WaitForRouteReplacementAsync(slot, acquisition.Token).ConfigureAwait(false);
+                                    connection = await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
+                                }
+                                else
+                                    connection = await _client.GetUnitRetryConnectionAsync(acquisition.Token, observation).ConfigureAwait(false);
+                                unitResendPending = true;
+                                routingAttempt = 0;
                                 break;
                             }
                             catch (Exception error)
@@ -677,22 +692,19 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }
                         continue;
                     }
-                    if (!reply.IsError || cluster is null)
+                    var redirect = reply.IsError && cluster is not null
+                        ? ResponseReader.ServerError(in reply, "MULTI/EXEC") : null;
+                    // EXEC result arrays can contain partial success. Only top-level routing
+                    // rejections stay inside this attempt; all other replies finish the unit.
+                    if (cluster is null || redirect is null || !ClusterRouter.CanRecover(redirect, slot))
                     {
                         if (retryTelemetry is { AcceptedResends: > 0 })
                             RespireTelemetry.RecordCommandRetry(_retryCategories.Label, unitResponseError is not null ? "exhausted" : "succeeded");
                         return reply;
                     }
 
-                    var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
-                    // EXEC result arrays can contain partial success and are returned above.
-                    if (!ClusterRouter.CanRecover(redirect, slot))
-                    {
-                        return reply;
-                    }
-
                     reply.Dispose();
-                    if (attempt >= ClusterRouter.RedirectLimit)
+                    if (routingAttempt >= ClusterRouter.RedirectLimit)
                     {
                         // Throw within the owning round so its outcome and queued operations
                         // retain the same terminal routing rejection.
@@ -724,11 +736,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     }
 
                     cluster.RecordRejection(ref discovery, connection, redirect);
+                    if (unitAttemptCounted) unitAttempts--;
                     observation.Handled(redirect);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(redirect, connection, acquisition.Token, slot, discovery, observation)
                         .ConfigureAwait(false);
                     discoveryPending = false;
+                    routingAttempt++;
                 }
             }
             catch (Exception error)
@@ -824,9 +838,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     }
 
     // Only a complete unit that can be rebuilt from its retained frame is resent. WATCH state,
-    // import fieldsets, Cluster routing and server-local cursor pages cannot follow a new connection.
+    // import fieldsets and server-local cursor pages cannot follow a new connection.
     private bool CanRetryUnit(ClientCore core)
-        => core.CommandRetries is not null && core.Cluster is null && this is RespireTransaction
+        => core.CommandRetries is not null && this is RespireTransaction
             && _watchConnection is null && !ConnectionPolicy.IsImportSession && !_hasCursorContinuation
             && _ops.Count != 0;
 
