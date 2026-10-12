@@ -103,5 +103,5 @@ remain outside this contract unless separately documented in the migration guide
 
 This Hangfire-specific evidence does not close
 [#889](https://github.com/thomhurst/Respire/issues/889), which requires independent combined
-Microsoft/SignalR/Hangfire acceptance. The parent
+Microsoft/Hangfire acceptance. The parent
 [#1269](https://github.com/thomhurst/Respire/issues/1269) retains its complete acceptance gate.
