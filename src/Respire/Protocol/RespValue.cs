@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -286,12 +287,18 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
             RespDataType.SimpleString or RespDataType.BulkString or RespDataType.BigNumber =>
                 Utf8String.GetString(_payload),
             RespDataType.VerbatimString => DecodeVerbatimString(),
-            RespDataType.Integer => _integerValue.ToString(),
+            RespDataType.Integer => FormatInteger(),
             RespDataType.Boolean => AsBoolean().ToString(),
-            RespDataType.Double => AsDouble().ToString(),
+            RespDataType.Double => FormatDouble(),
             _ => string.Empty,
         };
     }
+
+    // Protocol text must not follow the caller's culture: de-DE writes "1,5" and sv-SE uses U+2212
+    // for the minus sign, so numeric replies use invariant round-trip formatting.
+    private string FormatInteger() => _integerValue.ToString(CultureInfo.InvariantCulture);
+
+    private string FormatDouble() => AsDouble().ToString("R", CultureInfo.InvariantCulture);
 
     private string DecodeVerbatimString()
     {
@@ -362,8 +369,8 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         {
             RespDataType.Null => "null",
             RespDataType.Boolean => AsBoolean().ToString(),
-            RespDataType.Integer => _integerValue.ToString(),
-            RespDataType.Double => AsDouble().ToString(),
+            RespDataType.Integer => FormatInteger(),
+            RespDataType.Double => FormatDouble(),
             RespDataType.Array or RespDataType.Map or RespDataType.Set or RespDataType.Push
                 => $"[{_type}({_elementCount})]",
             RespDataType.SimpleString or RespDataType.BulkString or RespDataType.Error
