@@ -127,57 +127,6 @@ jobs:
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
-      - name: Collect separate pinned batch allocation diagnostics
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Separate processes after all public timing runs; tracing never changes their regions.
-          # Preserve both controls and every case/launch in both existing metric-mode jobs.
-          for phase in baseline-a candidate baseline-b; do
-            source=baseline
-            if [ "$phase" = candidate ]; then source=candidate; fi
-            (
-              cd "$source"
-              revision=$(git rev-parse HEAD)
-              binary=benchmarks/Respire.Benchmarks/bin/Release/net10.0/Respire.Benchmarks.dll
-              for connections in 1 2; do
-                for count in 32 100; do
-                  for launch in 1 2; do
-                    output="$GITHUB_WORKSPACE/results/batch-allocation/$phase/c$connections-n$count-l$launch"
-                    mkdir -p "$output"
-                    dotnet "$binary" --transport-batch-diagnostics "$output" "$revision" \
-                      "$phase" "$connections" "$count" "$launch" 1024 > "$output/launch.log" 2>&1
-                    dotnet "$binary" --transport-batch-trace-report \
-                      "$output/allocations.nettrace" "$output/allocations.jsonl" > "$output/report.log" 2>&1
-                  done
-                done
-              done
-            )
-          done
-      - name: Verify batch diagnostic identities and suspension controls
-        shell: python
-        run: |
-          import json, os
-          from pathlib import Path
-          for phase in ("baseline-a", "candidate", "baseline-b"):
-              revision = Path("candidate.commit" if phase == "candidate" else "baseline.commit").read_text().strip()
-              for connections in (1, 2):
-                  for count in (32, 100):
-                      for launch in (1, 2):
-                          directory = Path("results/batch-allocation", phase, f"c{connections}-n{count}-l{launch}")
-                          metadata = json.loads((directory / "metadata.json").read_text())
-                          assert (metadata["revision"], metadata["phase"], metadata["connections"], metadata["count"], metadata["launch"]) == (revision, phase, connections, count, launch)
-                          assert metadata["errorMetrics"] == os.environ["RESPIRE_BENCH_ERRORS"]
-                          controls = {item["control"]: item for item in metadata["observations"]}
-                          for control in ("gated-first", "gated-pool-demand", "gated-direct", "gated-task"):
-                              assert controls[control]["incompleteAtCall"] == controls[control]["operations"]
-                          records = [json.loads(line) for line in (directory / "allocations.jsonl").read_text().splitlines()]
-                          assert records[0]["metadata"] == metadata
-                          summary = records[-1]
-                          assert summary["kind"] == "summary" and summary["eventsLost"] == 0
-                          assert summary["samples"] > 0 and summary["samplesWithStacks"] > 0 and summary["samplesWithTypes"] > 0
-                          assert {"ready", *controls} == set(summary["controls"])
-                          assert all(record["processId"] == metadata["processId"] for record in records if record["kind"] == "allocation-sample")
       - name: Require completed measurements
         shell: python
         run: |
@@ -297,6 +246,58 @@ jobs:
               if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
             done
           done
+      # Publish public timing evidence before diagnostics, so diagnostic failures cannot suppress it.
+      - name: Collect separate pinned batch allocation diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Separate processes after all public timing runs; tracing never changes their regions.
+          # Preserve both controls and every case/launch in both existing metric-mode jobs.
+          for phase in baseline-a candidate baseline-b; do
+            source=baseline
+            if [ "$phase" = candidate ]; then source=candidate; fi
+            (
+              cd "$source"
+              revision=$(git rev-parse HEAD)
+              binary=benchmarks/Respire.Benchmarks/bin/Release/net10.0/Respire.Benchmarks.dll
+              for connections in 1 2; do
+                for count in 32 100; do
+                  for launch in 1 2; do
+                    output="$GITHUB_WORKSPACE/results/batch-allocation/$phase/c$connections-n$count-l$launch"
+                    mkdir -p "$output"
+                    dotnet "$binary" --transport-batch-diagnostics "$output" "$revision" \
+                      "$phase" "$connections" "$count" "$launch" 1024 > "$output/launch.log" 2>&1
+                    dotnet "$binary" --transport-batch-trace-report \
+                      "$output/allocations.nettrace" "$output/allocations.jsonl" > "$output/report.log" 2>&1
+                  done
+                done
+              done
+            )
+          done
+      - name: Verify batch diagnostic identities and suspension controls
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              revision = Path("candidate.commit" if phase == "candidate" else "baseline.commit").read_text().strip()
+              for connections in (1, 2):
+                  for count in (32, 100):
+                      for launch in (1, 2):
+                          directory = Path("results/batch-allocation", phase, f"c{connections}-n{count}-l{launch}")
+                          metadata = json.loads((directory / "metadata.json").read_text())
+                          assert (metadata["revision"], metadata["phase"], metadata["connections"], metadata["count"], metadata["launch"]) == (revision, phase, connections, count, launch)
+                          assert metadata["errorMetrics"] == os.environ["RESPIRE_BENCH_ERRORS"]
+                          controls = {item["control"]: item for item in metadata["observations"]}
+                          for control in ("gated-first", "gated-pool-demand", "gated-direct", "gated-task"):
+                              assert controls[control]["incompleteAtCall"] == controls[control]["operations"]
+                          records = [json.loads(line) for line in (directory / "allocations.jsonl").read_text().splitlines()]
+                          assert records[0]["metadata"] == metadata
+                          summary = records[-1]
+                          assert summary["kind"] == "summary" and summary["eventsLost"] == 0
+                          assert summary["samples"] > 0 and summary["samplesWithStacks"] > 0 and summary["samplesWithTypes"] > 0
+                          assert {"ready", *controls} == set(summary["controls"])
+                          assert all(record["processId"] == metadata["processId"] for record in records if record["kind"] == "allocation-sample")
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
