@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 404 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 414 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 61
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -236,7 +236,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 100
+# Count: Respire.Networking.RespireConnection | 101
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
@@ -287,6 +287,7 @@ Respire.Networking.RespireConnection | method SendNativeBytesAsync`1(in TCommand
 Respire.Networking.RespireConnection | method SendNativeCheckedAsync`1(in TCommand, CancellationToken, string) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendNativeConvertedAsync`3(in TCommand, CancellationToken, string, TState, ResponseConverter<TState, TResult>, bool) : ValueTask<TResult>
 Respire.Networking.RespireConnection | method SendNativeStringAsync`1(in TCommand, CancellationToken, string) : ValueTask<string?>
+Respire.Networking.RespireConnection | method SendNativeScalarAsync`3(in TCommand, CancellationToken, string) : ValueTask<TResult>
 Respire.Networking.RespireConnection | method SendPrefixedAsync`2(in TPrefix, in TCommand, bool, CancellationToken, string?, bool, bool, CommandDeadline, bool, string?, RespireTelemetry.ErrorObservation, int) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in TPrefix, in TCommand, CancellationToken, string?, Action<Exception?>?, string?, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<Stream?>
 Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
@@ -356,6 +357,16 @@ Respire.Networking.RespireConnection.StreamPayloadReader | method StartRead(Canc
 Respire.Networking.RespireConnection.StreamPayloadReader | property ConsumedPrefix [internal; get] : ReadOnlyMemory<byte>
 Respire.Networking.RespireConnection.StreamPayloadReader | property IsComplete [internal; get] : bool
 Respire.Networking.RespireConnection.StreamPayloadReader | property UnknownPositionReadError [internal; get] : Exception?
+# Count: Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | 9
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method IValueTaskSource<TResult>.GetResult(short) : TResult
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method IValueTaskSource<TResult>.GetStatus(short) : ValueTaskSourceStatus
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method IValueTaskSource<TResult>.OnCompleted(Action<object?>, object?, short, ValueTaskSourceOnCompletedFlags) : void
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method Rent(string?, RespireTelemetry.DurationObservation) : ScalarPendingResponseSource<TConverter, TResult>
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method ResetAndReturn() : void
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method SetExceptionCore(Exception) : void
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | method SetResultCore(in RespValue) : void
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | property CommandName [internal; get] : string?
+Respire.Networking.ScalarPendingResponseSource<TConverter, TResult> | property Task [public; get] : ValueTask<TResult>
 # Count: Respire.Networking.StringPendingResponseSource | 10
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus

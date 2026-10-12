@@ -11,6 +11,10 @@ namespace Respire.Networking;
 /// ownership transfer, but the value-type converter is a generic argument: each shape gets
 /// its own specialized code and a direct conversion call instead of a delegate invocation.
 /// </summary>
+/// <remarks>
+/// Deliberately a copy, not a shared base: a virtual or delegate conversion step would undo the
+/// specialization. Keep completion, telemetry and cleanup changes in step with the converted source.
+/// </remarks>
 internal sealed class ScalarPendingResponseSource<TConverter, TResult> : PendingResponse, IValueTaskSource<TResult>
     where TConverter : struct, IScalarResponseConverter<TResult>
 {
@@ -21,7 +25,6 @@ internal sealed class ScalarPendingResponseSource<TConverter, TResult> : Pending
     private RespValue _response;
     private bool _hasResponse;
     private string? _commandName;
-    private bool _observeErrors;
     private RespireTelemetry.DurationObservation _duration;
 
     private ScalarPendingResponseSource()
@@ -33,16 +36,13 @@ internal sealed class ScalarPendingResponseSource<TConverter, TResult> : Pending
     internal override string? CommandName => _commandName;
 
     public static ScalarPendingResponseSource<TConverter, TResult> Rent(
-        string? commandName, int errorAttempts = 0, bool observeErrors = true,
-        RespireTelemetry.DurationObservation duration = default)
+        string? commandName, RespireTelemetry.DurationObservation duration = default)
     {
         var source = Pool.Rent();
 
         source._commandName = commandName;
-        source._observeErrors = observeErrors;
         source._duration = duration;
         source.PrepareForUse();
-        source.ErrorAttempts = errorAttempts;
         return source;
     }
 
@@ -62,7 +62,6 @@ internal sealed class ScalarPendingResponseSource<TConverter, TResult> : Pending
 
     TResult IValueTaskSource<TResult>.GetResult(short token)
     {
-        var observeErrors = _observeErrors;
         Exception? failure = null;
         try
         {
@@ -87,9 +86,8 @@ internal sealed class ScalarPendingResponseSource<TConverter, TResult> : Pending
             }
             finally
             {
-                // No renter lends a final owner: native admission observes errors itself, and an
-                // observed send leaves them to its dispatch owner (observeErrors: false).
-                CompleteCallerInspection(default, failure, observeErrors);
+                // Native admission is the only renter: it observes errors itself, with no borrowed owner.
+                CompleteCallerInspection(default, failure, observeErrors: true);
             }
         }
     }
@@ -112,7 +110,6 @@ internal sealed class ScalarPendingResponseSource<TConverter, TResult> : Pending
         {
             _response = default;
             _hasResponse = false;
-            _observeErrors = false;
             _duration = default;
             // The receive loop still needs the operation when a canceled caller finishes first.
             // Clear it only after both references are released and the source returns to its pool.

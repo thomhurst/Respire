@@ -590,6 +590,10 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
 /// Poolable typed response source. Receive loop stores raw response and signals completion;
 /// conversion and disposal occur when caller consumes result, outside receive loop.
 /// </summary>
+/// <remarks>
+/// <see cref="ScalarPendingResponseSource{TConverter, TResult}"/> mirrors this lifecycle for the
+/// stateless scalar converters; keep completion, telemetry and cleanup changes in step.
+/// </remarks>
 internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingResponse, IValueTaskSource<TResult>
 {
     private const int MaxPoolSize = 4096;

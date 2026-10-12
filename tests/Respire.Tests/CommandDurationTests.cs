@@ -375,7 +375,7 @@ public class CommandDurationTests
         {
             case "string": response = client.GetStringAsync("key", timeout.Token).AsTask(); expectedSource = nameof(StringPendingResponseSource); break;
             case "bytes": response = client.GetBytesAsync("key", timeout.Token).AsTask(); expectedSource = nameof(BytesPendingResponseSource); break;
-            default: response = client.Strings.LengthAsync("key", timeout.Token).AsTask(); expectedSource = "ScalarPendingResponseSource"; break;
+            default: response = client.Strings.LengthAsync("key", timeout.Token).AsTask(); expectedSource = "ConvertedPendingResponseSource"; break;
         }
         while (!server.ReceivedCommands.Any(command => command.StartsWith(operation + " ")))
             await Task.Delay(1, timeout.Token);

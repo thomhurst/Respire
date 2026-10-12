@@ -193,18 +193,6 @@ public sealed partial class RespireClient
                 commandDeadline: commandDeadline, durationStarted: durationStarted, pinToConnection: pinToConnection, observation: errorObservation);
     }
 
-    private readonly struct ScalarReadySend<TConverter, TResult> : IReadySend<TResult>
-        where TConverter : struct, IScalarResponseConverter<TResult>
-    {
-        public bool ObserveDuration => true;
-        public ValueTask<TResult> Send<TCommand>(RespireConnection connection, string operation,
-            in TCommand command, CancellationToken cancellationToken,
-            RespireTelemetry.OperationStart durationStarted, CommandDeadline commandDeadline = default,
-            bool pinToConnection = false, RespireTelemetry.ErrorObservation errorObservation = default) where TCommand : struct, IRespCommand
-            => connection.SendScalarAsync<TCommand, TConverter, TResult>(in command, cancellationToken, operation,
-                commandDeadline, errorObservation, durationStarted, pinToConnection);
-    }
-
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static ValueTask<TResult> CaptureReadySendFailure<TResult>(Exception error,
         ClientSideCacheCoordinator? cache = null, ClientSideCacheCoordinator.MutationFence mutationFence = default,
