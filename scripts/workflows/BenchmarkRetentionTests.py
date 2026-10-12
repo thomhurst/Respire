@@ -16,7 +16,7 @@ class BenchmarkRetentionTests(unittest.TestCase):
     def run_summary(self, missing=None, invalid=None, stages=STAGES, stress=False,
                     missing_stress=None, invalid_stress=None, dimensions=(),
                     missing_dimension=None, scope_drift=None, collapse_scopes=False,
-                    group_field='', group_values=()):
+                    group_field='', group_values=(), collapse_methods=False):
         workflow = Path(__file__).resolve().parents[2] / '.github/workflows/benchmark-compare.yml'
         section = workflow.read_text().split('      - name: Require complete results and summarize both controls\n')[1]
         script = section.split('        run: |\n')[1].split('      - uses:')[0]
@@ -43,6 +43,8 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                         'pohBytes': 10, 'pohFragmentedBytes': 0, 'workingSetBytes': 500}
                             if dimensions:
                                 snapshot.update(owner=method, policy=str(coalesce))
+                                if 'method' in dimensions:
+                                    snapshot.update(owner='Standalone', method='same' if collapse_methods else method)
                                 snapshot['managedBytes'] += 1000 if coalesce else 0
                                 if missing_dimension == (phase, stage):
                                     del snapshot['owner']
@@ -133,6 +135,20 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                      missing_dimension=('candidate', 'after-first-reuse'))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Missing retention dimension', result.stderr)
+
+    def test_retention_methods_with_shared_owner_and_policy_remain_distinct(self):
+        result, summary = self.run_summary(dimensions=('owner', 'policy', 'method'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for phase in PHASES:
+            for method in ('ColdStringMiss', 'ColdMissAndFirstReuse', 'WarmStringHit'):
+                self.assertIn(
+                    f'| {phase} | connected-idle | owner=Standalone, policy=False, method={method} | 1 | 101 |',
+                    summary)
+
+    def test_collapsed_retention_methods_are_rejected(self):
+        result, _ = self.run_summary(dimensions=('owner', 'policy', 'method'), collapse_methods=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Incomplete retention parameters', result.stderr)
 
     def test_retention_groups_and_dimensions_preserve_both_reports(self):
         result, summary = self.run_summary(dimensions=('owner', 'policy'),
