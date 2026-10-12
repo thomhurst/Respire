@@ -22,6 +22,9 @@ public sealed record StreamIdempotency
     public static StreamIdempotency Automatic(RespireValue producerId)
         => new(SnapshotIdentifier(producerId, nameof(producerId)), default);
 
+    // Client-owned identifiers are immutable and nonempty, so no defensive copy is needed.
+    internal static StreamIdempotency Owned(RespireValue producerId, RespireValue idempotentId) => new(producerId, idempotentId);
+
     private static RespireValue SnapshotIdentifier(RespireValue value, string parameterName)
     {
         RespireValue.ThrowIfNull(value, parameterName);

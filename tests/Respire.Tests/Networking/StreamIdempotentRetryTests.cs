@@ -1,0 +1,212 @@
+using System.Text;
+using Respire.Testing;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+// Automatic XADD producer identity (#892): retries become safe only when IDMP is attached.
+public class StreamIdempotentRetryTests
+{
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
+
+    [Test]
+    public async Task LostReplyAfterWriteRetriesIntoExactlyOneEntry()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked },
+        });
+        using var fault = server.InjectFault("XADD", RespireFakeFault.Disconnect(afterExecution: true));
+
+        var id = await client.Streams.AddAsync("orders", ("status", "paid")).AsTask().WaitAsync(Limit);
+
+        await Assert.That(fault.ExecutionCount).IsEqualTo(1);
+        await Assert.That(await client.Streams.CountAsync("orders")).IsEqualTo(1);
+        // The deduplicated resend reports the entry that the lost reply carried.
+        await Assert.That(id.ToString()).IsNotEqualTo(string.Empty);
+    }
+
+    [Test]
+    public async Task LostReplyWithoutIdempotencyAppendsTwice()
+    {
+        // Positive control: the same fault duplicates an ordinary accumulating XADD.
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating },
+        });
+        using var fault = server.InjectFault("XADD", RespireFakeFault.Disconnect(afterExecution: true));
+
+        using (await client.ExecuteAsync(RespireCommands.Stream.XADD, new RespireValue[] { "orders", "*", "status", "paid" }).AsTask().WaitAsync(Limit)) { }
+
+        await Assert.That(fault.ExecutionCount).IsEqualTo(1);
+        await Assert.That(await client.Streams.CountAsync("orders")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task RetryEnabledAppendsAttachStableProducerAndFreshMessageIds()
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked) with
+        {
+            StreamProducerId = "orders-service",
+        });
+
+        await client.Streams.AddAsync("s", ("f", "v"));
+        await client.Streams.AddAsync("s", new StreamAddOptions { MaxLength = 10, Id = "*" }, ("f", "v"));
+        await client.WithKeyPrefix("tenant:").Streams.AddAsync("s", ("f", "v"));
+
+        var adds = XAdds(server);
+        await Assert.That(adds.Length).IsEqualTo(3);
+        foreach (var add in adds)
+        {
+            var index = Array.FindIndex(add, static argument => Encoding.ASCII.GetString(argument) == "IDMP");
+            await Assert.That(index).IsGreaterThan(1);
+            await Assert.That(Encoding.ASCII.GetString(add[index + 1])).IsEqualTo("orders-service");
+            await Assert.That(add[index + 2].Length).IsEqualTo(16);
+            await Assert.That(Encoding.ASCII.GetString(add[index + 3])).IsEqualTo("*");
+        }
+        var messageIds = adds.Select(add => Convert.ToHexString(add[Array.FindIndex(add, a => a.AsSpan().SequenceEqual("IDMP"u8)) + 2]));
+        await Assert.That(messageIds.Distinct().Count()).IsEqualTo(3);
+        await Assert.That(Encoding.ASCII.GetString(adds[1][2])).IsEqualTo("MAXLEN");
+    }
+
+    [Test]
+    public async Task DefaultProducerIsStablePerClientAndDistinctAcrossClients()
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        var options = Options(server, RespireCommandRetryCategory.WriteAccumulating);
+        await using var first = await RespireClient.ConnectAsync(options);
+        await using var second = await RespireClient.ConnectAsync(options);
+
+        await first.Streams.AddAsync("s", ("f", "v"));
+        await first.Streams.AddAsync("s", ("f", "v"));
+        await second.Streams.AddAsync("s", ("f", "v"));
+
+        var producers = XAdds(server).Select(add => Encoding.ASCII.GetString(add[3])).ToArray();
+        await Assert.That(producers[0]).StartsWith("respire-");
+        await Assert.That(producers[1]).IsEqualTo(producers[0]);
+        await Assert.That(producers[2]).IsNotEqualTo(producers[0]);
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments(RespireCommandRetryCategory.ReadOnly)]
+    [Arguments(RespireCommandRetryCategory.Never)]
+    public async Task PoliciesThatCannotRetryWritesSendOrdinaryXAdd(RespireCommandRetryCategory? maximum)
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        var options = Options(server, RespireCommandRetryCategory.WriteChecked) with
+        {
+            RetryPolicy = maximum is { } category ? new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = category } : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+
+        await client.Streams.AddAsync("s", ("f", "v"));
+
+        await Assert.That(XAdds(server).Single().Select(Encoding.ASCII.GetString))
+            .IsEquivalentTo(new[] { "XADD", "s", "*", "f", "v" });
+    }
+
+    [Test]
+    public async Task ConnectionLossMustBeSelectedToAttachIdentity()
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked) with
+        {
+            RetryPolicy = new()
+            {
+                InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked,
+                RetryableErrors = RespireRetryableErrors.TryAgain,
+            },
+        });
+
+        await client.Streams.AddAsync("s", ("f", "v"));
+
+        await Assert.That(XAdds(server).Single().Length).IsEqualTo(5);
+    }
+
+    [Test]
+    public async Task CallerChoicesAreNotReplaced()
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+
+        await client.Streams.AddAsync("s", new StreamAddOptions { Id = "5-0" }, ("f", "v"));
+        await client.Streams.AddAsync("s", new StreamAddOptions { Idempotency = StreamIdempotency.Manual("mine", "m-1") }, ("f", "v"));
+        await client.Streams.AddAsync("s", new StreamAddOptions { Idempotency = StreamIdempotency.Automatic("mine") }, ("f", "v"));
+
+        var adds = XAdds(server).Select(add => add.Select(Encoding.ASCII.GetString).ToArray()).ToArray();
+        await Assert.That(adds[0]).IsEquivalentTo(new[] { "XADD", "s", "5-0", "f", "v" });
+        await Assert.That(adds[1]).IsEquivalentTo(new[] { "XADD", "s", "IDMP", "mine", "m-1", "*", "f", "v" });
+        await Assert.That(adds[2]).IsEquivalentTo(new[] { "XADD", "s", "IDMPAUTO", "mine", "*", "f", "v" });
+    }
+
+    [Test]
+    public async Task OlderServersFallBackOnceToOrdinaryXAdd()
+    {
+        await using var server = XAddServer(supportsIdempotency: false);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+
+        await Assert.That(await client.Streams.AddAsync("s", ("f", "v"))).IsEqualTo((RespireStreamId)"1-0");
+        await Assert.That(await client.Streams.AddAsync("s", new StreamAddOptions { MaxLength = 5 }, ("f", "v")))
+            .IsEqualTo((RespireStreamId?)"1-0");
+
+        var adds = XAdds(server).Select(add => string.Join(' ', add.Take(3).Select(Encoding.ASCII.GetString))).ToArray();
+        await Assert.That(adds).IsEquivalentTo(new[] { "XADD s IDMP", "XADD s *", "XADD s MAXLEN" });
+    }
+
+    [Test]
+    public async Task ConfirmedSupportDoesNotHideLaterErrors()
+    {
+        var reject = false;
+        await using var server = XAddServer(supportsIdempotency: true);
+        server.ReplyOverride = (_, command) => command switch
+        {
+            _ when command.StartsWith("HELLO", StringComparison.Ordinal) => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "CLIENT ID" => ":1\r\n"u8.ToArray(),
+            _ when command.StartsWith("XADD", StringComparison.Ordinal) && reject => "-ERR rejected\r\n"u8.ToArray(),
+            _ when command.StartsWith("XADD", StringComparison.Ordinal) => "$3\r\n1-0\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+        await client.Streams.AddAsync("s", ("f", "v"));
+        reject = true;
+
+        await Assert.That(async () => await client.Streams.AddAsync("s", ("f", "v"))).ThrowsExactly<RespireServerException>();
+        await Assert.That(XAdds(server).Length).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task EmptyProducerIdIsRejected()
+    {
+        await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [new("localhost")], StreamProducerId = "" }))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    private static FakeRespServer XAddServer(bool supportsIdempotency) => new(4, FakeRespServer.OkReply)
+    {
+        ReplyOverride = (_, command) => command switch
+        {
+            _ when command.StartsWith("HELLO", StringComparison.Ordinal) => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "CLIENT ID" => ":1\r\n"u8.ToArray(),
+            _ when command.StartsWith("XADD", StringComparison.Ordinal) && !supportsIdempotency && command.Contains(" IDMP ", StringComparison.Ordinal)
+                => "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray(),
+            _ when command.StartsWith("XADD", StringComparison.Ordinal) => "$3\r\n1-0\r\n"u8.ToArray(),
+            _ => null,
+        },
+    };
+
+    private static RespireOptions Options(FakeRespServer server, RespireCommandRetryCategory maximum) => new()
+    {
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1,
+        CommandTimeout = TimeSpan.FromSeconds(3),
+        RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
+    };
+
+    private static byte[][][] XAdds(FakeRespServer server)
+        => server.ReceivedArguments.Where(static command => Encoding.ASCII.GetString(command[0]) == "XADD").ToArray();
+}
