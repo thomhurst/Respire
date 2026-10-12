@@ -161,51 +161,52 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    [Arguments(true)]
-    [Arguments(false)]
-    public async Task ClusterRetryAcquiresFreshAdmissionOnTheNewSlotOwner(bool slotMoves)
+    [Arguments(true, "immediate")]
+    [Arguments(true, "batch")]
+    [Arguments(true, "transaction")]
+    [Arguments(false, "immediate")]
+    [Arguments(false, "batch")]
+    [Arguments(false, "transaction")]
+    public async Task ClusterRetryAcquiresFreshAdmissionOnTheNewSlotOwner(bool slotMoves, string shape)
     {
         var failedOver = 0;
         Task? stopping = null;
-        await using var survivor = new FakeRespServer(32, FakeRespServer.OkReply);
-        await using var owner = new FakeRespServer(32, FakeRespServer.OkReply);
-        byte[] Map() => Volatile.Read(ref failedOver) == 0 || !slotMoves ? SplitSlots(survivor.Port, owner.Port) : Slots(survivor.Port);
-        survivor.ReplyOverride = (_, command) => command switch
+        await using var survivor = CircuitUnitServer(shape, _ => UnitValue(shape));
+        await using var owner = CircuitUnitServer(shape, current =>
         {
-            "CLUSTER SLOTS" => Map(),
-            "GET key" => Value,
-            _ => null,
-        };
-        owner.ReplyOverride = (_, command) =>
-        {
-            if (command == "CLUSTER SLOTS") return Map();
-            if (command != "GET key") return null;
             Volatile.Write(ref failedOver, 1);
-            stopping = owner.DisposeAsync().AsTask();
-            owner.CloseConnections();
+            stopping = current.DisposeAsync().AsTask();
+            current.CloseConnections();
             return null;
-        };
+        });
+        // Both nodes report the split map until the owner fails; a moved slot then names the survivor.
+        byte[] Map() => Volatile.Read(ref failedOver) == 0 || !slotMoves ? SplitSlots(survivor.Port, owner.Port) : Slots(survivor.Port);
+        var survivorReply = survivor.ReplyOverride!;
+        survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map() : survivorReply(id, command);
+        var ownerReply = owner.ReplyOverride!;
+        owner.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map() : ownerReply(id, command);
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(owner) with
         {
             CommandTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = CircuitOptions(),
             RetryPolicy = new() { MaxAttempts = 3, InitialBackoff = TimeSpan.Zero },
         });
+        var decisive = UnitCommand(shape);
         if (!slotMoves)
         {
             // Without a topology change, the open owner rejects the retry after the refresh window.
-            var error = await Failure(async () => await client.GetStringAsync("key"));
+            var error = await Failure(async () => await ReadCircuitUnitAsync(client, shape, default));
             if (stopping is not null) await stopping;
             await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
             await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", owner.Port));
-            await Assert.That(owner.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
-            await Assert.That(survivor.ReceivedCommands.Contains("GET key")).IsFalse();
+            await Assert.That(owner.ReceivedCommands.Count(command => command == decisive)).IsEqualTo(1);
+            await Assert.That(survivor.ReceivedCommands.Contains(decisive)).IsFalse();
             return;
         }
-        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(await ReadCircuitUnitAsync(client, shape, default)).IsEqualTo("value");
         if (stopping is not null) await stopping;
-        await Assert.That(owner.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
-        await Assert.That(survivor.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(owner.ReceivedCommands.Count(command => command == decisive)).IsEqualTo(1);
+        await Assert.That(survivor.ReceivedCommands.Count(command => command == decisive)).IsEqualTo(1);
         await Assert.That(CircuitOf(client, owner).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
         var fresh = CircuitOf(client, survivor).Snapshot();
         await Assert.That(fresh.State).IsEqualTo(EndpointCircuitState.Closed);
@@ -281,7 +282,12 @@ public partial class TopologyCommandRetryTests
             await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
             await Assert.That(((RespireCircuitOpenException)error).Endpoint).IsEqualTo(primaryEndpoint);
             await Assert.That(clients.TrueForAll(client => ReferenceEquals(client, clients[0]))).IsTrue();
-            await Assert.That(events.IsEmpty).IsTrue();
+            // The group cannot see inside the operation, which may have run other commands before
+            // the member rejected one, so the rejected resend still counts as attempted.
+            await Assert.That(clients.Count).IsEqualTo(2);
+            await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
+            await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(1L);
+            await Assert.That(events.ContainsKey("succeeded")).IsFalse();
         }
     }
 

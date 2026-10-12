@@ -223,9 +223,13 @@ Every attempt acquires its own admission immediately before dispatch.
   owner, or finds no owner, the retry is rejected without connecting to it. A lone owner is rejected
   immediately.
 
-Retry metrics never count a circuit rejection as a retry. A resend that is rejected by circuit
-admission records no `attempted`, `succeeded` or `exhausted` measurement on any retry owner, and
-the operation ends with the rejection. Circuit rejection metrics still record each rejected admission.
+A circuit rejection always ends the operation. On the client's own retry owners, a resend that
+circuit admission rejects adds no `attempted` measurement, because the rejection proves that the
+resend executed nothing. Earlier resends keep their measurements: when attempt 2 fails with a
+retryable error and attempt 3 is rejected, the operation still records one `attempted` and, when it
+ends, one `exhausted`. A failover-group operation is caller code that can run commands before a
+member rejects a later one, so its rejected resend counts as `attempted` and the operation records
+`exhausted`. Circuit rejection metrics still record each rejected admission.
 Disabled retries and a null `CircuitBreaker` keep their existing dispatch paths.
 
 ## Current scope

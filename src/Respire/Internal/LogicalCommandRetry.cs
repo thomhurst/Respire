@@ -12,8 +12,10 @@ namespace Respire.Internal;
 /// therefore treated as a possible execution, so only the category permission can admit another
 /// attempt. One deadline and cancellation budget span every attempt, route selection and backoff.
 /// Each attempt reads its route again; a retry never reuses a circuit-rejected endpoint, because
-/// circuit rejection is never a selected failure. A resend that ends in circuit rejection sent
-/// nothing the policy can observe, so it is not reported as an attempted retry.
+/// circuit rejection is never a selected failure. When the owner's dispatch proves that a circuit
+/// rejection ends a resend before it executes anything, that resend is not reported as an attempted
+/// retry. A caller-supplied operation can execute commands before a later one is rejected, so its
+/// rejected resend still counts as attempted.
 /// </remarks>
 internal static class LogicalCommandRetry
 {
@@ -42,7 +44,8 @@ internal static class LogicalCommandRetry
         TState state,
         Func<TState, Attempt, ValueTask<TResult>> send,
         RespireTelemetry.ErrorObservation observation,
-        CancellationToken callerToken)
+        CancellationToken callerToken,
+        bool rejectionProvesUnexecuted = true)
     {
         callerToken.ThrowIfCancellationRequested();
         var deadline = CreateDeadline(commandTimeout);
@@ -67,7 +70,8 @@ internal static class LogicalCommandRetry
                 catch (Exception error)
                 {
                     // Circuit rejection is never a selected failure, so it always ends the operation.
-                    if (error is not RespireCircuitOpenException) RecordAttempted(category, attempt, ref retries);
+                    if (!rejectionProvesUnexecuted || error is not RespireCircuitOpenException)
+                        RecordAttempted(category, attempt, ref retries);
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
                     if (!policy.TryGetDelay(error, CommandWriteOutcome.Unknown, category, attempt, remaining, token, out var delay))
                         throw;
@@ -97,9 +101,9 @@ internal static class LogicalCommandRetry
         }
     }
 
-    // Without transport evidence, a resend that was not rejected by circuit admission is the
-    // attempted retry. It is recorded once the resend finishes, so a circuit rejection on the
-    // route the retry selected cannot be reported as another attempt.
+    // Without transport evidence, a resend that the owner cannot prove unexecuted is the attempted
+    // retry. It is recorded once the resend finishes, so a circuit rejection that ends a
+    // single-command dispatch on the route the retry selected is not reported as another attempt.
     private static void RecordAttempted(RespireCommandRetryCategory category, int attempt, ref int retries)
     {
         if (attempt == 1) return;
