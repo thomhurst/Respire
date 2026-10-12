@@ -2433,6 +2433,9 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (core.Cluster is { } cluster)
         {
+            if (CanRetryCluster(in command))
+                return await SendTrackedClusterWithRetriesAsync(operation, cluster, command, cancellationToken,
+                    onRedirect, track, observation).ConfigureAwait(false);
             return await SendTrackedClusterAsync(
                 operation, cluster, command, cancellationToken, onRedirect, track, observation).ConfigureAwait(false);
         }
@@ -2483,7 +2486,7 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         Action? onRedirect,
-        bool track, RespireTelemetry.ErrorObservation observation = default)
+        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline retryDeadline = default)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -2502,7 +2505,7 @@ public sealed partial class RespireClient : IRespireClient
                 try
                 {
                     response = await SendTrackedOnConnectionAsync(
-                        operation, connection, command, cancellationToken, sendAsking, track, observation).ConfigureAwait(false);
+                        operation, connection, command, cancellationToken, sendAsking, track, observation, retryDeadline).ConfigureAwait(false);
                 }
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
@@ -2564,13 +2567,13 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         bool sendAsking,
-        bool track, RespireTelemetry.ErrorObservation observation = default)
+        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsOperationEnabled(operation)
             ? SendTrackedOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken, sendAsking, track, observation)
+                operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline)
             : SendTrackedOnConnectionCoreAsync(
-                operation, connection, command, cancellationToken, sendAsking, track, observation);
+                operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline);
 
     private ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
         string operation,
@@ -2578,11 +2581,13 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         bool sendAsking,
-        bool track, RespireTelemetry.ErrorObservation observation = default)
+        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
         => _core.Circuits is not null && !_snapshotPrefixedBinaryKeys
-            ? SendCircuitTrackedAsync(operation, connection, command, cancellationToken, sendAsking, track, observation)
-            : SendTrackedOnConnectionUncheckedAsync(operation, connection, command, cancellationToken, sendAsking, track, observation: observation);
+            ? SendCircuitTrackedAsync(operation, connection, command, cancellationToken, sendAsking, track, observation,
+                retryDeadline: commandDeadline)
+            : SendTrackedOnConnectionUncheckedAsync(operation, connection, command, cancellationToken, sendAsking, track,
+                commandDeadline, observation: observation);
 
     private ValueTask<RespValue> SendTrackedOnConnectionUncheckedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
@@ -2620,7 +2625,7 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         bool sendAsking,
-        bool track, RespireTelemetry.ErrorObservation observation = default)
+        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
         var telemetry = RespireTelemetry.StartOperation(
@@ -2628,11 +2633,11 @@ public sealed partial class RespireClient : IRespireClient
         // The circuit retry owns the final endpoint; transfer the scope so a reroute retargets it.
         if (_core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
             return await SendCircuitTrackedAsync(operation, connection, command, cancellationToken, sendAsking, track,
-                observation, telemetry).ConfigureAwait(false);
+                observation, telemetry, commandDeadline).ConfigureAwait(false);
         try
         {
             var response = await SendTrackedOnConnectionCoreAsync(
-                operation, connection, command, cancellationToken, sendAsking, track, observation).ConfigureAwait(false);
+                operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline).ConfigureAwait(false);
             var error = response.IsError ? ResponseReader.ServerError(in response, operation) : null;
             telemetry.Complete(
                 operation,
