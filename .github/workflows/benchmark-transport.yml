@@ -69,6 +69,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 2
           path: request
+          persist-credentials: false
       - name: Verify the immutable merge and resolve the comparison request
         id: revisions
         shell: python
@@ -119,14 +120,17 @@ jobs:
         with:
           ref: ${{ steps.revisions.outputs.candidate-sha }}
           path: candidate
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.revisions.outputs.fixture-sha }}
           path: fixture
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.revisions.outputs.baseline-sha }}
           path: baseline
+          persist-credentials: false
       - name: Compare pinned baseline, candidate, baseline on one runner
         shell: bash
         run: |
