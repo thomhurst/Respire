@@ -545,7 +545,7 @@ public class ClusterCircuitDispatchTests
         var method = typeof(ClusterRouter).GetMethod("TryRefreshSlotThroughKnownMastersAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var result = (ValueTask<RespireConnectionMultiplexer?>)method.Invoke(router,
-            [0, failedOwner, CancellationToken.None, null, default(RespireTelemetry.ErrorObservation), false])!;
+            [0, failedOwner, CancellationToken.None, null, default(RespireTelemetry.ErrorObservation), false, null])!;
         var owner = await result;
         await Assert.That(owner).IsSameReferenceAs(healthyNode);
         await Assert.That(healthy.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();

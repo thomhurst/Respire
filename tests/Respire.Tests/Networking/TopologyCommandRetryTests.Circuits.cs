@@ -292,16 +292,18 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DeclaredScriptRetryCountsARejectionOnlyAfterItsResendStarted(bool rejectFallback)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task DeclaredScriptRetryCountsARejectionOnlyAfterItsResendStarted(bool cluster, bool rejectFallback)
     {
         var events = new ConcurrentDictionary<string, long>();
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var listener = RetryListener(events);
         var sends = 0;
         RespireClient? client = null;
-        await using var server = Standalone((command, current) =>
+        Func<string, FakeRespServer, byte[]?> reply = (command, current) =>
         {
             if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
             if (Interlocked.Increment(ref sends) == 1)
@@ -313,17 +315,19 @@ public partial class TopologyCommandRetryTests
             // The resend's EVALSHA executed; the circuit opens before its EVAL fallback is admitted.
             OpenCircuit(client!, current);
             return "-NOSCRIPT No matching script.\r\n"u8.ToArray();
-        });
-        client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: false));
+        };
+        await using var server = cluster ? ClusterNode(reply) : Standalone(reply);
+        client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster));
         await using var owned = client;
         var script = RespireScript.Create("return 7").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
         var error = await Failure(async () => await client.Scripts.ExecuteIntegerAsync(script, ["key"]));
         await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsFalse();
-        if (rejectFallback)
+        if (rejectFallback || cluster)
         {
-            // The resend ran EVALSHA before its fallback was rejected, so it counts as attempted.
-            await Assert.That(Volatile.Read(ref sends)).IsEqualTo(2);
+            // The resend ran EVALSHA before its fallback was rejected, so it counts as attempted. Cluster
+            // routing admits the resend inside the operation, so a rejection before any send counts too.
+            await Assert.That(Volatile.Read(ref sends)).IsEqualTo(rejectFallback ? 2 : 1);
             await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
             await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(1L);
             await Assert.That(events.ContainsKey("succeeded")).IsFalse();

@@ -259,7 +259,8 @@ public sealed partial class RespireClient
     // Scripts and functions retry only with an explicit category. Their operation can issue several
     // independently admitted commands (EVALSHA then EVAL, or FCALL around a library reload), so a
     // circuit rejection inside it does not prove the resend unexecuted; only one from the resend's
-    // preparation does.
+    // preparation does. Cluster has no preparation: its first command's routing admits inside the
+    // operation, so a Cluster resend rejected before any send still counts as attempted.
     internal ValueTask<TResult> RunWithDeclaredRetriesAsync<TState, TResult>(string operation,
         RespireCommandRetryCategory category, TState state,
         Func<TState, LogicalCommandRetry.Attempt, ValueTask<TResult>> send,

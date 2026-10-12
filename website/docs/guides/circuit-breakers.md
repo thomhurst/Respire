@@ -230,7 +230,10 @@ retryable error and attempt 3 is rejected, the operation still records one `atte
 ends, one `exhausted`. A script or function resend can run EVALSHA or FCALL before its EVAL
 fallback or library reload is rejected, and a failover-group operation is caller code that can run
 commands before a member rejects a later one. Such a rejected resend counts as `attempted` and the
-operation records `exhausted`; a script or function resend rejected before its first command does not. Circuit rejection metrics still record each rejected admission.
+operation records `exhausted`. A standalone or Sentinel script or function resend rejected before
+its first command does not. On Cluster, that resend is admitted while its first command is routed,
+inside the operation, so its rejection also counts as `attempted`. Circuit rejection metrics still
+record each rejected admission.
 Disabled retries and a null `CircuitBreaker` keep their existing dispatch paths.
 
 ## Current scope

@@ -542,25 +542,26 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (_circuits is not null)
         {
             try { _circuits.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose(); }
-            catch (RespireCircuitOpenException) when (slot is { } owned && HasAlternateMaster(node))
+            catch (RespireCircuitOpenException rejection) when (slot is { } owned && HasAlternateMaster(node))
             {
                 // The open owner is never retried, but another master can report that the slot
                 // moved to a healthy node. Dispatch then acquires fresh admission on that owner.
-                return RefreshRouteAfterCircuitRejectionAsync(owned, node, cancellationToken);
+                return RefreshRouteAfterCircuitRejectionAsync(owned, node, rejection, cancellationToken);
             }
         }
         return WaitForRouteReplacementCoreAsync(slot, node, cancellationToken);
     }
 
     // Asks the other known masters for the slot's owner without contacting the rejected node, as
-    // ordinary routing does after a failed owner. A refresh that still names the open owner
-    // rejects there again, before connecting or sending; so does a refresh that finds no owner.
+    // ordinary routing does after a failed owner. A refresh that still names the open owner, or
+    // finds no owner, rethrows the observed rejection without consulting the circuit again: the
+    // circuit can reach half-open during the refresh, and must not admit a resend to that node.
     private async ValueTask RefreshRouteAfterCircuitRejectionAsync(int slot, RespireConnectionMultiplexer node,
-        CancellationToken cancellationToken)
+        RespireCircuitOpenException rejection, CancellationToken cancellationToken)
     {
-        if (await TryRefreshSlotThroughKnownMastersAsync(slot, node, cancellationToken, discovery: null).ConfigureAwait(false) is not null)
-            return;
-        _circuits!.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
+        if (await TryRefreshSlotThroughKnownMastersAsync(slot, node, cancellationToken, discovery: null,
+                rejectedOwner: node).ConfigureAwait(false) is null)
+            ExceptionDispatchInfo.Throw(rejection);
     }
 
     // The owner's disconnect already requested a topology refresh. Stop waiting when that refresh
@@ -1677,7 +1678,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         int slot,
         RespireConnectionMultiplexer? failedOwner,
         CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation = default,
-        bool keepUncoveredOwners = false)
+        bool keepUncoveredOwners = false, RespireConnectionMultiplexer? rejectedOwner = null)
     {
         var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
@@ -1699,6 +1700,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             if (owner is null)
             {
                 continue;
+            }
+
+            // The slot has not moved off a rejected owner; it is never contacted.
+            if (ReferenceEquals(owner, rejectedOwner))
+            {
+                return null;
             }
 
             try
