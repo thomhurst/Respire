@@ -241,7 +241,7 @@ command-specific Redis ACLs therefore see the same commands as StackExchange.Red
 ### Batch and lifetime behavior
 
 `CreateBatch()` supports the listed hash/list/key/string/set/sorted-set asynchronous
-methods and `KeyExpireAsync` with `None`/`DemandMaster` flags. No queued command executes
+methods, string-based `ScriptEvaluateAsync`, and `KeyExpireAsync` with `None`/`DemandMaster` flags. No queued command executes
 before `Execute()`; empty hash field, key, member, and sorted-set entry arrays
 remain immediate no-ops. Execution
 uses a native `RespireBatch`, so commands for the same key share an ordered
@@ -284,8 +284,14 @@ API guidance rather than returning fabricated success. This adapter does not
 provide general StackExchange.Redis parity. Pinned Hangfire acceptance is
 documented [separately](./hangfire-acceptance); SignalR acceptance remains blocked
 under [#889](https://github.com/thomhurst/Respire/issues/889).
-Floating-point and bounded/expiring string increment overloads, conditional
-sorted-set additions, and lexicographic sorted-set ranges remain unsupported.
+Floating-point and bounded/expiring string increment overloads and conditional
+sorted-set additions remain unsupported.
+
+`SortedSetRangeByValue[Async]` supports both overloads, ascending/descending order,
+inclusive/exclusive binary bounds, null/open bounds, and `skip`/`take` pagination.
+`SortedSetRemoveRangeByValue[Async]` preserves the supplied bound order and returns
+the number removed. These use Redis lexicographic commands; all members must have
+the same score for Redis to provide defined lexicographic ordering.
 
 ### Transactions and conditions
 
@@ -294,8 +300,10 @@ deferred `ITransaction`/`ITransactionAsync`. Transactions support the listed
 hash/list/key/string/set/sorted-set asynchronous commands, except cursor scans,
 plus literal `PublishAsync`. They copy binary arguments when queued, preserve
 command order, and execute through native `MULTI`/`EXEC`. Publish is part of that
-same transaction, including the notifications used by Hangfire. Lock operations,
-scripts, scans, synchronous command calls, and nested transactions remain unsupported.
+same transaction, including the notifications used by Hangfire. String-based
+`ScriptEvaluateAsync` and lexicographic ranges/removals are also supported.
+Lock operations, other script overloads, scans, synchronous command calls,
+and nested transactions remain unsupported.
 
 Result-bearing `Execute` and `ExecuteAsync`, and queued commands, accept only
 `None` and `DemandMaster`. Replica routing, `NoRedirect`, `FireAndForget`, and
@@ -388,7 +396,16 @@ writes. `FireAndForget` returns the default `false` after admission and discards
 the server reply. Lock operations on `IBatch` remain unsupported.
 Lua errors preserve native `RespireServerException` and the server message;
 there are no direct `ScriptEvaluate` call sites in the pinned Hangfire source,
-and general script evaluation remains explicitly unsupported.
+but string-based `ScriptEvaluate[Async]` is supported for Orleans and other callers.
+Scripts execute atomically with binary `KEYS`/`ARGV`, optional key/value arrays,
+and standalone scalar, null, or nested array replies. A 40-character hexadecimal
+string executes `EVALSHA`; other strings execute `EVAL` without a script-cache
+probe. SHA string calls on an ordinary database hold its dispatch gate until
+the reply completes because native stored-procedure telemetry has no admission
+signal. Lua script errors preserve native `RespireServerException`; missing
+hashes return `NOSCRIPT` without retries. Byte-array hash, `LuaScript`,
+`LoadedLuaScript`, and read-only script overloads remain unsupported. The existing
+boundary conversion restrictions, including nested error replies, still apply.
 
 `GetSubscriber()` supports literal, binary channel callback
 `Subscribe[Async]`, `Unsubscribe[Async]`, and `UnsubscribeAll[Async]` with `None`.
@@ -509,12 +526,13 @@ longer-lived Hangfire worker or DataProtection key repository.
 
 ### Orleans Redis providers
 
-The [Orleans 10.2.2 assessment](./orleans-compatibility) inventories clustering,
-grain persistence, and reminders against the adapter. Selected membership and
-gateway scenarios pass, but persistence and reminders require unsupported
-general Lua evaluation and lexicographic sorted-set reads/removals. The adapter
-does not currently support the combined Orleans provider set. This limitation
-does not depend on SignalR's `ChannelMessageQueue` path.
+The [Orleans 10.2.2 acceptance suite](./orleans-compatibility) inventories clustering,
+grain persistence, and reminders against the adapter. Its 18 provider cases
+exercise membership/gateways, atomic binary storage and ETag conflicts, expiry,
+reminder replacement and hash-ring ranges, and bidirectional interoperability
+with the official client. The factory injection uses the existing official
+providers without a fork. These providers do not use SignalR's
+`ChannelMessageQueue` path. The guide records setup, exact versions, and exclusions.
 
 Migrate one call site at a time, then replace the bridge with native typed
 commands when its callers no longer require StackExchange.Redis values. The

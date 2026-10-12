@@ -22,31 +22,39 @@ changing them requires a new source inventory and compatibility assessment.
 | `Membership_GetGateways` | `MembershipTable_GetGateways` in that base |
 | `Storage_WriteRead` | `CommonStorageTests.Store_WriteRead` in `test/Orleans.Runtime.Internal.Tests/StorageTests/CommonStorageTests.cs`, called by `RedisStorageTests.StorageDataSetGeneric_WriteRead` |
 | `Storage_Clear` | `CommonStorageTests.Store_WriteClearRead` and the delete-state-on-clear variant in `test/Extensions/Orleans.Redis.Tests/Persistence`; selects the clear operation and its subsequent read |
+| `Storage_StaleETagRejectsWriteAndClear` | The duplicate/inconsistent ETag contracts in `CommonStorageTests.PersistenceStorage_WriteDuplicateFailsWithInconsistentStateException` and `PersistenceStorage_WriteInconsistentFailsWithInconsistentStateException`, extended to stale clear and rewrite after both clear modes |
+| `Storage_ConcurrentWritesHaveOneWinner` | Additional adapter regression: 16 writes sharing one ETag must leave exactly one winner |
+| `Storage_ExpiryIsAppliedAtomically` | Additional adapter regression: configured TTL and binary payload survive the provider write script |
+| `Storage_BinaryStateInteroperatesWithOfficialClient` | `CommonStorageTests.Store_WriteRead`/`Store_WriteClearRead` contracts extended to binary byte-list payloads and bidirectional client interoperability |
 | `Reminders_ReminderSimple` | `ReminderSimple` in `test/Orleans.Runtime.Internal.Tests/RemindersTest/ReminderTableTestsBase.cs`, called by `RedisRemindersTableTests.RemindersTable_Redis_ReminderSimple` |
 | `Reminders_ReadRows` | Selected grain/range read contracts from `RemindersRange` in that base |
 | `Reminders_RemoveRow` | The stale/current/repeated removal contracts in `ReminderSimple` |
+| `Reminders_InteroperateWithOfficialClient` | `ReminderSimple` contracts extended to bidirectional client interoperability |
+| `Reminders_RangePartitionsAndGrainFilters` | `RemindersRange`/`TestRemindersHashInterval` contracts with 32 deterministic grain IDs, multiple reminder names, and explicit inclusive/exclusive ring boundaries |
+| `Reminders_ConcurrentUpsertsLeaveOneReplacement` | `RemindersParallelUpsert` contract adapted to 16 concurrent replacements of one reminder, with stale ETag removal assertions |
 
 Adaptations: deterministic grain IDs and membership entries, unique service and
-cluster IDs per client, an integer persistence state, three combined membership
+cluster IDs per client, integer and binary persistence states, three combined membership
 operations, and no Orleans silo or grain activation. Storage initialization uses
 the upstream `CommonFixture.CreateRedisGrainStorage` lifecycle pattern. The
 assembly name grants the same internal-provider access as the upstream suite.
 The storage fixture uses Orleans' binary serializer; JSON serialization is not
 assessed. Both clients borrow their multiplexer (`IsShared = true`).
 
-Each scenario first succeeds with StackExchange.Redis, then runs with the shim
-against the same real Redis server and a separate provider namespace. Six cases
-require the provider's exact exception type and the specific unsupported member
-in its message. These are **confirmed incompatibilities, not passing provider
-conformance**. Independent control seeding reaches persistence clear and reminder
-read/removal paths despite the earlier shim write failure. No production calls
-fall back to the control client.
+Each scenario first succeeds with StackExchange.Redis, then requires the same
+behavior from the shim against the same real Redis server and a separate provider
+namespace. No scenario expects unsupported-member failures, and no production
+calls fall back to the control client. Explicit interoperability cases read/update
+one namespace with both clients to verify the unchanged storage format.
 
-Nine cases run per framework/protocol combination: three successful clustering
-scenarios and six gap reproductions. This is a selected assessment, not the full
-upstream suite. Parallel membership updates, reminder parallel upserts and large
-hash-ring distributions, all persistence datasets/serializers, silo integration,
-provider-owned multiplexer shutdown, reconnect/failover, and Cluster routing are
-not validated. The three unsupported methods prevent full persistence/reminder
-acceptance; adding support must replace the gap expectations with successful
-upstream assertions and expand coverage before claiming compatibility.
+Eighteen cases run per framework/protocol combination: three clustering, nine
+persistence, and six reminder cases. The expiry case inspects TTL and payload
+without waiting for expiration. Byte-array state exercises binary write/read;
+byte-list state exercises both clear modes because the upstream activator cannot
+create an empty byte array after clear.
+
+This is selected upstream acceptance with additional adapter regressions, not the
+full upstream suite. Parallel membership updates, sustained parallel stress,
+large hash-ring distributions, all persistence datasets/serializers, silo
+integration, provider-owned multiplexer shutdown, reconnect/failover, and Cluster
+routing remain unvalidated.

@@ -127,11 +127,14 @@ both supported frameworks. General StackExchange.Redis interface
 parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
 [#889](https://github.com/thomhurst/Respire/issues/889).
 
-The [Orleans 10.2.2 assessment](./guides/orleans-compatibility) finds no missing
-membership API in the inventoried clustering paths, but grain persistence and
-reminders need unsupported Lua and lexicographic sorted-set operations.
-[#890](https://github.com/thomhurst/Respire/issues/890) remains open for those
-specific behaviors; the current shim does not cover all three providers.
+The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) covers
+clustering membership and gateways, atomic grain persistence, and reminders
+through the existing official providers. The adapter now supports their Lua
+and lexicographic sorted-set calls, including ETag conflicts, binary state,
+expiry, reminder replacement, hash-ring ranges, and storage interoperability.
+This delivers [#890](https://github.com/thomhurst/Respire/issues/890) through
+the compatibility adapter; separate native providers are unnecessary for these
+assessed paths. Full silo integration, Cluster routing, and failover remain unvalidated.
 
 These open epics track remaining work, not release commitments. Follow their linked issues for
 acceptance criteria, dependencies, and current status:

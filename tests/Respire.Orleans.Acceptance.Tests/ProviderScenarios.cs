@@ -21,8 +21,7 @@ using Assert = Xunit.Assert;
 namespace Respire.Orleans.Acceptance.Tests;
 
 // Named scenarios from Orleans v10.2.2; see NOTICE.md for source and adaptations.
-// Both clients run the same provider operations. Known gaps must fail with the
-// specific unsupported member, while the upstream client must complete successfully.
+// Both clients must complete the same provider operations successfully.
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class ProviderScenarios(RedisTestContainer redis)
 {
@@ -106,7 +105,7 @@ public class ProviderScenarios(RedisTestContainer redis)
         Assert.Equal(state.ETag, read.ETag);
         Assert.Equal(state.State, read.State);
         Assert.True(read.RecordExists);
-    }, "ScriptEvaluateAsync", typeof(RedisStorageException));
+    });
 
     [Test]
     [Arguments(false)]
@@ -117,9 +116,7 @@ public class ProviderScenarios(RedisTestContainer redis)
         await using var storage = await Storage(connection, services, deleteStateOnClear);
         var grainId = GrainId.Create("assessment", "state");
         var state = new GrainState<int> { State = 42 };
-        // Seed through the control so the clear script is reached even though shim writes fail.
-        await using var seed = await Storage(_control!, services, deleteStateOnClear);
-        await seed.WriteStateAsync("integer", grainId, state);
+        await storage.WriteStateAsync("integer", grainId, state);
         var writtenETag = state.ETag;
         await storage.ClearStateAsync("integer", grainId, state);
         Assert.NotEqual(writtenETag, state.ETag);
@@ -128,7 +125,101 @@ public class ProviderScenarios(RedisTestContainer redis)
         await storage.ReadStateAsync("integer", grainId, read);
         Assert.False(read.RecordExists);
         Assert.Equal(0, read.State);
-    }, "ScriptEvaluateAsync", typeof(RedisStorageException));
+    });
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task Storage_StaleETagRejectsWriteAndClear(bool deleteStateOnClear) => Compare(async connection =>
+    {
+        using var services = new ServiceCollection().AddSerializer().BuildServiceProvider();
+        await using var storage = await Storage(connection, services, deleteStateOnClear);
+        var grainId = GrainId.Create("acceptance", "conflict");
+        var current = new GrainState<int> { State = 42 };
+        await storage.WriteStateAsync("integer", grainId, current);
+        await Assert.ThrowsAsync<InconsistentStateException>(() => storage.WriteStateAsync("integer", grainId, new GrainState<int> { State = 99 }));
+        var stale = new GrainState<int> { State = 99, ETag = current.ETag };
+        current.State = 43;
+        await storage.WriteStateAsync("integer", grainId, current);
+        await Assert.ThrowsAsync<InconsistentStateException>(() => storage.WriteStateAsync("integer", grainId, stale));
+        await Assert.ThrowsAsync<InconsistentStateException>(() => storage.ClearStateAsync("integer", grainId, stale));
+        var read = new GrainState<int>();
+        await storage.ReadStateAsync("integer", grainId, read);
+        Assert.Equal(43, read.State);
+        Assert.Equal(current.ETag, read.ETag);
+        await storage.ClearStateAsync("integer", grainId, current);
+        current.State = 44;
+        await storage.WriteStateAsync("integer", grainId, current);
+        await storage.ReadStateAsync("integer", grainId, read);
+        Assert.Equal(44, read.State);
+    });
+
+    [Test]
+    public Task Storage_ConcurrentWritesHaveOneWinner() => Compare(async connection =>
+    {
+        using var services = new ServiceCollection().AddSerializer().BuildServiceProvider();
+        await using var storage = await Storage(connection, services, deleteStateOnClear: false);
+        var grainId = GrainId.Create("acceptance", "concurrent");
+        var original = new GrainState<int> { State = 1 };
+        await storage.WriteStateAsync("integer", grainId, original);
+        var contenders = Enumerable.Range(2, 16).Select(value => new GrainState<int> { State = value, ETag = original.ETag }).ToArray();
+        var outcomes = await Task.WhenAll(contenders.Select(async state =>
+        {
+            try { await storage.WriteStateAsync("integer", grainId, state); return true; }
+            catch (InconsistentStateException) { return false; }
+        }));
+        Assert.Equal(1, outcomes.Count(static success => success));
+        var winner = contenders[Array.IndexOf(outcomes, true)];
+        var read = new GrainState<int>();
+        await storage.ReadStateAsync("integer", grainId, read);
+        Assert.Equal(winner.State, read.State);
+        Assert.Equal(winner.ETag, read.ETag);
+    });
+
+    [Test]
+    public Task Storage_ExpiryIsAppliedAtomically() => Compare(async connection =>
+    {
+        using var services = new ServiceCollection().AddSerializer().BuildServiceProvider();
+        await using var storage = await Storage(connection, services, deleteStateOnClear: false, TimeSpan.FromMinutes(1));
+        var grainId = GrainId.Create("acceptance", "expiry");
+        var state = new GrainState<byte[]> { State = [0xff, 0, 0x80] };
+        await storage.WriteStateAsync("bytes", grainId, state);
+        var key = $"{_cluster.ServiceId}/state/{grainId}/bytes";
+        var ttl = await connection.GetDatabase().KeyTimeToLiveAsync(key);
+        Assert.NotNull(ttl);
+        Assert.InRange(ttl.Value.TotalSeconds, 1, 60);
+        var read = new GrainState<byte[]>();
+        await storage.ReadStateAsync("bytes", grainId, read);
+        Assert.Equal(state.State, read.State);
+        Assert.Equal(state.ETag, read.ETag);
+    });
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task Storage_BinaryStateInteroperatesWithOfficialClient(bool deleteStateOnClear) => Compare(async connection =>
+    {
+        using var services = new ServiceCollection().AddSerializer().BuildServiceProvider();
+        await using var storage = await Storage(connection, services, deleteStateOnClear);
+        await using var other = await Storage(Other(connection), services, deleteStateOnClear);
+        var grainId = GrainId.Create("acceptance", "binary");
+        // A list can be activated after clear; the upstream provider cannot activate byte[].
+        var state = new GrainState<List<byte>> { State = [0, 0xff, 0x80, 13, 10, 0] };
+        await storage.WriteStateAsync("bytes", grainId, state);
+        var read = new GrainState<List<byte>>();
+        await other.ReadStateAsync("bytes", grainId, read);
+        Assert.Equal(state.State, read.State);
+        Assert.Equal(state.ETag, read.ETag);
+        read.State = [0xfe, 1, 0];
+        await other.WriteStateAsync("bytes", grainId, read);
+        await Assert.ThrowsAsync<InconsistentStateException>(() => storage.ClearStateAsync("bytes", grainId, state));
+        await storage.ReadStateAsync("bytes", grainId, state);
+        Assert.Equal(read.State, state.State);
+        Assert.Equal(read.ETag, state.ETag);
+        await storage.ClearStateAsync("bytes", grainId, state);
+        await other.ReadStateAsync("bytes", grainId, read);
+        Assert.False(read.RecordExists);
+    });
 
     [Test]
     public Task Reminders_ReminderSimple() => Compare(async connection =>
@@ -149,40 +240,114 @@ public class ProviderScenarios(RedisTestContainer redis)
         Assert.False(await table.RemoveRow(reminder.GrainId, "bla", reminder.ETag));
         Assert.True(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, reminder.ETag));
         Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, reminder.ETag));
-    }, "ScriptEvaluateAsync", typeof(RedisRemindersException));
+    });
 
     [Test]
     public Task Reminders_ReadRows() => Compare(async connection =>
     {
         await using var table = Reminders(connection);
         await table.Init();
-        await using var seed = Reminders(_control!);
-        await seed.Init();
         var reminder = Reminder();
-        await seed.UpsertRow(reminder);
+        await table.UpsertRow(reminder);
         Assert.Equal(reminder.ReminderName, Assert.Single((await table.ReadRows(reminder.GrainId)).Reminders).ReminderName);
         Assert.Single((await table.ReadRows(0, uint.MaxValue)).Reminders);
         Assert.Single((await table.ReadRows(0, 0)).Reminders);
-    }, "SortedSetRangeByValueAsync", typeof(RedisRemindersException));
+    });
 
     [Test]
     public Task Reminders_RemoveRow() => Compare(async connection =>
     {
         await using var table = Reminders(connection);
         await table.Init();
-        await using var seed = Reminders(_control!);
-        await seed.Init();
         var reminder = Reminder();
-        reminder.ETag = await seed.UpsertRow(reminder);
+        reminder.ETag = await table.UpsertRow(reminder);
         Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, "stale"));
         Assert.True(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, reminder.ETag));
         Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, reminder.ETag));
-    }, "SortedSetRemoveRangeByValueAsync", typeof(RedisRemindersException));
+    });
+
+    [Test]
+    public Task Reminders_InteroperateWithOfficialClient() => Compare(async connection =>
+    {
+        await using var table = Reminders(connection);
+        await using var other = Reminders(Other(connection));
+        await table.Init();
+        await other.Init();
+        var reminder = Reminder();
+        var oldETag = await table.UpsertRow(reminder);
+        var read = await other.ReadRow(reminder.GrainId, reminder.ReminderName);
+        Assert.Equal(oldETag, read.ETag);
+        Assert.Equal(reminder.StartAt, read.StartAt);
+        read.Period = TimeSpan.FromMinutes(3);
+        var newETag = await other.UpsertRow(read);
+        Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, oldETag));
+        read = await table.ReadRow(reminder.GrainId, reminder.ReminderName);
+        Assert.Equal(newETag, read.ETag);
+        Assert.Equal(TimeSpan.FromMinutes(3), read.Period);
+        Assert.True(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, newETag));
+        Assert.Null(await other.ReadRow(reminder.GrainId, reminder.ReminderName));
+    });
+
+    [Test]
+    public Task Reminders_RangePartitionsAndGrainFilters() => Compare(async connection =>
+    {
+        await using var table = Reminders(connection);
+        await table.Init();
+        var reminders = Enumerable.Range(0, 32).Select(index => new ReminderEntry
+        {
+            GrainId = GrainId.Create("acceptance", $"grain-{index}"),
+            ReminderName = "first",
+            StartAt = Reminder().StartAt,
+            Period = TimeSpan.FromMinutes(1)
+        }).ToArray();
+        foreach (var reminder in reminders) await table.UpsertRow(reminder);
+        var second = Reminder();
+        second.GrainId = reminders[0].GrainId;
+        second.ReminderName = "second";
+        await table.UpsertRow(second);
+        Assert.Equal(new[] { "first", "second" }, (await table.ReadRows(second.GrainId)).Reminders.Select(static row => row.ReminderName).Order().ToArray());
+        Assert.Empty((await table.ReadRows(GrainId.Create("acceptance", "missing"))).Reminders);
+        var all = reminders.Append(second).ToArray();
+        foreach (var (begin, end) in new[]
+        {
+            (0u, uint.MaxValue / 2), (uint.MaxValue / 2, uint.MaxValue),
+            (uint.MaxValue / 4, uint.MaxValue / 4 * 3), (uint.MaxValue / 4 * 3, uint.MaxValue / 4),
+            (reminders[0].GrainId.GetUniformHashCode(), reminders[1].GrainId.GetUniformHashCode()), (0u, 0u)
+        })
+        {
+            var expected = all.Where(row => begin < end
+                ? row.GrainId.GetUniformHashCode() > begin && row.GrainId.GetUniformHashCode() <= end
+                : row.GrainId.GetUniformHashCode() > begin || row.GrainId.GetUniformHashCode() <= end);
+            Assert.NotEmpty(expected);
+            var actual = (await table.ReadRows(begin, end)).Reminders;
+            Assert.Equal(expected.Select(static row => (row.GrainId.ToString(), row.ReminderName)).Order().ToArray(),
+                actual.Select(static row => (row.GrainId.ToString(), row.ReminderName)).Order().ToArray());
+        }
+    });
+
+    [Test]
+    public Task Reminders_ConcurrentUpsertsLeaveOneReplacement() => Compare(async connection =>
+    {
+        await using var table = Reminders(connection);
+        await table.Init();
+        var reminder = Reminder();
+        var oldETag = await table.UpsertRow(reminder);
+        var tags = await Task.WhenAll(Enumerable.Range(1, 16).Select(_ => table.UpsertRow(Reminder())));
+        var read = Assert.Single((await table.ReadRows(reminder.GrainId)).Reminders);
+        Assert.Contains(read.ETag, tags);
+        Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, oldETag));
+        foreach (var tag in tags.Where(tag => tag != read.ETag))
+            Assert.False(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, tag));
+        Assert.True(await table.RemoveRow(reminder.GrainId, reminder.ReminderName, read.ETag));
+    });
 
     private ConnectionMultiplexer? _control;
+    private RespireConnectionMultiplexer? _shim;
     private ClusterOptions _cluster = null!;
 
-    private async Task Compare(Func<IConnectionMultiplexer, Task> scenario, string? gap = null, Type? exceptionType = null)
+    private IConnectionMultiplexer Other(IConnectionMultiplexer connection) => ReferenceEquals(connection, _control) ? _shim! : _control!;
+
+    private async Task Compare(Func<IConnectionMultiplexer, Task> scenario)
     {
         var shimOptions = RespireOptions.Parse(redis.ConnectionString) with { Connections = 1 };
         var controlOptions = ConfigurationOptions.Parse(redis.StackExchangeConnectionString);
@@ -200,19 +365,11 @@ public class ProviderScenarios(RedisTestContainer redis)
             Assert.Contains($"resp={(int)shimOptions.Protocol}", clientInfo.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         }
         _control = control;
+        _shim = shim;
         foreach (var connection in new IConnectionMultiplexer[] { control, shim })
         {
             _cluster = new ClusterOptions { ServiceId = Guid.NewGuid().ToString("N"), ClusterId = Guid.NewGuid().ToString("N") };
-            if (ReferenceEquals(connection, control) || gap is null)
-            {
-                await scenario(connection);
-            }
-            else
-            {
-                var exception = await Assert.ThrowsAsync(exceptionType!, () => scenario(connection));
-                Assert.Contains("System.NotSupportedException", exception.Message);
-                Assert.Contains(gap, exception.Message);
-            }
+            await scenario(connection);
         }
     }
 
@@ -231,12 +388,13 @@ public class ProviderScenarios(RedisTestContainer redis)
             EntryExpiry = TimeSpan.FromHours(1)
         }));
 
-    private async Task<RedisGrainStorage> Storage(IConnectionMultiplexer connection, IServiceProvider services, bool deleteStateOnClear)
+    private async Task<RedisGrainStorage> Storage(IConnectionMultiplexer connection, IServiceProvider services, bool deleteStateOnClear, TimeSpan? expiry = null)
     {
         var storage = new RedisGrainStorage("assessment", new RedisStorageOptions
         {
             CreateMultiplexer = _ => Task.FromResult((connection, true)),
-            DeleteStateOnClear = deleteStateOnClear
+            DeleteStateOnClear = deleteStateOnClear,
+            EntryExpiry = expiry
         }, new OrleansGrainStorageSerializer(services.GetRequiredService<Serializer>()), Options.Create(_cluster),
             services.GetRequiredService<IActivatorProvider>(), NullLogger<RedisGrainStorage>.Instance);
         var lifecycle = new SiloLifecycleSubject(NullLogger<SiloLifecycleSubject>.Instance);
