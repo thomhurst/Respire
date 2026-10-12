@@ -233,6 +233,9 @@ internal static class Verbs
 
     // Streams
     public static readonly Verb XAdd = new("XADD");
+    // IDMP/IDMPAUTO makes a repeated append return the original entry ID instead of adding another.
+    // Older servers reject the option before executing, so the frame never applies twice.
+    public static readonly Verb XAddIdempotent = new("XADD", allowReadRouting: true, RespireCommandRetryCategory.WriteChecked);
     public static readonly Verb XLen = new("XLEN");
     public static readonly Verb XRange = new("XRANGE");
     public static readonly Verb XRevRange = new("XREVRANGE");

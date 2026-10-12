@@ -58,6 +58,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
   atomic dead-letter completion, graceful draining, capability-aware `CLAIM`/`XNACK`/`XACKDEL`,
   bounded group metrics and W3C trace propagation.
   Producer deduplication remains tracked by [#891](https://github.com/thomhurst/Respire/issues/891).
+- [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): retry-enabled
+  typed `XADD` calls attach a per-client producer identity on Redis 8.6+, so a resend after a
+  lost reply cannot duplicate the entry.
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
   [durability acknowledgements](guides/durability-acknowledgements.md).
 - [Pub/sub](guides/pub-sub.md), pattern and sharded subscriptions, and delivery-gap reporting.
@@ -175,8 +178,11 @@ acceptance criteria, dependencies, and current status:
   [#1214](https://github.com/thomhurst/Respire/issues/1214) and
   [#1474](https://github.com/thomhurst/Respire/issues/1474) are closed. Their final audit left
   aggregate transport performance acceptance unmet, and that result still counts against #862's
-  healthy-path criterion. Automatic `XADD` producer identity stays separate in
-  [#892](https://github.com/thomhurst/Respire/issues/892).
+  healthy-path criterion.
+  [Idempotent stream appends](./guides/command-retries#idempotent-stream-appends)
+  ([#892](https://github.com/thomhurst/Respire/issues/892)) are implemented: retry-enabled typed
+  `XADD` calls attach a per-client producer and per-call `IDMP` identity on Redis 8.6+, so a resend
+  after a lost reply leaves one entry. Older servers fall back to ordinary `XADD`.
 - [Error telemetry ownership hardening](https://github.com/thomhurst/Respire/issues/1046): strengthen
   stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,

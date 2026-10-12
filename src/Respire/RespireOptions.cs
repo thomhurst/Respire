@@ -421,6 +421,22 @@ public sealed record RespireOptions
     /// Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
     public RespireRetryPolicy? RetryPolicy { get; init; }
 
+    /// <summary>
+    /// Producer identity attached to automatic idempotent stream appends. Null (the default)
+    /// generates a random identity once per client.
+    /// </summary>
+    /// <remarks>
+    /// When <see cref="RetryPolicy"/> selects connection-loss retries and permits
+    /// <see cref="RespireCommandRetryCategory.WriteChecked"/> or a higher write category, typed
+    /// <c>Streams.AddAsync</c> calls without explicit idempotency or entry ID send
+    /// <c>XADD key IDMP producer message-id</c> on Redis 8.6+. A resend after a lost reply then
+    /// returns the original entry instead of appending another. Each call uses a new random
+    /// message ID, so a stable producer identity across restarts cannot collide with earlier
+    /// appends. Servers that reject IDMP receive ordinary XADD, which keeps its conservative
+    /// <see cref="RespireCommandRetryCategory.WriteAccumulating"/> category.
+    /// </remarks>
+    public string? StreamProducerId { get; init; }
+
     /// <summary>Optional factory for Respire diagnostic logs.</summary>
     public ILoggerFactory? LoggerFactory { get; init; }
 
@@ -498,6 +514,8 @@ public sealed record RespireOptions
         HedgedReads?.Validate();
         CircuitBreaker?.Validate();
         RetryPolicy?.Validate();
+        Require(StreamProducerId is null || StreamProducerId.Length != 0,
+            nameof(StreamProducerId), "must be nonempty when provided");
         Require(CircuitBreaker is null || ReplicaEndpoints.Count == 0,
             nameof(CircuitBreaker), "requires standalone, Sentinel or Cluster routing without configured replica endpoints");
         Require(

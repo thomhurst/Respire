@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -560,13 +561,13 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
     private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS");
 
     public ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => AddRequiredAsync(BuildAddCommand(client, key, default, fields), CancellationToken.None);
+        => AddRequiredAsync(key, fields, CancellationToken.None);
 
     public ValueTask<RespireStreamId> AddAsync(
         RespireKey key,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-        => AddRequiredAsync(BuildAddCommand(client, key, default, fields), cancellationToken);
+        => AddRequiredAsync(key, fields, cancellationToken);
 
     public ValueTask<RespireStreamId?> AddAsync(
         RespireKey key,
@@ -579,13 +580,129 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         StreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-        => AddOptionalAsync(BuildAddCommand(client, key, options, fields), cancellationToken);
+    {
+        if (!TryAttachIdempotency(in options, out var attached))
+            return AddOptionalAsync(BuildAddCommand(client, key, options, fields), cancellationToken);
+        var owner = DispatchResponseSource<RespireStreamId?>.Start();
+        try
+        {
+            var arguments = BuildAddArguments(attached, fields, snapshotValues: true, out var idempotencyOffset);
+            return owner.Attach(AddIdempotentAsync(client.Key(in key).Snapshot(), arguments, idempotencyOffset, attached.Idempotency!.ArgumentCount,
+                cancellationToken, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
+
+    private ValueTask<RespireStreamId> AddRequiredAsync(RespireKey key,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields, CancellationToken cancellationToken)
+    {
+        if (!TryAttachIdempotency(default, out var attached))
+            return AddRequiredAsync(BuildAddCommand(client, key, default, fields), cancellationToken);
+        var owner = DispatchResponseSource<RespireStreamId>.Start();
+        try
+        {
+            var arguments = BuildAddArguments(attached, fields, snapshotValues: true, out var idempotencyOffset);
+            return owner.Attach(AddRequiredIdempotentAsync(client.Key(in key).Snapshot(), arguments, idempotencyOffset, attached.Idempotency!.ArgumentCount,
+                cancellationToken, owner.Observation));
+        }
+        catch (Exception error)
+        {
+            owner.Fail(error);
+            throw;
+        }
+    }
+
+    // Retry-enabled clients attach a fresh message identity under the client's producer unless the
+    // caller chose idempotency or an explicit entry ID.
+    private bool TryAttachIdempotency(in StreamAddOptions options, out StreamAddOptions attached)
+    {
+        attached = options;
+        if (options.Idempotency is not null || options.Id is { } id && id.Value != "*"
+            || !client.Core.TryGetStreamProducerId(out var producerId)) return false;
+        var messageId = new byte[16];
+        _ = Guid.NewGuid().TryWriteBytes(messageId);
+        attached = options with { Idempotency = StreamIdempotency.Owned(producerId, messageId) };
+        return true;
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespireStreamId> AddRequiredIdempotentAsync(RespireValue key, RespireValue[] arguments,
+        int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => await AddIdempotentAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation).ConfigureAwait(false)
+            ?? throw new RespireProtocolException("XADD returned null without NOMKSTREAM.");
+
+    // The key and arguments are snapshots, so the fallback can rebuild ordinary XADD after an await.
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespireStreamId?> AddIdempotentAsync(RespireValue key, RespireValue[] arguments,
+        int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // One AddAsync owns one command timeout, so the legacy fallback spends only what the probe left.
+        var deadline = LogicalCommandRetry.CreateDeadline(client.Core.Options.CommandTimeout);
+        string? id;
+        try
+        {
+            id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAddIdempotent, key, arguments),
+                cancellationToken, observation).ConfigureAwait(false);
+        }
+        catch (RespireServerException error) when (error.Message == "ERR Invalid stream ID specified as stream command argument")
+        {
+            // Servers before Redis 8.6 parse IDMP as an invalid entry ID and reject XADD before
+            // executing it. Ordinary XADD keeps its conservative accumulating retry category.
+            // All caller-supplied trim IDs are validated, and our entry ID is always *, so this
+            // specific parse error identifies unsupported IDMP. Other errors must reach the caller.
+            // Never cache capability: the next call or retry can reach a different server version.
+            observation.Handled(error);
+            var plain = new RespireValue[arguments.Length - idempotencyArgumentCount];
+            arguments.AsSpan(0, idempotencyOffset).CopyTo(plain);
+            arguments.AsSpan(idempotencyOffset + idempotencyArgumentCount).CopyTo(plain.AsSpan(idempotencyOffset));
+            id = await AddWithinDeadlineAsync(new Cmd1N(Verbs.XAdd, key, plain), deadline, cancellationToken, observation)
+                .ConfigureAwait(false);
+        }
+        return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<string?> AddWithinDeadlineAsync(Cmd1N command, CommandDeadline deadline,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        if (!deadline.IsSet)
+            return await client.StringOrNullAsync("XADD", command, cancellationToken, observation).ConfigureAwait(false);
+        var commandTimeout = client.Core.Options.CommandTimeout!.Value;
+        var remaining = deadline.RemainingMilliseconds;
+        if (remaining == 0) throw new RespireTimeoutException("XADD", commandTimeout);
+        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, TimeSpan.FromMilliseconds(remaining));
+        try
+        {
+            return await client.StringOrNullAsync("XADD", command, timeout.Token, observation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (RespireConnection.IsDeadlineCancellation(error, timeout.Token, cancellationToken))
+        {
+            throw new RespireTimeoutException("XADD", commandTimeout, error, RespireTimeoutDiagnostics.Capture());
+        }
+        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+    }
 
     internal static Cmd1N BuildAddCommand(
         RespireClient client, RespireKey key,
         StreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         bool snapshotValues = false)
+        => new(options.Idempotency is null ? Verbs.XAdd : Verbs.XAddIdempotent, client.Key(in key),
+            BuildAddArguments(options, fields, snapshotValues, out _));
+
+    private static RespireValue[] BuildAddArguments(
+        StreamAddOptions options,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        bool snapshotValues,
+        out int idempotencyOffset)
     {
         var trim = options.ToTrimOptions();
         if (options.Idempotency is not null && options.Id is { } explicitId && explicitId.Value != "*")
@@ -600,6 +717,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         }
 
         offset += trim.CopyArgumentsTo(args.AsSpan(offset));
+        idempotencyOffset = offset;
         if (options.Idempotency is { } idempotency) offset += idempotency.CopyArgumentsTo(args.AsSpan(offset));
 
         args[offset++] = options.Id?.Value ?? "*";
@@ -609,7 +727,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             args[offset + i * 2 + 1] = snapshotValues ? fields[i].Value.Snapshot() : fields[i].Value;
         }
 
-        return new Cmd1N(Verbs.XAdd, client.Key(in key), args);
+        return args;
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

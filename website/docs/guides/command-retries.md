@@ -33,7 +33,8 @@ Typed SET and ZADD refine their category only for audited option sets:
 - `ZADD key XX` is `WriteLastWins`, and `ZADD key NX` is `WriteChecked`.
 
 SET with an expiry, `KEEPTTL` or `GET`, ZADD with `INCR`, `CH`, `GT` or `LT`, and
-XADD keep their conservative audited categories. A checked write checks its
+XADD without idempotency keep their conservative audited categories. XADD with `IDMP`
+or `IDMPAUTO` is `WriteChecked`; see [idempotent stream appends](#idempotent-stream-appends). A checked write checks its
 condition again, which may prevent another write. If another caller removes the
 key or member between attempts, `SET NX` or `ZADD NX` can write again. A replay
 can report a different result, such as "not set" for a write that the first
@@ -43,6 +44,50 @@ retry risk can repeat effects and cannot recover the original reply.
 Generated catalog commands, such as `RespireCommands.String.SET`, do not inspect
 their caller arguments. They use the descriptor's category for every argument
 list. To allow a narrower category, declare it with `WithRetryCategory`.
+
+## Idempotent stream appends
+
+A plain `XADD` that loses its reply after the server appended the entry would append
+a duplicate when resent, so it is `WriteAccumulating`. Redis 8.6 deduplicates appends
+that carry a producer ID and message ID (`IDMP`): a resend returns the original entry ID.
+
+When `RetryPolicy` selects `ConnectionLoss` and its `MaxCommandRetryCategory` is
+`WriteChecked` or higher, typed `Streams.AddAsync` calls attach that identity
+automatically. Each client has one producer ID, and each call gets a new random
+16-byte message ID that every resend of that call reuses. Only these calls become
+`WriteChecked`.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new("localhost", 6379) },
+    RetryPolicy = new RespireRetryPolicy
+    {
+        MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked,
+    },
+    StreamProducerId = "orders-service", // optional; null generates "respire-<guid>" per client
+});
+
+// A lost reply is retried; the stream still contains exactly one entry.
+RespireStreamId id = await client.Streams.AddAsync("orders", ("status", "paid"));
+```
+
+Calls that set `StreamAddOptions.Idempotency` or an explicit entry ID keep the caller's
+choice. Explicit `IDMP` and `IDMPAUTO` are also `WriteChecked`. Batch and transaction
+`Streams.Add` members do not receive an automatic identity: without explicit
+idempotency they remain `WriteAccumulating` and are not retried after possible
+execution at a `WriteChecked` maximum. Generated catalog
+`RespireCommands.Stream.XADD` calls keep `WriteAccumulating` for every argument list.
+
+A server that does not support `IDMP` rejects the option before it runs XADD. The
+specific `ERR Invalid stream ID specified as stream command argument` rejection
+resends that call as plain XADD, with its `WriteAccumulating` category. Other errors
+reach the caller without a fallback. Each call attempts IDMP independently, so
+Cluster shards, Sentinel failovers and rolling upgrades do not share stale
+capability state. Older servers therefore receive one rejected IDMP attempt per
+append before the ordinary XADD. Redis keeps deduplication history only within each stream's
+`IDMP-DURATION` and `IDMP-MAXSIZE` limits (see `Streams.ConfigureAsync`). A retry that
+arrives after its identity expires or is evicted appends again.
 
 ## Topologies
 

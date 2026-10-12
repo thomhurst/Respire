@@ -458,8 +458,13 @@ its history. This is not an unlimited exactly-once guarantee. See
 
 Existing `Streams.Add` batch/transaction methods accept the same options. Trimming,
 reference policies, and NOMKSTREAM remain composable. Older servers return their normal
-errors. The client does not add automatic write retries. Cancellation after dispatch
-cannot prove that a write did not execute; applications must choose any retry policy.
+errors for explicit idempotency. An XADD with explicit idempotency is audited as
+`WriteChecked`, because a resend returns the original entry instead of appending again.
+Cancellation after dispatch cannot prove that a write did not execute.
+
+When a [retry policy](../guides/command-retries#idempotent-stream-appends) can resend a
+possibly executed checked write, typed `Streams.AddAsync` attaches a producer and message
+identity automatically. Set `RespireOptions.StreamProducerId` to choose the producer.
 
 ### Stream configuration (Redis 8.6+)
 

@@ -251,6 +251,45 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SentinelStreamAppendDetectsReplacementVersion(bool newerFirst)
+    {
+        var demoted = 0;
+        var formerAdds = 0;
+        byte[] AppendReply(string command, bool supportsIdempotency)
+            => !supportsIdempotency && command.Contains(" IDMP ", StringComparison.Ordinal)
+                ? "-ERR Invalid stream ID specified as stream command argument\r\n"u8.ToArray()
+                : "$3\r\n1-0\r\n"u8.ToArray();
+        await using var replacement = Primary(command => command.StartsWith("XADD ", StringComparison.Ordinal)
+            ? AppendReply(command, !newerFirst) : null);
+        await using var former = Primary(command =>
+        {
+            if (command == "ROLE") return RoleReply(Volatile.Read(ref demoted) == 0 ? "master" : "slave");
+            if (!command.StartsWith("XADD ", StringComparison.Ordinal)) return null;
+            // An old primary receives both the unsupported attempt and its plain fallback.
+            if (Interlocked.Increment(ref formerAdds) > (newerFirst ? 1 : 2))
+            {
+                Volatile.Write(ref demoted, 1);
+                return "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
+            }
+            return AppendReply(command, newerFirst);
+        });
+        await using var sentinel = Sentinel(() => Volatile.Read(ref demoted) == 0 ? former.Port : replacement.Port);
+        await using var client = await RespireClient.ConnectAsync(SentinelOptions(sentinel) with
+        { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked } });
+
+        await client.Streams.AddAsync("s", ("f", "v"));
+        await client.Streams.AddAsync("s", ("f", "v"));
+        await client.Streams.AddAsync("s", ("f", "v"));
+
+        var replacementAdds = replacement.ReceivedArguments.Where(command => command[0].AsSpan().SequenceEqual("XADD"u8)).ToArray();
+        await Assert.That(replacementAdds.Length).IsEqualTo(newerFirst ? 4 : 2);
+        await Assert.That(replacementAdds.Count(command => command[2].AsSpan().SequenceEqual("IDMP"u8))).IsEqualTo(2);
+        await Assert.That(replacementAdds.Count(command => command[2].AsSpan().SequenceEqual("*"u8))).IsEqualTo(newerFirst ? 2 : 0);
+    }
+
+    [Test]
     public async Task SentinelConnectionLossRetryRediscoversThePrimary()
     {
         var failed = 0;

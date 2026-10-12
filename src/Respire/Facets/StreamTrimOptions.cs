@@ -33,6 +33,10 @@ public readonly record struct StreamTrimOptions
         {
             // MINID accepts numeric thresholds, not the ms-* ID-generation syntax used by XADD.
             var text = id.Value.AsSpan();
+            // Redis's stream ID parser copies into a 128-byte buffer including the terminator.
+            // Leading zeros can keep the numeric value in range while exceeding that buffer.
+            if (text.Length > 127)
+                throw new ArgumentException("MINID stream id must not exceed 127 bytes.", parameterName);
             var separator = text.IndexOf('-');
             var milliseconds = separator < 0 ? text : text[..separator];
             if (!ulong.TryParse(milliseconds, NumberStyles.None, CultureInfo.InvariantCulture, out _)

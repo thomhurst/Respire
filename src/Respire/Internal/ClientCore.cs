@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
@@ -40,6 +41,15 @@ internal sealed class ClientCore : IAsyncDisposable
     public readonly RespireOptions Options;
     internal readonly StandaloneCircuitRegistry? Circuits;
     internal readonly CommandRetryPolicy? CommandRetries;
+    // Automatic XADD idempotency (#892): null unless the retry policy could resend a possibly
+    // executed checked write. Capability is checked by each append on its actual serving node.
+    private readonly string? _streamProducerId;
+
+    internal bool TryGetStreamProducerId([NotNullWhen(true)] out string? producerId)
+    {
+        producerId = _streamProducerId;
+        return producerId is not null;
+    }
     internal readonly HedgedReadBudget? HedgedReads;
     public readonly ILogger? Logger;
     private CorrectionCoordinator? _corrections;
@@ -99,6 +109,14 @@ internal sealed class ClientCore : IAsyncDisposable
         Options = options;
         var retries = options.RetryPolicy is { } retry ? new CommandRetryPolicy(retry) : null;
         CommandRetries = retries is { IsEnabled: true } ? retries : null;
+        if (CommandRetries is not null && options.RetryPolicy is { } policy
+            && (policy.RetryableErrors & RespireRetryableErrors.ConnectionLoss) != 0
+            && policy.MaxCommandRetryCategory is RespireCommandRetryCategory.WriteChecked
+                or RespireCommandRetryCategory.WriteLastWins or RespireCommandRetryCategory.WriteAccumulating
+                or RespireCommandRetryCategory.ServerAdmin)
+        {
+            _streamProducerId = options.StreamProducerId ?? "respire-" + Guid.NewGuid().ToString("N");
+        }
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
