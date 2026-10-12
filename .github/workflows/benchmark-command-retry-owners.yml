@@ -21,7 +21,7 @@ jobs:
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/CommandRetryOwnerBenchmarks.cs
       filter: '*CommandRetryOwnerBenchmarks*'
-      expected-case-count: 15
+      expected-case-count: 18
       expected-methods: Read
       artifact-prefix: command-retry-owner-policies
       job: Short
@@ -43,10 +43,33 @@ jobs:
       control-sha: 15b7adf5090cce616d5fa395f96fb5f38d344ce1
       fixture: benchmarks/Respire.Benchmarks/CommandRetryOwnerBenchmarks.cs
       filter: '*CommandRetryOwnerBenchmarks*'
-      expected-case-count: 5
+      expected-case-count: 6
       expected-methods: Read
       artifact-prefix: command-retry-historical-default
       default-policy-only: true
+      redis-server: true
+      retry-topologies: true
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      retained-memory-dimensions: owner,policy
+
+  aggregate-audit:
+    if: github.event.label.name == 'run-command-retry-audit-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      # Current main already contains tracked retries/pooling. Pin a compilable
+      # control before those changes. Intervening changes remain included, so this
+      # is not an isolated pooling or dispatch ablation.
+      control-sha: a19b9590235f6d2ad0f0e7d41dfafccbbb9b5394
+      fixture: benchmarks/Respire.Benchmarks/CommandRetryOwnerBenchmarks.cs
+      filter: '*CommandRetryOwnerBenchmarks*'
+      expected-case-count: 18
+      expected-methods: Read
+      artifact-prefix: command-retry-aggregate-audit
+      job: Medium
       redis-server: true
       retry-topologies: true
       retained-memory: true

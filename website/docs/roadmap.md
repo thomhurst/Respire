@@ -150,12 +150,15 @@ acceptance criteria, dependencies, and current status:
   [#1256](https://github.com/thomhurst/Respire/issues/1256).
   Immediate retry correctness and performance acceptance remains open in
   [#1499](https://github.com/thomhurst/Respire/issues/1499) and
-  [#1215](https://github.com/thomhurst/Respire/issues/1215). Public fault tests and
-  the [completed twelve-case policy comparison](./guides/command-retries#completed-policy-comparison)
-  provide evidence. Default/disabled typed reads and tested group operations report zero allocation;
-  enabled typed/catalog/script paths allocate and have higher latency than default in this fixture.
-  The controls already contain retries, so native/default regression freedom remains unproven.
-  Enabled topology/function/cache overhead and complete composition coverage still require acceptance.
+  [#1215](https://github.com/thomhurst/Respire/issues/1215). Public fault tests include discovery,
+  backoff cancellation, deadlines, error ownership, tracked Cluster cache producers and pooled reuse.
+  Real Redis tests check increment effects after Sentinel promotion, group switching and Cluster slot migration.
+  The [completed policy comparison](./guides/command-retries#completed-policy-comparison) and
+  [owner/historical-default comparisons](./guides/command-retries#completed-owner-and-historical-default-comparisons)
+  disclose intervals, allocations, drift and retention. Default/disabled integer paths report zero allocation;
+  completed enabled measurements allocate. The historical Cluster latency signal remains unattributed.
+  Pooled retry frames reduce isolated snapshot allocations; completed end-to-end follow-up assessment
+  and tracked Cluster cache overhead remain unmet. Complete reclamation and every lifetime race are not proven.
   The retry epic [#862](https://github.com/thomhurst/Respire/issues/862) remains open.
   No zero-overhead claim is made.
   [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance

@@ -173,10 +173,15 @@ composition, including half-open contention and failover switches, remains track
 [#1256](https://github.com/thomhurst/Respire/issues/1256).
 
 Replica read routing, streams, fire-and-forget operations, deferred batch/transaction members, connection
-protocol commands, cursor continuations, client-cache tracked reads on Cluster, and
+protocol commands, cursor continuations, and
 commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
 never acquire retry permission from their diagnostic name. Use an audited
 `RespireCommands` descriptor for generated buffered commands, or declare a category.
+
+Tracked Cluster cache reads share the producer's retry owner. Each attempt retains
+its `CLIENT CACHING` prelude and routing-owned redirects. Recovery rebases the
+cache read token before another attempt; coalesced waiters receive one producer
+publication. Each waiter still owns its final caller-error observation.
 
 The `respire.command.retries` counter records `respire.command.retry.category` and
 `respire.command.retry.outcome`. On standalone and Sentinel clients, `attempted` counts
@@ -202,9 +207,9 @@ does not establish zero overhead or complete resilience across every composition
 | --- | --- |
 | Category and transport evidence | `CommandRetryPolicyTests` checks the permission and failure matrix; `StandaloneCommandRetryTests` sends public catalog commands across every retryable category before a write. |
 | Lost replies and effects | `StandaloneCommandRetryIntegrationTests` discards replies received from real Redis, then checks stored values, counters, checked-write results and configuration. Declared raw, script and function requests require explicit accumulating risk. |
-| Topology ownership | `TopologyCommandRetryTests` checks Sentinel rediscovery, Cluster MOVED/ASK ownership, the newly active failover-group member, and counter effects after a lost reply across all three owners. |
-| Deadline, cancellation and caching | Standalone fault tests check backoff cancellation, one command deadline, coalesced producer publication and mutation fences through FIFO retirement. Cluster tests bound redirects and retries by one deadline. |
-| Metrics and reuse | Standalone tests distinguish internal attempt errors from final errors. Topology tests repeat declared raw, script, function and Cluster operations, checking one terminal retry outcome despite a throwing exporter. |
+| Topology ownership | `TopologyCommandRetryTests` checks discovery failures, Sentinel rediscovery, Cluster MOVED/ASK ownership and the newly active failover-group member. `TopologyCommandRetryIntegrationTests` loses executed increment replies, then checks effects independently after real Sentinel promotion, group switching and Cluster slot migration. Default risk preserves one effect; explicit accumulating risk permits two. |
+| Deadline, cancellation and caching | Public Sentinel, Cluster, raw, script, function and group cases cancel after an observed failure. Sentinel/raw/script/function cases check the original deadline and late-reply FIFO retirement; existing Cluster cases bound redirects and retries by one deadline. Tracked Cluster tests cover cancellation, redirects, cache-token rebasing, coalesced publication and mutable payload reuse; standalone tests retain mutation fences through FIFO retirement. Groups have no command timeout: the caller token bounds the whole operation. |
+| Metrics and reuse | Public paths repeat successful/exhausted retries and unselected errors with a throwing exporter. Tests distinguish internal attempt errors from final caller errors, producer retry outcomes from waiter observations, and group retry ownership from member final errors. `ImmediateRetryStateTests` checks snapshot isolation, cleanup, simultaneous rentals and canceled-frame retirement. |
 
 Run correctness tests on both net8.0 and net10.0. Fake server tests exercise actual
 public commands and controlled transport failures; the real Redis tests establish
@@ -336,23 +341,185 @@ include runtime, benchmark infrastructure and retained pools; they neither locat
 an ownership leak nor demonstrate that all retained memory was reclaimed. They
 are not per-command allocations and cannot establish zero-allocation dispatch.
 
+### Completed owner and historical-default comparisons
+
+[Owner-policy run 38250362487](https://github.com/thomhurst/Respire/actions/runs/38250362487)
+and [historical-default run 38250366580](https://github.com/thomhurst/Respire/actions/runs/38250366580)
+measure the identical fixture from [PR #1513](https://github.com/thomhurst/Respire/pull/1513).
+The artifacts are `command-retry-owner-policies-net10.0` and
+`command-retry-historical-default-net10.0`, respectively. Both preserve raw reports,
+revision manifests, validation logs and full retention reports for A/candidate/B.
+These completed measurements were assessed without rerunning unchanged code.
+
+| Revision role | Immutable SHA |
+| --- | --- |
+| Owner-policy control A/B; both runs' event base | `14e4e9c22314377c92ec5aebe806bb5acdc28818` |
+| Historical-default control A/B, before retry foundation | `15b7adf5090cce616d5fa395f96fb5f38d344ce1` |
+| Both measured candidates (temporary PR merge) | `f0a4276a666e88f75a63d1c4cc1dd74d9df0a210` |
+| Both measured PR heads | `e048419ae202125a64326718813c316000a760be` |
+
+The owner comparison uses ShortRun (one launch, three measurement iterations).
+The historical comparison uses MediumRun (two launches, ten warmups and fifteen
+measurement iterations per launch). Each has two Dry fixture validations followed
+by baseline A/candidate/baseline B. Dry output is not performance evidence.
+All measured phases contain the expected fifteen or five distinct cases.
+
+`Default` is a null policy; `Disabled` sets `MaxAttempts = 1`; `Enabled` uses an
+enabled policy. Standalone, Sentinel and Cluster cases use healthy integer reads.
+Function uses a declared read-only function. CacheProducer forces a standalone
+cache miss with local clear and conversion on each invocation; it does not measure
+cache hits or tracked Cluster cache retries. Sentinel and the single-primary
+Cluster fixture establish healthy routing, not failover performance.
+
+The tables preserve means and exported confidence intervals in **nanoseconds**,
+allocations in **bytes per operation**, both brackets and control drift.
+Mean ratios are point estimates, not confidence bounds.
+
+<details>
+<summary>Fifteen owner/policy latency and allocation cases</summary>
+
+| Case | A ns [interval] | Candidate ns [interval] | B ns [interval] | Candidate/A | Candidate/B | B/A drift | Allocated B/op (A/candidate/B) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CacheProducer / Default | 110765.194 [93529.627, 128000.760] | 114532.638 [99296.788, 129768.487] | 113279.918 [95079.380, 131480.456] | +3.40% | +1.11% | +2.27% | 2654/2651/2648 |
+| CacheProducer / Disabled | 112843.039 [103918.118, 121767.959] | 115249.424 [69013.826, 161485.022] | 110477.909 [94205.525, 126750.293] | +2.13% | +4.32% | -2.10% | 2649/2652/2663 |
+| CacheProducer / Enabled | 117572.958 [95818.958, 139326.957] | 118218.144 [61064.346, 175371.942] | 114429.678 [31687.830, 197171.527] | +0.55% | +3.31% | -2.67% | 3908/3948/3964 |
+| Cluster / Default | 98321.748 [68052.493, 128591.004] | 104529.458 [87888.651, 121170.265] | 91617.328 [68053.774, 115180.882] | +6.31% | +14.09% | -6.82% | 0/0/0 |
+| Cluster / Disabled | 98419.202 [5788.133, 191050.270] | 105116.114 [-23999.667, 234231.896] | 99105.937 [72393.043, 125818.831] | +6.80% | +6.06% | +0.70% | 0/0/0 |
+| Cluster / Enabled | 105844.386 [-80829.471, 292518.242] | 109288.173 [71496.543, 147079.803] | 109244.593 [89520.740, 128968.445] | +3.25% | +0.04% | +3.21% | 1729/1743/1745 |
+| Function / Default | 113189.153 [97294.411, 129083.895] | 111374.825 [85986.566, 136763.085] | 117475.253 [22062.627, 212887.879] | -1.60% | -5.19% | +3.79% | 785/784/787 |
+| Function / Disabled | 115105.549 [101430.495, 128780.603] | 110930.615 [85148.197, 136713.033] | 111915.443 [99250.477, 124580.409] | -3.63% | -0.88% | -2.77% | 783/771/786 |
+| Function / Enabled | 115602.290 [99224.880, 131979.699] | 116470.665 [108152.447, 124788.882] | 117197.481 [59735.903, 174659.059] | +0.75% | -0.62% | +1.38% | 1895/1871/1868 |
+| Sentinel / Default | 96160.265 [33064.581, 159255.949] | 100188.607 [63552.045, 136825.170] | 99005.604 [23234.148, 174777.060] | +4.19% | +1.19% | +2.96% | 0/0/0 |
+| Sentinel / Disabled | 97312.804 [45166.431, 149459.176] | 101096.335 [79258.543, 122934.128] | 97602.057 [64584.087, 130620.028] | +3.89% | +3.58% | +0.30% | 0/0/0 |
+| Sentinel / Enabled | 109227.829 [73566.981, 144888.677] | 109038.775 [77068.421, 141009.129] | 105236.923 [3016.488, 207457.357] | -0.17% | +3.61% | -3.65% | 1662/1667/1667 |
+| Standalone / Default | 97219.153 [91134.177, 103304.130] | 99128.852 [94978.601, 103279.103] | 96312.773 [71603.730, 121021.815] | +1.96% | +2.92% | -0.93% | 0/0/0 |
+| Standalone / Disabled | 98531.976 [41514.264, 155549.687] | 96342.271 [90260.853, 102423.689] | 99926.199 [84437.401, 115414.998] | -2.22% | -3.59% | +1.41% | 0/0/0 |
+| Standalone / Enabled | 105351.533 [57544.478, 153158.589] | 106795.148 [34428.014, 179162.282] | 108403.786 [74934.257, 141873.315] | +1.37% | -1.48% | +2.90% | 1311/1321/1322 |
+
+</details>
+
+Every owner-policy candidate latency interval overlaps both control intervals.
+Mean changes range from -3.63% to +6.80% against A and -5.19% to +14.09% against B;
+B/A drift ranges from -6.82% to +3.79%. These broad ShortRun intervals do not
+establish latency equivalence or zero overhead. Default/Disabled integer paths
+allocate 0 B/op. Enabled costs 1321 B/op standalone, 1667 B/op Sentinel and
+1743 B/op Cluster. Function Default/Disabled/Enabled costs 784/771/1871 B/op;
+CacheProducer costs 2651/2652/3948 B/op, including the documented fixture work.
+The controls have similar enabled costs. This run predates pooled retry frames.
+
+| Case | A ns [interval] | Candidate ns [interval] | B ns [interval] | Candidate/A | Candidate/B | B/A drift | Allocated B/op (A/candidate/B) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CacheProducer / Default | 69636.721 [67975.733, 71297.709] | 69623.371 [67651.620, 71595.123] | 70445.283 [68990.620, 71899.947] | -0.02% | -1.17% | +1.16% | 2657/2669/2658 |
+| Cluster / Default | 66777.916 [65483.422, 68072.410] | 69193.465 [68203.945, 70182.985] | 67737.068 [67036.070, 68438.065] | +3.62% | +2.15% | +1.44% | 0/0/0 |
+| Function / Default | 69352.828 [68497.629, 70208.027] | 70754.107 [69682.958, 71825.255] | 69254.331 [68309.567, 70199.096] | +2.02% | +2.17% | -0.14% | 791/792/791 |
+| Sentinel / Default | 67150.264 [66079.460, 68221.068] | 67481.921 [67068.758, 67895.083] | 67863.038 [67260.683, 68465.392] | +0.49% | -0.56% | +1.06% | 0/0/0 |
+| Standalone / Default | 67601.438 [67151.955, 68050.921] | 67822.701 [66751.012, 68894.390] | 67750.449 [67087.692, 68413.206] | +0.33% | +0.11% | +0.22% | 0/0/0 |
+
+Historical default integer paths allocate 0 B/op in every phase. Function costs
+791/792/791 B/op (A/candidate/B); CacheProducer costs 2657/2669/2658 B/op.
+Cluster candidate mean rises 3.62% against A and 2.15% against B, with 1.44% drift.
+Its interval does not overlap A, but overlaps B. Other candidate intervals overlap
+both controls. The Cluster signal requires attribution: this historical comparison
+includes intervening changes and does not isolate retry dispatch as its cause.
+Neither overlapping intervals nor zero integer allocations prove regression freedom.
+
+<details>
+<summary>Candidate four-stage retention, preserving every owner/policy</summary>
+
+Each cell lists before-connect / connected-idle / after-churn / after-dispose
+full-GC process snapshots in **bytes**. The owner-policy run has one process sample
+per scope/stage; the historical run has two and reports their median. In every
+listed scope POH size is 8184 / 24528 / 24528 / 24528 B, with zero reported POH
+fragmentation. No policy or owner dimensions are pooled in these tables.
+The linked artifacts and PR retain the same stages for both controls.
+
+Owner-policy candidate:
+
+| Owner / policy | Managed B: before / idle / churn / disposed | Working-set B: before / idle / churn / disposed |
+| --- | ---: | ---: |
+| CacheProducer / Default | 137760 / 2010984 / 2042528 / 1746888 | 46100480 / 66293760 / 67936256 / 95645696 |
+| CacheProducer / Disabled | 137760 / 2015224 / 2037896 / 1745480 | 45932544 / 66158592 / 67780608 / 95600640 |
+| CacheProducer / Enabled | 137760 / 2015952 / 2038568 / 1720144 | 45953024 / 66322432 / 67940352 / 99696640 |
+| Cluster / Default | 137744 / 2944112 / 2970272 / 3038800 | 46215168 / 74571776 / 76189696 / 72577024 |
+| Cluster / Disabled | 137744 / 2944168 / 2970328 / 3039160 | 46153728 / 74579968 / 76206080 / 79798272 |
+| Cluster / Enabled | 137744 / 2948584 / 2974576 / 3052720 | 46075904 / 74715136 / 76353536 / 93429760 |
+| Function / Default | 137744 / 1836104 / 1862048 / 1590440 | 46223360 / 65101824 / 66519040 / 80982016 |
+| Function / Disabled | 137752 / 1848456 / 1874400 / 1591920 | 46161920 / 65007616 / 66445312 / 80818176 |
+| Function / Enabled | 137744 / 1777896 / 1811504 / 1534808 | 45912064 / 64913408 / 66347008 / 94679040 |
+| Sentinel / Default | 137744 / 2790824 / 2808816 / 2428696 | 46059520 / 74432512 / 76460032 / 82210816 |
+| Sentinel / Disabled | 137760 / 2784880 / 2803208 / 2421744 | 46092288 / 74321920 / 76353536 / 81793024 |
+| Sentinel / Enabled | 137752 / 2727680 / 2808616 / 2434232 | 46030848 / 74489856 / 76464128 / 105734144 |
+| Standalone / Default | 137760 / 1743384 / 1764912 / 1478624 | 46227456 / 64270336 / 65617920 / 72855552 |
+| Standalone / Disabled | 137760 / 1731152 / 1752680 / 1478496 | 46002176 / 64151552 / 65486848 / 72560640 |
+| Standalone / Enabled | 137760 / 1666344 / 1762984 / 1495032 | 46096384 / 64319488 / 65634304 / 96432128 |
+
+Historical-default candidate:
+
+| Owner / policy | Managed B: before / idle / churn / disposed | Working-set B: before / idle / churn / disposed |
+| --- | ---: | ---: |
+| CacheProducer / Default | 137960 / 2011184 / 2035988 / 1728996 | 46082048 / 66220032 / 67837952 / 97417216 |
+| Cluster / Default | 137944 / 2944344 / 2970380 / 3040552 | 45928448 / 74266624 / 75896832 / 74674176 |
+| Function / Default | 137944 / 1836304 / 1860008 / 1590244 | 45887488 / 64806912 / 66232320 / 86372352 |
+| Sentinel / Default | 137944 / 2789148 / 2805396 / 2411532 | 46104576 / 74407936 / 76443648 / 82055168 |
+| Standalone / Default | 137952 / 1737432 / 1763176 / 1454292 | 45993984 / 64106496 / 65449984 / 72519680 |
+
+</details>
+
+Managed memory and working set remain above before-connect after disposal for
+every owner in both runs and in both controls. Cluster managed bytes after disposal
+also exceed after-churn in every phase. These process observations include runtime,
+fixtures and pools. Sparse samples and working-set variation cannot attribute a leak,
+establish complete reclamation, or measure per-command allocations.
+
+### Pooled dispatch follow-up
+
+[PR #1517](https://github.com/thomhurst/Respire/pull/1517) pools at most 256 retry
+frame owners and avoids discovery for a healthy Sentinel generation. It clears and
+releases frame arrays when the logical operation ends; transport copies retain their
+FIFO ownership. Its isolated snapshot test measures 120000 bytes for 1000 old
+snapshots, 0 bytes for 1000 pooled rentals and 64000 bytes for an escaping positive
+control on net8.0/net10.0. This is snapshot ownership, not end-to-end allocation.
+Remaining sampled allocations include attempt-local write evidence, declared
+function arguments/results and cache fixture work; none becomes zero by assertion.
+
+[Follow-up run 38255514678](https://github.com/thomhurst/Respire/actions/runs/38255514678)
+was requested for head `7b5b4b5ec2b02b5b303efa718373256885c80768` and remains
+unassessed in this audit. The pooling merge retained obsolete tracked-Cluster
+constructor calls and failed local compilation; [#1519](https://github.com/thomhurst/Respire/pull/1519)
+adapts that path to pooled ownership and returns its rental in `finally`. The earlier pinned
+measurements above do not measure this repair or prove its end-to-end performance.
+
+The audit extends `CommandRetryOwnerBenchmarks` with `ClusterCacheProducer`:
+each invocation clears one local entry and performs a tracked Cluster read, with
+verified cache miss/publication and result conversion. The current fixture has
+eighteen owner/policy cases; default-only selection has six. The earlier completed
+reports retain their original fifteen/five cases and standalone cache scope.
+The `run-command-retry-audit-benchmarks` label requests a net10.0 MediumRun
+A/candidate/B comparison, with the identical fixture and all owner/policy retention
+dimensions. It pins compilable control `a19b9590235f6d2ad0f0e7d41dfafccbbb9b5394`,
+before tracked retries and pooling; current main already contains those changes.
+This control includes intervening changes and does not isolate their individual
+costs. The new tracked case and the pooling repair need completed measurement
+assessment; no asynchronous result is awaited or inferred here.
+
 ### Unmet aggregate acceptance
 
-This run supports measured zero allocation for default/disabled typed reads and
-the tested group operations. It does not establish the full native/default
-zero-allocation and no-measurable-cost requirement: catalog/script operations
-allocate in all modes, the control is not pre-retry code, and only four healthy
-paths are measured. Healthy enabled typed/catalog/script operations demonstrably
-allocate and have higher latency than default in this fixture, so no general
-zero-allocation or no-measurable-cost claim is made for enabled retries.
+The audit establishes public-command category admission, lost-reply effects,
+selected/unselected failures, discovery ownership, backoff cancellation, logical
+deadlines, listener isolation, coalesced publication and repeated producer reuse
+through the named suites. Real topology evidence now includes Sentinel promotion,
+group member switching and Cluster key/slot migration. Cluster migration is not
+replica-election evidence, and the tests do not prove every pooled lifetime race or
+every possible API/topology/fault combination. Group operations remain bounded by
+the caller token rather than a new group command timeout.
 
-Enabled healthy Sentinel, Cluster, function and cache-producer paths remain
-unmeasured here. Existing routing/cache comparisons do not isolate the incremental
-cost of retry ownership. Real Redis topology failover effects, discovery failures,
-the remaining cancellation/backoff/deadline combinations, internal/final error
-ownership outside standalone coverage, and pool lifetime races still need the
-corresponding composition evidence. A successful workflow validates complete
-reports, not performance acceptance.
+Performance acceptance remains unmet. The historical Cluster signal is not fully
+attributed; the pooling follow-up still needs completed intervals, allocations and
+retention assessment. End-to-end enabled paths remain positively allocated in the
+completed evidence, and raw/catalog/script/function/cache paths cannot be advertised
+as generally zero-allocation. Tracked Cluster cache retry overhead now has a fixture
+but no assessed completed result. Process retention does not prove ownership leaks or
+complete reclamation. A successful workflow validates reports, not acceptance.
 
 Aggregate acceptance remains open in [#1499](https://github.com/thomhurst/Respire/issues/1499),
 [#1215](https://github.com/thomhurst/Respire/issues/1215) and
