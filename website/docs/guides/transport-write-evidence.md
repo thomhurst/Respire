@@ -560,3 +560,76 @@ Diagnostic launch numbers identify their own processes; they are not the earlier
 BenchmarkDotNet timing launch numbers. These traces cannot retrospectively explain
 the historical deltas or automatically establish aggregate performance acceptance.
 The final #1474 audit owns that decision; #1214 and #862 remain open.
+
+### Local causal evidence: 2026-10-12
+
+Revision `49ecd977ef46072936f0743475567581a93706ee` ran on Windows
+10.0.26200 with an owned Redis 8.10 container. Each launch used 128 iterations per
+ordinary control, one first gated batch, 128 overlapping batches, and 128 background
+arrays. Both runtimes captured all controls and proved every gated operation
+incomplete before release. These are diagnostic executions, not public latency
+measurements. The .NET 10 fixture/library SHA-256 values were
+`16AB29EEAF7C3B81FF8ED7311D7AF76308329FAC777494ADE11D612F27753A7A` /
+`F0E695A5FA66666D9CC189EC9442CE695F6ED25D1BB468D9A3810F3B07D18731`;
+the .NET 8 values were
+`AED8B102E3D9316D5E7D90CE74A9E818F89FDB6D527E0E77DF5B956CC3E4325A` /
+`C8709B2BF72EC159C26C6F518ABD0AEA8B852AD3B7719810C65F3E92422F2AE8`.
+
+The table identifies every case and process. Sample counts are allocation ticks;
+all 5,947 .NET 10 and 6,741 .NET 8 samples had types and stacks, with zero dropped
+events. Every trace contained 64 sampled 65,560-byte arrays with the
+`AllocateBackgroundControl` worker stack, independently of transport.
+
+| Error metrics | Connections/commands | Launch | .NET 10.0.12 PID / samples | .NET 8.0.31 PID / samples |
+| --- | --- | --- | --- | --- |
+| disabled | 1/32 | 1 | 32708 / 193 | 5428 / 242 |
+| disabled | 1/32 | 2 | 7972 / 242 | 34824 / 242 |
+| disabled | 1/100 | 1 | 2972 / 350 | 19600 / 597 |
+| disabled | 1/100 | 2 | 38668 / 350 | 11756 / 596 |
+| disabled | 2/32 | 1 | 37508 / 245 | 17236 / 246 |
+| disabled | 2/32 | 2 | 15364 / 245 | 3400 / 246 |
+| disabled | 2/100 | 1 | 10724 / 600 | 37640 / 601 |
+| disabled | 2/100 | 2 | 39824 / 598 | 38676 / 600 |
+| enabled | 1/32 | 1 | 37436 / 242 | 37840 / 242 |
+| enabled | 1/32 | 2 | 12928 / 241 | 3452 / 242 |
+| enabled | 1/100 | 1 | 30960 / 596 | 516 / 596 |
+| enabled | 1/100 | 2 | 3140 / 596 | 21216 / 597 |
+| enabled | 2/32 | 1 | 29292 / 247 | 3840 / 245 |
+| enabled | 2/32 | 2 | 33124 / 246 | 33012 / 247 |
+| enabled | 2/100 | 1 | 37620 / 357 | 35428 / 603 |
+| enabled | 2/100 | 2 | 22556 / 599 | 37696 / 599 |
+
+Concrete .NET 10 sampled objects distinguish the requested sites. The sizes below
+are individual objects, never totals assigned to a type or per-batch differences:
+
+| Case / PID | Control | Sampled type / size | Allocation stack evidence |
+| --- | --- | --- | --- |
+| disabled, 1/32, launch 1 / 32708 | construction | `RespirePending<long>` / 64 B | `RespireBatch.Add`, `BatchStringCommands.Increment`, `Construct` |
+| disabled, 1/32, launch 1 / 32708 | construction | `Op<IncrementCommand,long>` / 224 B | `RespireBatch.Add`, `BatchStringCommands.Increment`, `Construct` |
+| disabled, 1/100, launch 1 / 2972 | construction | `Op[]` / 1,048 B | `List<Op>.AddWithResize`, `Construct` |
+| disabled, 1/32, launch 1 / 32708 | public-task | `AsyncStateMachineBox<long,StandaloneBatch>` / 152 B | `AsyncTaskMethodBuilder<long>.GetStateMachineBox`, `StandaloneBatch.MoveNext` |
+| disabled, 1/32, launch 2 / 7972 | gated-direct | `AsyncStateMachineBox<RespireBatchResult,TryExecuteAsync>` / 328 B | `AsyncTaskMethodBuilder.GetStateMachineBox`, `TryExecuteAsync.MoveNext`, `ExecuteAsync.MoveNext` |
+| disabled, 1/32, launch 2 / 7972 | gated-pool-demand | pooling `StateMachineBox<Exception,CompleteSendAsync>` / 240 B | `PoolingAsyncValueTaskMethodBuilder.StateMachineBox.RentFromCache`, `GetStateMachineBox`, `CompleteSendAsync.MoveNext` |
+| disabled, 1/32, launch 1 / 32708 | background-positive | `byte[]` / 65,560 B | `AllocateBackgroundControl`, `Task<int>.InnerInvoke`, `ThreadPoolWorkQueue.Dispatch` |
+
+The construction-only boundary demonstrates existing pending/operation/list
+allocations independently of response work. Holding replies demonstrates a real
+completion suspension; keeping 128 executions live exposes a sampled pooling
+builder miss. The public fixture Task has its own sampled allocation stack, and
+the diagnostic pooling-wrapper control removes that unpooled wrapper. The worker
+positive control demonstrates why process totals require stack attribution.
+These observations establish concrete allocation sites and controlled causes;
+they do not identify the objects behind the historical fractional B/op deltas.
+No causal transport defect or zero-allocation contract violation was demonstrated,
+so this change does not alter production builders or transport behavior.
+
+Benchmark projects built on net8.0/net10.0 through the unchanged guard. The five
+gate tests passed on each runtime in a focused harness compiling the committed
+gate, fake-server and test sources. The full `Respire.Tests` build reached the
+unchanged 2,048 MB process-tree guard (observed 2,142 MB), so full-project validation
+remains for CI. A negative control that changed only metadata PID failed conversion
+with `Trace contains mismatched process identity or duplicate control boundaries.`
+The website build and workflow YAML/Python/PowerShell syntax checks passed.
+Raw local evidence is retained outside the released worktree; the requested pinned
+workflow publishes fresh, independently identified evidence for the later #1474
+audit. Its pending comparison is not a passing aggregate disposition.
