@@ -13,6 +13,13 @@ commit [`a575888773a3b01b079c9c3720bb1553c3169997`](https://github.com/dotnet/or
 
 This is an assessed version, not a blanket supported-version declaration.
 
+The acceptance project pins all three providers to **10.2.2** by updating its
+central `PackageVersion` items. Repository defaults are **10.4.0**, but the
+project pins preserve the provider and runtime versions used by this source
+inventory and its recorded results. Renovate updates the repository defaults
+together and excludes the assessment pins. Version **10.4.0** is not assessed
+here; moving the pins requires a new source inventory and compatibility assessment.
+
 ## Source inventory
 
 All inventoried calls use the default `CommandFlags.None`. Each provider calls

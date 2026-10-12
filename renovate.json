@@ -2,6 +2,20 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "packageRules": [
     {
+      "description": "Update Orleans Redis providers together without changing the historical assessment pin.",
+      "matchManagers": ["nuget"],
+      "matchFileNames": ["Directory.Packages.props"],
+      "matchPackageNames": ["Microsoft.Orleans.*"],
+      "groupName": "Orleans Redis providers"
+    },
+    {
+      "description": "The assessed Orleans version changes only with a new source inventory and compatibility assessment.",
+      "matchManagers": ["nuget"],
+      "matchFileNames": ["tests/Respire.Orleans.Acceptance.Tests/Respire.Orleans.Acceptance.Tests.csproj"],
+      "matchPackageNames": ["Microsoft.Orleans.*"],
+      "enabled": false
+    },
+    {
       "description": "Keep .NET 8 ASP.NET Core dependencies on their compatible 8.x train.",
       "matchManagers": ["nuget"],
       "matchFileNames": ["Directory.Packages.props"],
