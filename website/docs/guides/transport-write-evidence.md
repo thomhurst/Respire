@@ -17,6 +17,264 @@ The source evidence is [the per-attempt owner and observation](https://github.co
 
 Gathered SET uses a separate ownership barrier. Array-backed payloads of at least 8 KiB take `GatheredSetCommand`'s borrowed path. Its `GatheredSetWriteLease` has a pool retention capacity of 4,096 leases; that capacity is not an active-operation limit. One logical operation and every accepted write retain references. The response's `finally` waits for `FinishOperation`, and the sender releases each accepted write only after its send returns. Abort releases queued writes. Consuming the barrier's result returns the lease to the pool. The lease fields do not directly store the payload, but accepted write-buffer descriptors hold the caller array until write ownership ends. Cancellation, a deadline, a failed reply or a captured write outcome must not release that array early. See [the gathered command and lease](https://github.com/thomhurst/Respire/blob/622972d400b96d111b18272ba011fd3edb6958f4/src/Respire/Commands/GatheredSetCommand.cs) and [the sender](https://github.com/thomhurst/Respire/blob/622972d400b96d111b18272ba011fd3edb6958f4/src/Respire/Networking/RespireConnection.GatheredSet.cs).
 
+## Evidence audit: 2026-10-12
+
+### Pinned final-frame wait comparison
+
+**Aggregate transport performance acceptance remains unmet.** This audit completes the evidence disposition requested by [#1433](https://github.com/thomhurst/Respire/issues/1433). Further causal measurement and any resulting implementation are tracked in native child [#1474](https://github.com/thomhurst/Respire/issues/1474), which blocks [#1214](https://github.com/thomhurst/Respire/issues/1214). Both #1214 and [#862](https://github.com/thomhurst/Respire/issues/862) remain open. The merged write-outcome foundation and the two pooling fixes do not need reimplementation. No unchanged comparison was rerun for this audit.
+
+[Run 38141963234](https://github.com/thomhurst/Respire/actions/runs/38141963234) measures [PR #1434](https://github.com/thomhurst/Respire/pull/1434). Both baseline controls pin `3a6d7ef79707148eaa85dbc8106bea7d572e8b2e`; the candidate pins immutable merge `5fd8e478730a2df7ded8f9743306304382e1c426`, whose second parent is implementation head `0d882ced4c8e33b8b82ad3aa3e0dac65cb570deb`. The metadata head is the implementation head, not the measured merge. The artifacts are `transport-acceptance-comparison-disabled` (ID 11704970497) and `transport-acceptance-comparison-enabled` (ID 11704342219).
+
+Each metric mode brackets A/candidate/B on its own Ubuntu 24.04 Linux x64 runner, with SDK 10.0.401, runtime 10.0.12, BenchmarkDotNet 0.15.8, concurrent workstation GC and digest-pinned Redis 8.10. Disabled uses Intel Xeon Platinum 8370C; enabled uses Intel Xeon Platinum 8573C. Each has four logical/two physical cores. Absolute values across modes cannot identify metric cost: the machines differ. High-priority setup fails with permission denied in every phase.
+
+All 48 case rows, 288 measured launches, 4,320 raw actual workload samples, 4,213 retained result samples, 96 Dry validation launches and 1,536 full-GC samples were checked. Every measured launch has 15 actual iterations; each case retains 24–30 results across its two launches after outlier handling. Operation counts agree within each launch's actual/result samples and native exits are successful. Every phase publishes the requested error-metric instrument. The complete intervals, allocation reports, launch means, raw GC ratios, control drift and retention groups follow below. Workflow success only proves completed measurements.
+
+The fixture adds circuit-enabled streamed GET to the previous audit's cases. It constructs a public client, a circuit-enabled client and an internal multiplexer, then warms instant SET and circuit GET during setup for every case. `Connections` is not the total number of process connections. All cases still retain the 5 MiB caller payload and two 256 KiB source arrays. Batch units are whole batches; raw/public pipeline units are individual commands. Large SET uses the public array-backed gathered route, already present in both controls. Its copying/gather-send performance is separately tracked by [#976](https://github.com/thomhurst/Respire/issues/976).
+
+The baseline/candidate production diff is exactly the pooling builder attribute on `WaitForFinalFrameWriteAsync`; the other changed files are tests. Batch, selection, stream reader and fixture source are identical across the bracket. The measured merge predates later changes on main, including batch route handling. It is evidence for these pinned revisions, not a benchmark of all current main, TLS, Windows or net8.0.
+
+### Public latency disposition
+
+No public row has a slower interval separated from **both** controls. This does not establish equivalence. Disabled two-connection PING, one-connection public pipeline and one-connection delayed SET are slower with separated intervals against B only. Disabled two-connection small SET is faster against B only, and two-connection delayed SET is faster against both. Enabled two-connection circuit GET is slower against A only; two-connection PING, one-connection public pipeline and two-connection instant SET are faster against B only. Every other public row overlaps both controls. Internal disabled one-connection selection is slower against both; disabled two-connection selection is faster against both. All internal pipeline and enabled selection intervals overlap both controls.
+
+Enabled circuit GET with two connections is +11.95%/+8.08% versus A/B. Its candidate interval is 223.319–263.323 us, compared with A 213.105–221.602 us and B 221.917–228.345 us. Candidate launch means are 220.570/266.072 us versus A 217.189/217.518 and B 227.724/222.352. Disabled GET has its own different second-launch regime, and B has 342.151/275.031 us launch means. Circuit GET does not execute the changed SET wait during its timed region; its setup does warm SET. These process regimes must remain visible and need causal diagnosis in #1474. They cannot establish a general GET regression or disappear because an aggregate interval overlaps B.
+
+### Allocation causes and measurement boundary
+
+The exported allocation report is not an average across launches. [BenchmarkDotNet 0.15.8's report constructor](https://github.com/dotnet/BenchmarkDotNet/blob/v0.15.8/src/BenchmarkDotNet/Reports/BenchmarkReport.cs#L46) selects the last execution's GC statistics. Its [GC statistics implementation](https://github.com/dotnet/BenchmarkDotNet/blob/v0.15.8/src/BenchmarkDotNet/Engines/GcStats.cs#L37) rounds bytes per operation, and on modern .NET reads `GC.GetTotalAllocatedBytes(precise: true)`. Thus allocations include process background work, rather than only the invoking thread or the changed helper. This explains why an integer report can look restored while launch 1 remains high. It does not identify the allocator responsible for that high launch.
+
+Instant SET with one connection remains mixed. Disabled A/C/B reports are 6437/6463/6230 B/op, with candidate launches 6501.844/6462.637 versus A 6327.828/6437.324 and B 6485.004/6229.949. Both candidate launches exceed both A launches; candidate launch 1 also exceeds both B launches. Enabled reports are 6434/6481/6498, but candidate launch 1 is 6508.283 versus A 6428.850/6434.176 and B 6508.834/6497.826. Both two-connection candidate instant launches are below every corresponding control launch in both modes. This supports a particular observed reduction, not a consistent restored contract for every profile.
+
+Delayed SET also remains mixed: disabled reports are 12332/12364/12517 and 12358/12437/12297 for one/two connections; enabled reports are 12304/12431/12237 and 12593/12277/12371. Enabled/two-connection candidate launches are below all controls, but enabled/one-connection launch 2 exceeds both A's launch 2 and B's launch 2. Disabled/two-connection launches exceed both B launches. The earlier pooled outer state machines' reduction and the isolated zero-byte final-wait regression do not imply a fixed total upload allocation.
+
+There are concrete remaining allocation sites in the identical [stream reader](https://github.com/thomhurst/Respire/blob/5fd8e478730a2df7ded8f9743306304382e1c426/src/Respire/Networking/RespireConnection.StreamPayloadReader.cs) and [streaming sender](https://github.com/thomhurst/Respire/blob/5fd8e478730a2df7ded8f9743306304382e1c426/src/Respire/Networking/RespireConnection.Streaming.cs). A 256 KiB exact `MemoryStream` produces eight 32 KiB chunks through `async Task<ReadOnlyMemory<byte>> ReadChunkAsync`; returning a memory value still requires a Task even when the read completes inline. Each upload constructs a reader, its ownership lock and linked cancellation. `CopyStreamPayloadAsync` still uses an unpooled async ValueTask builder; socket-drain suspension can allocate its box. Cancellable `Task.WaitAsync` calls can add wait state when writes remain incomplete. The public benchmark itself returns an async Task, and pooled builders can miss on a continuation thread. Derived delayed streams additionally use background fills and `Task.Delay`. The final-wait builder pools one suspended box; it does not eliminate these other owners. These source sites causally explain why total upload allocation remains nonzero and suspension-dependent. Without allocation stacks and suspension/pool-miss counts, they do not attribute the exact mixed launch deltas. #1474 requires those missing causal measurements before choosing a further fix.
+
+The 100-command batch increases are also not fully resolved. Disabled/one-connection reports are 30010/30018/30016, and candidate launch 2 (30018.027) exceeds every control launch. Disabled/two-connection reports drop to 30015/30004/30018, with candidate 30013.660/30003.613; this is not the earlier audit's consistent candidate increase. Enabled/one-connection candidate launches 30015.758/30016.531 exceed every control launch (30013.080–30014.564). Enabled/two-connection launch 2 (30017.453) exceeds every control launch, while launch 1 (30011.107) is below A and above B. Some 32-command launches also increase; all are retained below.
+
+The identical [batch implementation](https://github.com/thomhurst/Respire/blob/5fd8e478730a2df7ded8f9743306304382e1c426/src/Respire/RespireBatch.cs) constructs a batch/list, a `RespirePending<T>` and `Op<TCommand,T>` for every queued increment, and expands list storage. Standalone execution rents send/observation arrays and awaits replies through pooled builders; the fixture wraps it in an async Task. No timed batch call reaches `WaitForFinalFrameWriteAsync`. The unrelated setup upload can affect process/pool state, and process-wide GC counters include background work. Construction explains the large nonzero total but not a particular extra 2–10 B/op. An unchanged call graph is evidence against direct batch allocation from the changed helper, not proof that every difference is noise. #1474 must separate construction, suspension, pool misses and background allocations with causal controls.
+
+PING, error and small/large SET reports vary by at most two bytes in this bracket; raw/public pipeline reports are unchanged. Selection reports zero, with tiny amortized raw diagnostic ratios. Circuit GET reports vary substantially: disabled A/C/B are 14452/15571/13635 and 14538/13603/15526; enabled are 13639/15004/13866 and 14594/15359/14010. Its complete raw launch allocations must be diagnosed alongside upload/batch evidence, not excluded from the public fixture.
+
+### Internal selection regimes
+
+The identical [multiplexer selection source](https://github.com/thomhurst/Respire/blob/5fd8e478730a2df7ded8f9743306304382e1c426/src/Respire/Infrastructure/RespireConnectionMultiplexer.cs#L395) has two actual paths: one connection uses an inlined health check without the round-robin atomic increment; two connections increment `_next` with `Interlocked.Increment`, then select/check a slot. Neither path calls the streamed helper or the opt-in write observation owner. The diagnostic disassembly contains the one-connection health checks and the two-connection `lock xadd`, which explains the connection-profile cost distinction. It does not explain every same-profile launch difference.
+
+Disabled one-connection selection is +17.80%/+18.49%, with candidate interval 2.210–2.230 ns versus A 1.861–1.908 and B 1.848–1.898. Candidate launches are 2.232/2.209 ns versus A 1.852/1.914 and B 1.906/1.841. These are separated results and remain acceptance evidence even though selection source is unchanged. Disabled two-connection A launches differ at 11.628/10.459 ns; candidate is 10.213/10.269 and B 10.287/10.314. Enabled two-connection candidate launches differ at 9.798/8.538 ns versus A 8.517/8.810 and B 8.828/8.834. Enabled one-connection launches remain around 1.65–1.69 ns.
+
+The regimes already exist in raw workload timing, not only in subtracted reports. Enabled/two-connection candidate actual workload means are 13.877/12.444 ns, while overhead actual means are 3.952/3.900 ns. Disabled/two-connection A actual means are 15.651/14.467 ns, while overhead is 3.998/3.995 ns. Disabled/one-connection candidate actual means are 6.233/6.210 ns versus controls 5.841–5.918 ns, with overhead about 3.995–4.017 ns across those launches. The full result uses overhead estimation and outlier handling, so subtracting these two displayed means will not reproduce every result exactly. Overhead alone cannot explain these differences.
+
+The depth-three diagnostic selection bodies have the same instruction sequence after normalizing absolute addresses across A/C/B and both modes, for each connection profile. Their sizes are 1,122/1,069 bytes. Those captures are one body per case, without code/tier capture tied to each of the two timed launches. They cannot establish that the slow launch executed identical machine code, identify a JIT tier/layout cause, or isolate CPU scheduling/frequency. The earlier audit's enabled one-connection candidate regime (10.998/2.677 ns) remains unresolved too; its AMD runner and older fixture differ from this run. No causal claim of a streaming-induced selection slowdown, or a demonstrated harmless JIT regime, is made. #1474 requires launch-specific code evidence and controlled diagnosis; rerunning unchanged samples to select a favorable regime is insufficient.
+
+### Retention disposition and next measurement
+
+The ownership and retention limits above still apply. Each opt-in attempt owns one non-pooled observation with no payload/source history; limits are per attempt, not a global observation count or time cap. Source reuse remains generation-safe. The fixture does not invoke an opt-in attempt owner. All 1,536 full-GC samples retain 5,767,168 bytes of caller arrays; measured groups contain 24 samples per connection/stage. POH and whole-process memory ranges follow below. None measures isolated runtime pool retention, observation bytes or complete reclamation. Three connection owners and runtime/background state further prevent such an inference.
+
+#1474 is the required material diagnostic/implementation follow-up, with #1432 recorded as its closed prerequisite. It must attribute allocation types/stacks, controlled suspension and pool misses, capture each selection launch's code/tiering, and disposition circuit GET. Any resulting fix preserves FIFO, payload ownership, mutation barriers, exceptions, default limits and source generations. Its implementation PR requests `run-transport-benchmarks`; a later pass audits both completed metric modes without waiting or rerunning unchanged failures for green. #1214 stays open until its full acceptance is established, and #862 stays open for conservative retry-policy work.
+
+### Complete case and launch evidence
+
+#### Error metrics disabled
+
+validation-baseline: 24 cases, 24 successful exits, 96 full-GC samples.
+
+validation-candidate: 24 cases, 24 successful exits, 96 full-GC samples.
+
+baseline-a: 24 cases, 48 successful exits, 192 full-GC samples.
+
+candidate: 24 cases, 48 successful exits, 192 full-GC samples.
+
+baseline-b: 24 cases, 48 successful exits, 192 full-GC samples.
+
+Intervals are exported 99.9% intervals in microseconds. Positive deltas mean slower. Allocation is exported B/op. Batch units are whole batches; pipeline units are commands.
+
+| Case / parameters | C/A; C/B | B/A drift | Interval us: A / C / B | B/op: A / C / B |
+| --- | ---: | ---: | --- | ---: |
+| CircuitStreamedGet / Connections=1 | +0.24%; -0.73% | +0.98% | 268.703326–275.953877 / 269.403907–276.557541 / 271.699965–278.275330 | 14452 / 15571 / 13635 |
+| CircuitStreamedGet / Connections=2 | +4.65%; -4.89% | +10.03% | 276.113765–282.687084 / 273.955033–310.848068 / 283.668803–331.198833 | 14538 / 13603 / 15526 |
+| ClientPing / Connections=1 | +0.29%; -0.06% | +0.35% | 114.732639–115.965733 / 114.959417–116.410408 / 114.832044–116.668635 | 184 / 184 / 184 |
+| ClientPing / Connections=2 | +0.33%; +1.09% | -0.76% | 115.205960–116.933262 / 115.760414–117.140466 / 114.644057–115.737631 | 184 / 184 / 184 |
+| ClientServerError / Connections=1 | +0.31%; -0.47% | +0.79% | 137.361911–138.855291 / 137.589296–139.485554 / 138.265283–140.125097 | 952 / 952 / 952 |
+| ClientServerError / Connections=2 | +0.14%; -0.28% | +0.42% | 138.090195–140.670462 / 138.664136–140.480554 / 138.883831–141.045146 | 952 / 952 / 952 |
+| LargeSet / Connections=1 | +1.46%; +1.48% | -0.02% | 1193.171265–1236.843387 / 1207.516982–1257.908182 / 1193.095527–1236.463059 | 177 / 177 / 177 |
+| LargeSet / Connections=2 | -0.59%; +0.07% | -0.66% | 1236.909427–1275.567416 / 1222.069430–1275.540417 / 1229.586563–1266.227950 | 178 / 176 / 176 |
+| Pipeline / Connections=1 | -0.23%; -0.16% | -0.07% | 4.319633–4.350789 / 4.308261–4.341959 / 4.318247–4.346043 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | -1.15%; -2.71% | +1.60% | 4.805518–4.957688 / 4.735897–4.914764 / 4.894497–5.024519 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | +0.24%; +0.74% | -0.50% | 4.377325–4.401563 / 4.383034–4.416698 / 4.354602–4.380132 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | -2.24%; -2.15% | -0.10% | 4.899915–5.040779 / 4.784632–4.933147 / 4.868439–5.062525 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | +17.80%; +18.49% | -0.58% | 0.001861–0.001908 / 0.002210–0.002230 / 0.001848–0.001898 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | -7.24%; -0.56% | -6.72% | 0.010584–0.011502 / 0.010220–0.010266 / 0.010289–0.010313 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | -0.31%; +0.19% | -0.50% | 117.515203–118.537719 / 117.059249–118.250531 / 116.818021–118.051609 | 176 / 176 / 176 |
+| SmallSet / Connections=2 | +0.35%; -1.18% | +1.54% | 117.062506–118.522890 / 117.710158–118.703606 / 118.892917–120.331839 | 176 / 176 / 176 |
+| StandaloneBatch / Connections=1&count=100 | -0.19%; -0.96% | +0.77% | 284.931022–293.073902 / 285.783740–291.118289 / 288.347345–294.120759 | 30010 / 30018 / 30016 |
+| StandaloneBatch / Connections=1&count=32 | -0.28%; -0.00% | -0.27% | 174.628701–176.126283 / 174.285868–175.504218 / 173.909189–175.887852 | 10484 / 10485 / 10482 |
+| StandaloneBatch / Connections=2&count=100 | -0.19%; +0.29% | -0.48% | 286.664309–293.310566 / 286.645454–292.232432 / 285.118573–292.084812 | 30015 / 30004 / 30018 |
+| StandaloneBatch / Connections=2&count=32 | +0.43%; -0.54% | +0.98% | 174.272474–176.415683 / 175.268241–176.940759 / 176.387475–177.723866 | 10484 / 10486 / 10485 |
+| StreamedSetWithDelayedSource / Connections=1 | +1.55%; +5.08% | -3.36% | 9421.861627–9562.486151 / 9505.264710–9772.623245 / 9085.153994–9260.651134 | 12332 / 12364 / 12517 |
+| StreamedSetWithDelayedSource / Connections=2 | -3.18%; -2.67% | -0.53% | 9685.301760–9873.282510 / 9396.683703–9539.868220 / 9592.164372–9863.216546 | 12358 / 12437 / 12297 |
+| StreamedSetWithInstantSource / Connections=1 | -0.55%; +0.82% | -1.36% | 232.633797–239.036309 / 232.163023–236.914853 / 230.589453–234.676260 | 6437 / 6463 / 6230 |
+| StreamedSetWithInstantSource / Connections=2 | +0.42%; +0.99% | -0.56% | 232.835480–238.087304 / 234.031628–238.853908 / 231.654225–236.615962 | 6488 / 6443 / 6452 |
+
+All 15 raw actual workload samples per launch were checked for positive duration, consistent operations and sequential iteration indices. The following means use retained overhead-adjusted results. Launches are not independent repetitions of the bracket experiment. Raw B/op uses each launch's `// GC:` bytes/operations, which is distinct from the exported allocation column.
+
+| Case / parameters | Launch 1, 2 mean us: A / C / B | Raw launch 1, 2 B/op: A / C / B |
+| --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 272.263466, 272.393737 / 273.790975, 272.170474 / 276.186443, 273.788851 | 15352.219, 14452.219 / 14352.762, 15570.859 / 14946.508, 13635.375 |
+| CircuitStreamedGet / Connections=2 | 275.908487, 282.659566 / 279.220001, 305.583100 / 342.151065, 275.031054 | 15528.406, 14537.996 / 14492.156, 13602.781 / 13815.750, 15525.938 |
+| ClientPing / Connections=1 | 115.674550, 115.023822 / 115.867156, 115.502668 / 115.311948, 116.220045 | 184.060, 184.029 / 184.022, 184.052 / 183.544, 184.221 |
+| ClientPing / Connections=2 | 116.961874, 115.113615 / 116.885118, 116.015762 / 115.006317, 115.375371 | 184.104, 184.081 / 184.097, 184.112 / 183.597, 184.112 |
+| ClientServerError / Connections=1 | 138.575146, 137.608731 / 137.479996, 139.594854 / 138.379868, 140.068750 | 952.193, 951.553 / 952.193, 952.104 / 952.193, 952.104 |
+| ClientServerError / Connections=2 | 137.997674, 140.762983 / 140.265325, 138.879364 / 140.563217, 139.365760 | 951.877, 952.059 / 952.059, 952.283 / 952.059, 952.104 |
+| LargeSet / Connections=1 | 1202.425297, 1227.589354 / 1229.984734, 1235.440430 / 1198.394767, 1230.071518 | 176.000, 177.078 / 177.078, 177.078 / 176.000, 177.078 |
+| LargeSet / Connections=2 | 1260.000030, 1252.476813 / 1220.115040, 1275.582148 / 1235.548001, 1260.266511 | 176.359, 177.797 / 177.797, 176.000 / 177.797, 176.000 |
+| Pipeline / Connections=1 | 4.338433, 4.331758 / 4.328322, 4.321898 / 4.334611, 4.329299 | 6.756, 6.760 / 6.760, 6.757 / 6.757, 6.758 |
+| Pipeline / Connections=2 | 4.920957, 4.839439 / 4.915193, 4.729049 / 5.023110, 4.895905 | 6.755, 6.763 / 6.758, 6.764 / 6.769, 6.758 |
+| PublicPipeline / Connections=1 | 4.380762, 4.397458 / 4.390898, 4.408834 / 4.373763, 4.360479 | 5.758, 5.758 / 5.758, 5.756 / 5.758, 5.758 |
+| PublicPipeline / Connections=2 | 4.990006, 4.950688 / 4.865432, 4.852348 / 5.051053, 4.879911 | 5.769, 5.765 / 5.767, 5.767 / 5.766, 5.760 |
+| SelectConnection / Connections=1 | 0.001852, 0.001914 / 0.002232, 0.002209 / 0.001906, 0.001841 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 0.011628, 0.010459 / 0.010213, 0.010269 / 0.010287, 0.010314 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 118.542244, 117.510679 / 117.692611, 117.619684 / 117.875295, 116.994335 | 176.044, 176.044 / 176.000, 175.969 / 176.000, 176.067 |
+| SmallSet / Connections=2 | 118.447956, 117.137439 / 117.981699, 118.432065 / 118.758315, 120.466441 | 176.180, 175.984 / 176.180, 176.117 / 176.180, 176.225 |
+| StandaloneBatch / Connections=1&count=100 | 287.157426, 290.847498 / 287.577205, 289.324824 / 292.679287, 289.788818 | 30013.184, 30010.188 / 30012.457, 30018.027 / 30015.121, 30015.848 |
+| StandaloneBatch / Connections=1&count=32 | 175.931205, 174.860692 / 175.012899, 174.768768 / 174.181662, 175.567588 | 10477.346, 10484.287 / 10484.664, 10484.922 / 10481.744, 10482.301 |
+| StandaloneBatch / Connections=2&count=100 | 289.802899, 290.171976 / 288.274957, 290.602928 / 288.782027, 288.421358 | 30012.242, 30014.602 / 30013.660, 30003.613 / 30014.988, 30017.902 |
+| StandaloneBatch / Connections=2&count=32 | 176.585781, 174.102376 / 176.102555, 176.106584 / 176.964241, 177.153630 | 10486.324, 10483.994 / 10484.615, 10485.826 / 10483.463, 10484.842 |
+| StreamedSetWithDelayedSource / Connections=1 | 9464.876167, 9519.471612 / 9561.637423, 9721.772429 / 9145.717321, 9200.087807 | 12208.000, 12331.875 / 12522.250, 12363.500 / 12513.500, 12517.000 |
+| StreamedSetWithDelayedSource / Connections=2 | 9779.198800, 9779.385470 / 9470.466134, 9465.917314 / 9846.287964, 9609.092954 | 12609.625, 12358.375 / 12462.250, 12436.750 / 12261.125, 12297.000 |
+| StreamedSetWithInstantSource / Connections=1 | 236.609910, 235.060197 / 234.238709, 234.839167 / 233.263392, 231.844687 | 6327.828, 6437.324 / 6501.844, 6462.637 / 6485.004, 6229.949 |
+| StreamedSetWithInstantSource / Connections=2 | 235.625503, 235.297281 / 236.990768, 235.894768 / 234.309694, 233.960493 | 6501.441, 6488.363 / 6371.367, 6443.465 / 6469.293, 6452.254 |
+
+Full-GC samples cover the whole process and retain 5,767,168 bytes of caller arrays. They do not isolate transport retention. POH fragmentation is zero in every sample.
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5913432–5927824 | 8184–8184 | 49549312–49926144 | 134438912–134672384 |
+| baseline-a | 1 | connected | 24 | 8679576–8695984 | 24528–24528 | 67850240–68214784 | 261210112–261386240 |
+| baseline-a | 1 | after-churn | 24 | 9699192–9723224 | 24528–24528 | 71303168–71823360 | 263507968–280571904 |
+| baseline-a | 1 | after-dispose | 24 | 8239216–9099656 | 24528–24528 | 75169792–110256128 | 246517760–407040000 |
+| baseline-a | 2 | before-connect | 24 | 5913544–5921792 | 8184–8184 | 49598464–49971200 | 134443008–134483968 |
+| baseline-a | 2 | connected | 24 | 10285400–10305016 | 24528–24528 | 69640192–70144000 | 263565312–263827456 |
+| baseline-a | 2 | after-churn | 24 | 11315424–11336416 | 24528–24528 | 73875456–74436608 | 283615232–283901952 |
+| baseline-a | 2 | after-dispose | 24 | 8919768–10149128 | 24528–24528 | 75288576–110190592 | 280051712–448421888 |
+| candidate | 1 | before-connect | 24 | 5913640–5921896 | 8184–8184 | 49557504–49971200 | 134443008–134676480 |
+| candidate | 1 | connected | 24 | 8679576–8696224 | 24528–24528 | 67887104–68300800 | 261181440–261382144 |
+| candidate | 1 | after-churn | 24 | 9698176–9720968 | 24528–24528 | 71323648–71847936 | 263585792–280551424 |
+| candidate | 1 | after-dispose | 24 | 8250616–8822648 | 24528–24528 | 75206656–110645248 | 263192576–448294912 |
+| candidate | 2 | before-connect | 24 | 5913544–5921904 | 8184–8184 | 49594368–49979392 | 134438912–134676480 |
+| candidate | 2 | connected | 24 | 10288544–10305192 | 24528–24528 | 69623808–70164480 | 263655424–263872512 |
+| candidate | 2 | after-churn | 24 | 11318880–11335696 | 24528–24528 | 73875456–74432512 | 283701248–283934720 |
+| candidate | 2 | after-dispose | 24 | 8934224–9833136 | 24528–24528 | 75722752–111820800 | 263983104–410558464 |
+| baseline-b | 1 | before-connect | 24 | 5913432–5921784 | 8184–8184 | 49598464–49958912 | 134438912–134676480 |
+| baseline-b | 1 | connected | 24 | 8675360–8691928 | 24528–24528 | 67784704–68317184 | 261173248–261382144 |
+| baseline-b | 1 | after-churn | 24 | 9700720–9725304 | 24528–24528 | 71229440–71815168 | 263610368–280576000 |
+| baseline-b | 1 | after-dispose | 24 | 8239472–8843872 | 24528–24528 | 75132928–109953024 | 246370304–398295040 |
+| baseline-b | 2 | before-connect | 24 | 5913424–5921792 | 8184–8184 | 49577984–49922048 | 134438912–134582272 |
+| baseline-b | 2 | connected | 24 | 10292760–10304936 | 24528–24528 | 69758976–70094848 | 263651328–263843840 |
+| baseline-b | 2 | after-churn | 24 | 11315376–11337608 | 24528–24528 | 74014720–74452992 | 283701248–283881472 |
+| baseline-b | 2 | after-dispose | 24 | 8903744–9811768 | 24528–24528 | 75145216–110157824 | 263741440–408350720 |
+
+Phase CPU user/system seconds and utilization: baseline-a: 974.07 529.75 156%; candidate: 1000.73 528.71 154%; baseline-b: 1002.91 536.13 154%.
+
+#### Error metrics enabled
+
+validation-baseline: 24 cases, 24 successful exits, 96 full-GC samples.
+
+validation-candidate: 24 cases, 24 successful exits, 96 full-GC samples.
+
+baseline-a: 24 cases, 48 successful exits, 192 full-GC samples.
+
+candidate: 24 cases, 48 successful exits, 192 full-GC samples.
+
+baseline-b: 24 cases, 48 successful exits, 192 full-GC samples.
+
+Intervals are exported 99.9% intervals in microseconds. Positive deltas mean slower. Allocation is exported B/op. Batch units are whole batches; pipeline units are commands.
+
+| Case / parameters | C/A; C/B | B/A drift | Interval us: A / C / B | B/op: A / C / B |
+| --- | ---: | ---: | --- | ---: |
+| CircuitStreamedGet / Connections=1 | -0.85%; -1.02% | +0.17% | 214.776986–220.580721 / 211.650971–220.002066 / 214.038611–222.079509 | 13639 / 15004 / 13866 |
+| CircuitStreamedGet / Connections=2 | +11.95%; +8.08% | +3.58% | 213.104613–221.602317 / 223.319171–263.323056 / 221.916898–228.344707 | 14594 / 15359 / 14010 |
+| ClientPing / Connections=1 | +0.17%; +1.75% | -1.55% | 91.171032–92.494906 / 91.359645–92.622865 / 88.865291–91.944950 | 184 / 183 / 184 |
+| ClientPing / Connections=2 | -0.49%; -3.01% | +2.60% | 89.748729–91.962126 / 89.606324–91.213347 / 92.303156–94.134131 | 184 / 184 / 184 |
+| ClientServerError / Connections=1 | +0.66%; +0.60% | +0.06% | 103.519643–106.642319 / 104.204289–107.340842 / 103.697283–106.595305 | 952 / 951 / 952 |
+| ClientServerError / Connections=2 | +1.50%; +0.07% | +1.43% | 104.495831–106.291466 / 105.536868–108.411452 / 105.669642–108.138752 | 951 / 952 / 952 |
+| LargeSet / Connections=1 | +0.50%; -0.70% | +1.20% | 997.171421–1016.649581 / 998.323546–1025.481225 / 1005.549756–1032.477953 | 176 / 176 / 177 |
+| LargeSet / Connections=2 | +0.23%; -1.07% | +1.31% | 982.571083–1007.376139 / 986.753029–1007.738707 / 992.486120–1023.510811 | 176 / 176 / 176 |
+| Pipeline / Connections=1 | +0.30%; +0.33% | -0.03% | 3.423760–3.449027 / 3.434680–3.458638 / 3.415061–3.455423 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | +3.39%; -0.92% | +4.36% | 3.435416–3.510781 / 3.492429–3.689575 / 3.550159–3.698871 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | -0.52%; -0.87% | +0.36% | 3.459167–3.487386 / 3.443714–3.466973 / 3.469672–3.501673 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | -2.30%; -0.71% | -1.60% | 3.543675–3.644719 / 3.442794–3.580586 / 3.479989–3.593479 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | -0.76%; +0.62% | -1.37% | 0.001651–0.001688 / 0.001642–0.001671 / 0.001636–0.001657 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | +5.50%; +3.55% | +1.88% | 0.008561–0.008776 / 0.008687–0.009603 / 0.008812–0.008851 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | +0.56%; +0.38% | +0.18% | 93.355759–94.932314 / 93.690526–95.646890 / 93.088456–95.531523 | 176 / 176 / 176 |
+| SmallSet / Connections=2 | -0.83%; +2.38% | -3.14% | 94.895782–96.134738 / 94.081107–95.360248 / 91.845473–93.195645 | 176 / 176 / 176 |
+| StandaloneBatch / Connections=1&count=100 | +0.40%; -0.63% | +1.04% | 209.857273–217.964524 / 209.189540–220.347137 / 212.244644–220.015705 | 30013 / 30017 / 30015 |
+| StandaloneBatch / Connections=1&count=32 | -0.23%; +0.86% | -1.08% | 136.550137–139.272683 / 135.918458–139.280355 / 135.041462–137.799800 | 10483 / 10486 / 10483 |
+| StandaloneBatch / Connections=2&count=100 | -1.35%; +2.07% | -3.35% | 214.380124–224.084168 / 210.880374–221.662037 / 207.466044–216.310785 | 30013 / 30017 / 30009 |
+| StandaloneBatch / Connections=2&count=32 | +1.81%; +1.40% | +0.40% | 133.424938–136.471974 / 136.184873–138.591033 / 133.791966–137.179385 | 10479 / 10485 / 10481 |
+| StreamedSetWithDelayedSource / Connections=1 | -1.46%; -0.82% | -0.64% | 9278.838636–9455.323336 / 9047.248840–9413.170022 / 9191.092537–9422.883933 | 12304 / 12431 / 12237 |
+| StreamedSetWithDelayedSource / Connections=2 | +0.46%; +2.42% | -1.91% | 9376.549399–9529.306683 / 9434.826137–9557.505547 / 9096.481830–9447.576876 | 12593 / 12277 / 12371 |
+| StreamedSetWithInstantSource / Connections=1 | -0.66%; -0.05% | -0.62% | 177.089270–180.136791 / 175.782842–179.072549 / 175.872094–179.154002 | 6434 / 6481 / 6498 |
+| StreamedSetWithInstantSource / Connections=2 | -0.82%; -3.73% | +3.02% | 175.285625–180.334896 / 174.469013–178.220845 / 181.226035–185.143316 | 6487 / 6464 / 6519 |
+
+All 15 raw actual workload samples per launch were checked for positive duration, consistent operations and sequential iteration indices. The following means use retained overhead-adjusted results. Launches are not independent repetitions of the bracket experiment. Raw B/op uses each launch's `// GC:` bytes/operations, which is distinct from the exported allocation column.
+
+| Case / parameters | Launch 1, 2 mean us: A / C / B | Raw launch 1, 2 B/op: A / C / B |
+| --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 216.605764, 218.751943 / 216.580035, 215.073002 / 218.339874, 217.758187 | 14514.316, 13639.062 / 13696.477, 15004.164 / 13125.613, 13865.609 |
+| CircuitStreamedGet / Connections=2 | 217.188728, 217.518203 / 220.570086, 266.072142 / 227.724073, 222.352299 | 13357.887, 14593.910 / 14132.953, 15359.438 / 15480.906, 14010.363 |
+| ClientPing / Connections=1 | 91.647735, 92.018204 / 92.038026, 91.944484 / 88.872686, 92.047014 | 183.989, 184.067 / 184.036, 183.364 / 183.593, 184.036 |
+| ClientPing / Connections=2 | 89.364146, 92.346709 / 89.744672, 91.074999 / 94.314006, 92.123281 | 184.066, 184.104 / 183.867, 184.081 / 183.746, 184.089 |
+| ClientServerError / Connections=1 | 102.983073, 107.178889 / 103.790065, 107.896673 / 103.896078, 106.396510 | 951.823, 952.059 / 949.354, 951.261 / 952.081, 952.097 |
+| ClientServerError / Connections=2 | 106.075370, 104.757375 / 106.229533, 107.718787 / 108.267585, 105.540809 | 951.748, 951.354 / 952.118, 952.142 / 952.142, 952.021 |
+| LargeSet / Connections=1 | 1008.829054, 1004.991947 / 1019.457714, 1004.347057 / 1012.354494, 1025.673214 | 176.000, 176.000 / 176.000, 176.000 / 176.250, 177.078 |
+| LargeSet / Connections=2 | 1004.426099, 985.521123 / 997.852970, 996.638765 / 1020.224876, 996.587148 | 176.000, 176.250 / 176.000, 176.000 / 176.000, 176.000 |
+| Pipeline / Connections=1 | 3.433118, 3.439450 / 3.454664, 3.438654 / 3.456667, 3.413817 | 6.756, 6.758 / 6.761, 6.753 / 6.759, 6.754 |
+| Pipeline / Connections=2 | 3.447343, 3.498854 / 3.700064, 3.481939 / 3.685851, 3.563178 | 6.743, 6.739 / 6.762, 6.734 / 6.757, 6.719 |
+| PublicPipeline / Connections=1 | 3.474098, 3.472455 / 3.458156, 3.452530 / 3.470867, 3.498504 | 5.757, 5.758 / 5.757, 5.757 / 5.756, 5.757 |
+| PublicPipeline / Connections=2 | 3.592018, 3.596376 / 3.549817, 3.470840 / 3.548682, 3.524786 | 5.754, 5.752 / 5.742, 5.655 / 5.748, 5.752 |
+| SelectConnection / Connections=1 | 0.001690, 0.001648 / 0.001651, 0.001662 / 0.001647, 0.001645 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 0.008517, 0.008810 / 0.009798, 0.008538 / 0.008828, 0.008834 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 94.485622, 93.802451 / 93.423724, 95.913692 / 95.554624, 93.065355 | 175.818, 176.015 / 175.977, 176.060 / 176.025, 175.747 |
+| SmallSet / Connections=2 | 95.457527, 95.569145 / 94.862097, 94.579258 / 92.341442, 92.699676 | 176.094, 176.097 / 176.008, 176.090 / 176.022, 175.784 |
+| StandaloneBatch / Connections=1&count=100 | 211.888299, 215.933497 / 217.019568, 212.356306 / 219.001317, 213.053950 | 30014.004, 30013.398 / 30015.758, 30016.531 / 30013.080, 30014.564 |
+| StandaloneBatch / Connections=1&count=32 | 136.269826, 139.552994 / 139.193267, 136.005546 / 136.471575, 136.366048 | 10482.820, 10483.381 / 10485.848, 10485.605 / 10476.846, 10482.820 |
+| StandaloneBatch / Connections=2&count=100 | 217.480785, 220.983507 / 215.896890, 216.645521 / 209.510569, 214.266260 | 30011.545, 30012.795 / 30011.107, 30017.453 / 30006.008, 30009.246 |
+| StandaloneBatch / Connections=2&count=32 | 134.937607, 134.958582 / 138.426707, 136.349199 / 136.531693, 134.439658 | 10481.766, 10478.939 / 10480.781, 10485.270 / 10481.682, 10481.436 |
+| StreamedSetWithDelayedSource / Connections=1 | 9365.726822, 9368.435150 / 9348.800407, 9111.618455 / 9195.323002, 9418.653468 | 12498.000, 12304.500 / 12333.625, 12430.625 / 12455.500, 12237.375 |
+| StreamedSetWithDelayedSource / Connections=2 | 9444.173968, 9461.682114 / 9484.611243, 9507.720442 / 9482.850540, 9028.774138 | 12467.750, 12592.875 / 12346.125, 12277.375 / 12374.125, 12371.000 |
+| StreamedSetWithInstantSource / Connections=1 | 178.913446, 178.312615 / 177.365562, 177.489829 / 178.410798, 176.675149 | 6428.850, 6434.176 / 6508.283, 6480.641 / 6508.834, 6497.826 |
+| StreamedSetWithInstantSource / Connections=2 | 179.261195, 176.359325 / 176.477853, 176.202510 / 182.788095, 183.554817 | 6502.273, 6486.949 / 6465.521, 6464.102 / 6510.791, 6518.684 |
+
+Full-GC samples cover the whole process and retain 5,767,168 bytes of caller arrays. They do not isolate transport retention. POH fragmentation is zero in every sample.
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5913488–5927896 | 8184–8184 | 49537024–49942528 | 134443008–134676480 |
+| baseline-a | 1 | connected | 24 | 8676712–8693288 | 24528–24528 | 67846144–68345856 | 261210112–261378048 |
+| baseline-a | 1 | after-churn | 24 | 9701288–9720624 | 24528–24528 | 71233536–71811072 | 263512064–280596480 |
+| baseline-a | 1 | after-dispose | 24 | 8251416–8820400 | 24528–24528 | 75362304–169742336 | 247877632–404480000 |
+| baseline-a | 2 | before-connect | 24 | 5913496–5928008 | 8184–8184 | 49651712–49893376 | 134447104–134676480 |
+| baseline-a | 2 | connected | 24 | 10285936–10304576 | 24528–24528 | 69754880–70053888 | 263630848–263831552 |
+| baseline-a | 2 | after-churn | 24 | 11318464–11334856 | 24528–24528 | 73998336–74375168 | 266784768–283922432 |
+| baseline-a | 2 | after-dispose | 24 | 8973784–10246456 | 24528–24528 | 76406784–169291776 | 267210752–443617280 |
+| candidate | 1 | before-connect | 24 | 5913600–5928112 | 8184–8184 | 49545216–49942528 | 134443008–134483968 |
+| candidate | 1 | connected | 24 | 8680072–8696704 | 24528–24528 | 67706880–68333568 | 261173248–261386240 |
+| candidate | 1 | after-churn | 24 | 9702576–9716968 | 24528–24528 | 71151616–71790592 | 263495680–280592384 |
+| candidate | 1 | after-dispose | 24 | 8235280–9154776 | 24528–24528 | 75247616–168988672 | 247922688–458940416 |
+| candidate | 2 | before-connect | 24 | 5913624–5928120 | 8184–8184 | 49430528–49868800 | 134447104–134483968 |
+| candidate | 2 | connected | 24 | 10289008–10305480 | 24528–24528 | 69611520–70033408 | 263643136–263884800 |
+| candidate | 2 | after-churn | 24 | 11314112–11332128 | 24528–24528 | 73797632–74276864 | 266833920–283959296 |
+| candidate | 2 | after-dispose | 24 | 8910968–10143392 | 24528–24528 | 76058624–170033152 | 265289728–406728704 |
+| baseline-b | 1 | before-connect | 24 | 5921712–5927872 | 8184–8184 | 49524736–49897472 | 133828608–134483968 |
+| baseline-b | 1 | connected | 24 | 8679960–8696480 | 24528–24528 | 67817472–68308992 | 260620288–261394432 |
+| baseline-b | 1 | after-churn | 24 | 9644584–9718456 | 24528–24528 | 71237632–71831552 | 263380992–280592384 |
+| baseline-b | 1 | after-dispose | 24 | 8246032–8842984 | 24528–24528 | 75157504–169955328 | 247808000–421814272 |
+| baseline-b | 2 | before-connect | 24 | 5913536–5927976 | 8184–8184 | 49635328–49901568 | 134447104–134676480 |
+| baseline-b | 2 | connected | 24 | 10293144–10308744 | 24528–24528 | 69664768–72011776 | 263630848–263880704 |
+| baseline-b | 2 | after-churn | 24 | 11312672–11358520 | 24528–24528 | 73859072–76304384 | 266784768–283914240 |
+| baseline-b | 2 | after-dispose | 24 | 9013768–10106528 | 24528–24528 | 76152832–150667264 | 265383936–406212608 |
+
+Phase CPU user/system seconds and utilization: baseline-a: 1147.03 576.75 163%; candidate: 1065.48 545.56 160%; baseline-b: 1074.94 537.36 163%.
+
 ## Evidence audit: 2026-10-09
 
 The comparison, disposition and tables below are a point-in-time audit of the pinned run. A later audit can supersede this dated evidence without replacing the ownership and retention guidance above.

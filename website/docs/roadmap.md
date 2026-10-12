@@ -132,6 +132,9 @@ acceptance criteria, dependencies, and current status:
 
 - [Resilience and API parity](https://github.com/thomhurst/Respire/issues/857): command retry policies,
   circuit breaker integration for topology routing, and further connection/API work.
+  [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance
+  acceptance remains open in [#1214](https://github.com/thomhurst/Respire/issues/1214), with causal
+  allocation and selection measurements tracked by [#1474](https://github.com/thomhurst/Respire/issues/1474).
 - [Error telemetry ownership hardening](https://github.com/thomhurst/Respire/issues/1046): strengthen
   stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
 - [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
