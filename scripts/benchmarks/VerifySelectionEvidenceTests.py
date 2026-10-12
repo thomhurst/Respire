@@ -113,6 +113,11 @@ class SelectionEvidenceTests(unittest.TestCase):
         self.reports.mkdir()
         self.create_fixture(("selection-reference", "selection-tiering-off", "selection-pinned", "selection-no-subtraction"), True)
         self.assertEqual(len(self.verify()), 16)
+        original = self.report.read_text()
+        self.report.write_text(original.replace(", UnrollFactor=16", ""))
+        with self.assertRaisesRegex(AssertionError, "Uncontrolled engine shape"):
+            self.verify()
+        self.report.write_text(original)
         path = next(self.evidence.glob("selection-pinned-*.BeforeActualRun.json"))
         self.write(path, dict(json.loads(path.read_text()), files={}))
         with self.assertRaisesRegex(AssertionError, "Affinity was not applied"):
