@@ -25,18 +25,22 @@ public class DispatchResponseObservationTests
     [Arguments("string", "success")]
     [Arguments("bytes", "success")]
     [Arguments("typed", "success")]
+    [Arguments("scalar", "success")]
     [Arguments("raw", "error")]
     [Arguments("string", "error")]
     [Arguments("bytes", "error")]
     [Arguments("typed", "error")]
+    [Arguments("scalar", "error")]
     [Arguments("raw", "cancelled")]
     [Arguments("string", "cancelled")]
     [Arguments("bytes", "cancelled")]
     [Arguments("typed", "cancelled")]
+    [Arguments("scalar", "cancelled")]
     [Arguments("raw", "pre-cancelled")]
     [Arguments("string", "pre-cancelled")]
     [Arguments("bytes", "pre-cancelled")]
     [Arguments("typed", "pre-cancelled")]
+    [Arguments("scalar", "pre-cancelled")]
     public async Task ReadyStandaloneDispatchReturnsNativeSourceAndObservesLateEnabledErrors(string shape, string mode)
         => await RunNativeProbeAsync(shape + ":" + mode);
 
@@ -97,6 +101,11 @@ public class DispatchResponseObservationTests
                 await InspectNativeDispatch(server, client.BytesOrNullAsync("GET", command, cancellation.Token),
                     typeof(BytesPendingResponseSource), mode, cancellation);
                 break;
+            case "scalar":
+                // Stateless scalar shapes keep their own converter-specialized native source.
+                await InspectNativeDispatch(server, client.OkOrNullAsync("GET", command, cancellation.Token),
+                    typeof(ScalarPendingResponseSource<OkOrNullResponseConverter, bool>), mode, cancellation);
+                break;
             default:
                 await InspectNativeDispatch(server, client.ConvertResponseAsync("GET", command, cancellation.Token, 0,
                     static (int _, in RespValue value) => ResponseReader.StringOrNull(in value)),
@@ -127,6 +136,7 @@ public class DispatchResponseObservationTests
                 raw.Dispose();
             }
             else if (result is byte[] bytes) await Assert.That(bytes).IsEquivalentTo("42"u8.ToArray());
+            else if (result is bool present) await Assert.That(present).IsTrue();
             else await Assert.That(result).IsEqualTo((T)(object)"42");
         }
         catch (Exception error) { failure = error; }

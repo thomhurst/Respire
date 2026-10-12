@@ -41,7 +41,7 @@ public partial class SentinelRoutingTests
                     "$5\r\nvalue\r\n"u8.ToArray(), static value => value is not null && value.AsSpan().SequenceEqual("value"u8));
                 break;
             case "integer":
-                await VerifySourceAsync(client.Strings.IncrementAsync("ready"), "ConvertedPendingResponseSource",
+                await VerifySourceAsync(client.Strings.IncrementAsync("ready"), "ScalarPendingResponseSource",
                     ":7\r\n"u8.ToArray(), static value => value == 7);
                 break;
             case "raw":

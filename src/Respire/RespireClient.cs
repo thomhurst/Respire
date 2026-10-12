@@ -5874,9 +5874,7 @@ public sealed partial class RespireClient : IRespireClient
 
     internal ValueTask<long> IntegerAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => ConvertAsync(
-            operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.Integer(in value), observation: observation);
+        => ScalarAsync<TCommand, IntegerResponseConverter, long>(operation, command, ct, observation);
 
     internal ValueTask<long> IntegerValuesAsync(
         string operation, Verb verb, RespireValue first, ReadOnlySpan<RespireValue> rest, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
@@ -5905,21 +5903,15 @@ public sealed partial class RespireClient : IRespireClient
 
     internal ValueTask<bool> FlagAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => ConvertAsync(
-            operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.Flag(in value), observation: observation);
+        => ScalarAsync<TCommand, FlagResponseConverter, bool>(operation, command, ct, observation);
 
     internal ValueTask<bool> OkOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => ConvertAsync(
-            operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.OkOrNull(in value), observation: observation);
+        => ScalarAsync<TCommand, OkOrNullResponseConverter, bool>(operation, command, ct, observation);
 
     internal ValueTask<bool> OkResultAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => ConvertAsync(
-            operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.Ok(in value), observation: observation);
+        => ScalarAsync<TCommand, OkResponseConverter, bool>(operation, command, ct, observation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -5927,8 +5919,7 @@ public sealed partial class RespireClient : IRespireClient
     internal async ValueTask OkAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
     {
-        _ = await ConvertAsync(operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.Ok(in value)).ConfigureAwait(false);
+        _ = await ScalarAsync<TCommand, OkResponseConverter, bool>(operation, command, ct, default).ConfigureAwait(false);
     }
 
     internal ValueTask<string> StringAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
