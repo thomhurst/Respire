@@ -121,6 +121,12 @@ with explicit exclusions and limitations. General StackExchange.Redis interface
 parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
 [#889](https://github.com/thomhurst/Respire/issues/889).
 
+The [Orleans 10.2.2 assessment](./guides/orleans-compatibility) finds no missing
+membership API in the inventoried clustering paths, but grain persistence and
+reminders need unsupported Lua and lexicographic sorted-set operations.
+[#890](https://github.com/thomhurst/Respire/issues/890) remains open for those
+specific behaviors; the current shim does not cover all three providers.
+
 These open epics track remaining work, not release commitments. Follow their linked issues for
 acceptance criteria, dependencies, and current status:
 

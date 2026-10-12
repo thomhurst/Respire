@@ -153,11 +153,26 @@ jobs:
               -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 95 --report-trx \
               --results-directory "TestResults/hangfire/${{ matrix.framework }}/resp$protocol"
           done
+      - name: Build pinned Orleans provider assessment
+        run: dotnet build tests/Respire.Orleans.Acceptance.Tests -c Release -f ${{ matrix.framework }}
+      - name: Assess Orleans providers on RESP2 and RESP3
+        shell: bash
+        run: |
+          for protocol in 2 3; do
+            RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release \
+              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 9 --report-trx \
+              --results-directory "TestResults/orleans/${{ matrix.framework }}/resp$protocol"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: hangfire-acceptance-${{ matrix.framework }}
           path: TestResults/hangfire
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: orleans-assessment-${{ matrix.framework }}
+          path: TestResults/orleans
 
   mapper-native-aot:
     name: Generated mapper Native AOT (${{ matrix.framework }})

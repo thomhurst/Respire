@@ -426,6 +426,15 @@ registration, plus Redis wire controls for binary data, database isolation,
 TTL, deferred pipeline order, command errors, cancellation and ownership.
 These are the named upstream scenarios, not every test in ASP.NET Core.
 
+### Orleans Redis providers
+
+The [Orleans 10.2.2 assessment](./orleans-compatibility) inventories clustering,
+grain persistence, and reminders against the adapter. Selected membership and
+gateway scenarios pass, but persistence and reminders require unsupported
+general Lua evaluation and lexicographic sorted-set reads/removals. The adapter
+does not currently support the combined Orleans provider set. This limitation
+does not depend on SignalR's `ChannelMessageQueue` path.
+
 Migrate one call site at a time, then replace the bridge with native typed
 commands when its callers no longer require StackExchange.Redis values. The
 boundary allocates argument arrays and standalone reply copies; native APIs
