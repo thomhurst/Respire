@@ -68,28 +68,61 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 2
-          path: candidate
-      - name: Verify the immutable merge and derive its baseline
+          path: request
+      - name: Verify the immutable merge and resolve the comparison request
         id: revisions
         shell: python
         env:
           MERGE_SHA: ${{ github.sha }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
-          import os, re, subprocess
-          for variable in ('MERGE_SHA', 'EXPECTED_HEAD_SHA', 'EVENT_BASE_SHA'):
+          import json, os, re, subprocess
+          from pathlib import Path
+          for variable in ('MERGE_SHA', 'EXPECTED_HEAD_SHA', 'EVENT_BASE_SHA', 'WORKFLOW_SHA'):
               assert re.fullmatch(r'[0-9a-f]{40}', os.environ[variable]), 'A pinned full SHA is required'
-          actual = subprocess.check_output(['git', '-C', 'candidate', 'rev-parse', 'HEAD'], text=True).strip()
+          actual = subprocess.check_output(['git', '-C', 'request', 'rev-parse', 'HEAD'], text=True).strip()
           assert actual == os.environ['MERGE_SHA'], 'Wrong candidate merge'
-          parents = subprocess.check_output(['git', '-C', 'candidate', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
+          parents = subprocess.check_output(['git', '-C', 'request', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
           assert len(parents) == 2, 'Candidate must be a two-parent PR merge'
           assert parents[1] == os.environ['EXPECTED_HEAD_SHA'], 'Wrong PR head'
+          guide = 'website/docs/guides/transport-write-evidence.md'
+          def selection_request(text):
+              matches = re.findall(r'<!-- selection-comparison-request -->\s*```json\s*(.*?)\s*```', text, re.S)
+              assert len(matches) <= 1, 'Ambiguous selection request'
+              return json.loads(matches[0]) if matches else None
+          requested = selection_request(Path('request', guide).read_text())
+          previous = selection_request(subprocess.check_output(
+              ['git', '-C', 'request', 'show', parents[0] + ':' + guide], text=True))
+          baseline, candidate, fixture = parents[0], actual, actual
+          # An unchanged historical request must not redirect future transport PRs.
+          if requested is not None and requested != previous:
+              assert set(requested) == {'issue', 'baseline', 'candidate', 'fixture'}, 'Unknown request fields'
+              assert requested['issue'] == 1520, 'Unsupported selection request'
+              for key in ('baseline', 'candidate', 'fixture'):
+                  assert re.fullmatch(r'[0-9a-f]{40}', requested[key]), 'A pinned full SHA is required'
+              baseline, candidate, fixture = (requested[key] for key in ('baseline', 'candidate', 'fixture'))
+              # The unchanged provenance gate binds fixtureRevision to candidate.commit.
+              assert candidate == fixture, 'Selection request requires candidate and fixture at the same revision'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
-              print('baseline-sha=' + parents[0], file=stream)
+              print('baseline-sha=' + baseline, 'candidate-sha=' + candidate, 'fixture-sha=' + fixture, sep='\n', file=stream)
           with open('revisions.log', 'w') as stream:
-              print('merge=' + actual, 'baseline=' + parents[0],
+              print('request-source=' + actual, 'baseline=' + baseline, 'candidate=' + candidate, 'fixture=' + fixture,
                     'head=' + parents[1], 'event-base=' + os.environ['EVENT_BASE_SHA'], sep='\n', file=stream)
+          Path('selection-request.log').write_text(json.dumps({
+              'requestSource': actual, 'workflowSource': os.environ['WORKFLOW_SHA'],
+              'head': parents[1], 'baseline': baseline, 'candidate': candidate, 'fixture': fixture,
+              'selectionRequest': requested if requested != previous else None,
+          }, indent=2))
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.candidate-sha }}
+          path: candidate
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.fixture-sha }}
+          path: fixture
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.revisions.outputs.baseline-sha }}
@@ -100,16 +133,41 @@ jobs:
           set -euo pipefail
           # The shared fixture must compile against both pinned APIs. A mismatch fails this
           # step; the always() upload below retains its phase log without masking that failure.
-          cp candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
-          cp candidate/benchmarks/Respire.Benchmarks/ErrorMetricBenchmarkScope.cs baseline/benchmarks/Respire.Benchmarks/
-          cp candidate/benchmarks/Respire.Benchmarks/Program.cs baseline/benchmarks/Respire.Benchmarks/
-          for fixture in TransportBatchDiagnostics BatchReplyGate TransportBatchTraceReport; do
-            cp "candidate/benchmarks/Respire.Benchmarks/$fixture.cs" baseline/benchmarks/Respire.Benchmarks/
+          for source in baseline candidate; do
+            for file in TransportAcceptanceBenchmarks ErrorMetricBenchmarkScope Program \
+              TransportBatchDiagnostics BatchReplyGate TransportBatchTraceReport \
+              SelectionLaunchDiagnoser SelectionEvidenceToolchain; do
+              cp "fixture/benchmarks/Respire.Benchmarks/$file.cs" "$source/benchmarks/Respire.Benchmarks/"
+            done
           done
-          cp candidate/benchmarks/Respire.Benchmarks/SelectionLaunchDiagnoser.cs baseline/benchmarks/Respire.Benchmarks/
-          cp candidate/benchmarks/Respire.Benchmarks/SelectionEvidenceToolchain.cs baseline/benchmarks/Respire.Benchmarks/
           git -C baseline rev-parse HEAD > baseline.commit
           git -C candidate rev-parse HEAD > candidate.commit
+          git -C fixture rev-parse HEAD > fixture.commit
+          # Preserve exact copied inputs and production selection source for the later audit.
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          request = json.loads(Path('selection-request.log').read_text())
+          for source in ('baseline', 'candidate', 'fixture'):
+              assert Path(source + '.commit').read_text().strip() == request[source], 'Wrong checked-out revision: ' + source
+          copied_files = ['benchmarks/Respire.Benchmarks/' + name + '.cs' for name in (
+              'TransportAcceptanceBenchmarks', 'ErrorMetricBenchmarkScope', 'Program',
+              'TransportBatchDiagnostics', 'BatchReplyGate', 'TransportBatchTraceReport',
+              'SelectionLaunchDiagnoser', 'SelectionEvidenceToolchain')]
+          files = copied_files + ['src/Respire/Infrastructure/RespireConnectionMultiplexer.cs',
+                                  'scripts/benchmarks/VerifySelectionEvidence.py']
+          request['sourceSha256'] = {source: {
+              file: hashlib.sha256(Path(source, file).read_bytes()).hexdigest()
+              if Path(source, file).is_file() else None for file in files
+          } for source in ('baseline', 'candidate', 'fixture')}
+          for source in ('baseline', 'candidate'):
+              for file in copied_files:
+                  assert request['sourceSha256'][source][file] == request['sourceSha256']['fixture'][file]
+          gate = 'scripts/benchmarks/VerifySelectionEvidence.py'
+          assert request['sourceSha256']['fixture'][gate] == hashlib.sha256(Path('request', gate).read_bytes()).hexdigest(), \
+              'The requested provenance gate differs from the current gate'
+          Path('selection-request.log').write_text(json.dumps(request, indent=2))
+          PY
           dotnet --info > runtime-info.log
           uname -a > host-info.log
           lscpu >> host-info.log
@@ -123,7 +181,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               export RESPIRE_BENCH_REVISION="$(git rev-parse HEAD)"
-              export RESPIRE_BENCH_FIXTURE_REVISION="$(git -C "$GITHUB_WORKSPACE/candidate" rev-parse HEAD)"
+              export RESPIRE_BENCH_FIXTURE_REVISION="$(cat "$GITHUB_WORKSPACE/fixture.commit")"
               export RESPIRE_BENCH_PHASE="$phase"
               export RESPIRE_SELECTION_EVIDENCE="$GITHUB_WORKSPACE/results/$phase/selection"
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
@@ -142,7 +200,7 @@ jobs:
           export RESPIRE_SELECTION_AFFINITY="$(python -c 'import os; cpu=min(os.sched_getaffinity(0)); assert cpu < 63; print(1 << cpu)')"
           export RESPIRE_SELECTION_CONTROLS=1
           export RESPIRE_SELECTION_PURPOSE=diagnostic
-          export RESPIRE_BENCH_FIXTURE_REVISION="$(git -C candidate rev-parse HEAD)"
+          export RESPIRE_BENCH_FIXTURE_REVISION="$(cat fixture.commit)"
           for phase in baseline-a candidate baseline-b; do
             source=baseline
             if [ "$phase" = candidate ]; then source=candidate; fi
@@ -158,7 +216,7 @@ jobs:
           done
       - name: Require selection launch provenance and raw samples
         shell: bash
-        run: python candidate/scripts/benchmarks/VerifySelectionEvidence.py "$GITHUB_WORKSPACE"
+        run: python fixture/scripts/benchmarks/VerifySelectionEvidence.py "$GITHUB_WORKSPACE"
       - name: Require completed measurements
         shell: python
         run: |

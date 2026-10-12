@@ -61,6 +61,28 @@ The residual stream evidence is independently rechecked against its metadata/tra
 
 ### Selection code, scheduling and evidence gap
 
+#### Corrected selection comparison request (#1520)
+
+The reviewed aggregate audit closes #1481, so #1520 can request the corrected control experiment. This request pins the library baseline to the parent of the merged #1488 corrections, and the candidate and shared fixture to that merge. The production selection source is identical across these library revisions; the experiment measures the corrected capture and causal controls, not a selection optimization. Both bracket controls use the same corrected fixture. The earlier run's invalid affinity records remain invalid.
+
+<!-- selection-comparison-request -->
+```json
+{
+  "issue": 1520,
+  "baseline": "82a6fda724b1e79f95ac3eb778547586e286b4fc",
+  "candidate": "e3a19cf86dbcb94ad616ebabc8eb5b928f5c4946",
+  "fixture": "e3a19cf86dbcb94ad616ebabc8eb5b928f5c4946"
+}
+```
+
+The label event captures this request from its immutable PR merge, verifies the PR head, and runs baseline/candidate/baseline on one runner per metric mode. `revisions.log`, `selection-request.log` and the three `.commit` files bind the request source, library revisions, copied fixture revision and SHA-256 hashes of every copied input, production multiplexer source and provenance gate. The gate is unchanged from the merged corrections. A request applies only when its JSON differs from the PR merge's first parent; later PRs that inherit this historical request retain the ordinary merge/first-parent comparison.
+
+The request retains every public Medium timing body, two launches, both connection profiles, and the separate Short reference, tiering-off, pinned and no-subtraction controls with unroll factor 16. Linux pinned children use the merged pre-runtime `taskset` launcher. Request `run-transport-benchmarks` once after this request is reviewable. A later pass must verify every public and diagnostic selection process in both metric modes with the unchanged gate, then audit both launches against A and B, B/A drift, raw overhead/workload, native addresses, code/tier versions and scheduling at both boundaries. Do not rerun unchanged evidence for a favorable result.
+
+**Selection disposition: corrected public evidence is pending.** Local shortened sampling and the historical comparison do not establish acceptance. Captured code versions cannot identify the tier used by every timed invocation; scheduling and frequency snapshots cannot establish placement or frequency throughout an iteration. Overhead subtraction sensitivity must use each matching launch's raw samples. One connection skips the round-robin atomic increment; two connections use it. Historical enabled two-connection 9.798/8.538 ns and disabled one-connection +17.80%/+18.49% remain unattributed without matching historical evidence. Overlapping intervals do not prove equivalence, unfavorable launches remain evidence, and unrelated historical fixture totals cannot be subtracted. If causal evidence establishes a production defect, file its own native child before implementing it.
+
+This request and a successful workflow alone cannot close #1520 or clear the other public latency/allocation gaps from #1481. Record the completed selection audit here and on #1474 on a later pass. #1474, #1214 and #862 remain open until full aggregate acceptance is established; #976 remains separate.
+
 Run 38195553203 contains **128 selection processes**: 32 Dry/public processes and 96 separate diagnostic processes across both metric modes and three bracket phases. Every process has matching before/after identity, JIT code/tier output, perf-map addresses, scheduling snapshots and raw workload samples. Required overhead samples are present; no-subtraction and Dry controls omit them as designed. Diagnostic unroll factor is explicitly 16. Tiering-off controls stamp `DOTNET_TieredCompilation=0`. These checks establish capture provenance, not which tier ran throughout a timed iteration or a causal layout effect.
 
 The current full provenance gate rejects all six diagnostic phase/mode combinations with **`Missing affinity target`**. All **24 pinned launches** lack the later `affinityMask` identity. Their captured process/task masks are singleton masks, but the missing requested target prevents verification against the corrected control, and this run predates the pre-runtime `taskset` correction. Do not weaken the current verifier to accept the old artifacts. The remaining historical records were audited separately without treating affinity as verified. Local corrected captures at `a88a40e80fc397073e5bec48f6d845f999c76dd8` pass the current gate for 32 Linux diagnostic processes; shortened local sampling validates instrumentation, not the required pinned acceptance comparison. #1520 owns that specific remaining evidence gap and reuses the merged corrections.
