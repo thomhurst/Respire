@@ -50,6 +50,10 @@ public partial class TopologyCommandRetryTests
         FakeRespServer? formerServer = null;
         await using var former = Primary(command =>
         {
+            // A demoted primary reports itself as a replica. The startup monitor's validation
+            // discovery can read Sentinel before the failure and connect after it; ROLE must
+            // reject that stale candidate, as it would for a real failover.
+            if (command == "ROLE") return RoleReply(Volatile.Read(ref failed) == 0 ? "master" : "slave");
             if (command == "GET first") return "$3\r\nold\r\n"u8.ToArray();
             if (command != "GET second") return null;
             Volatile.Write(ref failed, 1);
