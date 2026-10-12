@@ -189,8 +189,9 @@ registry's existing endpoint identities and retention limits, without another en
 Batch execution counts each rejected entry. A rejected transaction commit counts once
 for its single MULTI/EXEC permit, regardless of its queued command count. WATCH setup
 has its own admission and can produce a separate rejection. Cancellation and validation
-before admission do not count as circuit rejection. Successful admissions do not emit
-either counter. The generic `redis.client.errors` counter can also report the surfaced
+before admission do not count as circuit rejection. Successful admissions never add a
+rejection, but can report a state transition, such as `open` to `half_open` when recovery
+starts. The generic `redis.client.errors` counter can also report the surfaced
 exception; it measures error handling rather than circuit admission.
 
 The failover group's health-probe circuit keeps its existing `respire.failover.*`

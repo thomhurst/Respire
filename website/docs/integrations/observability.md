@@ -190,8 +190,9 @@ State values are fixed; keys, payloads, exception messages, and credentials are 
 
 Batch entries acquire independently, so each rejected entry adds one. A transaction
 commit acquires one permit for MULTI/EXEC, so it adds one even if several pending results
-receive the rejection. WATCH setup is a separate admission. Successful admission,
-initial closed-state creation, and history eviction add nothing. These counters are
+receive the rejection. WATCH setup is a separate admission. Successful admissions never
+add a rejection, but can report a state transition, such as `open` to `half_open` when
+recovery starts. Initial closed-state creation and history eviction add nothing. These counters are
 independent of `redis.client.errors`, which can also count surfaced circuit exceptions.
 Failover-group health probes keep only their existing `respire.failover.*` metrics;
 application commands on circuit-enabled members use the data-endpoint counters.

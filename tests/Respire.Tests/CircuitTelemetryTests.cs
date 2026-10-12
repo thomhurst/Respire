@@ -271,6 +271,54 @@ public sealed class CircuitTelemetryTests
         finally { probe.Dispose(); }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AdmissionListenersCanWaitForRegistryWorkOnAnotherThread(bool rejected)
+    {
+        using var configuration = new MetricConfigurationScope();
+        using var measurements = new Measurements();
+        var endpoint = new RespireEndpoint("listener-worker.test");
+        var registry = new StandaloneCircuitRegistry(Options());
+        var clock = new Clock();
+        var first = registry.Acquire(endpoint, default);
+        var original = registry.GetForTests(endpoint);
+        CircuitClock(original) = clock;
+        first.Failed(new RespireConnectionException("failed"), default);
+        first.Dispose();
+        if (!rejected) clock.Advance();
+
+        Task? worker = null;
+        var completedDuringCallback = false;
+        measurements.OnMeasurement = () =>
+        {
+            measurements.OnMeasurement = null;
+            worker = Task.Factory.StartNew(() =>
+            {
+                Reject(registry, endpoint);
+                for (var i = 0; i < 32; i++) Finish(registry, new("worker.test", 9000 + i), false);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            completedDuringCallback = worker.Wait(TimeSpan.FromSeconds(5));
+        };
+
+        var probe = default(CircuitAdmission);
+        try
+        {
+            if (rejected)
+                await Assert.That(() => registry.Acquire(endpoint, default)).ThrowsExactly<RespireCircuitOpenException>();
+            else probe = registry.Acquire(endpoint, default);
+            await worker!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            await Assert.That(completedDuringCallback).IsTrue();
+            await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
+            if (!rejected)
+            {
+                await Assert.That(registry.GetForTests(endpoint)).IsSameReferenceAs(original);
+                await Assert.That(original.Snapshot().ActiveProbes).IsEqualTo(1);
+            }
+        }
+        finally { probe.Dispose(); }
+    }
+
     private static RespireCircuitBreakerOptions Options() => new()
     {
         MinimumFailureCount = 1, OpenDuration = TimeSpan.FromSeconds(5), HalfOpenProbeCount = 1,
