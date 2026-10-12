@@ -117,6 +117,12 @@ Members keep their own `RetryPolicy`; a group retry starts only after a member's
 operation fails. The group has no command timeout of its own. Each attempt uses its
 member's timeout, and the caller's token bounds the whole operation.
 
+For batches and transactions, create and execute the complete unit inside the delegate.
+Each group retry then creates a fresh unit on the newly active member. Do not retain a
+batch, transaction or member client between attempts. Declare a category that permits
+every queued member's possible repeated effects. An open member circuit terminates the
+operation; the group never retries that circuit rejection against the same endpoint.
+
 ## Policy settings
 
 | Setting | Default | Bounds and meaning |
@@ -173,7 +179,7 @@ composition, including half-open contention and failover switches, remains track
 [#1256](https://github.com/thomhurst/Respire/issues/1256).
 
 Replica read routing, streams, fire-and-forget operations, individual deferred batch/transaction
-members (standalone and Sentinel batches retry only as complete units, described below), connection
+members (batches retry only as complete units, described below), connection
 protocol commands, cursor continuations, and
 commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
 never acquire retry permission from their diagnostic name. Use an audited
@@ -196,6 +202,10 @@ separate error owners. Exporter exceptions cannot change retry decisions or repl
 ### Batches
 
 Standalone and Sentinel batches use `RetryPolicy` to retry the complete pipeline.
+Cluster batches retry each slot group independently as a complete unit. A transient retry
+resends every member of that group, including successful members, while other groups keep
+their results. Routing still handles MOVED, ASK and retirement rejections within an attempt.
+A retry waits for the slot owner's replacement before selecting its connection again.
 A batch is not atomic: Redis can execute some or all members before a failure.
 Replies remain pending until the retry decision is final, and only the final
 attempt's results are published. A selected transient failure permits a resend
@@ -214,17 +224,24 @@ deadline and caller cancellation token cover acquisition, admission, replies and
 backoff. Retry telemetry counts accepted resends and one terminal outcome per
 batch that accepted a resend, using its most conservative member category. A retry
 decision followed only by failed acquisition or admission produces no retry event.
-Hash import sessions and server cursor continuations do not retry. Cluster batches
-do not replay; watched transaction helpers retain their complete-callback retries.
+Hash import sessions and server cursor continuations do not retry. Cluster group telemetry
+counts started resends after route selection, excluding a group rejected entirely by open
+circuits, and one terminal outcome per retried group. Watched transaction helpers retain
+their complete-callback retries.
 Further whole-unit work remains tracked by
 [#1216](https://github.com/thomhurst/Respire/issues/1216).
 
 ### Transactions
 
-On standalone and Sentinel clients, the same `RetryPolicy` retries an unwatched
+On standalone, Sentinel and Cluster clients, the same `RetryPolicy` retries an unwatched
 `RespireTransaction` as one complete unit. The client resends the retained `MULTI`, queued
 commands and `EXEC` frame together on the current primary. It never resends a subset of the
 members.
+
+Cluster transactions keep MOVED and retirement recovery within an attempt. Routing
+rejections do not consume the transient retry budget. A transient retry waits for the
+slot owner's replacement and selects the current owner. Transactions never follow ASK;
+an ASK rejection terminates the unit, including during a transient retry.
 
 The transport records one write outcome for the whole frame. A resend needs both a selected
 failure and permission for every member's category under that outcome. One member is
@@ -258,7 +275,6 @@ The client never resends these units:
   [watched transaction retries](./batches-and-transactions#automatic-watched-transaction-retries).
 - Hash import sessions.
 - Units that hold a server-local cursor continuation.
-- Cluster transactions, tracked by [#1524](https://github.com/thomhurst/Respire/issues/1524).
 
 ## Correctness and performance evidence
 

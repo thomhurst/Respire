@@ -396,22 +396,24 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         finally { cacheToInvalidate?.CompleteMutation(in mutationFence); }
     }
 
-    private async ValueTask<RespireConnection?> RunRetryableBatchAsync(CancellationToken callerToken)
+    private async ValueTask<RespireConnection?> RunRetryableBatchAsync(CancellationToken callerToken, List<Op>? group = null,
+        int? slot = null, RespireReadFrom readFrom = RespireReadFrom.Primary)
     {
         var core = _client.Core;
+        var operations = group ?? _ops;
         var deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
         using var timeout = deadline.IsSet
             ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
             : null;
         var token = timeout?.Token ?? callerToken;
-        var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
-        var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
+        var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(operations.Count);
+        var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
         var category = RespireCommandRetryCategory.Never;
-        for (var i = 0; i < _ops.Count; i++)
+        for (var i = 0; i < operations.Count; i++)
         {
-            observations[i] = _ops[i].Observation;
+            observations[i] = operations[i].Observation;
             // Numeric ordering describes risk only; permission is checked separately for every member.
-            if (_ops[i].RetryCategory > category) category = _ops[i].RetryCategory;
+            if (operations[i].RetryCategory > category) category = operations[i].RetryCategory;
         }
         RespireConnection? connection = null;
         var retries = 0;
@@ -420,38 +422,56 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             callerToken.ThrowIfCancellationRequested();
             // Serialize before any asynchronous route selection. Borrowed arguments may change
             // after execution starts, but every attempt must send the original bytes.
-            foreach (var op in _ops) op.Snapshot();
+            foreach (var op in operations) op.Snapshot();
             for (var attempt = 1; ; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 var outcome = CommandWriteOutcome.DefinitelyUnwritten;
                 try
                 {
-                    if (attempt > 1)
+                    if (core.Cluster is { } cluster)
                     {
-                        await core.EnsureConnectedAsync(token, _ops[0].Observation).ConfigureAwait(false);
+                        if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                            slot = await cluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
+                        if (attempt > 1) await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
+                        connection = await _client.AcquireConnectionAsync(slot, token, readFrom, operations[0].Observation).ConfigureAwait(false);
+                        DeferredOperation.SetAttempts(operations, operations[0].Observation.Attempts);
+                        DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
+                    }
+                    else if (attempt > 1)
+                    {
+                        await core.EnsureConnectedAsync(token, operations[0].Observation).ConfigureAwait(false);
                         // Reject an open circuit before waiting for a replacement. Disposing
                         // this ignored admission releases half-open capacity without an outcome;
                         // each dispatched member still owns its own permit below.
                         core.Circuits?.Acquire(core.Multiplexer.ActiveConnectionEndpoint, token).Dispose();
                         connection = await core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
                     }
-                    else connection = await _client.AcquireConnectionAsync(null, token, _ops[0].Observation).ConfigureAwait(false);
+                    else connection = await _client.AcquireConnectionAsync(null, token, operations[0].Observation).ConfigureAwait(false);
                     // Ordered admission has no immutable per-member write evidence. Once any
                     // send starts, treat the complete unit as a possible execution.
                     outcome = CommandWriteOutcome.Unknown;
                     var acceptedRetry = false;
                     // Like the default path, an idle circuit-free connection admits the whole attempt
                     // under one write gate and schedules a single flush, so no producer interleaves.
-                    if (core.Circuits is null && connection.TryEnqueueMany(_ops, sends, observations, token, deadline))
+                    if (core.Cluster is not null)
+                    {
+                        for (var i = 0; i < operations.Count; i++)
+                        {
+                            try { sends[i] = operations[i].StartClusterSend(_client, connection, token, observations[i], deadline); }
+                            catch (Exception error) { sends[i] = ValueTask.FromException<RespValue>(error); }
+                        }
+                        acceptedRetry = true;
+                    }
+                    else if (core.Circuits is null && connection.TryEnqueueMany(operations, sends, observations, token, deadline))
                         acceptedRetry = true;
                     else
                     {
-                        for (var i = 0; i < _ops.Count; i++)
+                        for (var i = 0; i < operations.Count; i++)
                         {
                             // Admission failures become faulted reply tasks, so a rejected later
                             // member cannot skip consumption of earlier accepted replies.
-                            var accepted = await _ops[i].StartOrderedSendAsync(_client, connection, token,
+                            var accepted = await operations[i].StartOrderedSendAsync(_client, connection, token,
                                 observations[i], deadline, core.Circuits).ConfigureAwait(false);
                             sends[i] = accepted.Reply;
                             if (accepted.Connection is { } endpoint)
@@ -461,29 +481,35 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                             }
                         }
                     }
-                    if (attempt > 1 && acceptedRetry)
+                    // Consume every native source once, even when an earlier member fails.
+                    for (var i = 0; i < operations.Count; i++)
+                    {
+                        if (core.Cluster is not null)
+                            _ = await operations[i].CompleteClusterSendAsync(this, connection, sends[i], readFrom, token, observations[i]).ConfigureAwait(false);
+                        else
+                            await operations[i].CaptureReplyAsync(sends[i]).ConfigureAwait(false);
+                    }
+                    if (attempt > 1 && acceptedRetry && (core.Cluster is null
+                        || !operations.TrueForAll(static op => op.AttemptError is RespireCircuitOpenException)))
                     {
                         retries++;
                         RespireTelemetry.RecordCommandRetry(category, "attempted");
                     }
-                    // Consume every native source once, even when an earlier member fails.
-                    for (var i = 0; i < _ops.Count; i++)
-                        await _ops[i].CaptureReplyAsync(sends[i]).ConfigureAwait(false);
                 }
                 catch (Exception error)
                 {
-                    foreach (var op in _ops) op.CaptureFailure(error);
+                    foreach (var op in operations) op.CaptureFailure(error);
                 }
 
-                if (!TryGetBatchRetryDelay(attempt, outcome, deadline, token, out var delay)) break;
+                if (!TryGetBatchRetryDelay(operations, attempt, outcome, deadline, token, out var delay)) break;
                 var attempts = 0;
-                foreach (var op in _ops)
+                foreach (var op in operations)
                 {
                     if (op.AttemptError is { } error) op.Observation.Handled(error);
                     if (op.Observation.Attempts > attempts) attempts = op.Observation.Attempts;
                     op.DiscardReply();
                 }
-                DeferredOperation.SetAttempts(_ops, attempts);
+                DeferredOperation.SetAttempts(operations, attempts);
                 if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
             }
         }
@@ -494,36 +520,36 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 error = callerToken.IsCancellationRequested
                     ? new OperationCanceledException(canceled.Message, canceled, callerToken)
                     : new RespireTimeoutException("PIPELINE", core.Options.CommandTimeout!.Value, canceled);
-            foreach (var op in _ops) op.CaptureFailure(error);
+            foreach (var op in operations) op.CaptureFailure(error);
         }
         finally
         {
-            DeferredOperation.ShareEndpoint(_ops, _ops[0].Observation);
-            foreach (var op in _ops)
+            if (core.Cluster is null) DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
+            foreach (var op in operations)
             {
                 op.NormalizeCancellation(callerToken, token, core.Options.CommandTimeout);
                 op.PublishReply(_client);
                 op.ReleaseSnapshot();
             }
             if (retries != 0)
-                RespireTelemetry.RecordCommandRetry(category, _ops.Exists(static op => op.Error is not null) ? "exhausted" : "succeeded");
+                RespireTelemetry.RecordCommandRetry(category, operations.Exists(static op => op.Error is not null) ? "exhausted" : "succeeded");
             ArrayPool<ValueTask<RespValue>>.Shared.Return(sends, clearArray: true);
             ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true);
         }
         return connection;
     }
 
-    private bool TryGetBatchRetryDelay(int attempt, CommandWriteOutcome outcome, CommandDeadline deadline,
+    private bool TryGetBatchRetryDelay(List<Op> operations, int attempt, CommandWriteOutcome outcome, CommandDeadline deadline,
         CancellationToken token, out TimeSpan delay)
     {
         delay = default;
         var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
-        foreach (var failed in _ops)
+        foreach (var failed in operations)
         {
             if (failed.AttemptError is not { } error) continue;
             var permitted = true;
             var candidate = TimeSpan.Zero;
-            foreach (var member in _ops)
+            foreach (var member in operations)
             {
                 if (!_client.Core.CommandRetries!.TryGetDelay(error, outcome, member.RetryCategory,
                     attempt, remaining, token, out var memberDelay))
@@ -641,6 +667,12 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         RespireReadFrom readFrom,
         CancellationToken cancellationToken)
     {
+        if (_client.Core.CommandRetries is not null
+            && operations.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
+        {
+            _ = await RunRetryableBatchAsync(cancellationToken, operations, slot, readFrom).ConfigureAwait(false);
+            return;
+        }
         RespireConnection connection;
         RespireConnection? continuationConnection;
         // Read selection borrows the first pending's existing owner. Copy the completed
@@ -927,7 +959,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             RespireClient client,
             RespireConnection connection,
             CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation);
+            RespireTelemetry.ErrorObservation observation, CommandDeadline deadline = default);
         public abstract Task<Exception?> CompleteClusterSendAsync(
             RespireBatch batch,
             RespireConnection connection,
@@ -975,10 +1007,15 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             RespireClient client,
             RespireConnection connection,
             CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation)
+            RespireTelemetry.ErrorObservation observation, CommandDeadline deadline = default)
         {
-            return client.SendOnConnectionAsync(Operation, connection, new MutationCommand<TCommand>(command, MutationFence), cancellationToken,
-                observation: observation);
+            var bound = new MutationCommand<TCommand>(command, MutationFence);
+            if (SnapshotError is { } error) return ValueTask.FromException<RespValue>(error);
+            if (SnapshotState is { } snapshot)
+                return client.SendOnConnectionAsync(Operation, connection, new SnapshotCommand<TCommand>(bound, snapshot), cancellationToken,
+                    observation: observation, commandDeadline: deadline);
+            return client.SendOnConnectionAsync(Operation, connection, bound, cancellationToken,
+                observation: observation, commandDeadline: deadline);
         }
 
         public override async Task<Exception?> CompleteClusterSendAsync(
@@ -999,9 +1036,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 catch (RespireConnectionRetiredException error) when (batch.ConnectionPolicy.CanReplayRejectedCommands)
                 {
                     // Retry only this rejected operation; other pipeline entries may already be accepted.
-                    value = await batch._client.ResumeRetiredClusterSendAsync(
-                        Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken,
-                        observation: observation).ConfigureAwait(false);
+                    value = await ResumeAsync(error, retired: true).ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (batch.ConnectionPolicy.CanReplayRejectedCommands
                     && command.TryGetClusterSlot(out var readSlot)
@@ -1009,27 +1044,42 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                         ReadFallbackPolicy.IsReplicaConnection(connection)))
                 {
                     // Complete each operation in queue order; retry only its rejected read.
-                    value = await batch._client.ResumeRejectedClusterSendAsync(
-                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken,
-                            observation: observation)
-                        .ConfigureAwait(false);
+                    value = await ResumeAsync(error, retired: false).ConfigureAwait(false);
                 }
                 catch (RespireServerException error) when (
                     batch.ConnectionPolicy.CanRecoverRejectedCommand(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
-                    value = await batch._client.ResumeRejectedClusterSendAsync(
-                            Operation, new MutationCommand<TCommand>(command, MutationFence), connection, error, readFrom, cancellationToken,
-                            observation: observation)
-                        .ConfigureAwait(false);
+                    value = await ResumeAsync(error, retired: false).ConfigureAwait(false);
                 }
 
+                if (SnapshotState is not null || SnapshotError is not null)
+                {
+                    await CaptureReplyAsync(new ValueTask<RespValue>(value)).ConfigureAwait(false);
+                    return AttemptError;
+                }
                 return Complete(batch._client, value);
             }
             catch (Exception ex)
             {
-                pending.Fail(ex);
+                if (SnapshotState is not null || SnapshotError is not null) CaptureFailure(ex);
+                else pending.Fail(ex);
                 return ex;
             }
+
+            ValueTask<RespValue> ResumeAsync(Exception error, bool retired)
+            {
+                var bound = new MutationCommand<TCommand>(command, MutationFence);
+                if (SnapshotState is { } snapshot)
+                    return ResumeCommandAsync(new SnapshotCommand<TCommand>(bound, snapshot), error, retired);
+                return ResumeCommandAsync(bound, error, retired);
+            }
+
+            ValueTask<RespValue> ResumeCommandAsync<TReplay>(TReplay replay, Exception error, bool retired) where TReplay : struct, IRespCommand
+                => retired
+                    ? batch._client.ResumeRetiredClusterSendAsync(Operation, replay, connection,
+                        (RespireConnectionRetiredException)error, readFrom, cancellationToken, observation: observation)
+                    : batch._client.ResumeRejectedClusterSendAsync(Operation, replay, connection,
+                        (RespireServerException)error, readFrom, cancellationToken, observation: observation);
         }
 
         public override async ValueTask<Task<Exception?>> StartImportAsync(
