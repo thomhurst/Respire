@@ -529,6 +529,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
     }
 
+    // A logical retry waits for the routed owner's replacement socket, as the standalone owner does,
+    // instead of spending its attempt on a lost one. Uninitialized and retired owners stay with discovery.
+    internal async ValueTask WaitForRouteReplacementAsync(int? slot, CancellationToken cancellationToken)
+    {
+        var node = (slot is { } value ? RoutingSnapshot[value].Primary : null) ?? Volatile.Read(ref _seed);
+        if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return;
+        // An open circuit rejects before the wait, and again at dispatch admission.
+        _circuits?.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
+        try { _ = await node.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false); }
+        catch (RespireConnectionRetiredException) { /* Retirement moves selection back to discovery. */ }
+    }
+
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
     private async ValueTask EnsureRouteNodeConnectedAsync(
