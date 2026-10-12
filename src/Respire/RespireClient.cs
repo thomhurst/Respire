@@ -476,7 +476,7 @@ public sealed partial class RespireClient : IRespireClient
                 cacheMutation: command.CacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
                 readKind: RawCommandDescriptorLookup.GetReadKind(command.Name, args),
-                allowReadFrom: false, observation: observation);
+                allowReadFrom: false, observation: observation, retryCategory: command.DeclaredRetryCategory);
         }
 
         // Catalog execution handles typed commands; explicit prefixable layouts also allow raw module commands.
@@ -497,13 +497,15 @@ public sealed partial class RespireClient : IRespireClient
             operation, rawArguments, flags, cancellationToken,
             cacheMutation: cacheMutation,
             hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation);
+            readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation,
+            retryCategory: command.DeclaredRetryCategory);
         var prefixError = PrefixModuleKeysOrError(operation, rawArguments, out var prefixedArguments);
         return prefixError is null
             ? ExecuteRawAsync(operation, prefixedArguments, flags, cancellationToken,
                 cacheMutation: cacheMutation,
                 hasExplicitCacheMutation: command.HasExplicitCacheMutation,
-                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation)
+                readKind: readKind, allowReadFrom: command.Sources != RespireCommandSource.None, observation: observation,
+                retryCategory: command.DeclaredRetryCategory)
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
@@ -781,13 +783,14 @@ public sealed partial class RespireClient : IRespireClient
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
         bool hasExplicitCacheMutation = false,
         ReadCommandKind readKind = ReadCommandKind.None,
-        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default,
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         if (observation.IsEmpty)
         {
             return await DispatchResponseSource<RespireResult>.Run(
-                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken, Mutation: cacheMutation, Explicit: hasExplicitCacheMutation, Read: readKind, AllowRead: allowReadFrom),
-                static (state, owner) => state.Client.ExecuteRawAsync(state.Command, state.Args, state.Flags, state.Token, state.Mutation, state.Explicit, state.Read, state.AllowRead, owner)).ConfigureAwait(false);
+                (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken, Mutation: cacheMutation, Explicit: hasExplicitCacheMutation, Read: readKind, AllowRead: allowReadFrom, Retry: retryCategory),
+                static (state, owner) => state.Client.ExecuteRawAsync(state.Command, state.Args, state.Flags, state.Token, state.Mutation, state.Explicit, state.Read, state.AllowRead, owner, state.Retry)).ConfigureAwait(false);
         }
         string operation;
         string? storedProcedureName;
@@ -797,7 +800,7 @@ public sealed partial class RespireClient : IRespireClient
         ValidateResultFlags(flags);
         (operation, var words, var firstArgumentIndex) = ParseRawCommand(command, ref args);
         (storedProcedureName, commandValue) = CreateRawCommand(
-            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind);
+            operation, words, firstArgumentIndex, args, cacheMutation, hasExplicitCacheMutation, readKind, retryCategory);
         isBlocking = RespireCommand.IsBlocking(
             operation,
             RespireCommand.Classify(operation),
@@ -1148,7 +1151,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         RespireCacheMutation cacheMutation = RespireCacheMutation.Unknown,
         bool hasExplicitCacheMutation = false,
-        ReadCommandKind readKind = ReadCommandKind.None)
+        ReadCommandKind readKind = ReadCommandKind.None,
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         var tokens = new RespireValue[words.Length + args.Length];
         for (var i = 0; i < words.Length; i++)
@@ -1165,7 +1169,7 @@ public sealed partial class RespireClient : IRespireClient
         return (storedProcedureName,
             new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex, cacheMutation, readKind,
                 Verb.GetCursorArgumentIndex(operation), hasExplicitCacheMutation,
-                _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation)));
+                _core.ClientCache is null ? default : ClientCacheCommandMetadata.Get(operation), retryCategory));
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -2762,6 +2766,11 @@ public sealed partial class RespireClient : IRespireClient
         {
             return SendReadFromAsync(operation, command, readKind, cursorAffinity, cancellationToken, observation);
         }
+        else if (core.Cluster is { } retryCluster && readKind == ReadCommandKind.None && CanRetryCluster(in command))
+        {
+            return SendClusterWithRetriesAsync(operation, retryCluster, command, cancellationToken,
+                HasFlag(flags, RespireCommandFlags.NoRedirect), observeErrors, observation);
+        }
         else if (core.Cluster is { } cluster)
         {
             return SendClusterAsync(
@@ -3103,7 +3112,8 @@ public sealed partial class RespireClient : IRespireClient
         bool observeErrors = false,
         bool discardServerErrors = false,
         Action<Exception>? onRetry = null,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        CommandDeadline retryDeadline = default)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -3169,7 +3179,9 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 discoveryPending = false;
             }
-            var commandDeadline = command is IStreamingRespCommand && _core.Options.CommandTimeout is { } streamTimeout
+            // A retry owner's logical deadline bounds every redirect inside each of its attempts.
+            var commandDeadline = retryDeadline.IsSet ? retryDeadline
+                : command is IStreamingRespCommand && _core.Options.CommandTimeout is { } streamTimeout
                 ? CommandDeadline.After(Math.Max(1L, (long)streamTimeout.TotalMilliseconds))
                 : CommandDeadline.None;
             var sendAsking = initialRejection?.Code == RespireErrorCodes.Ask;

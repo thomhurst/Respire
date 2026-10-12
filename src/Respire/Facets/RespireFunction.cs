@@ -14,12 +14,14 @@ namespace Respire;
 /// </summary>
 public sealed class RespireFunction
 {
-    internal RespireFunction(string name, bool readOnly, RespireFunctionLibrary? library)
+    internal RespireFunction(string name, bool readOnly, RespireFunctionLibrary? library,
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Name = name;
         IsReadOnly = readOnly;
         Library = library;
+        RetryCategory = retryCategory;
     }
 
     /// <summary>The server-registered function name.</summary>
@@ -28,8 +30,27 @@ public sealed class RespireFunction
     public bool IsReadOnly { get; }
     /// <summary>The optional library used for bounded reload after a missing-function error.</summary>
     public RespireFunctionLibrary? Library { get; }
+    /// <summary>
+    /// The caller-declared retry risk of one complete call. Defaults to
+    /// <see cref="RespireCommandRetryCategory.Never"/>, including read-only functions.
+    /// </summary>
+    public RespireCommandRetryCategory RetryCategory { get; }
     /// <summary>References a function that the application loads separately.</summary>
     public static RespireFunction Create(string name, bool readOnly = false) => new(name, readOnly, null);
+
+    /// <summary>Returns this function with a caller-declared retry category.</summary>
+    /// <remarks>
+    /// Immediate calls retry only when <see cref="RespireOptions.RetryPolicy"/> permits the category.
+    /// A failed attempt is treated as possibly executed. Declare a write category only when repeating
+    /// every effect of the call, with the same keys and arguments, is acceptable. Deferred calls never
+    /// resend individually.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
+    public RespireFunction WithRetryCategory(RespireCommandRetryCategory category)
+    {
+        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        return new(Name, IsReadOnly, Library, category);
+    }
     internal string Operation => IsReadOnly ? "FCALL_RO" : "FCALL";
     internal Verb Verb => IsReadOnly ? RespireCommands.Scripting.FCALL_RO.Verb : RespireCommands.Scripting.FCALL.Verb;
 }

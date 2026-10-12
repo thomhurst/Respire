@@ -23,6 +23,10 @@
     {
       "Member": "Respire.RespireFailoverGroup.GetEndpointStatuses():IReadOnlyList<RespireFailoverEndpointStatus>",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireFailoverGroup.ExecuteAsync`1(Func<IRespireClient,CancellationToken,ValueTask<T>>,RespireCommandRetryCategory,CancellationToken):ValueTask<T>",
+      "Reason": "Runs a caller-supplied operation on member clients; each member command entry point owns its dispatch and final errors."
     }
   ]
 }

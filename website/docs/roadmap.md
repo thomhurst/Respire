@@ -144,8 +144,10 @@ acceptance criteria, dependencies, and current status:
 - [Resilience and API parity](https://github.com/thomhurst/Respire/issues/857): command retry policies,
   circuit breaker integration for topology routing, and further connection/API work.
   [Command retry policy settings](./guides/command-retries) and conservative safety decisions are
-  implemented for standalone buffered immediate commands. Topology, raw/script and failover-group dispatch remain open in
-  [#1215](https://github.com/thomhurst/Respire/issues/1215) and its native children.
+  implemented for buffered immediate commands on standalone, Sentinel and Cluster clients, caller-declared
+  raw, script and function requests, and failover-group operations. Whole batch/transaction retries remain
+  open in [#1216](https://github.com/thomhurst/Respire/issues/1216), and the full circuit composition in
+  [#1256](https://github.com/thomhurst/Respire/issues/1256).
   [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance
   acceptance remains open in [#1214](https://github.com/thomhurst/Respire/issues/1214), with causal
   allocation and selection measurements tracked by [#1474](https://github.com/thomhurst/Respire/issues/1474).

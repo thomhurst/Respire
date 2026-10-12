@@ -34,8 +34,20 @@ public sealed record RespireFailoverGroupOptions
     /// <summary>Time a recovered higher-priority endpoint must stay healthy before failback. Defaults to ten seconds.</summary>
     public TimeSpan FailbackGracePeriod { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Retry settings for <see cref="RespireFailoverGroup.ExecuteAsync{T}"/>. Defaults to null, which
+    /// runs each operation once on the active client.
+    /// </summary>
+    /// <remarks>
+    /// Each retry reads <see cref="RespireFailoverGroup.ActiveClient"/> again, so it uses a newly
+    /// selected member after a switch. Member clients keep their own
+    /// <see cref="RespireOptions.RetryPolicy"/>; a group retry starts only after a member's operation fails.
+    /// </remarks>
+    public RespireRetryPolicy? RetryPolicy { get; init; }
+
     internal void Validate()
     {
+        RetryPolicy?.Validate();
         if (!IsTimerCompatible(ProbeInterval)) throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
         if (!IsTimerCompatible(ProbeTimeout)) throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
         if (FailureThreshold < 1) throw new ArgumentOutOfRangeException(nameof(FailureThreshold));
@@ -122,6 +134,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 {
     private readonly CandidateState[] _candidates;
     private readonly RespireFailoverGroupOptions _options;
+    private readonly CommandRetryPolicy? _retries;
     private readonly TimeProvider _clock;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -145,12 +158,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         internal Task ProbeAsync(int index, CancellationToken cancellationToken = default)
             => group.ProbeAsync(group._candidates[index], cancellationToken);
         internal CircuitSnapshot Circuit(int index) => group._candidates[index].CircuitSnapshot();
+        internal ValueTask SelectActiveAsync() => group.SelectActiveAsync();
     }
 
     private RespireFailoverGroup(CandidateState[] candidates, RespireFailoverGroupOptions options, TimeProvider clock, ILogger? logger)
     {
         _candidates = candidates;
         _options = options;
+        _retries = options.RetryPolicy is { } retry && new CommandRetryPolicy(retry) is { IsEnabled: true } policy ? policy : null;
         _clock = clock;
         _logger = logger;
     }
@@ -185,6 +200,44 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             return Volatile.Read(ref _active)?.Client
                 ?? throw new RespireConnectionException("No healthy Redis endpoint is available in the failover group.");
         }
+    }
+
+    /// <summary>
+    /// Runs an operation on the active client. With <see cref="RespireFailoverGroupOptions.RetryPolicy"/>,
+    /// a selected failure retries on the client that is active when the retry starts.
+    /// </summary>
+    /// <param name="operation">
+    /// The complete operation for one attempt. It receives the attempt's client and cancellation token,
+    /// and must not retain the client after it completes.
+    /// </param>
+    /// <param name="retryCategory">
+    /// The caller-declared risk of repeating the complete operation. Respire cannot inspect the operation,
+    /// so every failed attempt is treated as possibly executed. <see cref="RespireCommandRetryCategory.Never"/>
+    /// runs it once.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the current attempt and stops retries and backoff.</param>
+    /// <remarks>
+    /// A missing healthy endpoint is a connection failure, so a retry can wait for the next selection within
+    /// the attempt and backoff budget. Members report their own command errors and retries; the group records
+    /// its retries under <c>respire.command.retries</c>. The group has no command timeout of its own: each
+    /// attempt uses its member's timeout, and the caller's token bounds the whole operation.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="operation"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="retryCategory"/> is not a defined value.</exception>
+    public ValueTask<T> ExecuteAsync<T>(Func<IRespireClient, CancellationToken, ValueTask<T>> operation,
+        RespireCommandRetryCategory retryCategory, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (!Enum.IsDefined(retryCategory)) throw new ArgumentOutOfRangeException(nameof(retryCategory));
+        if (_retries is null || retryCategory == RespireCommandRetryCategory.Never)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return operation(ActiveClient, cancellationToken);
+        }
+        return LogicalCommandRetry.RunAsync(_retries, "FAILOVER GROUP", retryCategory, commandTimeout: null,
+            (Group: this, Operation: operation),
+            static (state, attempt) => state.Operation(state.Group.ActiveClient, attempt.Token),
+            default, cancellationToken);
     }
 
     /// <summary>Returns a snapshot of endpoint health and circuit state.</summary>

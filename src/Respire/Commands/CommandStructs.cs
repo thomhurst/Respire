@@ -513,8 +513,11 @@ internal readonly struct DynamicCommand(
     ReadCommandKind readKind = ReadCommandKind.None,
     int cursorArgumentIndex = -1,
     bool hasExplicitCacheMutation = false,
-    ClientCacheCommandMetadata cacheMetadata = default) : IRespCommand
+    ClientCacheCommandMetadata cacheMetadata = default,
+    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
 {
+    // Only a caller declaration reaches this value; the operation name never grants one.
+    public RespireCommandRetryCategory RetryCategory => retryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(CommandWriteSizeHint.HeaderLength, tokens);
     // Keep constrained response admission from boxing the raw command for the interface default.
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
@@ -733,7 +736,8 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    public RespireCommandRetryCategory RetryCategory => command.RetryCategory != RespireCommandRetryCategory.Never
+    public RespireCommandRetryCategory RetryCategory => !command.HasExplicitRetryCategory
+        && command.RetryCategory != RespireCommandRetryCategory.Never
         && command.Name == "SET" && args.Length == 2
         ? RespireCommandRetryCategory.WriteLastWins : command.RetryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(command.Verb, args);

@@ -14,6 +14,9 @@ public readonly struct RespireCommand
     private const int CacheMutationMask = 0xF << CacheMutationShift;
     private const int ReadOnlyMetadataFlag = 1 << 12;
     private const int ExplicitCacheMutationFlag = 1 << 13;
+    private const int ExplicitRetryCategoryFlag = 1 << 14;
+    private const int RetryCategoryShift = 16;
+    private const int RetryCategoryMask = 0xFF << RetryCategoryShift;
     private readonly Verb _verb;
     private readonly int _sourceAndMutationMetadata;
 
@@ -55,10 +58,47 @@ public readonly struct RespireCommand
 
     /// <summary>
     /// Conservative retry-risk metadata. This does not enable retries or recover the original reply.
-    /// Caller-supplied commands, including recognized names, always return
-    /// <see cref="RespireCommandRetryCategory.Never"/>.
+    /// Caller-supplied commands, including recognized names, return
+    /// <see cref="RespireCommandRetryCategory.Never"/> unless the caller declares a category with
+    /// <see cref="WithRetryCategory"/>.
     /// </summary>
-    public RespireCommandRetryCategory RetryCategory => _verb.RetryCategory;
+    public RespireCommandRetryCategory RetryCategory => HasExplicitRetryCategory
+        ? (RespireCommandRetryCategory)((_sourceAndMutationMetadata & RetryCategoryMask) >> RetryCategoryShift)
+        : _verb.RetryCategory;
+
+    /// <summary>
+    /// Returns this descriptor with a caller-declared retry category, replacing any audited category.
+    /// </summary>
+    /// <remarks>
+    /// The declaration is the caller's statement about the complete invocation; Respire does not
+    /// validate it against the command name or its arguments. It takes effect only when
+    /// <see cref="RespireOptions.RetryPolicy"/> permits that category. Declaring a write category
+    /// accepts repeated effects after a possible execution. Blocking commands, scripts and functions
+    /// sent through this escape hatch, fire-and-forget sends, batches and transactions do not retry.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
+    /// <exception cref="InvalidOperationException">The descriptor is uninitialized.</exception>
+    public RespireCommand WithRetryCategory(RespireCommandRetryCategory category)
+    {
+        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        if (Name is null) throw new InvalidOperationException("An uninitialized command descriptor cannot declare a retry category.");
+        return new RespireCommand(this, category);
+    }
+
+    private RespireCommand(RespireCommand source, RespireCommandRetryCategory category)
+    {
+        Name = source.Name;
+        _verb = source._verb;
+        Behavior = source.Behavior;
+        _sourceAndMutationMetadata = (source._sourceAndMutationMetadata & ~RetryCategoryMask)
+            | ExplicitRetryCategoryFlag | ((int)category << RetryCategoryShift);
+    }
+
+    internal bool HasExplicitRetryCategory => (_sourceAndMutationMetadata & ExplicitRetryCategoryFlag) != 0;
+
+    // Raw dispatch reads only a caller declaration. Recognized names never grant replay permission there.
+    internal RespireCommandRetryCategory DeclaredRetryCategory
+        => HasExplicitRetryCategory ? RetryCategory : RespireCommandRetryCategory.Never;
 
     /// <summary>How this command affects keys tracked by client-side caching.</summary>
     public RespireCacheMutation CacheMutation
@@ -85,7 +125,8 @@ public readonly struct RespireCommand
     /// Key-prefixed views rewrite keys for recognized module commands with explicitly registered
     /// prefixable layouts. Other caller-supplied commands keep physical keys and do not infer layouts.
     /// This does not declare the command read-only or associate it with an official command source.
-    /// Its retry category is always <see cref="RespireCommandRetryCategory.Never"/>.
+    /// Its retry category is <see cref="RespireCommandRetryCategory.Never"/> until the caller declares
+    /// one with <see cref="WithRetryCategory"/>.
     /// </remarks>
     /// <exception cref="ArgumentException">The name is empty or contains spaces, control characters, or non-ASCII characters.</exception>
     public static RespireCommand Create(string name)

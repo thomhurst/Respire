@@ -88,6 +88,65 @@ public class StandaloneCommandRetryIntegrationTests(RedisTestContainer fixture)
         await observer.Keys.DeleteAsync(key);
     }
 
+    [Test]
+    [Arguments("script", false, false)]
+    [Arguments("script", true, true)]
+    [Arguments("declared", false, false)]
+    [Arguments("declared", true, true)]
+    [Arguments("undeclared", true, false)]
+    public async Task LostReplyHonorsCallerDeclaredScriptAndRawCategories(string shape, bool highRisk, bool retries)
+    {
+        var options = RespireOptions.Parse(fixture.ConnectionString) with
+        { Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5) };
+        await using var observer = await RespireClient.ConnectAsync(options);
+        var key = "retry-declared:" + Guid.NewGuid().ToString("N");
+        await observer.SetAsync(key, "0");
+        var script = RespireScript.Create("return redis.call('INCR', KEYS[1])")
+            .WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating);
+        // A cached script keeps the fault on EVALSHA, without a NOSCRIPT fallback exchange.
+        await observer.Scripts.LoadAsync(script);
+        var fault = new LostReply(shape == "script" ? "EVALSHA" : "INCR");
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = highRisk ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly },
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return new DropReplyStream(new NetworkStream(socket, ownsSocket: true), fault);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        fault.Armed = true;
+        Exception? error = null;
+        try
+        {
+            switch (shape)
+            {
+                case "script": (await client.Scripts.ExecuteIntegerAsync(script, [key])).Should().Be(2); break;
+                case "declared":
+                    using (var result = await client.ExecuteAsync(
+                        RespireCommand.Create("INCR").WithRetryCategory(RespireCommandRetryCategory.WriteAccumulating), [key]))
+                        result.AsInteger().Should().Be(2);
+                    break;
+                default:
+                    using (var result = await client.ExecuteAsync("INCR", [key])) result.AsInteger().Should().Be(2);
+                    break;
+            }
+        }
+        catch (Exception failure) { error = failure; }
+        if (retries) error.Should().BeNull();
+        else error.Should().BeAssignableTo<RespireConnectionException>();
+        fault.Sends.Should().Be(retries ? 2 : 1);
+        fault.Dropped.Should().Be(1);
+        (await observer.GetStringAsync(key)).Should().Be(retries ? "2" : "1");
+        await observer.Keys.DeleteAsync(key);
+    }
+
     private sealed class LostReply(string operation)
     {
         private static byte[] EncodeVerb(string operation)

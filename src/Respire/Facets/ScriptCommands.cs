@@ -22,12 +22,14 @@ public sealed class RespireScript
     private const int StackallocThreshold = 256;
     private const string HexDigits = "0123456789abcdef";
 
-    private RespireScript(string source, string sha1, bool readOnly, bool cacheReadOnly)
+    private RespireScript(string source, string sha1, bool readOnly, bool cacheReadOnly,
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
     {
         Source = source;
         Sha1 = sha1;
         IsReadOnly = readOnly;
         IsCacheReadOnly = cacheReadOnly;
+        RetryCategory = retryCategory;
     }
 
     /// <summary>The Lua source text.</summary>
@@ -41,6 +43,28 @@ public sealed class RespireScript
     public bool IsReadOnly { get; }
 
     internal bool IsCacheReadOnly { get; }
+
+    /// <summary>
+    /// The caller-declared retry risk of one complete execution. Defaults to
+    /// <see cref="RespireCommandRetryCategory.Never"/>, including read-only scripts.
+    /// </summary>
+    /// <remarks>Respire cannot audit Lua source, so script execution retries only with a declared category.</remarks>
+    public RespireCommandRetryCategory RetryCategory { get; }
+
+    /// <summary>Returns this script with a caller-declared retry category.</summary>
+    /// <remarks>
+    /// Immediate execution retries only when <see cref="RespireOptions.RetryPolicy"/> permits the
+    /// category. A failed attempt is treated as possibly executed, because the script may have run
+    /// before its reply was lost. Declare a write category only when repeating every effect of the
+    /// script, with the same keys and arguments, is acceptable. Batches and transactions never resend
+    /// an individual script.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
+    public RespireScript WithRetryCategory(RespireCommandRetryCategory category)
+    {
+        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
+        return new RespireScript(Source, Sha1, IsReadOnly, IsCacheReadOnly, category);
+    }
 
     internal string EvalOperation => IsReadOnly ? "EVAL_RO" : "EVAL";
     internal string EvalShaOperation => IsReadOnly ? "EVALSHA_RO" : "EVALSHA";

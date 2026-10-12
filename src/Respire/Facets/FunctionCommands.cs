@@ -106,7 +106,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation observation)
     {
         var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan());
-        using var result = await ExecuteWithLibraryAsync(function, command, cancellationToken, observation)
+        using var result = await ExecuteWithRetriesAsync(function, command, cancellationToken, observation)
             .ConfigureAwait(false);
         return convert(result);
     }
@@ -118,7 +118,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         try
         {
             var command = CallCommand(client, function, keys, args);
-            return owner.Attach(ExecuteWithLibraryAsync(function, command, cancellationToken, owner.Observation));
+            return owner.Attach(ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation));
         }
         catch (Exception error)
         {
@@ -127,6 +127,17 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             throw;
         }
     }
+
+    // A declared category retries the complete call, including a missing-function reload.
+    private ValueTask<RespireResult> ExecuteWithRetriesAsync(RespireFunction function, BatchScriptCommand command,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.CanRetryDeclared(function.RetryCategory)
+            ? client.RunWithDeclaredRetriesAsync(function.Operation, function.RetryCategory,
+                (Commands: this, Function: function, Command: command, Observation: observation),
+                static (state, attempt) => state.Commands.ExecuteWithLibraryAsync(state.Function, state.Command,
+                    attempt.Token, state.Observation),
+                observation, cancellationToken)
+            : ExecuteWithLibraryAsync(function, command, cancellationToken, observation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -275,6 +286,9 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
                 if (tail[i].TryGetClusterSlot(out var slot) && slot != expected)
                     throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", function.Operation);
         }
+        // A retried call must resend the bytes of its first attempt.
+        if (client.CanRetryDeclared(function.RetryCategory))
+            for (var index = 0; index < tail.Length; index++) tail[index] = tail[index].Snapshot();
         return new(function.Verb, function.Name, tail, keys.Length);
     }
 

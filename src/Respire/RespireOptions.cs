@@ -405,9 +405,13 @@ public sealed record RespireOptions
     /// </summary>
     public RespireClientSideCacheOptions? ClientSideCache { get; init; }
 
-    /// <summary>Opt-in retries for buffered immediate commands on standalone clients. Null disables retries.</summary>
-    /// <remarks>One deadline spans all attempts. Batches, transactions, streams, scripts and topology routing
-    /// retain their existing behavior. Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
+    /// <summary>
+    /// Opt-in retries for buffered immediate commands on standalone, Sentinel and Cluster clients.
+    /// Null disables retries.
+    /// </summary>
+    /// <remarks>One deadline spans all attempts. Caller-supplied commands, scripts and functions retry only
+    /// with a declared category. Batches, transactions and streams retain their existing behavior.
+    /// Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
     public RespireRetryPolicy? RetryPolicy { get; init; }
 
     /// <summary>Optional factory for Respire diagnostic logs.</summary>

@@ -3,8 +3,8 @@ title: Command retry policy
 ---
 
 Set `RespireOptions.RetryPolicy` to enable retries for buffered immediate commands
-on standalone clients. The default is `null`, which retains native optimized
-dispatch and performs no automatic retries.
+on standalone, Sentinel and Cluster clients. The default is `null`, which retains
+native optimized dispatch and performs no automatic retries.
 
 ```csharp
 await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -28,7 +28,83 @@ responses retain their fences until their FIFO reply slots retire.
 
 Only plain `SET key value` is refined to `WriteLastWins`; option-sensitive SET,
 ZADD (including INCR), and XADD retain their conservative audited categories.
-Increasing retry risk can repeat effects and cannot recover the original reply.
+A checked write such as `SET NX` is not refined either: its repeated condition can
+report a different result after its first effect. An overwrite can replace an
+intervening update. Increasing retry risk can repeat effects and cannot recover
+the original reply.
+
+## Topologies
+
+Standalone and Sentinel clients share the owner that consumes transport write
+evidence. Each Sentinel attempt resolves the current primary generation. A
+`READONLY` reply retires that generation before the retry, so the retry discovers
+and writes to the promoted primary. A lost primary connection also retires the
+generation and triggers discovery.
+
+Cluster attempts keep `MOVED`, `ASK`, retirement and `READONLY` recovery inside the
+existing Cluster routing owner. A retry starts only after an attempt's final failure.
+That routing does not expose transport write evidence, so every failed Cluster attempt
+counts as possibly executed. Only the category permission can admit another attempt;
+a definitely unwritten frame does not unlock categories above the policy maximum.
+The logical deadline bounds every redirect inside every attempt. Redirects never
+count as retry attempts.
+
+## Caller-declared categories
+
+Respire never infers retry permission from a caller-supplied command name or from
+read routing. Declare the risk of the complete invocation explicitly:
+
+```csharp
+var read = RespireCommand.Create("MYMODULE.GET")
+    .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+using var result = await redis.ExecuteAsync(read, ["key"]);
+
+var script = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true)
+    .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+var value = await redis.Scripts.ExecuteStringAsync(script, ["key"]);
+
+var function = RespireFunction.Create("reader", readOnly: true)
+    .WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+```
+
+The declaration replaces any audited category on that descriptor, and Respire does
+not validate it against the name or arguments. Scripts and functions default to
+`Never`, including read-only ones. A declared script or function retries its complete
+exchange, including the `EVALSHA`/`EVAL` fallback or a library reload. Its arguments
+are copied before the first send. Every failed script or function attempt counts as
+possibly executed, because it may have run before its reply was lost.
+
+Raw `EVAL` and `FCALL` sent through `ExecuteAsync`, blocking commands, interpolated
+commands, and fire-and-forget sends do not retry. Use `RespireScript` or
+`RespireFunction` with a declared category instead.
+
+## Failover groups
+
+Set `RespireFailoverGroupOptions.RetryPolicy` and run operations through
+`RespireFailoverGroup.ExecuteAsync`:
+
+```csharp
+RespireFailoverCandidate[] candidates =
+[
+    new(new RespireOptions { Endpoints = { new("primary.example", 6379) } }, Priority: 0),
+    new(new RespireOptions { Endpoints = { new("standby.example", 6379) } }, Priority: 1),
+];
+await using var group = await RespireFailoverGroup.ConnectAsync(candidates, new RespireFailoverGroupOptions
+{
+    RetryPolicy = new RespireRetryPolicy { MaxAttempts = 3 },
+});
+var value = await group.ExecuteAsync(
+    (client, token) => client.GetStringAsync("key", token),
+    RespireCommandRetryCategory.ReadOnly);
+```
+
+Each attempt reads `ActiveClient` again, so a retry after a switch uses the newly
+active member. When no member is healthy, the attempt fails as a connection failure
+and can retry within the backoff budget. The group cannot inspect the operation, so
+its category is required and every failed attempt counts as possibly executed.
+Members keep their own `RetryPolicy`; a group retry starts only after a member's
+operation fails. The group has no command timeout of its own. Each attempt uses its
+member's timeout, and the caller's token bounds the whole operation.
 
 ## Policy settings
 
@@ -78,20 +154,24 @@ server errors, including `BUSY` and `CLUSTERDOWN`, are not selected by this foun
 `MOVED` and `ASK` remain owned by existing Cluster routing.
 
 A circuit rejection never authorizes a resend to that endpoint, even though the
-command was not submitted. A `READONLY` retry requires dispatch to refresh its
-primary route. Standalone dispatch selects the current multiplexer on every attempt.
-Sentinel, Cluster, explicit raw/script requests, and failover-group policy integration
-remain tracked by [#1215](https://github.com/thomhurst/Respire/issues/1215).
+command was not submitted. A retry that waits for a replacement connection first
+rejects an open circuit again. A `READONLY` retry requires dispatch to refresh its
+primary route. Standalone dispatch selects the current multiplexer on every attempt,
+and Sentinel dispatch selects the current generation. The full circuit and retry
+composition, including half-open contention and failover switches, remains tracked by
+[#1256](https://github.com/thomhurst/Respire/issues/1256).
 
 Replica read routing, streams, fire-and-forget operations, deferred batch/transaction members, connection
-protocol commands, cursor continuations, and commands categorized as `Never` do not
-use this retry owner. Caller-supplied raw names never acquire retry permission from
-their diagnostic name. Use an audited `RespireCommands` descriptor for generated
-buffered commands.
+protocol commands, cursor continuations, client-cache tracked reads on Cluster, and
+commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
+never acquire retry permission from their diagnostic name. Use an audited
+`RespireCommands` descriptor for generated buffered commands, or declare a category.
 
 The `respire.command.retries` counter records `respire.command.retry.category` and
-`respire.command.retry.outcome`. `attempted` counts accepted resends, while `succeeded`
-and `exhausted` report one terminal outcome per producer that accepted a resend.
+`respire.command.retry.outcome`. On standalone and Sentinel clients, `attempted` counts
+accepted resends. Cluster, script, function and failover-group owners have no transport
+acceptance signal, so `attempted` counts started resends. `succeeded` and `exhausted`
+report one terminal outcome per producer that made a resend.
 Failed circuit admission does not invent an attempt. Coalesced waiters do not duplicate
 producer retry events. Handled attempt failures and final caller errors retain their
 separate error owners. Exporter exceptions cannot change retry decisions or replies.
