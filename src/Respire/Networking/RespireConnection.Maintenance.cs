@@ -89,6 +89,7 @@ internal sealed partial class RespireConnection
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
     internal bool HasRelaxedTimeoutAllowance => HasMaintenanceWindow && _maintenanceOptions is { } options
         && (_responseTimeout is { } response && options.MaintenanceRelaxedTimeout > response
+            || _gatheredWriteTimeout is { } write && options.MaintenanceRelaxedTimeout > write
             || _commandTimeout is { } command && options.MaintenanceRelaxedTimeout > command);
     internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 

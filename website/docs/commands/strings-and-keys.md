@@ -115,17 +115,25 @@ Large array-backed binary values can be sent directly from caller memory on plai
 Keep the input unchanged until `SetAsync` completes, including cancellation, timeout, or failure.
 Cancellation and command deadlines can wait for an accepted socket write to finish before the
 operation returns. TLS, custom streams, and unsupported command shapes retain the copying path.
-Set `ConnectionIdleReadTimeout` to bound a stalled borrowed write: when no completed socket send
+Set `GatheredWriteStallTimeout` to bound a stalled borrowed write: when no completed socket send
 makes progress for that period, the connection watchdog closes the socket and waits for the
 kernel send to release caller memory before completing the operation. Borrowed memory is
 watched from the moment it is queued, including while a preceding copied command
-is sending. Completed sends advance the watchdog; further enqueues do not restart its timer.
+is sending, until every byte in the owning buffer (including trailing copied commands) is sent.
+Completed sends advance the watchdog; further enqueues do not restart its timer.
 The connection is then
 discarded; other pending commands on it can fail, and Redis may have received part or all of
 the SET. A paused `GetStreamAsync` consumer suppresses receive checks but does not suspend this
 write watchdog. Cancellation alone does not abort an accepted frame. With this watchdog disabled
 (the default), a peer that never resumes reading can retain the operation until the socket
 fails or the client is disposed, even after response cancellation or a command deadline.
+
+`GatheredWriteStallTimeout` defaults to null, which inherits `ConnectionIdleReadTimeout` for
+compatibility with callers using the combined watchdog. A finite value of at least one millisecond
+overrides that receive budget, even when receive checks are disabled. Set `Timeout.InfiniteTimeSpan`
+to disable only the borrowed-write bound while retaining a configured receive timeout. Neither
+option changes the completion barrier: reuse the input only after the returned operation completes.
+See [independent liveness bounds](../fundamentals/connections.md#independent-liveness-bounds).
 
 For large binary values held in a stream, stream the payload without building a payload-sized command buffer:
 

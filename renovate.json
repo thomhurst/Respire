@@ -11,7 +11,10 @@
     {
       "description": "The assessed Orleans version changes only with a new source inventory and compatibility assessment.",
       "matchManagers": ["nuget"],
-      "matchFileNames": ["tests/Respire.Orleans.Acceptance.Tests/Respire.Orleans.Acceptance.Tests.csproj"],
+      "matchFileNames": [
+        "tests/Respire.Orleans.Acceptance.Tests/Respire.Orleans.Acceptance.Tests.csproj",
+        "tests/Respire.DocTests/Respire.DocTests.csproj"
+      ],
       "matchPackageNames": ["Microsoft.Orleans.*"],
       "enabled": false
     },

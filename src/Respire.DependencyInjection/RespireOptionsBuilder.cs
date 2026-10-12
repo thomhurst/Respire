@@ -102,6 +102,9 @@ public sealed class RespireOptionsBuilder
         set => _connectionIdleReadTimeout = value;
     }
 
+    /// <inheritdoc cref="RespireOptions.GatheredWriteStallTimeout"/>
+    public TimeSpan? GatheredWriteStallTimeout { get; set; }
+
     /// <inheritdoc cref="RespireOptions.CommandTimeout"/>
     public TimeSpan? CommandTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
@@ -179,6 +182,7 @@ public sealed class RespireOptionsBuilder
         UseTls = UseTls,
         TlsOptions = TlsOptions,
         ConnectionIdleReadTimeout = ConnectionIdleReadTimeout,
+        GatheredWriteStallTimeout = GatheredWriteStallTimeout,
         CommandTimeout = CommandTimeout,
         Connections = Connections,
         Serializer = Serializer,

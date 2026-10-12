@@ -17,6 +17,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using Respire.Azure;
+using Respire.DependencyInjection;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,6 +27,24 @@ namespace Respire.Tests.Aspire;
 
 public class RegistrationTests
 {
+    [Test]
+    [Arguments(-1)]
+    [Arguments(2000)]
+    public async Task MutableBuilderPreservesIndependentWriteBound(int milliseconds)
+    {
+        var services = new ServiceCollection();
+        services.AddRespire(options =>
+        {
+            options.Endpoints.Add(new("localhost"));
+            options.ConnectionIdleReadTimeout = TimeSpan.FromSeconds(1);
+            options.GatheredWriteStallTimeout = TimeSpan.FromMilliseconds(milliseconds);
+        });
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<RespireClient>();
+        await Assert.That(client.Core.Options.ConnectionIdleReadTimeout).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(client.Core.Options.GatheredWriteStallTimeout).IsEqualTo(TimeSpan.FromMilliseconds(milliseconds));
+    }
+
     /// <summary>Verifies empty named JSON arrays replace globals while absent arrays inherit them.</summary>
     [Test]
     [Arguments("Endpoints", "empty")]
@@ -193,6 +212,7 @@ public class RegistrationTests
             ["ConnectionStrings:cache"] = "injected:6381,password=injected,defaultDatabase=3,ssl=true",
             ["Aspire:Respire:Options:Connections"] = "2",
             ["Aspire:Respire:Options:CommandTimeout"] = "00:00:04",
+            ["Aspire:Respire:Options:GatheredWriteStallTimeout"] = "00:00:02",
             ["Aspire:Respire:cache:Options:Connections"] = "3",
             ["Aspire:Respire:cache:Options:ClientName"] = "test",
         });
@@ -210,6 +230,7 @@ public class RegistrationTests
         await Assert.That(observed.UseTls).IsTrue();
         await Assert.That(observed.Connections).IsEqualTo(3);
         await Assert.That(observed.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(4));
+        await Assert.That(observed.GatheredWriteStallTimeout).IsEqualTo(TimeSpan.FromSeconds(2));
         await Assert.That(observed.ClientName).IsEqualTo("test");
         await Assert.That(client.IsConnected).IsFalse();
         await Assert.That(client).IsSameReferenceAs(host.Services.GetRequiredService<RespireClient>());

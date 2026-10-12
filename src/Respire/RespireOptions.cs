@@ -342,16 +342,31 @@ public sealed record RespireOptions
     /// <summary>
     /// Aborts a connection when commands are awaiting replies and no bytes arrive within this
     /// period. Null (default) disables the receive watchdog.
-    /// For large array-backed SET values sent from caller memory, this also aborts a stalled
-    /// socket write with no completed send progress during the period, allowing safe caller reuse.
-    /// This includes borrowed memory queued behind a preceding copied write.
-    /// Receive suppression for a paused stream consumer does not suppress this write watchdog.
+    /// Also supplies the gathered-write stall bound when <see cref="GatheredWriteStallTimeout"/>
+    /// is null, preserving the combined watchdog behavior for existing callers.
     /// </summary>
     public TimeSpan? ConnectionIdleReadTimeout
     {
         get => _connectionIdleReadTimeout;
         init => _connectionIdleReadTimeout = value;
     }
+
+    /// <summary>
+    /// Aborts the whole connection when borrowed large-SET memory is queued or being sent and
+    /// no socket send completes within this period. Null (default) inherits
+    /// <see cref="ConnectionIdleReadTimeout"/>; <see cref="Timeout.InfiniteTimeSpan"/> disables
+    /// only the write bound. A finite value must be at least one millisecond and overrides the
+    /// receive timeout. Paused stream consumers suppress only receive checks.
+    /// </summary>
+    /// <remarks>
+    /// Watches from queue admission until every byte in the owning buffer is sent, including
+    /// preceding copied writes and trailing commands. Completed sends advance progress;
+    /// additional commands do not extend an existing stall. Abort fails other pending commands,
+    /// and Redis execution may be uncertain. Keep caller memory unchanged until public completion,
+    /// which still waits for the kernel to release it, even after cancellation or a deadline.
+    /// With both bounds disabled, memory can remain owned until the peer resumes or the connection closes.
+    /// </remarks>
+    public TimeSpan? GatheredWriteStallTimeout { get; init; }
 
     /// <summary>
     /// Client-side cap on how long a command waits for its response. Defaults to ten seconds;
@@ -515,6 +530,10 @@ public sealed record RespireOptions
             ConnectionIdleReadTimeout is null || ConnectionIdleReadTimeout >= TimeSpan.FromMilliseconds(1),
             nameof(ConnectionIdleReadTimeout),
             "must be at least one millisecond");
+        Require(
+            GatheredWriteStallTimeout is null || GatheredWriteStallTimeout == Timeout.InfiniteTimeSpan
+                || GatheredWriteStallTimeout >= TimeSpan.FromMilliseconds(1),
+            nameof(GatheredWriteStallTimeout), "must be at least one millisecond, Timeout.InfiniteTimeSpan, or null");
         Require(ReceiveBufferSize >= 1, nameof(ReceiveBufferSize), "must be at least one");
         Require(WriteBufferSize >= 1, nameof(WriteBufferSize), "must be at least one");
         Require(MaxInflightCommands >= 1, nameof(MaxInflightCommands), "must be at least one");
@@ -645,6 +664,7 @@ public sealed record RespireOptions
             ConnectTimeout = ConnectTimeout,
             ReconnectPolicy = ReconnectPolicy,
             ResponseTimeout = ConnectionIdleReadTimeout,
+            GatheredWriteStallTimeout = GatheredWriteStallTimeout,
             CommandTimeout = CommandTimeout,
             UseTls = UseTls,
             TlsOptions = TlsOptions,
@@ -672,7 +692,9 @@ public sealed record RespireOptions
     /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, <c>keyPrefix</c>, <c>pubSubPrefix</c>, and Sentinel credentials/TLS.
     /// Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
-    /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
+    /// <c>connectionIdleReadTimeoutMs</c>, <c>gatheredWriteStallTimeoutMs</c> (-1 disables the
+    /// gathered-write bound; omitted inherits <c>connectionIdleReadTimeoutMs</c>),
+    /// <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false),
     /// <c>allowAdmin</c> (true or false), <c>keyPrefix</c>, and <c>pubSubPrefix</c>.
@@ -750,6 +772,7 @@ public sealed record RespireOptions
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? commandTimeout = DefaultCommandTimeout;
         TimeSpan? responseTimeout = null;
+        TimeSpan? gatheredWriteStallTimeout = null;
         var protocol = RespProtocol.Auto;
         var mode = new ConnectionStringMode();
         var allowAdmin = false;
@@ -797,6 +820,9 @@ public sealed record RespireOptions
                 case "protocol":
                     protocol = ParseProtocolOption(name, value);
                     break;
+                case "gatheredwritestalltimeoutms":
+                    gatheredWriteStallTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    break;
                 case "db":
                     database = ParseIntegerOption(name, value);
                     break;
@@ -828,6 +854,7 @@ public sealed record RespireOptions
             UseTls = useTls,
             CommandTimeout = commandTimeout,
             ConnectionIdleReadTimeout = responseTimeout,
+            GatheredWriteStallTimeout = gatheredWriteStallTimeout,
             Protocol = protocol,
             UseCluster = mode.UseCluster,
             SentinelPrimaryName = mode.ServiceName,
