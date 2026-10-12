@@ -300,6 +300,80 @@ public partial class StandaloneCircuitDispatchTests
     }
 
     [Test]
+    public async Task RetryableBatchConsumesAcceptedReplyWhenSecondMemberIsCircuitRejected()
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
+            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
+        });
+        var (circuit, clock) = await Prepare(client, server);
+        for (var round = 0; round < 8; round++)
+        {
+            Open(client, server);
+            clock.Advance(TimeSpan.FromMinutes(1));
+            var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.SuppressReply = command =>
+            {
+                if (command != "GET probe") return false;
+                received.TrySetResult();
+                return true;
+            };
+            using var batch = client.CreateBatch();
+            var accepted = batch.GetString("probe");
+            var rejected = batch.GetString("never");
+            var executing = batch.TryExecuteAsync().AsTask();
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+            await server.SendRawAsync("$5\r\nprobe\r\n"u8.ToArray());
+            var result = await executing;
+            await Assert.That(result.FailureCount).IsEqualTo(1);
+            await Assert.That(accepted.Result).IsEqualTo("probe");
+            await Assert.That(rejected.Error).IsTypeOf<RespireCircuitOpenException>();
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+            await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+            await Assert.That(await client.GetStringAsync("after")).IsEqualTo("after");
+        }
+        await Assert.That(server.ReceivedCommands.Any(command => command == "GET never")).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET probe")).IsEqualTo(8);
+    }
+
+    [Test]
+    public async Task RetryableBatchPreflightReleasesIgnoredHalfOpenProbe()
+    {
+        await using var server = QueueServer();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CommandTimeout = TimeSpan.FromSeconds(5),
+            CircuitBreaker = Options(server).CircuitBreaker! with { HalfOpenProbeCount = 1 },
+            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
+        });
+        var (circuit, clock) = await Prepare(client, server);
+        var attempts = 0;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command != "GET retry") return command.StartsWith("GET ", StringComparison.Ordinal) ? Bulk(command[4..]) : null;
+            if (Interlocked.Increment(ref attempts) != 1) return Bulk("final");
+            // The first member owns an older-generation permit. Its server error must
+            // not complete the new half-open probe used by the next attempt.
+            Open(client, server);
+            clock.Advance(TimeSpan.FromMinutes(1));
+            return "-TRYAGAIN busy\r\n"u8.ToArray();
+        };
+        using var batch = client.CreateBatch();
+        var pending = batch.GetString("retry");
+        await batch.ExecuteAsync();
+        await Assert.That(pending.Result).IsEqualTo("final");
+        await Assert.That(attempts).IsEqualTo(2);
+        await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+        await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+        await Assert.That(circuit.Snapshot().SuccessfulProbes).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("after")).IsEqualTo("after");
+    }
+
+    [Test]
     [Arguments("batch", false)]
     [Arguments("batch", true)]
     [Arguments("transaction", false)]

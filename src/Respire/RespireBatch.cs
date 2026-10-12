@@ -406,11 +406,15 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         var token = timeout?.Token ?? callerToken;
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
-        for (var i = 0; i < _ops.Count; i++) observations[i] = _ops[i].Observation;
+        var category = RespireCommandRetryCategory.Never;
+        for (var i = 0; i < _ops.Count; i++)
+        {
+            observations[i] = _ops[i].Observation;
+            // Numeric ordering describes risk only; permission is checked separately for every member.
+            if (_ops[i].RetryCategory > category) category = _ops[i].RetryCategory;
+        }
         RespireConnection? connection = null;
         var retries = 0;
-        // Numeric ordering describes risk only; permission is checked separately for every member.
-        var category = _ops.Max(static op => op.RetryCategory);
         try
         {
             callerToken.ThrowIfCancellationRequested();
@@ -426,8 +430,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     if (attempt > 1)
                     {
                         await core.EnsureConnectedAsync(token, _ops[0].Observation).ConfigureAwait(false);
-                        // An open circuit rejects before waiting for a replacement. Admission
-                        // still takes a separate permit for each member below.
+                        // Reject an open circuit before waiting for a replacement. Disposing
+                        // this ignored admission releases half-open capacity without an outcome;
+                        // each dispatched member still owns its own permit below.
                         core.Circuits?.Acquire(core.Multiplexer.ActiveConnectionEndpoint, token).Dispose();
                         connection = await core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
                     }
@@ -444,6 +449,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     {
                         for (var i = 0; i < _ops.Count; i++)
                         {
+                            // Admission failures become faulted reply tasks, so a rejected later
+                            // member cannot skip consumption of earlier accepted replies.
                             var accepted = await _ops[i].StartOrderedSendAsync(_client, connection, token,
                                 observations[i], deadline, core.Circuits).ConfigureAwait(false);
                             sends[i] = accepted.Reply;
@@ -469,12 +476,14 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 }
 
                 if (!TryGetBatchRetryDelay(attempt, outcome, deadline, token, out var delay)) break;
+                var attempts = 0;
                 foreach (var op in _ops)
                 {
                     if (op.AttemptError is { } error) op.Observation.Handled(error);
+                    if (op.Observation.Attempts > attempts) attempts = op.Observation.Attempts;
                     op.DiscardReply();
                 }
-                DeferredOperation.SetAttempts(_ops, _ops.Max(static op => op.Observation.Attempts));
+                DeferredOperation.SetAttempts(_ops, attempts);
                 if (delay != TimeSpan.Zero) await Task.Delay(delay, token).ConfigureAwait(false);
             }
         }

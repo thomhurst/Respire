@@ -202,13 +202,19 @@ evidence, starting any send makes the whole unit a possible execution; a connect
 acquisition failure before any send is definitely unwritten. A successful `INCR`
 alongside a failed `GET`, for example, prevents replay under the default read-only
 policy. Retrying such a batch requires explicitly accepting accumulating effects.
+With that permission, a transient failure from the read-only `GET` replays the
+already-successful `INCR`, duplicating its effect. Cancellation or timeout during
+backoff faults every pending, including members that already executed successfully;
+the abandoned attempt's successful replies are not published.
 Every retry resends every member in queue order, retains the original argument
 bytes and cache mutation fence, and acquires circuit admission per command. One
 deadline and caller cancellation token cover acquisition, admission, replies and
 backoff. Retry telemetry counts accepted resends and one terminal outcome per
-batch, using its most conservative member category. Hash import sessions and
-server cursor continuations do not retry. Cluster batches and transactions retain
-their existing behavior; further whole-unit work remains tracked by
+batch that accepted a resend, using its most conservative member category. A retry
+decision followed only by failed acquisition or admission produces no retry event.
+Hash import sessions and server cursor continuations do not retry. Cluster batches
+and direct transaction commits do not replay; watched transaction helpers retain
+their complete-callback retries. Further whole-unit work remains tracked by
 [#1216](https://github.com/thomhurst/Respire/issues/1216).
 
 ## Correctness and performance evidence

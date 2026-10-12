@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Net.Sockets;
 using System.Text;
 using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -203,7 +204,8 @@ public class BatchCommandRetryTests
         var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = HandledListener(signal);
         await using var server = Server(_ => null);
-        server.ReplyOverride = (_, command) => command.StartsWith("GET ") ? TryAgain : null;
+        server.ReplyOverride = (_, command) => command == "GET first" && phase == "backoff"
+            ? "$5\r\nvalue\r\n"u8.ToArray() : command.StartsWith("GET ") ? TryAgain : null;
         if (phase == "reply") server.SuppressReply = command =>
         {
             if (command == "GET second") signal.TrySetResult();
@@ -447,6 +449,37 @@ public class BatchCommandRetryTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BulkAdmissionStopsUnsentWritesWhenCallerCancels(bool retries)
+    {
+        await using var server = Server(_ => null);
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        { RetryPolicy = retries ? Options(server).RetryPolicy : null });
+        using var caller = new CancellationTokenSource();
+        using var batch = client.CreateBatch();
+        // Cancel inside acceptance of the first frame, before the bulk owner can admit
+        // another member. Snapshot serialization does not call OnAccepted.
+        var command = new CancelOnAcceptedCommand(caller);
+        var first = ((IPendingSink)batch).Add<CancelOnAcceptedCommand, bool>("SET", in command, static (_, _) => true);
+        var rest = new List<RespirePending<bool>>();
+        for (var i = 0; i < 63; i++) rest.Add(batch.Set($"unsent{i}", "value"));
+        var result = await batch.TryExecuteAsync(caller.Token);
+        await Assert.That(result.FailureCount).IsEqualTo(64);
+        await Assert.That(first.Error).IsTypeOf<OperationCanceledException>();
+        foreach (var pending in rest)
+        {
+            await Assert.That(pending.Error).IsTypeOf<OperationCanceledException>();
+            await Assert.That(((OperationCanceledException)pending.Error!).CancellationToken).IsEqualTo(caller.Token);
+        }
+        // Drain the accepted frame's native FIFO slot before inspecting server effects.
+        using var barrier = await client.ExecuteAsync(RespireCommands.Connection.PING);
+        await Assert.That(barrier.AsString()).IsEqualTo("OK");
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("SET "))).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET unsent"))).IsFalse();
+    }
+
+    [Test]
     public async Task NeverMemberPreventsWholeUnitReplay()
     {
         await using var server = Server(command => command == "GET first" ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray());
@@ -513,6 +546,14 @@ public class BatchCommandRetryTests
         });
         listener.Start();
         return listener;
+    }
+
+    private readonly struct CancelOnAcceptedCommand(CancellationTokenSource caller) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public RespireCommandRetryCategory RetryCategory => RespireCommandRetryCategory.WriteLastWins;
+        public void Write(ref RespWriter writer) => writer.WriteRaw("*3\r\n$3\r\nSET\r\n$5\r\nfirst\r\n$5\r\nvalue\r\n"u8);
+        public void OnAccepted() => caller.Cancel();
     }
 
     private sealed class RecordingWriteStream(Stream inner) : Stream
