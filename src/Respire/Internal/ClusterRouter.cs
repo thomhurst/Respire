@@ -1702,10 +1702,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 continue;
             }
 
-            // The slot has not moved off a rejected owner; it is never contacted.
+            // A stale master may still name the rejected owner. Let later masters correct
+            // that snapshot without losing the round's fence against concurrent redirects.
             if (ReferenceEquals(owner, rejectedOwner))
             {
-                return null;
+                snapshotBatch = new object();
+                continue;
             }
 
             try

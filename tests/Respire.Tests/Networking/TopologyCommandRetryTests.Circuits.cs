@@ -215,6 +215,89 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
+    public async Task ClusterRetryPreservesRejectionWhenOpenDurationExpiresDuringRefresh()
+    {
+        await using var survivor = CircuitUnitServer("immediate", _ => Value);
+        await using var server = CircuitUnitServer("immediate", _ => Value);
+        var survivorReply = survivor.ReplyOverride!;
+        survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SplitSlots(survivor.Port, server.Port) : survivorReply(id, command);
+        var ownerReply = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SplitSlots(survivor.Port, server.Port) : ownerReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: true));
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(12539)!;
+        var clock = new CircuitClock();
+        CircuitTimeProvider(CircuitOf(client, server)) = clock;
+        var refresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        survivor.ReadGate = refresh.Task;
+        server.ReadGate = handshake.Task;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            await owner.GetConnection().DisposeAsync();
+            OpenCircuit(client, server);
+            var wait = router.WaitForRouteReplacementAsync(12539, cancellation.Token).AsTask();
+            await Assert.That(wait.IsCompleted).IsFalse();
+            clock.Advance(TimeSpan.FromMinutes(1));
+            refresh.TrySetResult();
+            var error = await Failure(async () => await wait);
+            await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+            await Assert.That(((RespireCircuitOpenException)error).RetryAfter).IsEqualTo(TimeSpan.FromMinutes(1));
+            await Assert.That(CircuitOf(client, server).Snapshot().State).IsEqualTo(EndpointCircuitState.Open);
+            await Assert.That(server.ReceivedCommands.Contains("GET key")).IsFalse();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            refresh.TrySetResult();
+            handshake.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task ClusterRetryRefreshContinuesPastAStaleMaster()
+    {
+        await using var stale = CircuitUnitServer("immediate", _ => Value);
+        await using var survivor = CircuitUnitServer("immediate", _ => Value);
+        await using var server = CircuitUnitServer("immediate", _ => Value);
+        byte[] Map(int highPort) => Encoding.ASCII.GetBytes(
+            $"*3\r\n*3\r\n:0\r\n:4095\r\n*2\r\n$9\r\n127.0.0.1\r\n:{stale.Port}\r\n"
+            + $"*3\r\n:4096\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{survivor.Port}\r\n"
+            + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{highPort}\r\n");
+        var staleReply = stale.ReplyOverride!;
+        stale.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(server.Port) : staleReply(id, command);
+        var survivorReply = survivor.ReplyOverride!;
+        survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(survivor.Port) : survivorReply(id, command);
+        var ownerReply = server.ReplyOverride!;
+        server.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(server.Port) : ownerReply(id, command);
+        await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: true));
+        var router = client.Core.Cluster!;
+        var owner = router.GetKnownSlotOwner(12539)!;
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.ReadGate = handshake.Task;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            OpenCircuit(client, server);
+            await owner.GetConnection().DisposeAsync();
+            await router.WaitForRouteReplacementAsync(12539, cancellation.Token);
+            await Assert.That(router.GetKnownSlotOwner(12539)!.ActiveConnectionEndpoint)
+                .IsEqualTo(new RespireEndpoint("127.0.0.1", survivor.Port));
+            await Assert.That(stale.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
+            await Assert.That(survivor.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
+            await Assert.That(server.ReceivedCommands.Contains("GET key")).IsFalse();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            handshake.TrySetResult();
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FailoverGroupRetryNeedsFreshAdmissionOnTheActiveMember(bool switchMember)

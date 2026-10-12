@@ -223,16 +223,17 @@ Every attempt acquires its own admission immediately before dispatch.
   owner, or finds no owner, the retry is rejected without connecting to it. A lone owner is rejected
   immediately.
 
-A circuit rejection always ends the operation. On the client's own retry owners, a resend that
-circuit admission rejects adds no `attempted` measurement, because the rejection proves that the
-resend executed nothing. Earlier resends keep their measurements: when attempt 2 fails with a
+A circuit rejection always ends the operation. Immediate-command, batch and transaction retry
+owners add no `attempted` measurement for a circuit-rejected resend. Earlier resends keep their
+measurements: when attempt 2 fails with a
 retryable error and attempt 3 is rejected, the operation still records one `attempted` and, when it
 ends, one `exhausted`. A script or function resend can run EVALSHA or FCALL before its EVAL
 fallback or library reload is rejected, and a failover-group operation is caller code that can run
 commands before a member rejects a later one. Such a rejected resend counts as `attempted` and the
-operation records `exhausted`. A standalone or Sentinel script or function resend rejected before
-its first command does not. On Cluster, that resend is admitted while its first command is routed,
-inside the operation, so its rejection also counts as `attempted`. Circuit rejection metrics still
+operation records `exhausted`. Standalone and Sentinel script/function owners suppress these
+measurements when route preparation rejects the resend before its first command. Cluster
+script/function owners conservatively count every started resend, even when its first command
+is rejected, because they have no transport acceptance signal. Circuit rejection metrics still
 record each rejected admission.
 Disabled retries and a null `CircuitBreaker` keep their existing dispatch paths.
 
