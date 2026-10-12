@@ -31,9 +31,8 @@ public sealed partial class RespireClient
     {
         var deadline = CreateCircuitDeadline();
         cancellationToken.ThrowIfCancellationRequested();
-        var frame = SnapshotCommand.Create(in command, captureCacheMetadata: false);
-        var state = new ImmediateRetryState(command.RetryCategory);
-        return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, frame, state, track),
+        var state = ImmediateRetryState.Rent(in command);
+        return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
             state, cancellationToken, deadline, observation, track);
     }
 
@@ -42,10 +41,8 @@ public sealed partial class RespireClient
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track) where TCommand : struct, IRespCommand
     {
-        using var timeout = deadline.IsSet
-            ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
-            : null;
-        var token = timeout?.Token ?? callerToken;
+        CancellationTokenSource? timeout = null;
+        var token = callerToken;
         RespireConnection? connection = null;
         RespireTelemetry.OperationScope telemetry = default;
         try
@@ -57,6 +54,12 @@ public sealed partial class RespireClient
         Exception? finalError = null;
         try
         {
+            if (deadline.IsSet)
+            {
+                timeout = CommandTimeoutCancellation.Create(callerToken,
+                    TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)));
+                token = timeout.Token;
+            }
             for (var attempt = 1; ; attempt++)
             {
                 ThrowIfRetryStopped(operation, token, deadline);
@@ -65,14 +68,20 @@ public sealed partial class RespireClient
                 CircuitAdmission admission = default;
                 try
                 {
-                    await _core.EnsureConnectedAsync(token, observation).ConfigureAwait(false);
+                    // Use the same validated ready route as default dispatch. Healthy Sentinel
+                    // sends must not create discovery state; retirement is rechecked at admission.
+                    if (!_core.TryGetReadyPrimaryMultiplexer(out var multiplexer))
+                    {
+                        await _core.EnsureConnectedAsync(token, observation).ConfigureAwait(false);
+                        multiplexer = _core.Multiplexer;
+                    }
                     // Initialization alone does not wait for an established socket's replacement.
                     // Do not spend the command attempt budget probing the same dead connection.
                     // An open circuit still rejects before the wait, and again at admission below.
                     if (attempt > 1 && _core.Circuits is not null) RejectOpenCircuit(token);
                     connection = attempt > 1
-                        ? await _core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
-                        : GetCircuitAwareConnection(_core.Multiplexer, token);
+                        ? await multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
+                        : GetCircuitAwareConnection(multiplexer, token);
                     observation.UseEndpoint(new(connection.Host, connection.Port), token);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     connection.ThrowIfRetired();
@@ -131,6 +140,8 @@ public sealed partial class RespireClient
                 RespireTelemetry.RecordCommandRetry(state.Category, "exhausted");
             try { telemetry.Complete(_core, operation, error: finalError, connection: connection); }
             catch (Exception) { /* A listener cannot replace the logical command outcome. */ }
+            try { timeout?.Dispose(); }
+            finally { state.Return(); }
         }
     }
 
@@ -142,23 +153,22 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var frame = SnapshotCommand.Create(in command, captureCacheMetadata: false);
-        var state = new ImmediateRetryState(command.RetryCategory);
-        return SendClusterRetryCoreAsync(operation, cluster, new ImmediateRetryCommand<TCommand>(command, frame, state, track: false),
-            state.Category, cancellationToken, noRedirect, observeErrors, observation);
+        var state = ImmediateRetryState.Rent(in command);
+        return SendClusterRetryCoreAsync(operation, cluster, new ImmediateRetryCommand<TCommand>(command, state, track: false),
+            state, cancellationToken, noRedirect, observeErrors, observation);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> SendClusterRetryCoreAsync<TCommand>(string operation, ClusterRouter cluster,
-        TCommand command, RespireCommandRetryCategory category, CancellationToken cancellationToken, bool noRedirect,
+        TCommand command, ImmediateRetryState state, CancellationToken cancellationToken, bool noRedirect,
         bool observeErrors, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         // Attempts borrow one logical owner, so handled attempt failures never publish as final errors.
         var ownsObservation = observeErrors && observation.IsEmpty;
-        if (ownsObservation) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
         try
         {
-            return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, category, _core.Options.CommandTimeout,
+            if (ownsObservation) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+            return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, state.Category, _core.Options.CommandTimeout,
                 (Client: this, Operation: operation, Cluster: cluster, Command: command, NoRedirect: noRedirect, Observation: observation),
                 static (state, attempt) => state.Client.SendClusterAttemptAsync(state.Operation, state.Cluster, state.Command,
                     state.NoRedirect, attempt, state.Observation),
@@ -171,7 +181,8 @@ public sealed partial class RespireClient
         }
         finally
         {
-            if (ownsObservation) observation.Dispose();
+            try { if (ownsObservation) observation.Dispose(); }
+            finally { state.Return(); }
         }
     }
 
@@ -273,32 +284,18 @@ public sealed partial class RespireClient
             throw new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value);
     }
 
-    private sealed class ImmediateRetryState(RespireCommandRetryCategory category)
+    private readonly struct ImmediateRetryCommand<TCommand>(TCommand command, ImmediateRetryState state,
+        bool track) : IRespCommandWrapper where TCommand : struct, IRespCommand
     {
-        internal RespireCommandRetryCategory Category { get; } = category;
-        internal bool IsRetry;
-        internal bool AcceptedAttempt;
-        internal int Retries;
-        internal void Accepted()
-        {
-            AcceptedAttempt = true;
-            if (!IsRetry) return;
-            Retries++;
-        }
-    }
-
-    private readonly struct ImmediateRetryCommand<TCommand>(TCommand command, SnapshotCommand frame,
-        ImmediateRetryState state, bool track) : IRespCommandWrapper where TCommand : struct, IRespCommand
-    {
-        public int GetWriteSizeHint() => checked(frame.GetWriteSizeHint() + (track ? new ClientCachingCommand().GetWriteSizeHint() : 0));
+        public int GetWriteSizeHint() => checked(state.Frame.Length + (track ? new ClientCachingCommand().GetWriteSizeHint() : 0));
         public void Write(ref RespWriter writer)
         {
             if (track) new ClientCachingCommand().Write(ref writer);
-            frame.Write(ref writer);
+            writer.WriteRaw(state.Frame.Span);
         }
         public ReadCommandKind ReadKind => command.ReadKind;
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
-        public bool TryGetClusterSlot(out int slot) => frame.TryGetClusterSlot(out slot);
+        public bool TryGetClusterSlot(out int slot) => state.TryGetClusterSlot(out slot);
         public bool IsConnectionProtocol => false;
         public void ValidateAdmission() => command.ValidateAdmission();
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;

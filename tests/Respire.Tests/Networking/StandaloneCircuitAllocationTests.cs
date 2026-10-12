@@ -11,9 +11,11 @@ public class StandaloneCircuitAllocationTests
 
     [Test]
     [NotInParallel]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DisabledDispatchAddsNoAllocation(bool raw)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DisabledDispatchAddsNoAllocation(bool raw, bool disabledRetryPolicy)
     {
         // A blocked producer can trigger pool growth, whose Thread/StartHelper allocations
         // are charged to the signaling thread. Reuse the bounded isolated-probe workflow.
@@ -21,6 +23,7 @@ public class StandaloneCircuitAllocationTests
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(StandaloneCircuitAllocationTests).Assembly.Location);
         start.Environment[ProbeMode] = Environment.Version.ToString();
         start.Environment["RESPIRE_RAW_DISPATCH_ALLOCATION_PROBE"] = raw.ToString();
+        start.Environment["RESPIRE_DISABLED_RETRY_ALLOCATION_PROBE"] = disabledRetryPolicy.ToString();
         // Measure fully optimized steady state, independent of asynchronous tier promotion.
         // Throughput comparisons retain the runtime's normal tiering settings.
         start.Environment["DOTNET_TieredCompilation"] = "0";
@@ -72,6 +75,8 @@ public class StandaloneCircuitAllocationTests
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            RetryPolicy = bool.Parse(Environment.GetEnvironmentVariable("RESPIRE_DISABLED_RETRY_ALLOCATION_PROBE") ?? "False")
+                ? new() { MaxAttempts = 1 } : null,
         });
         for (var i = 0; i < 32; i++) await client.Strings.LengthAsync("warm");
         server.SuppressReply = command => command == "STRLEN measured";
