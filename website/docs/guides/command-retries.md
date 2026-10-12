@@ -172,7 +172,8 @@ and Sentinel dispatch selects the current generation. The full circuit and retry
 composition, including half-open contention and failover switches, remains tracked by
 [#1256](https://github.com/thomhurst/Respire/issues/1256).
 
-Replica read routing, streams, fire-and-forget operations, deferred batch/transaction members, connection
+Replica read routing, streams, fire-and-forget operations, individual deferred batch/transaction
+members (standalone and Sentinel batches retry only as complete units, described below), connection
 protocol commands, cursor continuations, and
 commands categorized as `Never` do not use a retry owner. Caller-supplied raw names
 never acquire retry permission from their diagnostic name. Use an audited
@@ -537,6 +538,6 @@ complete reclamation. A successful workflow validates reports, not acceptance.
 
 Aggregate acceptance remains open in [#1499](https://github.com/thomhurst/Respire/issues/1499),
 [#1215](https://github.com/thomhurst/Respire/issues/1215) and
-[#862](https://github.com/thomhurst/Respire/issues/862). Conservative deferred
-batch/transaction scope remains [#1216](https://github.com/thomhurst/Respire/issues/1216);
+[#862](https://github.com/thomhurst/Respire/issues/862). Cluster batch and transaction
+whole-unit scope remains [#1216](https://github.com/thomhurst/Respire/issues/1216);
 full circuit composition remains [#1256](https://github.com/thomhurst/Respire/issues/1256).

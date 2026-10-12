@@ -419,6 +419,34 @@ public class BatchCommandRetryTests
     }
 
     [Test]
+    public async Task RetryableAttemptsKeepBulkAdmissionAndOneFlush()
+    {
+        const int members = 64;
+        RecordingWriteStream? transport = null;
+        var rejected = 0;
+        await using var server = Server(command => command == $"GET key{members - 1}" && Interlocked.Increment(ref rejected) == 1
+            ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(host, port, token);
+                return transport = new RecordingWriteStream(new NetworkStream(socket, ownsSocket: true));
+            },
+        });
+        transport!.Writes.Clear();
+        using var batch = client.CreateBatch();
+        for (var i = 0; i < members; i++) _ = batch.GetString($"key{i}");
+        await batch.ExecuteAsync();
+        // Each attempt reaches the transport as one write that carries every member.
+        var attempts = transport.Writes.Where(write => write.Contains("GET", StringComparison.Ordinal)).ToArray();
+        await Assert.That(attempts.Length).IsEqualTo(2);
+        foreach (var attempt in attempts)
+            await Assert.That(attempt.Split("GET").Length - 1).IsEqualTo(members);
+    }
+
+    [Test]
     public async Task NeverMemberPreventsWholeUnitReplay()
     {
         await using var server = Server(command => command == "GET first" ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray());
@@ -485,6 +513,28 @@ public class BatchCommandRetryTests
         });
         listener.Start();
         return listener;
+    }
+
+    private sealed class RecordingWriteStream(Stream inner) : Stream
+    {
+        internal readonly ConcurrentQueue<string> Writes = new();
+        public override bool CanRead => inner.CanRead;
+        public override bool CanWrite => inner.CanWrite;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) => inner.ReadAsync(buffer, token);
+        public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
+        {
+            Writes.Enqueue(Encoding.ASCII.GetString(buffer.Span));
+            return inner.WriteAsync(buffer, token);
+        }
+        public override void Flush() => inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
     }
 
     private sealed class PartialWriteStream(Stream inner) : Stream

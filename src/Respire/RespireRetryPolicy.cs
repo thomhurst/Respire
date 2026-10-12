@@ -6,7 +6,9 @@ namespace Respire;
 /// RespireFailoverGroupOptions.RetryPolicy to retry failover-group operations.
 /// RunTransactionAsync and RunTransactionWithReadsAsync also use RespireOptions.RetryPolicy
 /// to replay complete watched callbacks. It does not recover a lost reply or provide exactly-once
-/// execution. Batches and direct transaction commits are not replayed.
+/// execution. Standalone and Sentinel batches retry as complete units: every attempt resends every member, and a resend after any
+/// send started requires the policy to permit every member's category. Cluster batches and
+/// direct transaction commits are not replayed.
 /// </remarks>
 public sealed record RespireRetryPolicy
 {

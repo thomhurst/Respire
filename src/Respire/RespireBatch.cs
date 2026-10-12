@@ -405,6 +405,8 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             : null;
         var token = timeout?.Token ?? callerToken;
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
+        var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
+        for (var i = 0; i < _ops.Count; i++) observations[i] = _ops[i].Observation;
         RespireConnection? connection = null;
         var retries = 0;
         // Numeric ordering describes risk only; permission is checked separately for every member.
@@ -434,15 +436,22 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                     // send starts, treat the complete unit as a possible execution.
                     outcome = CommandWriteOutcome.Unknown;
                     var acceptedRetry = false;
-                    for (var i = 0; i < _ops.Count; i++)
+                    // Like the default path, an idle circuit-free connection admits the whole attempt
+                    // under one write gate and schedules a single flush, so no producer interleaves.
+                    if (core.Circuits is null && connection.TryEnqueueMany(_ops, sends, observations, token, deadline))
+                        acceptedRetry = true;
+                    else
                     {
-                        var accepted = await _ops[i].StartOrderedSendAsync(_client, connection, token,
-                            _ops[i].Observation, deadline, core.Circuits).ConfigureAwait(false);
-                        sends[i] = accepted.Reply;
-                        if (accepted.Connection is { } endpoint)
+                        for (var i = 0; i < _ops.Count; i++)
                         {
-                            connection = endpoint;
-                            acceptedRetry = true;
+                            var accepted = await _ops[i].StartOrderedSendAsync(_client, connection, token,
+                                observations[i], deadline, core.Circuits).ConfigureAwait(false);
+                            sends[i] = accepted.Reply;
+                            if (accepted.Connection is { } endpoint)
+                            {
+                                connection = endpoint;
+                                acceptedRetry = true;
+                            }
                         }
                     }
                     if (attempt > 1 && acceptedRetry)
@@ -490,6 +499,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             if (retries != 0)
                 RespireTelemetry.RecordCommandRetry(category, _ops.Exists(static op => op.Error is not null) ? "exhausted" : "succeeded");
             ArrayPool<ValueTask<RespValue>>.Shared.Return(sends, clearArray: true);
+            ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true);
         }
         return connection;
     }
@@ -1036,6 +1046,14 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             CommandDeadline deadline)
         {
             var bound = new MutationCommand<TCommand>(command, MutationFence);
+            // Retryable batches bulk-admit their serialized snapshot so every attempt sends the original bytes.
+            if (SnapshotError is { } error) return ValueTask.FromException<RespValue>(error);
+            if (SnapshotState is { } snapshot)
+            {
+                var replay = new SnapshotCommand<TCommand>(bound, snapshot);
+                return connection.SendAsync(in replay, cancellationToken,
+                    commandName: Operation, observation: observation, commandDeadline: deadline, deferFlush: deferFlush);
+            }
             return connection.SendAsync(in bound, cancellationToken,
                 commandName: Operation, observation: observation, commandDeadline: deadline, deferFlush: deferFlush);
         }

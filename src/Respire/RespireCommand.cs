@@ -74,8 +74,10 @@ public readonly struct RespireCommand
     /// validate it against the command name or its arguments. It takes effect only when
     /// <see cref="RespireOptions.RetryPolicy"/> permits that category. Declaring a write category
     /// accepts repeated effects after a possible execution. Blocking commands, scripts and functions
-    /// sent through this escape hatch, fire-and-forget sends, batches and direct transaction commits do not retry.
+    /// sent through this escape hatch, fire-and-forget sends, Cluster batches and direct transaction commits do not retry.
     /// Watched transaction helpers inspect queued declarations before replaying the whole callback.
+    /// In a standalone or Sentinel batch, the category joins the complete unit's retry decision; a
+    /// replay resends every member, so a write category accepts repeated effects for this member.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The category is not a defined value.</exception>
     /// <exception cref="InvalidOperationException">The descriptor is uninitialized.</exception>
