@@ -94,14 +94,15 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
         var cases = JsonBackendTests.Cases().Where(row => (RespProtocol)row[0] == protocol).ToArray();
         foreach (var (name, suite, excluded) in new (string, Type, string[])[]
         {
-            ("Basic", typeof(BasicModelTests<string>), ["GetAsync_with_filter", "GetAsync_with_filter_by_true",
-                "GetAsync_with_filter_and_OrderBy", "GetAsync_with_filter_and_multiple_OrderBys", "GetAsync_with_filter_and_OrderBy_and_Skip",
-                "UpsertAsync_does_nothing_for_empty_batch", "DeleteAsync_does_nothing_for_non_existing_key", "DeleteAsync_does_nothing_for_empty_batch", "SearchAsync_with_Filter"]),
+            ("Basic", typeof(BasicModelTests<string>),
+                ["GetAsync_with_filter_and_OrderBy", "GetAsync_with_filter_and_multiple_OrderBys", "GetAsync_with_filter_and_OrderBy_and_Skip"]),
             ("NoData", typeof(NoDataModelTests<string>), []),
             ("MultiVector", typeof(MultiVectorModelTests<string>), []),
+            ("Filter", typeof(FilterTests<string>),
+                ["Equal_with_string_sql_injection_in_name", "Equal_with_string_containing_special_characters"]),
             ("Distance", typeof(DistanceFunctionTests<string>), ["CosineSimilarity", "DotProductSimilarity", "EuclideanDistance", "HammingDistance", "ManhattanDistance"]),
             ("Index", typeof(IndexKindTests<string>), []),
-            ("Hybrid", typeof(HybridSearchTests<string>), ["HybridSearchAsync_with_filter"]),
+            ("Hybrid", typeof(HybridSearchTests<string>), []),
         })
         {
             var facts = Facts(suite);

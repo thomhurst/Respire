@@ -51,5 +51,11 @@ public sealed class JsonMovieMapper() : RespireVectorDataJsonMapper<JsonMovie>(M
 
     public override IReadOnlyList<RespireVectorDataTextField> TextFields => [new("Details.Title", "title")];
 
+    public override IReadOnlyList<RespireVectorDataFilterField> FilterFields =>
+    [
+        new("Details.Title", "filter_title", RespireVectorDataFilterKind.String) { JsonPath = "$.details.movie_title" },
+        new("Details.Tag", "filter_tag", RespireVectorDataFilterKind.String) { JsonPath = "$.details.genre" },
+    ];
+
     public override string GetKey(JsonMovie record) => record.Id;
 }

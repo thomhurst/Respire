@@ -12,12 +12,16 @@ public enum RespireVectorDataFilterKind
     Numeric,
     /// <summary>Boolean values stored as NUMERIC 0 or 1.</summary>
     Boolean,
-    /// <summary>String arrays/lists, stored as comma-separated encoded case-sensitive TAGs.</summary>
+    /// <summary>String arrays/lists, stored as encoded case-sensitive TAGs (comma-separated in hashes, arrays in JSON).</summary>
     StringCollection,
 }
 
-/// <summary>Explicit property name, hash field and storage shape for expression filters.</summary>
-public sealed record RespireVectorDataFilterField(string PropertyName, string StorageName, RespireVectorDataFilterKind Kind);
+/// <summary>Explicit CLR property name, query field and storage shape for expression filters.</summary>
+public sealed record RespireVectorDataFilterField(string PropertyName, string StorageName, RespireVectorDataFilterKind Kind)
+{
+    /// <summary>JSON source property path. Defaults to <c>$.StorageName</c>; ignored by hash mappings.</summary>
+    public string? JsonPath { get; init; }
+}
 
 /// <summary>Lossless TAG storage for ordinal filtering, including empty strings, whitespace and Redis syntax.</summary>
 public static class RespireVectorDataFilterEncoding
