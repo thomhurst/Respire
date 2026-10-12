@@ -166,6 +166,28 @@ public class MetricSelectionTests
     }
 
     [Test]
+    [Arguments(RespireMetricGroups.Command, "none", true)]
+    [Arguments(RespireMetricGroups.Command, "allowed", true)]
+    [Arguments(RespireMetricGroups.Command, "excluded", false)]
+    [Arguments(RespireMetricGroups.Command, "blocked", false)]
+    [Arguments(RespireMetricGroups.Default, "none", false)]
+    public async Task DirectRouteDurationStartMatchesOperationStart(RespireMetricGroups groups, string mode, bool expected)
+    {
+        using var configuration = new MetricConfigurationScope(new()
+        {
+            Groups = groups,
+            CommandAllowList = mode switch { "allowed" => ["GET"], "excluded" => ["SET"], _ => [] },
+            CommandBlockList = mode == "blocked" ? ["get"] : [],
+        });
+        using var capture = new Capture();
+        var direct = RespireTelemetry.CaptureCommandDurationStart("GET");
+        await Assert.That(RespireMetrics.Current.IncludesCommand("GET")).IsEqualTo(mode is "none" or "allowed");
+        await Assert.That(direct.MetricEnabled).IsEqualTo(expected);
+        await Assert.That(direct.MetricEnabled).IsEqualTo(RespireTelemetry.CaptureOperationStart("GET").MetricEnabled);
+        await Assert.That(direct.Timestamp != 0).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task ConfigurationOwnsListsAndBlockListWins()
     {
         var allow = new List<string> { "get", "SET", "CLIENT LIST" };

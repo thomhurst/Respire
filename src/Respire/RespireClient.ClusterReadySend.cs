@@ -46,7 +46,7 @@ public sealed partial class RespireClient
                 try
                 {
                     return await sender.Send(connection, operation, in command, cancellationToken, observation,
-                        RespireTelemetry.CaptureOperationStart(operation)).ConfigureAwait(false);
+                        RespireTelemetry.CaptureCommandDurationStart(operation)).ConfigureAwait(false);
                 }
                 catch (ClusterConverterException error)
                 {

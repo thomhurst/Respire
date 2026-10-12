@@ -349,16 +349,22 @@ internal static partial class RespireTelemetry
     internal static bool ShouldRetainPublication(string? operation)
         => IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages) && TryGetPublicationKind(operation, out _);
 
+    /// <summary>True when a confirmed publication reply could be counted; checked before resolving its operation name.</summary>
+    internal static bool ShouldRecordPublication(in RespValue response)
+        => response.Type == RespDataType.Integer && IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages);
+
     internal static void RecordPublication(string? operation, in RespValue response)
     {
-        if (!IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages)
-            || response.Type != RespDataType.Integer || response.AsInteger() < 0
+        if (!ShouldRecordPublication(in response) || response.AsInteger() < 0
             || !TryGetPublicationKind(operation, out var sharded)) return;
         AddPubSubMessage(received: false, sharded);
     }
 
     private static bool TryGetPublicationKind(string? operation, out bool sharded)
     {
+        // The length check rejects almost every other command before a case-insensitive compare.
+        sharded = false;
+        if (operation is not { Length: 7 or 8 }) return false;
         sharded = string.Equals(operation, "SPUBLISH", StringComparison.OrdinalIgnoreCase);
         return sharded || string.Equals(operation, "PUBLISH", StringComparison.OrdinalIgnoreCase);
     }
@@ -443,7 +449,7 @@ internal static partial class RespireTelemetry
 
     // Dispatch gates select a path only. Once captured, OperationStart is authoritative
     // through acquisition and completion; do not re-check the current policy after awaits.
-    private static bool IsCommandMetricEnabled(string operation)
+    internal static bool IsCommandMetricEnabled(string operation)
     {
         var selection = RespireMetrics.Current;
         return selection.Includes(RespireMetricGroups.Command) && OperationDuration.Enabled && selection.IncludesCommand(operation);
@@ -514,6 +520,13 @@ internal static partial class RespireTelemetry
 
     internal static OperationStart CaptureOperationStart(string operation)
         => CaptureOperationStart(IsCommandMetricEnabled(operation));
+
+    /// <summary>
+    /// Captures a start for a direct reply route whose gate already excluded ActivitySource
+    /// listeners. Such routes read the timestamp only when the command metric is enabled.
+    /// </summary>
+    internal static OperationStart CaptureCommandDurationStart(string operation)
+        => IsCommandMetricEnabled(operation) ? new(Stopwatch.GetTimestamp(), true) : default;
 
     internal static OperationStart CaptureBatchStart<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
         => CaptureOperationStart(IsBatchMetricEnabled(prefix, operations, operationName));
