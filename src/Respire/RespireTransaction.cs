@@ -665,7 +665,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     {
                         for (;;)
                         {
-                            if (wait != TimeSpan.Zero) await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+                            await core.DelayUnitRetryAsync(wait, cancellationToken).ConfigureAwait(false);
                             acquisition = new CommandAcquisitionScope(cancellationToken, deadline, timeout);
                             acquisition.CheckDeadline("MULTI/EXEC", core);
                             try

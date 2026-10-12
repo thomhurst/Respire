@@ -220,6 +220,12 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested
+            && _lifetime.IsCancellationRequested)
+        {
+            // Disposal stopped discovery. The caller did not cancel, so do not report its cancellation.
+            throw new ObjectDisposedException("Sentinel discovery stopped because the client was disposed.", error);
+        }
         finally
         {
             try
