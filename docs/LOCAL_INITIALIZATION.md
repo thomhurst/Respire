@@ -14,8 +14,9 @@ Do not apply `SkipLocalsInit`, at module, type or method scope, to the measured 
   call. That is the most it can save.
 - No other instruction in those methods changes deterministically. The CoreLib UTF-8 callees
   that differed in #1076 also differ between two runs of the same unchanged binary under
-  Dynamic PGO. The #1076 regressions match that run-to-run variation, not an effect of the
-  attribute.
+  Dynamic PGO. The +10 percent net10.0 `FormatLargeUnicodeBulkString` regression from #1076
+  falls inside that run-to-run variation. The +35 percent net8.0 `ReadUnicodeBulkString`
+  regression does not: this probe did not reproduce it and does not explain it.
 - Timing across separate processes shows no benefit on either framework. The spread between
   processes of the same build is much larger than any difference between the builds.
 
@@ -109,8 +110,16 @@ then candidate.
 
 The candidate's minimum never beats the baseline's minimum by more than the noise in the
 baseline's own range. On the large rows, one build's processes range over 20 to 40 percent.
-That spread covers both #1076 regressions (+35 percent on net8.0 `ReadUnicodeBulkString`, +10
-percent on net10.0 `FormatLargeUnicodeBulkString`). It also covers the opposite results of
+That spread covers the +10 percent #1076 regression on net10.0 `FormatLargeUnicodeBulkString`.
+
+It does not cover the +35 percent #1076 regression on net8.0 `ReadUnicodeBulkString`. On that
+row, one build's processes range over at most about 19 percent with PGO on (15.58–18.50) and
+about 7 percent with PGO off. Even across both builds, the row stays well under 35 percent.
+This probe did not reproduce that regression, and process variance as measured here does not
+explain it. The candidate here is no faster on that row, so the regression does not argue for
+the attribute either.
+
+The large-row spread also covers the opposite results of
 [run 38278398897](https://github.com/thomhurst/Respire/actions/runs/38278398897), the probe run
 of the merged comparison workflow on Linux. With PGO on, all of that run's gates passed, with
 candidate/control ratios from 0.912 to 1.025. With PGO off, its report-only leg flagged four
