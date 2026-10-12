@@ -46,7 +46,7 @@ public class NativeDispatchOwnershipTests
     [Test]
     [MatrixDataSource]
     public async Task NativeRoutesKeepPhysicalDisconnectSeparateFromCallerFailure(
-        [Matrix("raw", "catalog", "interpolated", "string", "bytes", "typed")] string route,
+        [Matrix("raw", "catalog", "interpolated", "string", "bytes", "typed", "facet-string", "facet-bytes", "facet-typed")] string route,
         [Matrix("idle", "pending", "cancelled", "success")] string outcome,
         [Matrix(false, true)] bool commandMetrics)
     {
@@ -110,7 +110,7 @@ public class NativeDispatchOwnershipTests
     [Test]
     [MatrixDataSource]
     public async Task CancelledNativeRoutesDrainLateErrorBeforeNextReply(
-        [Matrix("raw", "catalog", "interpolated", "string", "bytes", "typed")] string route,
+        [Matrix("raw", "catalog", "interpolated", "string", "bytes", "typed", "facet-string", "facet-bytes", "facet-typed")] string route,
         [Matrix(false, true)] bool commandMetrics)
     {
         using var configuration = new MetricConfigurationScope(new()
@@ -162,6 +162,9 @@ public class NativeDispatchOwnershipTests
             case "string": _ = await client.GetStringAsync("key", token); break;
             case "bytes": _ = await client.GetBytesAsync("key", token); break;
             case "typed": _ = await client.Strings.LengthAsync("key", token); break;
+            case "facet-string": _ = await client.Strings.GetStringAsync("key", token); break;
+            case "facet-bytes": _ = await client.Strings.GetBytesAsync("key", token); break;
+            case "facet-typed": _ = await client.Strings.GetAsync<string>("key", token); break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
     }

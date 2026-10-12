@@ -193,6 +193,14 @@ public class TypedFacetObservationTests
     [Arguments("key")]
     [Arguments("list")]
     [Arguments("sorted")]
+    [Arguments("string-get")]
+    [Arguments("string-bytes")]
+    [Arguments("string-set")]
+    [Arguments("string-increment")]
+    [Arguments("hash-get")]
+    [Arguments("hash-set")]
+    [Arguments("key-exists")]
+    [Arguments("key-delete")]
     public async Task TypedFacetPreCancellationPreservesTokenAndOneFinalError(string facet)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
@@ -210,7 +218,15 @@ public class TypedFacetObservationTests
                 case "hash": await client.Hashes.CountAsync("key", cancellation.Token); break;
                 case "key": await client.Keys.ExpiryAsync("key", cancellation.Token); break;
                 case "list": await client.Lists.CountAsync("key", cancellation.Token); break;
-                default: await client.SortedSets.RandomMemberAsync("key", cancellation.Token); break;
+                case "sorted": await client.SortedSets.RandomMemberAsync("key", cancellation.Token); break;
+                case "string-get": await client.Strings.GetStringAsync("key", cancellation.Token); break;
+                case "string-bytes": await client.Strings.GetBytesAsync("key", cancellation.Token); break;
+                case "string-set": await client.Strings.SetAsync("key", "value", cancellationToken: cancellation.Token); break;
+                case "string-increment": await client.Strings.IncrementAsync("key", cancellationToken: cancellation.Token); break;
+                case "hash-get": await client.Hashes.GetStringAsync("key", "field", cancellation.Token); break;
+                case "hash-set": await client.Hashes.SetAsync("key", "field", "value", cancellation.Token); break;
+                case "key-exists": await client.Keys.ExistsAsync("key", cancellation.Token); break;
+                default: await client.Keys.DeleteAsync(["key"], cancellation.Token); break;
             }
         }
         catch (Exception error) { failure = error; }

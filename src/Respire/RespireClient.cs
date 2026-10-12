@@ -1881,10 +1881,20 @@ public sealed partial class RespireClient : IRespireClient
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
     {
         if (observation.IsEmpty && observeErrors)
+        {
+            // An uncached default route needs no dispatch owner: its native source reports
+            // the reply and conversion failure once, as ConvertResponseAsync does.
+            if (GetReadCache is null)
+            {
+                var get = new Cmd1(Verbs.Get, resolvedKey.AsValue());
+                if (TryGetNativeDispatchConnection("GET", in get, out var connection))
+                    return connection.SendNativeConvertedAsync(in get, cancellationToken, "GET", this, converter, transferOwnership: false);
+            }
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Key: resolvedKey, Token: cancellationToken, Converter: converter),
                 static (state, owner) => state.Client.CachedGetAsync(
                     state.Key, state.Token, state.Converter, observeErrors: false, observation: owner));
+        }
         var cache = GetReadCache;
         var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
         if (cache is null)
@@ -1903,12 +1913,13 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
+        var cache = GetReadCache;
+        // An empty observation lets StringOrNullAsync pick native dispatch or its own owner.
+        if (cache is null)
+            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
         if (observation.IsEmpty)
             return DispatchResponseSource<string?>.Run((Client: this, Key: resolvedKey, Token: cancellationToken),
                 static (state, owner) => state.Client.CachedGetStringAsync(state.Key, state.Token, owner));
-        var cache = GetReadCache;
-        if (cache is null)
-            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
         var generation = _core.Sentinel?.Current;
         if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
             return new ValueTask<string?>(cached);

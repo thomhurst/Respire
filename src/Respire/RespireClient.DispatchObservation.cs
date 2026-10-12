@@ -42,6 +42,27 @@ public sealed partial class RespireClient
             static (state, observation) => state.Client.BytesOrNullCoreAsync(state.Operation, state.Command, state.Token, observation));
     }
 
+    // Hot facet commands hand an empty observation to the helpers above, so the default
+    // standalone route reaches native dispatch without a DispatchResponseSource. Such a facet
+    // owns only its preflight (validation, key resolution, command construction) and records
+    // that failure here. Every later failure belongs to the helper: the native source, its
+    // admission boundary, or DispatchResponseSource.Run on observed routes. A preflight that
+    // calls one of those helpers must not wrap it, or one exception would be reported twice.
+    internal static void RecordPreflightFailure(Exception error)
+        => RespireTelemetry.RecordError(error, internallyHandled: false);
+
+    internal RespireValue PreflightKey(in RespireKey key)
+    {
+        try { return Key(in key); }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
+
+    internal RespireKey PreflightResolveKey(RespireKey key)
+    {
+        try { return ResolveKey(key); }
+        catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
+
     private bool TryGetNativeDispatchConnection<TCommand>(string operation, in TCommand command,
         out RespireConnection connection)
         where TCommand : struct, IRespCommand
