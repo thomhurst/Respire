@@ -151,8 +151,13 @@ acceptance criteria, dependencies, and current status:
   Immediate retry correctness and performance acceptance remains open in
   [#1499](https://github.com/thomhurst/Respire/issues/1499) and
   [#1215](https://github.com/thomhurst/Respire/issues/1215). Public fault tests and
-  healthy policy comparisons provide evidence; enabled topology/cache overhead and
-  complete composition coverage still require acceptance. No zero-overhead claim is made.
+  the [completed twelve-case policy comparison](./guides/command-retries#completed-policy-comparison)
+  provide evidence. Default/disabled typed reads and tested group operations report zero allocation;
+  enabled typed/catalog/script paths allocate and have higher latency than default in this fixture.
+  The controls already contain retries, so native/default regression freedom remains unproven.
+  Enabled topology/function/cache overhead and complete composition coverage still require acceptance.
+  The retry epic [#862](https://github.com/thomhurst/Respire/issues/862) remains open.
+  No zero-overhead claim is made.
   [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance
   acceptance remains open in [#1214](https://github.com/thomhurst/Respire/issues/1214), with causal
   allocation and selection measurements tracked by [#1474](https://github.com/thomhurst/Respire/issues/1474).
