@@ -227,9 +227,10 @@ A circuit rejection always ends the operation. On the client's own retry owners,
 circuit admission rejects adds no `attempted` measurement, because the rejection proves that the
 resend executed nothing. Earlier resends keep their measurements: when attempt 2 fails with a
 retryable error and attempt 3 is rejected, the operation still records one `attempted` and, when it
-ends, one `exhausted`. A failover-group operation is caller code that can run commands before a
-member rejects a later one, so its rejected resend counts as `attempted` and the operation records
-`exhausted`. Circuit rejection metrics still record each rejected admission.
+ends, one `exhausted`. A script or function resend can run EVALSHA or FCALL before its EVAL
+fallback or library reload is rejected, and a failover-group operation is caller code that can run
+commands before a member rejects a later one. Such a rejected resend counts as `attempted` and the
+operation records `exhausted`; a script or function resend rejected before its first command does not. Circuit rejection metrics still record each rejected admission.
 Disabled retries and a null `CircuitBreaker` keep their existing dispatch paths.
 
 ## Current scope

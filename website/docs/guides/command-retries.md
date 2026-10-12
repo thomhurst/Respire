@@ -198,10 +198,11 @@ The `respire.command.retries` counter records `respire.command.retry.category` a
 accepted resends. Cluster, script, function and failover-group owners have no transport
 acceptance signal, so `attempted` counts started resends. `succeeded` and `exhausted`
 report one terminal outcome per producer that made a resend.
-Failed circuit admission does not invent an attempt: a Cluster, script or function
-resend that ends in circuit rejection records no `attempted`, although an earlier
-resend's `exhausted` outcome still follows. A failover-group operation can run other
-commands before a member rejects one, so its rejected resend counts as `attempted`. Coalesced waiters do not duplicate
+Failed circuit admission does not invent an attempt: a Cluster resend that ends in
+circuit rejection, or a script or function resend rejected before its first command, records
+no `attempted`, although an earlier resend's `exhausted` outcome still follows. A script's
+EVAL fallback, a function's library reload and a failover-group operation can run other
+commands before a later one is rejected, so such a rejected resend counts as `attempted`. Coalesced waiters do not duplicate
 producer retry events. Handled attempt failures and final caller errors retain their
 separate error owners. Exporter exceptions cannot change retry decisions or replies.
 

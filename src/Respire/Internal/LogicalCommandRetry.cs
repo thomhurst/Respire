@@ -14,8 +14,9 @@ namespace Respire.Internal;
 /// Each attempt reads its route again; a retry never reuses a circuit-rejected endpoint, because
 /// circuit rejection is never a selected failure. When the owner's dispatch proves that a circuit
 /// rejection ends a resend before it executes anything, that resend is not reported as an attempted
-/// retry. A caller-supplied operation can execute commands before a later one is rejected, so its
-/// rejected resend still counts as attempted.
+/// retry. An operation that issues several independently admitted commands (a caller delegate, a
+/// script's EVALSHA/EVAL fallback or a function's library reload) can execute commands before a
+/// later one is rejected, so only a rejection from its resend preparation proves the resend unexecuted.
 /// </remarks>
 internal static class LogicalCommandRetry
 {
@@ -45,7 +46,8 @@ internal static class LogicalCommandRetry
         Func<TState, Attempt, ValueTask<TResult>> send,
         RespireTelemetry.ErrorObservation observation,
         CancellationToken callerToken,
-        bool rejectionProvesUnexecuted = true)
+        bool rejectionProvesUnexecuted = true,
+        Func<TState, Attempt, ValueTask>? prepareResend = null)
     {
         callerToken.ThrowIfCancellationRequested();
         var deadline = CreateDeadline(commandTimeout);
@@ -60,9 +62,15 @@ internal static class LogicalCommandRetry
             for (var attempt = 1; ; attempt++)
             {
                 ThrowIfStopped(operation, commandTimeout, token, deadline);
+                var sending = false;
                 try
                 {
-                    var result = await send(state, new Attempt(attempt, token, deadline)).ConfigureAwait(false);
+                    var current = new Attempt(attempt, token, deadline);
+                    // Preparation selects and admits the resend's route before anything executes.
+                    if (attempt > 1 && prepareResend is not null)
+                        await prepareResend(state, current).ConfigureAwait(false);
+                    sending = true;
+                    var result = await send(state, current).ConfigureAwait(false);
                     RecordAttempted(category, attempt, ref retries);
                     if (retries != 0) RespireTelemetry.RecordCommandRetry(category, "succeeded");
                     return result;
@@ -70,7 +78,7 @@ internal static class LogicalCommandRetry
                 catch (Exception error)
                 {
                     // Circuit rejection is never a selected failure, so it always ends the operation.
-                    if (!rejectionProvesUnexecuted || error is not RespireCircuitOpenException)
+                    if (error is not RespireCircuitOpenException || (sending && !rejectionProvesUnexecuted))
                         RecordAttempted(category, attempt, ref retries);
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
                     if (!policy.TryGetDelay(error, CommandWriteOutcome.Unknown, category, attempt, remaining, token, out var delay))

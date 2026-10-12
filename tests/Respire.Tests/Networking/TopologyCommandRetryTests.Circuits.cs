@@ -291,6 +291,51 @@ public partial class TopologyCommandRetryTests
         }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DeclaredScriptRetryCountsARejectionOnlyAfterItsResendStarted(bool rejectFallback)
+    {
+        var events = new ConcurrentDictionary<string, long>();
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
+        using var listener = RetryListener(events);
+        var sends = 0;
+        RespireClient? client = null;
+        await using var server = Standalone((command, current) =>
+        {
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+            if (Interlocked.Increment(ref sends) == 1)
+            {
+                if (rejectFallback) return TryAgain;
+                current.CloseConnections();
+                return null;
+            }
+            // The resend's EVALSHA executed; the circuit opens before its EVAL fallback is admitted.
+            OpenCircuit(client!, current);
+            return "-NOSCRIPT No matching script.\r\n"u8.ToArray();
+        });
+        client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: false));
+        await using var owned = client;
+        var script = RespireScript.Create("return 7").WithRetryCategory(RespireCommandRetryCategory.ReadOnly);
+        var error = await Failure(async () => await client.Scripts.ExecuteIntegerAsync(script, ["key"]));
+        await Assert.That(error).IsTypeOf<RespireCircuitOpenException>();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsFalse();
+        if (rejectFallback)
+        {
+            // The resend ran EVALSHA before its fallback was rejected, so it counts as attempted.
+            await Assert.That(Volatile.Read(ref sends)).IsEqualTo(2);
+            await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);
+            await Assert.That(events.GetValueOrDefault("exhausted")).IsEqualTo(1L);
+            await Assert.That(events.ContainsKey("succeeded")).IsFalse();
+        }
+        else
+        {
+            // The failure opened the circuit, so the resend's preparation rejected it before any send.
+            await Assert.That(Volatile.Read(ref sends)).IsEqualTo(1);
+            await Assert.That(events.IsEmpty).IsTrue();
+        }
+    }
+
     private static RespireCircuitBreakerOptions CircuitOptions() => new()
     {
         MinimumFailureCount = 1, FailureRateThreshold = 0.01, HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1),
