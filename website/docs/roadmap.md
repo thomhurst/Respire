@@ -143,6 +143,9 @@ acceptance criteria, dependencies, and current status:
 
 - [Resilience and API parity](https://github.com/thomhurst/Respire/issues/857): command retry policies,
   circuit breaker integration for topology routing, and further connection/API work.
+  [Command retry policy settings](./guides/command-retries) and conservative safety decisions are
+  implemented as a foundation; automatic immediate-command dispatch remains open in
+  [#1215](https://github.com/thomhurst/Respire/issues/1215) and its native children.
   [Transport write outcomes](./guides/transport-write-evidence) are implemented; aggregate performance
   acceptance remains open in [#1214](https://github.com/thomhurst/Respire/issues/1214), with causal
   allocation and selection measurements tracked by [#1474](https://github.com/thomhurst/Respire/issues/1474).
