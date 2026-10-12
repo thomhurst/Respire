@@ -9,7 +9,7 @@ internal sealed partial class RespireConnection
     /// write buffer before starting another fill. Retry and disposal both observe the entire fill,
     /// including synchronous source work and every asynchronous short read.
     /// </summary>
-    private sealed class StreamPayloadReader(Stream source, long length, ArrayPool<byte>? pool = null) : IDisposable
+    internal sealed class StreamPayloadReader(Stream source, long length, ArrayPool<byte>? pool = null) : IDisposable
     {
         private readonly ArrayPool<byte> _pool = pool ?? ArrayPool<byte>.Shared;
         private readonly Lock _bufferOwnershipGate = new();
@@ -19,6 +19,8 @@ internal sealed partial class RespireConnection
         private Task? _sourceCancellationCallbacks;
         private byte[]? _chunk;
         private Task<ReadOnlyMemory<byte>>? _activeFill;
+        private Task<ReadOnlyMemory<byte>>? _completedInlineFill;
+        private int _completedInlineLength;
         private bool _disposed;
         private long _remaining = length;
         private ReadOnlyMemory<byte> _consumedPrefix;
@@ -55,15 +57,33 @@ internal sealed partial class RespireConnection
                 // remain offloaded because their ReadAsync override may block before returning.
                 // Publish the whole task before disposal can acquire the gate.
                 return _activeFill = inlineRead
-                    ? ReadChunkAsync(chunk, cancellationToken)
+                    ? ReadInlineFill(chunk, cancellationToken)
                     : StartBackgroundFill(chunk, cancellationToken);
             }
         }
 
         private Task<ReadOnlyMemory<byte>> StartBackgroundFill(byte[] chunk, CancellationToken cancellationToken)
-            => Task.Run(() => ReadChunkAsync(chunk, cancellationToken), CancellationToken.None);
+            => Task.Run(() => ReadChunkAsync(chunk, cancellationToken).AsTask(), CancellationToken.None);
 
-        private async Task<ReadOnlyMemory<byte>> ReadChunkAsync(byte[] chunk, CancellationToken cancellationToken)
+        private Task<ReadOnlyMemory<byte>> ReadInlineFill(byte[] chunk, CancellationToken cancellationToken)
+        {
+            var fill = ReadChunkAsync(chunk, cancellationToken);
+            if (!fill.IsCompletedSuccessfully) return fill.AsTask();
+            var result = fill.Result;
+            // The task describes a slice of the reader's single buffer, not a payload snapshot.
+            // Reuse it only after the previous chunk has been copied by the transport. A shorter
+            // tail needs its own slice; faults and cancellation must retain their original task.
+            if (_completedInlineFill is null || _completedInlineLength != result.Length)
+            {
+                _completedInlineFill = Task.FromResult(result);
+                _completedInlineLength = result.Length;
+            }
+            return _completedInlineFill;
+        }
+
+        // Keep the default builder: suspended derived-stream fills still publish ordinary tasks.
+        // ValueTask avoids constructing a task only when an exact MemoryStream finishes inline.
+        private async ValueTask<ReadOnlyMemory<byte>> ReadChunkAsync(byte[] chunk, CancellationToken cancellationToken)
         {
             _consumedPrefix = default;
             _unknownPositionReadError = null;

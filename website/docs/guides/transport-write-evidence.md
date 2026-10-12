@@ -275,6 +275,18 @@ Full-GC samples cover the whole process and retain 5,767,168 bytes of caller arr
 
 Phase CPU user/system seconds and utilization: baseline-a: 1147.03 576.75 163%; candidate: 1065.48 545.56 160%; baseline-b: 1074.94 537.36 163%.
 
+## Exact MemoryStream fill-task diagnostic: 2026-10-12
+
+Child [#1477](https://github.com/thomhurst/Respire/issues/1477) isolates one allocation site from [#1474](https://github.com/thomhurst/Respire/issues/1474): the completed `Task<ReadOnlyMemory<byte>>` returned by each exact `MemoryStream` fill. A 256 KiB source fills eight 32 KiB chunks. The reader now reuses its successful completed task while the buffer and slice length remain the same. A shorter tail gets a separate result. Failure and cancellation retain their own tasks. Derived streams still use the background fill path, because an overridden `ReadAsync` can block synchronously.
+
+`ExactMemoryStreamReusesCompletedFillTask` measures the actual reader after its first fill, excluding reader construction, buffer rental, source allocation and the first task. The warmed, no-inline boundary runs under an unkeyed `NotInParallel` test inside `AllocationMeasurement.WithoutConcurrentGc`. The task-identity test also verifies different chunk contents, a shorter tail and consumed-prefix state. Error tests cover early EOF, cancellation before the next read, and the original disposed-source exception.
+
+On Windows x64, the unchanged read implementation at `becea358c6762202b5929907112772ebb471cec2` allocates **560 bytes for seven subsequent fills** on .NET 8.0.31 and .NET 10.0.12. Both the zero-byte assertion and the task-identity assertion fail before the change. The changed reader allocates **zero bytes in that same boundary**. Its causal positive control recreates a completed task for each subsequent fill and allocates **560 bytes**, identifying an 80-byte task per fill in these local runs. Diagnostic output records the process, runtime, revision when supplied, and library module ID; this is a test-only diagnostic, not a public timing launch.
+
+This does not establish a zero-allocation upload or attribute a historical process-wide launch delta. The first fill task and reader still allocate. Linked cancellation, suspended payload copying, cancellable write waits, fixture tasks and pooled-builder misses remain separate sites. Standalone batch allocation, selection code/tiering and scheduling, delayed uploads, and circuit-enabled streamed GET still require their own evidence. The normal public timing fixture retains every path; a new pinned comparison must audit both metric modes, all rows, raw launches, control drift and the retention limits above.
+
+The remaining native children are [residual stream/GET diagnosis #1478](https://github.com/thomhurst/Respire/issues/1478), [batch diagnosis #1479](https://github.com/thomhurst/Respire/issues/1479), [selection diagnosis #1480](https://github.com/thomhurst/Respire/issues/1480), and [final aggregate audit #1481](https://github.com/thomhurst/Respire/issues/1481). #1474, #1214 and #862 remain open. Whole-process memory with caller arrays still cannot establish isolated retention or a global observation cap. Large non-streamed SET copying/gather-send remains #976.
+
 ## Evidence audit: 2026-10-09
 
 The comparison, disposition and tables below are a point-in-time audit of the pinned run. A later audit can supersede this dated evidence without replacing the ownership and retention guidance above.
