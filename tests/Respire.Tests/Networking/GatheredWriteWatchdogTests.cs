@@ -13,6 +13,21 @@ public sealed class GatheredWriteWatchdogTests
     [Test]
     [Arguments(null)]
     [Arguments(120000)]
+    public async Task IdleWriteSleepPreservesReceiveBudget(int? receiveMilliseconds)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            ResponseTimeout = receiveMilliseconds is { } receive ? TimeSpan.FromMilliseconds(receive) : null,
+            GatheredWriteStallTimeout = TimeSpan.FromMilliseconds(1),
+        });
+        var idleDelay = TimeSpan.FromMinutes(2);
+        await Assert.That(connection.GetGatheredWriteWatchdogDelay(idleDelay)).IsEqualTo(idleDelay);
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments(120000)]
     public async Task ActiveWriteSleepUsesRemainingAllowance(int? receiveMilliseconds)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);

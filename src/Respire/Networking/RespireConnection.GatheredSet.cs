@@ -40,7 +40,10 @@ internal sealed partial class RespireConnection
                 // Arm when ownership is accepted, even if a preceding copied buffer is stalled.
                 // Further enqueues must not postpone a stall already being watched.
                 if (_flushProgress.GatheredWriteBufferCount++ == 0)
+                {
                     Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, Stopwatch.GetTimestamp());
+                    WakeGatheredWriteWatchdog();
+                }
             }
             _activeBuffer.AddBorrowedPayload(offset, command.Payload, command.Lease);
             if (_responseTimeout is not null) _activeReplyCount += discardRepliesBefore + 1;
@@ -88,8 +91,19 @@ internal sealed partial class RespireConnection
         {
             Debug.Assert(_flushProgress.GatheredWriteBufferCount > 0);
             if (--_flushProgress.GatheredWriteBufferCount == 0)
+            {
                 Volatile.Write(ref _flushProgress.GatheredWriteDeadlineTimestamp, 0);
+                WakeGatheredWriteWatchdog();
+            }
         }
+    }
+
+    private void WakeGatheredWriteWatchdog()
+    {
+        // All publishers hold _writeGate; only the watchdog consumes this coalesced signal.
+        // A completion wake lets a finished short write return immediately to the idle delay.
+        Debug.Assert(_writeGate.IsHeldByCurrentThread);
+        if (_watchdogWake is { CurrentCount: 0 } wake) wake.Release();
     }
 
     private bool TryAbortStalledGatheredWrite(TimeSpan timeout)

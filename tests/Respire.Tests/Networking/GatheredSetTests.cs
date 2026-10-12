@@ -630,7 +630,7 @@ public sealed class GatheredSetTests
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await Assert.That(await client.SetAsync("complete", new byte[512 * 1024],
             cancellationToken: guard.Token)).IsTrue();
-        // Cover multiple real watchdog scans after both the write and its reply have completed.
+        // Survive multiple timeout periods after both the write and its reply have completed.
         await Task.Delay(600, guard.Token);
         await Assert.That(connection.IsConnected).IsTrue();
         await Assert.That(await client.SetAsync("following", "small", cancellationToken: guard.Token)).IsTrue();
