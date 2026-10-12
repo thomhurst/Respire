@@ -329,7 +329,9 @@ public class TransactionCommandRetryTests
     }
 
     [Test]
-    public async Task RetryAttemptMetricPublishesOutsideTransportWriteGate()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetryAttemptMetricPublishesOutsideTransportWriteGate(bool throwFromListener)
     {
         RespireClient? client = null;
         var published = 0;
@@ -348,6 +350,7 @@ public class TransactionCommandRetryTests
                 Interlocked.Increment(ref published);
                 // A listener that blocks or re-enters the client must not run inside transport admission.
                 if (Volatile.Read(ref client) is { } current && AnyWriteGateHeld(current)) Interlocked.Increment(ref underGate);
+                if (throwFromListener) throw new InvalidOperationException("Injected retry listener failure.");
             }
         });
         listener.Start();

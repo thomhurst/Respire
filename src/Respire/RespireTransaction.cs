@@ -586,20 +586,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         {
                             unitAttempts++;
                             unitAttemptCounted = true;
-                            try
-                            {
-                                var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
-                                    cancellationToken, deadline, this, observation, mutationFence,
-                                    pinToConnection: core.Circuits is not null,
-                                    onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
-                                outcome = attempted.WriteOutcome;
-                                reply = attempted.GetResult();
-                            }
-                            finally
-                            {
-                                // Acceptance runs under the transport write gate; publish only after leaving it.
-                                retryTelemetry!.PublishAccepted();
-                            }
+                            var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
+                                cancellationToken, deadline, this, observation, mutationFence,
+                                pinToConnection: core.Circuits is not null,
+                                onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
+                            // Acceptance runs under the transport write gate; publish only after leaving it.
+                            retryTelemetry!.PublishAccepted();
+                            outcome = attempted.WriteOutcome;
+                            reply = attempted.GetResult();
                         }
                         else
                         {
