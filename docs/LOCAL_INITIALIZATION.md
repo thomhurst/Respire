@@ -14,9 +14,8 @@ Do not apply `SkipLocalsInit`, at module, type or method scope, to the measured 
   call. That is the most it can save.
 - No other instruction in those methods changes deterministically. The CoreLib UTF-8 callees
   that differed in #1076 also differ between two runs of the same unchanged binary under
-  Dynamic PGO. The +10 percent net10.0 `FormatLargeUnicodeBulkString` regression from #1076
-  falls inside that run-to-run variation. The +35 percent net8.0 `ReadUnicodeBulkString`
-  regression does not: this probe did not reproduce it and does not explain it.
+  Dynamic PGO. The #1076 listing differences are consistent with that run-to-run variation,
+  but these controls do not establish the cause of the earlier timing regressions.
 - Timing across separate processes shows no benefit on either framework. The spread between
   processes of the same build is much larger than any difference between the builds.
 
@@ -89,8 +88,8 @@ Under Dynamic PGO, the same binary produces different Tier1 layouts for the libr
 the CoreLib transcoders from one process to the next. The baseline-to-candidate differences fall
 inside that range, and some baseline/candidate pairs are identical. The #1076 listings showed
 `TranscodeToUtf16` hot/cold moves and the net10.0 `WidenAsciiToUtf16` tail moving below `ret`.
-Those moves are this run-to-run variation. A single BenchmarkDotNet process per measurement
-samples one layout, so one unlucky candidate process can land outside both controls.
+Similar moves occur in these unchanged-binary controls. A single BenchmarkDotNet process per
+measurement samples one layout; listing variation alone does not quantify its timing effect.
 
 ## Timing
 
@@ -110,16 +109,14 @@ then candidate.
 
 The candidate's minimum never beats the baseline's minimum by more than the noise in the
 baseline's own range. On the large rows, one build's processes range over 20 to 40 percent.
-That spread covers the +10 percent #1076 regression on net10.0 `FormatLargeUnicodeBulkString`.
+For net10.0 `FormatLargeUnicodeBulkString`, that row's spread exceeds the +10 percent
+regression reported in #1076. For net8.0 `ReadUnicodeBulkString`, the widest same-build
+range is 15.58–18.50 ns with PGO on (about 19 percent), or 21.60–22.70 ns with PGO off
+(about 5 percent). Neither range covers its earlier +35 percent regression. These measurements
+therefore do not explain that regression; its cause remains unresolved. Variation in other
+rows cannot establish the cause of a slowdown in this row.
 
-It does not cover the +35 percent #1076 regression on net8.0 `ReadUnicodeBulkString`. On that
-row, one build's processes range over at most about 19 percent with PGO on (15.58–18.50) and
-about 7 percent with PGO off. Even across both builds, the row stays well under 35 percent.
-This probe did not reproduce that regression, and process variance as measured here does not
-explain it. The candidate here is no faster on that row, so the regression does not argue for
-the attribute either.
-
-The large-row spread also covers the opposite results of
+The Linux probe also produced different results with PGO on and off in
 [run 38278398897](https://github.com/thomhurst/Respire/actions/runs/38278398897), the probe run
 of the merged comparison workflow on Linux. With PGO on, all of that run's gates passed, with
 candidate/control ratios from 0.912 to 1.025. With PGO off, its report-only leg flagged four
