@@ -15,7 +15,8 @@ STAGES = ('before-connect', 'connected-idle', 'after-first-reuse', 'after-dispos
 class BenchmarkRetentionTests(unittest.TestCase):
     def run_summary(self, missing=None, invalid=None, stages=STAGES, stress=False,
                     missing_stress=None, invalid_stress=None, dimensions=(),
-                    missing_dimension=None, scope_drift=None, collapse_scopes=False):
+                    missing_dimension=None, scope_drift=None, collapse_scopes=False,
+                    group_field='', group_values=()):
         workflow = Path(__file__).resolve().parents[2] / '.github/workflows/benchmark-compare.yml'
         section = workflow.read_text().split('      - name: Require complete results and summarize both controls\n')[1]
         script = section.split('        run: |\n')[1].split('      - uses:')[0]
@@ -70,6 +71,8 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                RETAINED_MEMORY_STAGES=','.join(stages), GITHUB_STEP_SUMMARY=str(root / 'step.md'))
             environment['LARGE_SET_STRESS'] = str(stress).lower()
             environment['RETAINED_MEMORY_DIMENSIONS'] = ','.join(dimensions)
+            environment['RETAINED_MEMORY_GROUP_FIELD'] = group_field
+            environment['RETAINED_MEMORY_GROUP_VALUES'] = ','.join(group_values)
             result = subprocess.run([sys.executable, 'summary.py'], cwd=root, env=environment,
                                     capture_output=True, text=True)
             summary = root / 'comparison.md'
@@ -130,6 +133,22 @@ class BenchmarkRetentionTests(unittest.TestCase):
                                      missing_dimension=('candidate', 'after-first-reuse'))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Missing retention dimension', result.stderr)
+
+    def test_retention_groups_and_dimensions_preserve_both_reports(self):
+        result, summary = self.run_summary(dimensions=('owner', 'policy'),
+                                           group_field='policy', group_values=('False', 'True'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for phase in PHASES:
+            self.assertIn(f'| {phase} | False | connected-idle | 3 | 101 |', summary)
+            self.assertIn(f'| {phase} | True | connected-idle | 3 | 1101 |', summary)
+            self.assertIn(f'| {phase} | connected-idle | owner=ColdStringMiss, policy=False | 1 | 101 |', summary)
+            self.assertIn(f'| {phase} | connected-idle | owner=ColdStringMiss, policy=True | 1 | 1101 |', summary)
+
+    def test_retention_dimensions_do_not_allow_missing_group_samples(self):
+        result, _ = self.run_summary(dimensions=('owner', 'policy'),
+                                     group_field='policy', group_values=('False', 'missing'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unexpected retention groups', result.stderr)
 
     def test_retention_scope_drift_is_rejected(self):
         result, _ = self.run_summary(dimensions=('owner', 'policy'),
