@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Reflection;
+using Respire.Infrastructure;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -323,6 +326,57 @@ public class TransactionCommandRetryTests
         await Assert.That(events.GetValueOrDefault("succeeded")).IsEqualTo(1L);
         await Assert.That(events.ContainsKey("exhausted")).IsFalse();
         await Assert.That(categories.Distinct().ToArray()).IsEquivalentTo([nameof(RespireCommandRetryCategory.ReadOnly)]);
+    }
+
+    [Test]
+    public async Task RetryAttemptMetricPublishesOutsideTransportWriteGate()
+    {
+        RespireClient? client = null;
+        var published = 0;
+        var underGate = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.command.retries")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key != "respire.command.retry.outcome" || (string?)tag.Value != "attempted") continue;
+                Interlocked.Increment(ref published);
+                // A listener that blocks or re-enters the client must not run inside transport admission.
+                if (Volatile.Read(ref client) is { } current && AnyWriteGateHeld(current)) Interlocked.Increment(ref underGate);
+            }
+        });
+        listener.Start();
+        var execs = 0;
+        await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+        await using var connected = await RespireClient.ConnectAsync(Options(server));
+        Volatile.Write(ref client, connected);
+        await using var transaction = connected.CreateTransaction();
+        var value = transaction.GetString("key");
+        await transaction.CommitAsync();
+
+        await Assert.That(await value).IsEqualTo("value");
+        await Assert.That(execs).IsEqualTo(2);
+        await Assert.That(published).IsEqualTo(1);
+        await Assert.That(underGate).IsEqualTo(0);
+    }
+
+    private static bool AnyWriteGateHeld(RespireClient client)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var connections = (RespireConnection?[])typeof(RespireConnectionMultiplexer).GetField("_connections", flags)!
+            .GetValue(client.Core.Multiplexer)!;
+        foreach (var connection in connections)
+        {
+            if (connection is null) continue;
+            var gate = typeof(RespireConnection).GetField("_writeGate", flags)!.GetValue(connection)!;
+            if ((bool)gate.GetType().GetProperty("IsHeldByCurrentThread")!.GetValue(gate)!) return true;
+        }
+        return false;
     }
 
     // The fake server keeps MULTI state per connection. A null EXEC reply closes every connection

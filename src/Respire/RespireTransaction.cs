@@ -548,6 +548,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     CircuitAdmission admission = default;
                     var outcome = CommandWriteOutcome.DefinitelyUnwritten;
                     TimeSpan? retryDelay = null;
+                    var unitAttemptCounted = false;
                     try
                     {
                         // The entire MULTI/EXEC sequence owns one endpoint permit. Pin transport
@@ -584,12 +585,21 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         if (retryUnit)
                         {
                             unitAttempts++;
-                            var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
-                                cancellationToken, deadline, this, observation, mutationFence,
-                                pinToConnection: core.Circuits is not null,
-                                onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
-                            outcome = attempted.WriteOutcome;
-                            reply = attempted.GetResult();
+                            unitAttemptCounted = true;
+                            try
+                            {
+                                var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
+                                    cancellationToken, deadline, this, observation, mutationFence,
+                                    pinToConnection: core.Circuits is not null,
+                                    onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
+                                outcome = attempted.WriteOutcome;
+                                reply = attempted.GetResult();
+                            }
+                            finally
+                            {
+                                // Acceptance runs under the transport write gate; publish only after leaving it.
+                                retryTelemetry!.PublishAccepted();
+                            }
                         }
                         else
                         {
@@ -611,6 +621,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     {
                         // Retirement rejected every frame before dispatch. Release this permit
                         // as ignored; the replacement endpoint owns its own health outcome.
+                        // Nothing was accepted, so the rejected frame spends no unit attempt.
+                        if (unitAttemptCounted) unitAttempts--;
                         observation.Handled(retirement);
                         connection = target;
                         deadline = rerouted;
@@ -773,13 +785,22 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     // Allocate only when retries are enabled; the default commit path retains its allocation shape.
     private sealed class UnitRetryTelemetry(RespireCommandRetryCategory category)
     {
+        private int _unpublished;
+
         internal int AcceptedResends { get; private set; }
 
+        // Runs under the connection write gate: mutate state only. Meter listeners run in PublishAccepted.
         internal void Accepted()
         {
             // Acceptance and execution evidence differ: an accepted frame can die before writing.
             AcceptedResends++;
-            RespireTelemetry.RecordCommandRetry(category, "attempted");
+            Interlocked.Increment(ref _unpublished);
+        }
+
+        internal void PublishAccepted()
+        {
+            for (var count = Interlocked.Exchange(ref _unpublished, 0); count > 0; count--)
+                RespireTelemetry.RecordCommandRetry(category, "attempted");
         }
     }
 
