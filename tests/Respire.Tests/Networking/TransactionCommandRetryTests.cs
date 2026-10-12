@@ -146,6 +146,36 @@ public class TransactionCommandRetryTests
     }
 
     [Test]
+    [Arguments(false, RespireCommandRetryCategory.ReadOnly)]
+    [Arguments(true, RespireCommandRetryCategory.ReadOnly)]
+    [Arguments(false, RespireCommandRetryCategory.Never)]
+    [Arguments(true, RespireCommandRetryCategory.Never)]
+    public async Task ScriptAndFunctionMembersUseDeclaredRetryCategory(bool functionCall, RespireCommandRetryCategory category)
+    {
+        var execs = 0;
+        await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*1\r\n$1\r\nx\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var transaction = client.CreateTransaction();
+        var value = functionCall
+            ? transaction.Functions.Execute(RespireFunction.Create("read", readOnly: true).WithRetryCategory(category), ["key"])
+            : transaction.Scripts.Evaluate(RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true).WithRetryCategory(category), ["key"]);
+
+        if (category == RespireCommandRetryCategory.Never)
+        {
+            await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireConnectionException>();
+            await Assert.That(async () => await value).Throws<RespireConnectionException>();
+            await Assert.That(execs).IsEqualTo(1);
+        }
+        else
+        {
+            await transaction.CommitAsync();
+            using var result = await value;
+            await Assert.That(result.AsString()).IsEqualTo("x");
+            await Assert.That(execs).IsEqualTo(2);
+        }
+    }
+
+    [Test]
     public async Task DeclaredRawMemberCategoryPermitsUnitRetry()
     {
         var execs = 0;
@@ -250,7 +280,9 @@ public class TransactionCommandRetryTests
     }
 
     [Test]
-    public async Task RetryTelemetryReportsUnitCategoryOnce()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetryTelemetryReportsOnlyAcceptedResends(bool circuitRejectsReplacement)
     {
         var events = new ConcurrentDictionary<string, long>();
         var categories = new ConcurrentBag<string>();
@@ -271,10 +303,20 @@ public class TransactionCommandRetryTests
         listener.Start();
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*2\r\n$5\r\nvalue\r\n:1\r\n"u8.ToArray());
-        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = circuitRejectsReplacement ? new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) } : null,
+        });
         await using var transaction = client.CreateTransaction();
         _ = transaction.GetString("key");
         _ = transaction.Exists("key");
+        if (circuitRejectsReplacement)
+        {
+            await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireCircuitOpenException>();
+            await Assert.That(events).IsEmpty();
+            await Assert.That(execs).IsEqualTo(1);
+            return;
+        }
         await transaction.CommitAsync();
 
         await Assert.That(events.GetValueOrDefault("attempted")).IsEqualTo(1L);

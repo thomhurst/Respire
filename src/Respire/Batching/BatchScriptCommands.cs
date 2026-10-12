@@ -61,7 +61,7 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = sink.Client.BuildScriptTail(keys, args);
-        var command = new BatchScriptCommand(script.EvalVerb, script.Source, tail, keys?.Length ?? 0);
+        var command = new BatchScriptCommand(script.EvalVerb, script.Source, tail, keys?.Length ?? 0, script.RetryCategory);
         return sink.Add<BatchScriptCommand, RespireResult>(
             script.EvalOperation,
             command,
@@ -71,8 +71,10 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
 }
 
 internal readonly struct BatchScriptCommand(
-    Verb verb, RespireValue source, RespireValue[] tail, int keyCount) : IRespCommand
+    Verb verb, RespireValue source, RespireValue[] tail, int keyCount,
+    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
 {
+    public RespireCommandRetryCategory RetryCategory => retryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
         CommandWriteSizeHint.For(verb, source.GetWriteSizeHint()), tail);
     public bool TryGetArgument(int index, out RespireValue value)

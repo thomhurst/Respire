@@ -519,7 +519,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             var sentinelTelemetryStarted = false;
             var retryUnit = CanRetryUnit(core);
             var unitAttempts = 0;
-            var unitRetries = 0;
+            var retryTelemetry = retryUnit ? new UnitRetryTelemetry(_retryCategories.Label) : null;
+            Action? onUnitAccepted = retryTelemetry is null ? null : retryTelemetry.Accepted;
             try
             {
                 var cluster = core.Cluster;
@@ -585,11 +586,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             unitAttempts++;
                             var attempted = await connection.SendTransactionAttemptAsync(_buffer.WrittenMemory, _ops.Count,
                                 cancellationToken, deadline, this, observation, mutationFence,
-                                pinToConnection: core.Circuits is not null).ConfigureAwait(false);
+                                pinToConnection: core.Circuits is not null,
+                                onAccepted: unitAttempts > 1 ? onUnitAccepted : null).ConfigureAwait(false);
                             outcome = attempted.WriteOutcome;
-                            // Like the immediate owner, count a resend once the transport accepted it.
-                            if (unitAttempts > 1 && outcome != CommandWriteOutcome.DefinitelyUnwritten)
-                                RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "attempted");
                             reply = attempted.GetResult();
                         }
                         else
@@ -670,12 +669,11 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                                 acquisition.Dispose();
                             }
                         }
-                        unitRetries++;
                         continue;
                     }
                     if (!reply.IsError || cluster is null)
                     {
-                        if (unitRetries != 0)
+                        if (retryTelemetry is { AcceptedResends: > 0 })
                             RespireTelemetry.RecordCommandRetry(_retryCategories.Label, reply.IsError ? "exhausted" : "succeeded");
                         return reply;
                     }
@@ -729,7 +727,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
             catch (Exception error)
             {
-                if (unitRetries != 0) RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "exhausted");
+                if (retryTelemetry is { AcceptedResends: > 0 }) RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "exhausted");
                 Exception failure = error;
                 if (error is OperationCanceledException canceled && acquisition.HasCancellation)
                 {
@@ -769,6 +767,19 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 => core.CommandRetries!.TryGetUnitDelay(error, outcome, _retryCategories, unitAttempts,
                     deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue,
                     cancellationToken, out delay);
+        }
+    }
+
+    // Allocate only when retries are enabled; the default commit path retains its allocation shape.
+    private sealed class UnitRetryTelemetry(RespireCommandRetryCategory category)
+    {
+        internal int AcceptedResends { get; private set; }
+
+        internal void Accepted()
+        {
+            // Acceptance and execution evidence differ: an accepted frame can die before writing.
+            AcceptedResends++;
+            RespireTelemetry.RecordCommandRetry(category, "attempted");
         }
     }
 

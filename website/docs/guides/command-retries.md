@@ -234,15 +234,19 @@ enough to block the unit:
   `MaxCommandRetryCategory` accepts `WriteAccumulating`. This applies even when the other
   members are reads.
 - A raw member, script or function without a declared category is `Never` and blocks the
-  unit. A deferred raw member uses only the caller's declared category, as raw dispatch does.
+  unit. Deferred raw members, scripts and functions carry the caller's declared category,
+  as their immediate dispatch does. Marking a script or function read-only alone does not declare
+  its retry category.
 
 A lost `EXEC` reply counts as a possible execution, not as an abort. A selected queue error,
 such as `LOADING`, makes Redis discard the transaction with `EXECABORT`. The frame was still
 written, so the same category rule applies.
 
 The retry keeps one logical deadline and the caller's token across attempts and backoff.
-Member pendings complete once, from the final attempt. Telemetry reports `attempted`,
-`succeeded` and `exhausted` once per unit. The category tag names the riskiest member category.
+Member pendings complete once, from the final attempt. Telemetry reports `attempted` for each
+accepted resend, even if its frame dies before writing. It reports `succeeded` or `exhausted`
+once per unit that accepted a resend. A replacement wait or circuit rejection before any
+accepted resend records neither outcome. The category tag names the riskiest member category.
 
 The client never resends these units:
 

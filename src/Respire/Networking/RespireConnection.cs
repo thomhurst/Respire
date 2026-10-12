@@ -3658,8 +3658,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// <summary>Writes an optional MULTI, a pre-serialized command block, and EXEC.
     /// Only an exclusive caller that already confirmed MULTI may omit it.</summary>
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti,
-        RespireTransactionBase? transaction, ClientSideCacheCoordinator.MutationFence mutationFence) : IMutationAdmissionCommand
+        RespireTransactionBase? transaction, ClientSideCacheCoordinator.MutationFence mutationFence,
+        Action? onAccepted = null) : IMutationAdmissionCommand
     {
+        public void OnAccepted() => onAccepted?.Invoke();
         public int GetWriteSizeHint() => checked(serializedCommands.Length + RespCommands.Exec.Length
             + (includeMulti ? RespCommands.Multi.Length : 0));
         internal void RecordConnection(RespireConnection connection)

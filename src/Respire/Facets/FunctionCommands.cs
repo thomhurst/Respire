@@ -289,7 +289,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         // A retried call must resend the bytes of its first attempt.
         if (client.CanRetryDeclared(function.RetryCategory))
             for (var index = 0; index < tail.Length; index++) tail[index] = tail[index].Snapshot();
-        return new(function.Verb, function.Name, tail, keys.Length);
+        return new(function.Verb, function.Name, tail, keys.Length, function.RetryCategory);
     }
 
     public ValueTask<string> LoadAsync(string source, bool replace = false, CancellationToken cancellationToken = default)

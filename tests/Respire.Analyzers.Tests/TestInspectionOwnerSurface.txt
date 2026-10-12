@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 403 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 404 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 61
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -236,7 +236,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 99
+# Count: Respire.Networking.RespireConnection | 100
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
@@ -293,6 +293,7 @@ Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPre
 Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken, int, bool) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, int, RespireTelemetry.ErrorObservation, RespireTelemetry.OperationStart, bool) : ValueTask<string?>
 Respire.Networking.RespireConnection | method SendTransactionAsync(ReadOnlyMemory<byte>, int, CancellationToken, TimeSpan?, CancellationToken, bool, CommandDeadline, RespireTransactionBase?, RespireTelemetry.ErrorObservation, ClientSideCacheCoordinator.MutationFence, bool, CommandWriteObservation?) : ValueTask<RespValue>
+Respire.Networking.RespireConnection | method SendTransactionAttemptAsync(ReadOnlyMemory<byte>, int, CancellationToken, CommandDeadline, RespireTransactionBase, RespireTelemetry.ErrorObservation, ClientSideCacheCoordinator.MutationFence, bool, Action?) : ValueTask<CommandAttemptResult>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`2(in TPrefix, in TCommand, CancellationToken, string, string?, bool, CommandDeadline, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedAsync`3(in TFirstPrefix, in TSecondPrefix, in TCommand, CancellationToken, string, string?, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendValidatedPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, CancellationToken, int, bool, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>

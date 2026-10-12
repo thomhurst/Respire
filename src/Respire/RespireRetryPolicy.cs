@@ -1,14 +1,18 @@
 namespace Respire;
 
-/// <summary>Safety and delay settings for immediate-command retry dispatch.</summary>
+/// <summary>Safety and delay settings for immediate-command and whole-unit retry dispatch.</summary>
 /// <remarks>
-/// Assign to RespireOptions.RetryPolicy to enable buffered immediate-command retries, or to
+/// Assign to RespireOptions.RetryPolicy to enable buffered immediate-command retries and complete
+/// unwatched transaction retries on standalone and Sentinel clients, or to
 /// RespireFailoverGroupOptions.RetryPolicy to retry failover-group operations.
 /// RunTransactionAsync and RunTransactionWithReadsAsync also use RespireOptions.RetryPolicy
-/// to replay complete watched callbacks. It does not recover a lost reply or provide exactly-once
-/// execution. Standalone and Sentinel batches retry as complete units: every attempt resends every
+/// to replay complete watched callbacks. Every transaction member must permit replay.
+/// Standalone and Sentinel batches retry as complete units: every attempt resends every
 /// member, and a resend after any send started requires the policy to permit every member's category.
-/// Cluster batches and direct transaction commits are not replayed.
+/// Direct watched commits, Cluster batches and transactions, hash import sessions,
+/// cursor continuations and streams are excluded.
+/// It does not recover a lost reply or provide exactly-once execution. A lost EXEC reply is
+/// ambiguous; permitting accumulating writes accepts repeated effects for the complete transaction.
 /// </remarks>
 public sealed record RespireRetryPolicy
 {

@@ -6,7 +6,8 @@ using Respire.Serialization;
 
 namespace Respire;
 
-/// <summary>Deferred Redis Functions. Calls never reload or replay; administration affects only the execution node.</summary>
+/// <summary>Deferred Redis Functions. Calls never reload or replay individually; eligible transactions can replay
+/// the complete unit under <see cref="RespireOptions.RetryPolicy"/>. Administration affects only the execution node.</summary>
 public interface IBatchFunctionCommands
 {
     /// <summary>Queues FCALL/FCALL_RO. Results own GC storage; unread results retain no pooled buffers. Dispose invalidates nested views.</summary>
