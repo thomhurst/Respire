@@ -117,7 +117,10 @@ The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
 atomic token locks, and literal callback subscriptions used by RedisStorage.
 [Pinned Hangfire acceptance](./guides/hangfire-acceptance) exercises 93 upstream
 facts and two real worker lifecycle cases on .NET 8/.NET 10 and RESP2/RESP3,
-with explicit exclusions and limitations. General StackExchange.Redis interface
+with explicit exclusions and limitations. The cache/DataProtection inventory now
+covers 52 upstream cases across all six applicable test classes, excluding only
+the cache's two internal HybridCache detection rows. CI runs both protocols on
+both supported frameworks. General StackExchange.Redis interface
 parity and combined Microsoft/SignalR/Hangfire acceptance remain planned under
 [#889](https://github.com/thomhurst/Respire/issues/889).
 

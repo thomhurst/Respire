@@ -7,7 +7,9 @@
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="xunit.assert" />
+    <PackageReference Include="Moq" />
     <PackageReference Include="Hangfire.Redis.StackExchange" />
     <ProjectReference Include="../../src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
     <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />

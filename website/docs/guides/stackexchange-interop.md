@@ -1,6 +1,6 @@
 ---
 title: Incremental StackExchange.Redis migration
-description: Reuse StackExchange.Redis values and run the official distributed cache and DataProtection integrations on Respire.
+description: Supported library versions, upstream coverage, ownership contracts, and migration from StackExchange.Redis to native Respire APIs.
 ---
 
 # Incremental StackExchange.Redis migration
@@ -9,6 +9,45 @@ Prefer Respire's native typed APIs for normal application code. Install
 `Respire.StackExchangeCompat` when migrating code that still passes `RedisKey`,
 `RedisValue`, or consumes `RedisResult`. The package uses the repository's pinned
 StackExchange.Redis version, currently 3.4.0, and targets .NET 8 and .NET 10.
+
+## Supported libraries and versions
+
+The compatibility adapter supports the integration call sites listed below.
+These versions match `Directory.Packages.props`; support for other versions must
+be verified separately. All acceptance runs use standalone Redis. This evidence
+does not establish every feature or general StackExchange.Redis interface parity.
+
+| Library | Pinned version | Verified scope | Native migration |
+| --- | --- | --- | --- |
+| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.12 on both frameworks | Public upstream cache and expiration classes, six service registration facts, buffer cache | `Respire.Caching` via `AddRespireDistributedCache` |
+| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.12 on both frameworks | All four repository scenarios and the builder extension fact, shared persisted key rings | `Respire.DataProtection` via `PersistKeysToRespire` |
+| `Hangfire.Redis.StackExchange` | 1.12.0 | 93 upstream facts and two worker lifecycle cases; [exact exclusions](./hangfire-acceptance) | Keep the shim at the Hangfire boundary; use native typed facets in application code |
+| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Unsupported:** requires queue-returning subscriptions; [#1268](https://github.com/thomhurst/Respire/issues/1268) blocks upstream conformance | `Respire.SignalR` via `AddRespire` |
+
+The cache/DataProtection upstream inventory covers **52 cases across six test
+classes**. Only the two rows of the cache's internal HybridCache detection test
+are excluded: they need ASP.NET Core's friend assembly grant and never use Redis
+or the adapter. Registration facts verify DI behavior, not Redis wire behavior.
+The [source inventory and adaptations](https://github.com/thomhurst/Respire/blob/main/tests/Respire.StackExchangeCompat.Tests/Upstream/NOTICE.md)
+record each class, case count and exclusion. Hangfire's excluded string constructors
+create StackExchange.Redis internally and cannot test an injected adapter.
+
+`IConnectionMultiplexer`, `IDatabase`/`IDatabaseAsync`, `IBatch`,
+`ITransaction`/`ITransactionAsync`, `IServer` and `ISubscriber` have only the
+documented supported members. Use the command and lifetime inventories below
+before migrating a new library. Unsupported operations throw
+`NotSupportedException` with native API guidance. Server errors retain native
+Respire exception types; consumers catching StackExchange.Redis-specific
+exceptions must update their handlers. Ordinary commands provide sync and async
+variants; batches and transactions queue async commands until execution.
+
+SignalR's `ChannelMessageQueue` construction, message delivery/completion and
+owned unsubscribe require internal StackExchange.Redis APIs. Callback pub/sub
+support for Hangfire does not satisfy that contract. Combined SignalR conformance
+remains tracked by [#1473](https://github.com/thomhurst/Respire/issues/1473);
+[#1270](https://github.com/thomhurst/Respire/issues/1270) and
+[#889](https://github.com/thomhurst/Respire/issues/889) remain open.
+Orleans is assessed separately in the [Orleans compatibility guide](./orleans-compatibility).
 
 ```csharp
 using Respire;
@@ -242,8 +281,9 @@ Profiling registration, library-name suffixes, events, unlisted subscriber/serve
 non-null `asyncState`, and all unlisted commands are explicitly
 unsupported. Unsupported members throw `NotSupportedException` with native
 API guidance rather than returning fabricated success. This adapter does not
-provide general StackExchange.Redis parity. SignalR and Hangfire acceptance
-remain pending under [#889](https://github.com/thomhurst/Respire/issues/889).
+provide general StackExchange.Redis parity. Pinned Hangfire acceptance is
+documented [separately](./hangfire-acceptance); SignalR acceptance remains blocked
+under [#889](https://github.com/thomhurst/Respire/issues/889).
 Floating-point and bounded/expiring string increment overloads, conditional
 sorted-set additions, and lexicographic sorted-set ranges remain unsupported.
 
@@ -419,12 +459,50 @@ the cache catches unsupported suffix calls. DataProtection uses `ListRange` and
 `ListRightPush` through a database factory.
 
 The test project adapts upstream `RedisCacheSetAndRemoveTests`,
-`TimeExpirationTests`, `TimeExpirationAsyncTests`, and the four
-`DataProtectionRedisTests` scenarios to TUnit/Testcontainers with the adapter.
+`TimeExpirationTests`, `TimeExpirationAsyncTests`, the public
+`CacheServiceExtensionsTests` facts, all four `DataProtectionRedisTests` scenarios,
+and `RedisDataProtectionBuilderExtensionsTest` to TUnit/Testcontainers with the adapter.
 Additional tests exercise the official buffer cache and DataProtection service
 registration, plus Redis wire controls for binary data, database isolation,
 TTL, deferred pipeline order, command errors, cancellation and ownership.
-These are the named upstream scenarios, not every test in ASP.NET Core.
+The complete applicable class inventory and the two internal-only exclusions
+are recorded above. This is coverage of these Redis integrations, not every
+test in ASP.NET Core.
+
+## Move application code to native APIs
+
+Keep one adapter at each remaining library boundary. Replace direct database
+calls with native facets such as `client.Strings`, `client.Hashes`, `client.Lists`
+and `client.SortedSets`. Use native batches/transactions when ordering or atomicity
+is required; do not replace a transaction with independent calls.
+
+For Microsoft integrations, switch service registration to the native
+[distributed cache](../integrations/caching), `Respire.DataProtection` or
+[SignalR](../integrations/signalr) package. Preserve instance/key prefixes, selected database
+and ownership when changing registration. Existing application consumers can
+keep using `IDistributedCache`, `IDataProtectionProvider` or SignalR hub APIs.
+Hangfire's storage package still consumes StackExchange.Redis interfaces, so
+retain its injected adapter while migrating unrelated application commands.
+
+For native DataProtection, install `Respire.DataProtection` and pass a factory
+for the existing native client, keeping the shared Redis list key:
+
+```csharp
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.DependencyInjection;
+using Respire.DataProtection;
+
+services.AddDataProtection().PersistKeysToRespire(() => client, "app:keys");
+```
+
+The repository borrows this client. Preserve DataProtection application names,
+purposes and key encryption settings so existing protected payloads remain usable.
+
+Keep borrowed native clients alive until all cache/storage operations and
+callback subscriptions finish. Closing the adapter removes its own subscriptions
+and settles queued/in-flight work; a borrowed client remains usable. An owned
+client closes with its adapter. Do not share a cache-owned adapter with a
+longer-lived Hangfire worker or DataProtection key repository.
 
 ### Orleans Redis providers
 
