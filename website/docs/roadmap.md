@@ -73,6 +73,9 @@ Server and protocol requirements vary by feature; each linked guide describes it
 
 ### Caching, integration, and testing
 
+- [Semantic chat response caching](guides/semantic-cache.md) for `Microsoft.Extensions.AI`,
+  with exact user/model/system/history scopes, cosine thresholds, atomic entry TTL,
+  request opt-out and explicit streaming bypass.
 - [VectorData hash and JSON collections](guides/vector-data.md) with explicit AOT-friendly mapping and KNN search.
   JSON mapping uses generated serializer metadata and supports nested schema paths.
   Both support expression filters, filtered retrieval and capability-aware

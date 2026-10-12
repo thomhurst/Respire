@@ -32,6 +32,7 @@ const sidebars = {
         'guides/stream-workers',
         'guides/vector-sets',
         'guides/vector-data',
+        'guides/semantic-cache',
         'guides/json',
         'guides/generated-hash-codecs',
           'guides/search',

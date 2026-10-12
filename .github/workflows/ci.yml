@@ -82,6 +82,10 @@ jobs:
         run: >-
           dotnet run --project tests/Respire.VectorData.Tests -c Release -f ${{ matrix.framework }} --
           --minimum-expected-tests 219 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/vector-data"
+      - name: Run semantic chat cache contracts on RESP2 and RESP3
+        run: >-
+          dotnet run --project tests/Respire.AI.Tests -c Release -f ${{ matrix.framework }} --
+          --minimum-expected-tests 34 --report-trx --results-directory "$GITHUB_WORKSPACE/TestResults/semantic-cache"
       - name: Run pinned official hash and JSON conformance on RESP2 and RESP3
         if: matrix.framework == 'net10.0'
         env:
@@ -112,6 +116,7 @@ jobs:
           path: |
             TestResults/vector-data
             TestResults/vector-data-official
+            TestResults/semantic-cache
 
   stackexchange-interop:
     name: StackExchange compatibility (${{ matrix.framework }})

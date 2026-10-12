@@ -37,6 +37,7 @@
     <PackageReference Include="Respire.OutputCaching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Search" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.VectorData" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.AI" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Probabilistic" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />

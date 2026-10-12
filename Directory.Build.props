@@ -23,6 +23,7 @@
       Aspire.Respire.HybridCaching;
       Aspire.Respire.OutputCaching;
       Respire;
+      Respire.AI;
       Respire.Compression.Lz4;
       Respire.Compression.Zstd;
       Respire.Aws;

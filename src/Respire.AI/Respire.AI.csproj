@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.AI</PackageId>
+    <Title>Respire.AI</Title>
+    <Description>Redis semantic response caching for Microsoft.Extensions.AI chat clients.</Description>
+    <PackageTags>$(PackageTags);ai;semantic-cache</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire.Search/Respire.Search.csproj" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+  </ItemGroup>
+</Project>
