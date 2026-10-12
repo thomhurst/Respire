@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Buffers.Text;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -24,6 +26,11 @@ internal ref struct RespWriter
 {
     // Max digits for a long (19) + sign + type prefix + CRLF
     internal const int MaxIntegerLineLength = 24;
+
+    // RespireValue's write size hint bounds formatted ulong, float and double payloads at 32 bytes
+    // (the longest double is 24). A frame adds a two-digit header and the trailing CRLF.
+    private const int MaxFormattedScalarLength = 32;
+    private const int MaxFormattedScalarFrameLength = 5 + MaxFormattedScalarLength + 2;
 
     private readonly WriteBuffer _buffer;
     private readonly bool _allowGrowth;
@@ -118,8 +125,7 @@ internal ref struct RespWriter
     /// <summary>Writes "$&lt;length&gt;\r\n&lt;value&gt;\r\n".</summary>
     public void WriteBulkString(scoped ReadOnlySpan<byte> value)
     {
-        WritePrefixedLine(RespConstants.BulkStringPrefix, value.Length);
-        var span = GetSpan(checked(value.Length + 2));
+        var span = WriteBulkHeaderAndReservePayload(value.Length);
         value.CopyTo(span);
         span[value.Length] = RespConstants.CarriageReturn;
         span[value.Length + 1] = RespConstants.LineFeed;
@@ -146,8 +152,7 @@ internal ref struct RespWriter
         {
             // Binary suffixes need neither UTF-8 length calculation nor surrogate handling.
             var binaryLength = checked(prefix.Bytes.Length + bytes.Length);
-            WriteBulkStringHeader(binaryLength);
-            var binaryPayload = GetSpan(checked(binaryLength + 2));
+            var binaryPayload = WriteBulkHeaderAndReservePayload(binaryLength);
             prefix.Bytes.CopyTo(binaryPayload);
             bytes.Span.CopyTo(binaryPayload[prefix.Bytes.Length..]);
             binaryPayload[binaryLength] = RespConstants.CarriageReturn;
@@ -160,8 +165,7 @@ internal ref struct RespWriter
             // An ASCII first code unit cannot pair with a surrogate at the prefix boundary.
             var mark = _position;
             var asciiLength = checked(prefix.Bytes.Length + text.Length);
-            WriteBulkStringHeader(asciiLength);
-            var asciiPayload = GetSpan(checked(asciiLength + 2));
+            var asciiPayload = WriteBulkHeaderAndReservePayload(asciiLength);
             prefix.Bytes.CopyTo(asciiPayload);
             if (Ascii.FromUtf16(text, asciiPayload[prefix.Bytes.Length..], out var asciiBytes) == OperationStatus.Done)
             {
@@ -174,8 +178,7 @@ internal ref struct RespWriter
             return;
         }
         var length = prefix.GetWireLength(text, bytes);
-        WriteBulkStringHeader(length);
-        var payload = GetSpan(checked(length + 2));
+        var payload = WriteBulkHeaderAndReservePayload(length);
         prefix.WritePayload(text, bytes, payload);
         payload[length] = RespConstants.CarriageReturn;
         payload[length + 1] = RespConstants.LineFeed;
@@ -192,8 +195,7 @@ internal ref struct RespWriter
         }
 
         var length = checked(values.Length * sizeof(float));
-        WritePrefixedLine(RespConstants.BulkStringPrefix, length);
-        var output = GetSpan(checked(length + 2));
+        var output = WriteBulkHeaderAndReservePayload(length);
         for (var index = 0; index < values.Length; index++)
             BinaryPrimitives.WriteSingleLittleEndian(output.Slice(index * sizeof(float), sizeof(float)), values[index]);
         output[length] = RespConstants.CarriageReturn;
@@ -207,8 +209,7 @@ internal ref struct RespWriter
         if (value.Length == 0 || value[0] <= 0x7f)
         {
             var mark = _position;
-            WritePrefixedLine(RespConstants.BulkStringPrefix, value.Length);
-            var asciiSpan = GetSpan(checked(value.Length + 2));
+            var asciiSpan = WriteBulkHeaderAndReservePayload(value.Length);
             if (Ascii.FromUtf16(value, asciiSpan, out var asciiBytes) == OperationStatus.Done)
             {
                 asciiSpan[asciiBytes] = RespConstants.CarriageReturn;
@@ -222,8 +223,7 @@ internal ref struct RespWriter
         }
 
         var byteCount = Encoding.UTF8.GetByteCount(value);
-        WritePrefixedLine(RespConstants.BulkStringPrefix, byteCount);
-        var span = GetSpan(checked(byteCount + 2));
+        var span = WriteBulkHeaderAndReservePayload(byteCount);
         Encoding.UTF8.GetBytes(value, span);
 
         span[byteCount] = RespConstants.CarriageReturn;
@@ -311,12 +311,129 @@ internal ref struct RespWriter
         _position += frameLength;
     }
 
+    /// <summary>Writes an unsigned integer as a bulk string, formatting its digits in place.</summary>
+    public void WriteBulkUInt64(ulong value)
+    {
+        var span = GetSpan(MaxFormattedScalarFrameLength);
+        if (!Utf8Formatter.TryFormat(value, span[4..], out var length))
+            ThrowFormattedScalarTooLarge();
+        CompleteFormattedScalar(span, length);
+    }
+
+    /// <summary>Writes a float in its shortest round-trip invariant form, formatting it in place.</summary>
+    public void WriteBulkSingle(float value)
+    {
+        var span = GetSpan(MaxFormattedScalarFrameLength);
+        if (!Utf8Formatter.TryFormat(value, span[4..], out var length))
+            ThrowFormattedScalarTooLarge();
+        CompleteFormattedScalar(span, length);
+    }
+
+    /// <summary>Writes a double in its shortest round-trip invariant form, formatting it in place.</summary>
+    public void WriteBulkDouble(double value)
+    {
+        var span = GetSpan(MaxFormattedScalarFrameLength);
+        if (!Utf8Formatter.TryFormat(value, span[4..], out var length))
+            ThrowFormattedScalarTooLarge();
+        CompleteFormattedScalar(span, length);
+    }
+
+    // Scalars are formatted after a one-digit header. Payloads of 10 or more bytes
+    // (at most 32, which every ulong, float and double fits) move one byte right.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void CompleteFormattedScalar(Span<byte> span, int length)
+    {
+        Debug.Assert((uint)length <= MaxFormattedScalarLength);
+        int headerLength;
+        span[0] = RespConstants.BulkStringPrefix;
+        if (length < 10)
+        {
+            span[1] = (byte)('0' + length);
+            headerLength = 4;
+        }
+        else
+        {
+            span.Slice(4, length).CopyTo(span[5..]);
+            var tens = (uint)length / 10;
+            span[1] = (byte)('0' + tens);
+            span[2] = (byte)('0' + (uint)length - tens * 10);
+            headerLength = 5;
+        }
+        span[headerLength - 2] = RespConstants.CarriageReturn;
+        span[headerLength - 1] = RespConstants.LineFeed;
+        var frameLength = headerLength + length + 2;
+        span[frameLength - 2] = RespConstants.CarriageReturn;
+        span[frameLength - 1] = RespConstants.LineFeed;
+        _position += frameLength;
+    }
+
+    [DoesNotReturn]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowFormattedScalarTooLarge()
+        => throw new InvalidOperationException("The write buffer cannot hold the formatted scalar payload.");
+
     /// <summary>Appends pre-encoded RESP bytes (e.g. a pre-compiled command prefix) verbatim.</summary>
     public void WriteRaw(scoped ReadOnlySpan<byte> preEncoded)
     {
         var span = GetSpan(preEncoded.Length);
         preEncoded.CopyTo(span);
         _position += preEncoded.Length;
+    }
+
+    /// <summary>
+    /// Writes "$&lt;length&gt;" and its CRLF, then returns the payload span. One reservation covers
+    /// the header, payload and trailing CRLF; the caller writes the payload and CRLF and advances past both.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Span<byte> WriteBulkHeaderAndReservePayload(int length)
+    {
+        Debug.Assert(length >= 0);
+        if ((uint)length < 10)
+        {
+            var span = GetSpan(length + 6);
+            span[0] = RespConstants.BulkStringPrefix;
+            span[1] = (byte)('0' + length);
+            span[2] = RespConstants.CarriageReturn;
+            span[3] = RespConstants.LineFeed;
+            _position += 4;
+            return span[4..];
+        }
+        if ((uint)length < 100)
+        {
+            var span = GetSpan(length + 7);
+            var tens = (uint)length / 10;
+            span[0] = RespConstants.BulkStringPrefix;
+            span[1] = (byte)('0' + tens);
+            span[2] = (byte)('0' + (uint)length - tens * 10);
+            span[3] = RespConstants.CarriageReturn;
+            span[4] = RespConstants.LineFeed;
+            _position += 5;
+            return span[5..];
+        }
+        return WriteLongBulkHeaderAndReservePayload(length);
+    }
+
+    private Span<byte> WriteLongBulkHeaderAndReservePayload(int length)
+    {
+        var digits = CountDigits((uint)length);
+        var span = GetSpan(checked(digits + 3 + length + 2));
+        span[0] = RespConstants.BulkStringPrefix;
+        Utf8Formatter.TryFormat(length, span[1..], out _);
+        span[digits + 1] = RespConstants.CarriageReturn;
+        span[digits + 2] = RespConstants.LineFeed;
+        _position += digits + 3;
+        return span[(digits + 3)..];
+    }
+
+    private static int CountDigits(uint value)
+    {
+        var digits = 1;
+        while (value >= 10)
+        {
+            value /= 10;
+            digits++;
+        }
+        return digits;
     }
 
     private void WritePrefixedLine(byte prefix, long value)
