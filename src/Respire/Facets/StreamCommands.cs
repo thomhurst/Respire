@@ -586,7 +586,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         try
         {
             var arguments = BuildAddArguments(attached, fields, snapshotValues: true, out var idempotencyOffset);
-            return owner.Attach(AddIdempotentAsync(client.Key(in key).Snapshot(), arguments, idempotencyOffset,
+            return owner.Attach(AddIdempotentAsync(client.Key(in key).Snapshot(), arguments, idempotencyOffset, attached.Idempotency!.ArgumentCount,
                 cancellationToken, owner.Observation));
         }
         catch (Exception error)
@@ -605,7 +605,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         try
         {
             var arguments = BuildAddArguments(attached, fields, snapshotValues: true, out var idempotencyOffset);
-            return owner.Attach(AddRequiredIdempotentAsync(client.Key(in key).Snapshot(), arguments, idempotencyOffset,
+            return owner.Attach(AddRequiredIdempotentAsync(client.Key(in key).Snapshot(), arguments, idempotencyOffset, attached.Idempotency!.ArgumentCount,
                 cancellationToken, owner.Observation));
         }
         catch (Exception error)
@@ -630,14 +630,14 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId> AddRequiredIdempotentAsync(RespireValue key, RespireValue[] arguments,
-        int idempotencyOffset, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => await AddIdempotentAsync(key, arguments, idempotencyOffset, cancellationToken, observation).ConfigureAwait(false)
+        int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => await AddIdempotentAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation).ConfigureAwait(false)
             ?? throw new RespireProtocolException("XADD returned null without NOMKSTREAM.");
 
     // The key and arguments are snapshots, so the fallback can rebuild ordinary XADD after an await.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId?> AddIdempotentAsync(RespireValue key, RespireValue[] arguments,
-        int idempotencyOffset, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string? id;
@@ -654,9 +654,9 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             // specific parse error identifies unsupported IDMP. Other errors must reach the caller.
             // Never cache capability: the next call or retry can reach a different server version.
             observation.Handled(error);
-            var plain = new RespireValue[arguments.Length - 3];
+            var plain = new RespireValue[arguments.Length - idempotencyArgumentCount];
             arguments.AsSpan(0, idempotencyOffset).CopyTo(plain);
-            arguments.AsSpan(idempotencyOffset + 3).CopyTo(plain.AsSpan(idempotencyOffset));
+            arguments.AsSpan(idempotencyOffset + idempotencyArgumentCount).CopyTo(plain.AsSpan(idempotencyOffset));
             id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAdd, key, plain),
                 cancellationToken, observation).ConfigureAwait(false);
         }

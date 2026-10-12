@@ -250,6 +250,31 @@ public class StreamIdempotentRetryTests
     }
 
     [Test]
+    [Arguments(128)]
+    [Arguments(129)]
+    public async Task OverlongMinIdCannotTriggerIdempotencyFallback(int length)
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+
+        var minimumId = new string('0', length - 2) + "-0";
+        await Assert.That(async () => await client.Streams.AddAsync("s", new StreamAddOptions { MinId = minimumId }, ("f", "v")))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(XAdds(server).Length).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task MinIdAtServerLengthLimitIsAccepted()
+    {
+        await using var server = XAddServer(supportsIdempotency: true);
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
+        var minimumId = new string('0', 125) + "-0";
+
+        await client.Streams.AddAsync("s", new StreamAddOptions { MinId = minimumId }, ("f", "v"));
+        await Assert.That(XAdds(server).Length).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task EmptyProducerIdIsRejected()
     {
         await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [new("localhost")], StreamProducerId = "" }))
