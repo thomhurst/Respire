@@ -305,12 +305,19 @@ public partial class StreamWorkerTests
     {
         var release = NewSignal();
         var canceled = NewSignal();
+        var parked = NewSignal();
         var state = new State { Handle = async (entry, token) =>
         {
             if (entry.GetString("payload") == "0")
             {
                 using var registration = token.Register(() => canceled.TrySetResult());
+                parked.TrySetResult();
                 await release.Task; // Ignore cancellation so the host and scope lifetimes differ.
+            }
+            else
+            {
+                // The failing ack must not cancel the host before the other handler has parked.
+                await parked.Task.WaitAsync(Deadline);
             }
             return RespireStreamWorkerResult.Ack;
         } };
