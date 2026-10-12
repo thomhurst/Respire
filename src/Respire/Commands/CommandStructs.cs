@@ -736,10 +736,8 @@ internal static class DynamicCommandRouting
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
     RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    public RespireCommandRetryCategory RetryCategory => !command.HasExplicitRetryCategory
-        && command.RetryCategory != RespireCommandRetryCategory.Never
-        && command.Name == "SET" && args.Length == 2
-        ? RespireCommandRetryCategory.WriteLastWins : command.RetryCategory;
+    // Caller arguments never refine risk; typed commands own option-aware categories.
+    public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(command.Verb, args);
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
     private readonly ReadCommandKind readKind = command.ReadKind != ReadCommandKind.None
@@ -917,8 +915,14 @@ internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
-    public RespireCommandRetryCategory RetryCategory => expiry.IsNone && when == SetWhen.Always && !returnOld
-        ? RespireCommandRetryCategory.WriteLastWins : Verbs.Set.RetryCategory;
+    // NX replays check the condition again; XX replays overwrite like a plain SET.
+    public RespireCommandRetryCategory RetryCategory => !expiry.IsNone || returnOld ? Verbs.Set.RetryCategory
+        : when switch
+        {
+            SetWhen.Always or SetWhen.Exists => RespireCommandRetryCategory.WriteLastWins,
+            SetWhen.NotExists => RespireCommandRetryCategory.WriteChecked,
+            _ => Verbs.Set.RetryCategory,
+        };
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
         key.GetWriteSizeHint(), value.GetWriteSizeHint(), CommandWriteSizeHint.SetOptions);

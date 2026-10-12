@@ -108,6 +108,45 @@ public class RetryCategoryMetadataTests
     }
 
     [Test]
+    [Arguments(SetWhen.Always, false, false, RespireCommandRetryCategory.WriteLastWins)]
+    [Arguments(SetWhen.Exists, false, false, RespireCommandRetryCategory.WriteLastWins)]
+    [Arguments(SetWhen.NotExists, false, false, RespireCommandRetryCategory.WriteChecked)]
+    [Arguments(SetWhen.Always, true, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(SetWhen.Exists, true, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(SetWhen.NotExists, true, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(SetWhen.Always, false, true, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(SetWhen.Exists, false, true, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(SetWhen.NotExists, false, true, RespireCommandRetryCategory.WriteAccumulating)]
+    public async Task TypedSetRefinesRiskOnlyWithoutExpiryOrGet(
+        SetWhen when, bool expires, bool returnOld, RespireCommandRetryCategory expected)
+    {
+        var expiry = expires ? RespireExpiry.In(TimeSpan.FromSeconds(1)) : RespireExpiry.None;
+        await Assert.That(new SetCommand("key", "value", expiry, when, returnOld).RetryCategory)
+            .IsEqualTo(expected);
+        await Assert.That(new SetCommand("key", "value", RespireExpiry.Keep, when, returnOld).RetryCategory)
+            .IsEqualTo(RespireCommandRetryCategory.WriteAccumulating);
+    }
+
+    [Test]
+    [Arguments(RespireSortedSetAddOptions.Nx, false, RespireCommandRetryCategory.WriteChecked)]
+    [Arguments(RespireSortedSetAddOptions.Xx, false, RespireCommandRetryCategory.WriteLastWins)]
+    [Arguments(RespireSortedSetAddOptions.None, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Nx | RespireSortedSetAddOptions.Ch, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Ch, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Gt, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Lt, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Gt, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Ch, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Nx, true, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSortedSetAddOptions.Xx, true, RespireCommandRetryCategory.WriteAccumulating)]
+    public async Task TypedSortedSetAddRefinesRiskOnlyForExactNxOrXx(
+        RespireSortedSetAddOptions options, bool increment, RespireCommandRetryCategory expected)
+    {
+        await Assert.That(new SortedSetAddCommand("key", options, "member", 1, increment).RetryCategory)
+            .IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task RetryRiskDoesNotChangeReadRoutingCacheEffectsOrFootprints()
     {
         await Assert.That(RespireCommands.Scripting.EVAL_RO.IsReadOnly).IsTrue();
