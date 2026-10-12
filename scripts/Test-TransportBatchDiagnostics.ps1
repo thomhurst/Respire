@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('respire-diagnostic-test-' + [Guid]::NewGuid())
 $previousMetrics = $env:RESPIRE_BENCH_ERRORS
 try {
-    foreach ($case in @('net10.0', 'net8.0', 'build-failure', 'revision-change', 'source-change', 'missing-assembly')) {
+    foreach ($case in @('net10.0', 'net8.0', 'build-failure', 'revision-change', 'source-change', 'dirty-sdk-selector', 'sdk-selector-change', 'missing-assembly')) {
         $fixture = Join-Path $fixtureRoot $case
         $scripts = Join-Path $fixture 'scripts'
         $source = Join-Path $fixture 'benchmarks/Respire.Benchmarks'
@@ -16,6 +16,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Invoke-TransportBatchDiagnostics.ps1') -Destination $scripts
         Set-Content -LiteralPath (Join-Path $source 'Respire.Benchmarks.csproj') -Value '<Project />'
         Set-Content -LiteralPath (Join-Path $fixture '.gitignore') -Value 'bin/'
+        Set-Content -LiteralPath (Join-Path $fixture 'global.json') -Value '{}'
         Set-Content -LiteralPath (Join-Path $scripts 'Invoke-AgentDotNet.ps1') -Value @'
 param([switch]$SingleNode, [string[]]$DotNetArguments)
 $repo = Split-Path $PSScriptRoot -Parent
@@ -32,6 +33,9 @@ if ($DotNetArguments[0] -eq 'build') {
     }
     if ($case -eq 'source-change') {
         Add-Content -LiteralPath (Join-Path $repo 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj') -Value 'changed'
+    }
+    if ($case -eq 'sdk-selector-change') {
+        Set-Content -LiteralPath (Join-Path $repo 'global.json') -Value '{"sdk":{"version":"10.0.100"}}'
     }
     $framework = $DotNetArguments[-1]
     $binary = Join-Path $repo "benchmarks/Respire.Benchmarks/bin/Release/$framework/Respire.Benchmarks.dll"
@@ -53,6 +57,9 @@ exit 0
         git -C $fixture add .
         git -C $fixture -c user.name=Test -c user.email=test@example.invalid commit -qm initial
         if ($LASTEXITCODE -ne 0) { throw 'Could not create the test repository.' }
+        if ($case -eq 'dirty-sdk-selector') {
+            Set-Content -LiteralPath (Join-Path $fixture 'global.json') -Value '{"sdk":{"version":"10.0.100"}}'
+        }
         $framework = if ($case -eq 'net8.0') { 'net8.0' } else { 'net10.0' }
         if ($case -ne 'missing-assembly') {
             $binaryDirectory = Join-Path $source "bin/Release/$framework"
@@ -69,6 +76,8 @@ exit 0
             'build-failure' { 'Diagnostic rebuild failed: net10.0' }
             'revision-change' { 'Diagnostic revision changed during the rebuild.' }
             'source-change' { 'Measured source changed during the rebuild.' }
+            'dirty-sdk-selector' { 'Commit measured source before capturing revision-stamped evidence.' }
+            'sdk-selector-change' { 'Measured source changed during the rebuild.' }
             'missing-assembly' { 'Diagnostic rebuild did not produce the net10.0 benchmark assembly.' }
             default { $null }
         }

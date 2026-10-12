@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $revision = (git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the diagnostic revision.' }
-if (git -C $repo status --porcelain -- benchmarks/Respire.Benchmarks src Directory.Build.props Directory.Packages.props) {
+if (git -C $repo status --porcelain -- benchmarks/Respire.Benchmarks src Directory.Build.props Directory.Packages.props global.json) {
     throw 'Commit measured source before capturing revision-stamped evidence.'
 }
 $outputRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) { throw "Diagnostic rebuild failed: $Framework" }
 if ((git -C $repo rev-parse HEAD).Trim() -ne $revision -or $LASTEXITCODE -ne 0) {
     throw 'Diagnostic revision changed during the rebuild.'
 }
-if (git -C $repo status --porcelain -- benchmarks/Respire.Benchmarks src Directory.Build.props Directory.Packages.props) {
+if (git -C $repo status --porcelain -- benchmarks/Respire.Benchmarks src Directory.Build.props Directory.Packages.props global.json) {
     throw 'Measured source changed during the rebuild.'
 }
 $binary = Join-Path $repo "benchmarks/Respire.Benchmarks/bin/Release/$Framework/Respire.Benchmarks.dll"
