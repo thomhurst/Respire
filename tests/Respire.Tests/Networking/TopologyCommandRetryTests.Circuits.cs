@@ -258,7 +258,10 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    public async Task ClusterRetryRefreshContinuesPastAStaleMaster()
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ClusterRetryRefreshContinuesPastAStaleMaster(bool omitSurvivor, bool redirectDuringRefresh)
     {
         await using var stale = CircuitUnitServer("immediate", _ => Value);
         await using var survivor = CircuitUnitServer("immediate", _ => Value);
@@ -268,13 +271,23 @@ public partial class TopologyCommandRetryTests
             + $"*3\r\n:4096\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{survivor.Port}\r\n"
             + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{highPort}\r\n");
         var staleReply = stale.ReplyOverride!;
-        stale.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(server.Port) : staleReply(id, command);
+        var omittedMap = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{stale.Port}\r\n"
+            + $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
+        ClusterRouter? router = null;
+        stale.ReplyOverride = (id, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return staleReply(id, command);
+            if (redirectDuringRefresh)
+                router!.SetSlotOwner(12539, router.GetMultiplexer(new("127.0.0.1", survivor.Port)));
+            return omitSurvivor ? omittedMap : Map(server.Port);
+        };
         var survivorReply = survivor.ReplyOverride!;
         survivor.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(survivor.Port) : survivorReply(id, command);
         var ownerReply = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? Map(server.Port) : ownerReply(id, command);
         await using var client = await RespireClient.ConnectAsync(CircuitRetryOptions(server, cluster: true));
-        var router = client.Core.Cluster!;
+        router = client.Core.Cluster!;
         var owner = router.GetKnownSlotOwner(12539)!;
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.ReadGate = handshake.Task;
@@ -287,7 +300,7 @@ public partial class TopologyCommandRetryTests
             await Assert.That(router.GetKnownSlotOwner(12539)!.ActiveConnectionEndpoint)
                 .IsEqualTo(new RespireEndpoint("127.0.0.1", survivor.Port));
             await Assert.That(stale.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
-            await Assert.That(survivor.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
+            await Assert.That(survivor.ReceivedCommands.Contains("CLUSTER SLOTS")).IsEqualTo(!redirectDuringRefresh);
             await Assert.That(server.ReceivedCommands.Contains("GET key")).IsFalse();
         }
         finally

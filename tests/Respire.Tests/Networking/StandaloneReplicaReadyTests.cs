@@ -324,7 +324,35 @@ public class StandaloneReplicaReadyTests
     [Arguments("integer")]
     public async Task PreparedDispatchAllocatesNoCallerState(string shape)
     {
-        await Assert.That(RespireTelemetry.IsOperationEnabled("GET")).IsFalse();
+        var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(StandaloneReplicaReadyTests).Assembly.Location);
+        start.Environment[AllocationProbeMode] = Environment.Version.ToString();
+        start.Environment["RESPIRE_REPLICA_DISPATCH_SHAPE"] = shape;
+        // Default-interface command calls can box until asynchronous tier promotion finishes.
+        // Measure optimized steady state, independent of other JIT work in the test runner.
+        start.Environment["DOTNET_TieredCompilation"] = "0";
+        await AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    private const string AllocationProbeMode = "RESPIRE_REPLICA_DISPATCH_ALLOCATION_PROBE";
+
+    internal static int? RunIsolatedAllocationProbe()
+    {
+        var runtime = Environment.GetEnvironmentVariable(AllocationProbeMode);
+        if (runtime is null) return null;
+        try
+        {
+            if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+            MeasurePreparedDispatchAsync(Environment.GetEnvironmentVariable("RESPIRE_REPLICA_DISPATCH_SHAPE")
+                ?? throw new InvalidOperationException("Missing dispatch shape.")).GetAwaiter().GetResult();
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static async Task MeasurePreparedDispatchAsync(string shape)
+    {
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
         await using var primary = Server();
         await using var replica = Server();
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
@@ -346,24 +374,16 @@ public class StandaloneReplicaReadyTests
             "bytes" => () => MeasureReplies(replica, connection, () => view.GetBytesAsync("parked"), true),
             _ => (Func<long>)(() => MeasureReplies(replica, connection, () => view.Strings.LengthAsync("parked"), true)),
         };
-        // Warm generic dispatch and both completion ownership transitions. Call
-        // counts alone can finish before background tiered compilation removes
-        // the two default-interface command boxes. Warm for a fixed duration,
-        // without using allocation results to decide when measurement starts.
-        var warmStart = Stopwatch.GetTimestamp();
-        var warmPasses = 0;
-        do
-        {
-            _ = send();
-            warmPasses++;
-        }
-        while (warmPasses < 8 || Stopwatch.GetElapsedTime(warmStart) < TimeSpan.FromSeconds(2));
+        // Warm generic dispatch and both completion ownership transitions.
+        for (var pass = 0; pass < 8; pass++) _ = send();
         _ = control();
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (send(), control()));
         Console.WriteLine($"REPLICA_DISPATCH {shape}: {measured.Item1} B; allocation control {measured.Item2} B for 32 calls.");
-        await Assert.That(measured.Item2 - measured.Item1).IsGreaterThanOrEqualTo(32L * 37);
+        if (measured.Item2 - measured.Item1 < 32L * 37)
+            throw new InvalidOperationException("Dispatch positive control did not observe the escaping allocations.");
 #if !DEBUG
-        await Assert.That(measured.Item1).IsEqualTo(0L);
+        if (measured.Item1 != 0)
+            throw new InvalidOperationException($"Expected zero prepared dispatch allocations; observed {measured.Item1} bytes.");
 #endif
     }
 

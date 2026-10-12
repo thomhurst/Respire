@@ -1650,7 +1650,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer node,
         CancellationToken cancellationToken, DiscoveryRound? discovery,
         long? expectedTopologyVersion = null, object? snapshotBatch = null, bool keepUncoveredOwners = false,
-        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null)
+        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null,
+        RespireConnectionMultiplexer? rejectedOwner = null)
     {
         try
         {
@@ -1658,7 +1659,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var load = await TryLoadSlotsAsync(node, cancellationToken,
                 expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch,
                 keepUncoveredOwners: keepUncoveredOwners, requiredSlot: requiredSlot,
-                replicaRefresh: replicaRefresh).ConfigureAwait(false);
+                replicaRefresh: replicaRefresh, rejectedOwner: rejectedOwner).ConfigureAwait(false);
             // Retained owners are not evidence that this reply revalidated the requested slot.
             var complete = load.Loaded && (requiredSlot.HasValue ? load.CoversRequiredSlot : HasCompleteTopology());
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
@@ -1690,7 +1691,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Each contacted node names a failure that escapes this refresh.
             observation.UseEndpoint(master.ActiveConnectionEndpoint, cancellationToken);
             var refreshed = await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
-                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null).ConfigureAwait(false);
+                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners || rejectedOwner is not null ? slot : null,
+                    rejectedOwner: rejectedOwner).ConfigureAwait(false);
             if (!refreshed)
             {
                 continue;
@@ -2551,7 +2553,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         long? expectedTopologyVersion = null,
         object? snapshotBatch = null,
         int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null,
-        RespireConnection? queryConnection = null)
+        RespireConnection? queryConnection = null, RespireConnectionMultiplexer? rejectedOwner = null)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -2639,6 +2641,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 var coversAllSlots = CoversAllSlots(topology);
                 var coversRequiredSlot = requiredSlot is not { } slot
                     || topology.Any(range => range.Start <= slot && slot <= range.End);
+                if (rejectedOwner is not null && requiredSlot is { } rejectedSlot)
+                {
+                    var range = topology.Find(range => range.Start <= rejectedSlot && rejectedSlot <= range.End);
+                    var rejectedEndpoint = new RespireEndpoint(rejectedOwner.Host, rejectedOwner.Port);
+                    // A reply without a replacement must not retire unvisited topology sources.
+                    // Identity reuse requires the transport's immutable endpoint to be advertised,
+                    // either as the preferred address or an alias.
+                    if (range is null || RespireEndpointComparer.Instance.Equals(range.Preferred, rejectedEndpoint)
+                        || range.Aliases.Contains(rejectedEndpoint, RespireEndpointComparer.Instance))
+                        // Consult the current snapshot, which may contain a newer MOVED route.
+                        return (true, coversAllSlots, coversRequiredSlot);
+                }
                 if (replicaRefresh is not null && !replicaRefresh.Accept(topology, topologyVersion, discoveryGeneration))
                     return (false, coversAllSlots, coversRequiredSlot);
                 ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners, snapshotBatch);

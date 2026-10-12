@@ -12,6 +12,7 @@ internal static class Program
         // Enter probes after module initialization, before the runner changes pool capacity.
         var probeResult = DispatchResponseObservationTests.RunIsolatedNativeDispatchProbe()
             ?? StandaloneCircuitAllocationTests.RunIsolatedAllocationProbe()
+            ?? StandaloneReplicaReadyTests.RunIsolatedAllocationProbe()
             ?? ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()
             ?? AsyncFlushSignalTests.RunIsolatedAllocationProbe()
             ?? StandaloneBatchFlushTests.RunIsolatedAllocationProbe();
