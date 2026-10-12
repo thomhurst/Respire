@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using BenchmarkDotNet.Analysers;
 using BenchmarkDotNet.Diagnosers;
 using BenchmarkDotNet.Engines;
@@ -30,6 +32,28 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             Directory.CreateDirectory(directory);
             _prefix = Path.Combine(Path.GetFullPath(directory), Guid.NewGuid().ToString("N"));
             var environment = parameters.Process.StartInfo.Environment;
+            // BenchmarkDotNet 0.15.8 sends this signal before Process.Start(). Its
+            // later WithAffinity call pins only the main Linux task, after runtime startup.
+            if (OperatingSystem.IsLinux() && parameters.BenchmarkCase.Job.Id == "selection-pinned")
+            {
+                var startInfo = parameters.Process.StartInfo;
+                var mask = parameters.BenchmarkCase.Job.Environment.Affinity.ToInt64();
+                if (mask <= 0 || (mask & (mask - 1)) != 0)
+                    throw new ArgumentException("Selection affinity must contain exactly one CPU.");
+                var executable = QuoteArgument(startInfo.FileName);
+                if (startInfo.ArgumentList.Count > 0)
+                {
+                    startInfo.ArgumentList.Insert(0, startInfo.FileName);
+                    startInfo.ArgumentList.Insert(0, $"0x{mask:x}");
+                }
+                else
+                {
+                    startInfo.Arguments = $"0x{mask:x} {executable} {startInfo.Arguments}";
+                }
+                // taskset execs the managed child with the same PID; all runtime
+                // threads inherit the singleton mask before they can be created.
+                startInfo.FileName = "/usr/bin/taskset";
+            }
             environment["DOTNET_JitDisasm"] = "SelectConnection GetConnection GetSingleConnection *WorkloadAction*";
             environment["DOTNET_JitDisasmWithCodeBytes"] = "1";
             environment["DOTNET_JitDisasmWithAlignmentBoundaries"] = "1";
@@ -45,8 +69,20 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
         }
         if (signal == HostSignal.AfterProcessExit)
         {
-            if (OperatingSystem.IsLinux())
-                File.Copy($"/tmp/perf-{_pid}.map", _prefix + ".perf.map");
+            if (!OperatingSystem.IsLinux() || _pid == 0) return;
+            try { File.Copy($"/tmp/perf-{_pid}.map", _prefix + ".perf.map"); }
+            catch (IOException) { return; }
+            catch (UnauthorizedAccessException) { return; }
+            // Publish the map only after copying succeeds. Missing maps remain
+            // a provenance-gate failure rather than aborting the benchmark host.
+            foreach (var boundary in new[] { HostSignal.BeforeActualRun, HostSignal.AfterActualRun })
+            {
+                var path = _prefix + "." + boundary + ".json";
+                if (!File.Exists(path)) continue;
+                var record = JsonNode.Parse(File.ReadAllText(path))!;
+                record["perfMap"] = Path.GetFileName(_prefix + ".perf.map");
+                File.WriteAllText(path, record.ToJsonString());
+            }
             return;
         }
 
@@ -87,6 +123,8 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             purpose = extraRun ? "disassembly" : Environment.GetEnvironmentVariable("RESPIRE_SELECTION_PURPOSE") ?? "public",
             job = parameters.BenchmarkCase.Job.ToString(),
             jobId = parameters.BenchmarkCase.Job.Id,
+            affinityMask = parameters.BenchmarkCase.Job.Id == "selection-pinned"
+                ? parameters.BenchmarkCase.Job.Environment.Affinity.ToInt64() : (long?)null,
             environment = process.StartInfo.Environment.Where(pair =>
                 pair.Key.StartsWith("DOTNET_", StringComparison.Ordinal) || pair.Key.StartsWith("COMPlus_", StringComparison.Ordinal))
                 .ToDictionary(pair => pair.Key, pair => pair.Value),
@@ -94,9 +132,12 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             timestampFrequency = Stopwatch.Frequency,
             cpuSeconds = process.TotalProcessorTime.TotalSeconds,
             jitFile = Path.GetFileName(_prefix + ".jit.txt"), files,
-            perfMap = OperatingSystem.IsLinux() ? Path.GetFileName(_prefix + ".perf.map") : null,
+            perfMap = (string?)null,
         }));
     }
+
+    private static string QuoteArgument(string value)
+        => "\"" + Regex.Replace(Regex.Replace(value, @"(\\*)""", "$1$1\\\""), @"(\\+)$", "$1$1") + "\"";
 
     private static void Capture(Dictionary<string, string?> files, string path)
     {

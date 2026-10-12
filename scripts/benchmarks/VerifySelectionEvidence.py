@@ -8,6 +8,42 @@ import sys
 from pathlib import Path
 
 
+def usable(value):
+    return isinstance(value, str) and bool(value.strip()) and not value.startswith("UNAVAILABLE:")
+
+
+def verify_linux_scheduling(boundary, path):
+    pid = boundary["pid"]
+    files = boundary["files"]
+    for name in ("stat", "status"):
+        assert usable(files.get(f"/proc/{pid}/{name}")), f"Missing Linux scheduling evidence: {path}"
+    main_task = f"/proc/{pid}/task/{pid}"
+    tasks = {name.rsplit("/", 1)[0] for name in files if name.startswith(f"/proc/{pid}/task/")}
+    assert main_task in tasks, f"Missing Linux thread scheduling evidence: {path}"
+    for task in tasks:
+        # A non-main task can exit during capture. The stable main task must
+        # remain usable; a task with a usable final status must be complete.
+        if task != main_task and not usable(files.get(task + "/status")):
+            continue
+        assert all(usable(files.get(task + "/" + name)) for name in ("stat", "schedstat", "sched", "status")), \
+            f"Missing Linux thread scheduling evidence: {path}, {task}"
+
+
+def verify_affinity(before, after, path):
+    mask = before.get("affinityMask")
+    assert isinstance(mask, int) and mask > 0 and mask & (mask - 1) == 0, f"Missing affinity target: {path}"
+    assert after.get("affinityMask") == mask, f"Changed affinity target: {path}"
+    cpu = str(mask.bit_length() - 1)
+    for boundary in (before, after):
+        files = boundary["files"]
+        statuses = [files.get(f"/proc/{boundary['pid']}/status", "")]
+        statuses.extend(value for name, value in files.items()
+                        if name.startswith(f"/proc/{boundary['pid']}/task/") and name.endswith("/status") and usable(value))
+        for status in statuses:
+            allowed = re.search(r"Cpus_allowed_list:\s*(\d+)\s*\n", status)
+            assert allowed and allowed[1] == cpu, f"Affinity was not applied to every task: {path}"
+
+
 def verify_phase(root, phase, revision, fixture_revision, metric_mode):
     artifacts = root / "results" / phase
     reports = list((artifacts / "results").glob("*-report-full-compressed.json"))
@@ -57,7 +93,8 @@ def verify_phase(root, phase, revision, fixture_revision, metric_mode):
             assert re.search(r"Tier[01]|FullOpts|MinOpts", code), f"Missing tier evidence: {jit}"
             if before.get("platform") == "linux":
                 assert before.get("perfMap"), f"Missing Linux code addresses: {path}"
-                assert f"/proc/{before['pid']}/stat" in before["files"], f"Missing Linux scheduling evidence: {path}"
+                for boundary in (before, after):
+                    verify_linux_scheduling(boundary, path)
             if before.get("perfMap"):
                 perf_map = evidence / before["perfMap"]
                 assert Path(before["perfMap"]).name == before["perfMap"] and perf_map.is_file(), f"Missing code addresses: {path}"
@@ -71,10 +108,7 @@ def verify_phase(root, phase, revision, fixture_revision, metric_mode):
             if "selection-tiering-off(" in case["DisplayInfo"]:
                 assert before["environment"]["DOTNET_TieredCompilation"] == "0", f"Missing tier control: {path}"
             if "selection-pinned(" in case["DisplayInfo"]:
-                for boundary in (before, after):
-                    status = boundary["files"].get(f"/proc/{boundary['pid']}/status", "")
-                    allowed = re.search(r"Cpus_allowed_list:\s*(\d+)\s*\n", status)
-                    assert allowed, f"Affinity was not applied: {path}"
+                verify_affinity(before, after, path)
             launches.append({"before": before, "after": after, "samples": samples,
                              "jitSha256": hashlib.sha256(jit.read_bytes()).hexdigest()})
     return launches

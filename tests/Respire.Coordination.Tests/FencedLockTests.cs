@@ -51,11 +51,14 @@ public class FencedLockTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync(3);
         var view = client.WithKeyPrefix($"rw:{Guid.NewGuid():N}:");
         byte[] key = [0xff, 0, 1];
-        var pending = new RespireCoordination(view).TryAcquireReadLockAsync(key, TimeSpan.FromMilliseconds(150));
+        var pending = new RespireCoordination(view).TryAcquireReadLockAsync(key, Lease);
         key[2] = 2;
         await using var expired = await pending;
         await Assert.That(expired.Acquired).IsTrue();
-        await Task.Delay(250);
+        // Expire the server lease after acquisition, without making success depend
+        // on a 150 ms command round trip on a busy runner. Keep the binary key snapshot check.
+        await Assert.That(await view.Keys.ExpireAsync(new byte[] { 0xff, 0, 1 },
+            RespireExpiry.In(TimeSpan.Zero))).IsTrue();
         await using var replacement = await new RespireCoordination(view).TryAcquireWriteLockAsync(new byte[] { 0xff, 0, 1 }, Lease);
         await Assert.That(replacement.Acquired).IsTrue();
         await Assert.That(await expired.Lock.ReleaseAsync()).IsFalse();
