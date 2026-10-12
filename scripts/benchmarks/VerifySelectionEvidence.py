@@ -17,6 +17,7 @@ def verify_phase(root, phase, revision, fixture_revision, metric_mode):
     diagnostic = phase.startswith("selection-")
     assert len(cases) == (8 if diagnostic else 2), f"Missing selection cases: {phase}"
     if diagnostic:
+        assert all("UnrollFactor=16" in case["DisplayInfo"] for case in cases), f"Uncontrolled engine shape: {phase}"
         jobs = ("selection-reference", "selection-tiering-off", "selection-pinned", "selection-no-subtraction")
         for job in jobs:
             for connections in (1, 2):

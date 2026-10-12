@@ -23,7 +23,9 @@ if (args is ["--transport-batch-trace-report", var trace, var report])
 // They never replace the public Medium baseline/candidate/baseline comparison.
 if (Environment.GetEnvironmentVariable("RESPIRE_SELECTION_CONTROLS") == "1")
 {
-    var reference = Job.ShortRun.WithLaunchCount(2);
+    // Fix the engine shape: first-invocation JIT/logging time must not choose a
+    // different unroll factor or silently disable overhead in a diagnostic control.
+    var reference = Job.ShortRun.WithLaunchCount(2).WithUnrollFactor(16);
     var affinity = long.Parse(Environment.GetEnvironmentVariable("RESPIRE_SELECTION_AFFINITY")
         ?? throw new ArgumentException("Selection controls require an allowed CPU affinity mask."),
         System.Globalization.CultureInfo.InvariantCulture);

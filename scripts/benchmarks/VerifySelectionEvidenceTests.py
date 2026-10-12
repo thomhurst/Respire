@@ -22,7 +22,7 @@ class SelectionEvidenceTests(unittest.TestCase):
         cases = []
         for job in jobs:
             for connections in (1, 2):
-                name = f"Selection.SelectConnection: {job}(LaunchCount=2) [Connections={connections}]"
+                name = f"Selection.SelectConnection: {job}(LaunchCount=2, UnrollFactor=16) [Connections={connections}]"
                 samples = []
                 for launch in (1, 2):
                     prefix = f"{job}-{connections}-{launch}"
