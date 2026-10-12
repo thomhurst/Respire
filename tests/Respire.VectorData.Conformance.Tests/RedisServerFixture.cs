@@ -46,13 +46,16 @@ public sealed class RedisServerFixture : IAsyncLifetime
 
     private async Task AssertCapabilitiesAsync()
     {
-        await using var client = await RespireClient.ConnectAsync(ConnectionString).ConfigureAwait(false);
-        string[] commands = ["JSON.SET", "JSON.GET", "FT.CREATE", "FT.SEARCH", "FT.HYBRID"];
-        using var info = await client.ExecuteAsync(RespireCommands.Server.COMMAND_INFO,
-            commands.Select(command => (RespireValue)command).ToArray()).ConfigureAwait(false);
-        if (info.Count != commands.Length) throw new InvalidOperationException("COMMAND INFO returned incomplete capability metadata.");
-        for (var i = 0; i < commands.Length; i++)
-            if (info[i].IsNull) throw new NotSupportedException($"Official VectorData conformance requires {commands[i]}.");
+        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        {
+            await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(ConnectionString) with { Protocol = protocol }).ConfigureAwait(false);
+            string[] commands = ["JSON.SET", "JSON.GET", "FT.CREATE", "FT.SEARCH", "FT.HYBRID", "FT.DROPINDEX", "FT._LIST", "HGETALL", "EVAL", "SCAN"];
+            using var info = await client.ExecuteAsync(RespireCommands.Server.COMMAND_INFO,
+                commands.Select(command => (RespireValue)command).ToArray()).ConfigureAwait(false);
+            if (info.Count != commands.Length) throw new InvalidOperationException("COMMAND INFO returned incomplete capability metadata.");
+            for (var i = 0; i < commands.Length; i++)
+                if (info[i].IsNull) throw new NotSupportedException($"Official VectorData conformance requires {commands[i]} on {protocol}.");
+        }
     }
 
     public async ValueTask DisposeAsync()

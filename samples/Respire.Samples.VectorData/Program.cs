@@ -21,7 +21,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         while (true)
         {
             var found = false;
-            await foreach (var result in collection.SearchAsync(new float[] { 1, 0 }, 1,
+            await foreach (var result in collection.SearchAsync(new Memory<float>([1, 0]), 1,
                 new() { IncludeVectors = true, VectorProperty = movie => movie.Vector, Filter = movie => movie.Title == title && movie.Tag == null }, deadline.Token))
             {
                 if (result.Record.Id != "1" || result.Score != 0 || result.Record.Vector.Length != 2)
@@ -39,7 +39,7 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         }
         if (retrieved != 1) throw new InvalidOperationException("Filtered retrieval smoke failed.");
         var hybridCount = 0;
-        await foreach (var result in collection.HybridSearchAsync(new float[] { 1, 0 }, ["Arrival"], 1,
+        await foreach (var result in collection.HybridSearchAsync(new ReadOnlyMemory<float>([1, 0]), ["Arrival"], 1,
             new() { AdditionalProperty = movie => movie.Title, Filter = movie => movie.Title == title, IncludeVectors = true }, deadline.Token))
         {
             if (result.Record.Id != "1" || result.Score is not > 0 || result.Record.Vector.Length != 2)
@@ -95,4 +95,58 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
         Console.WriteLine($"VectorData JSON, KNN and hybrid smoke passed ({protocol}).");
     }
     finally { await jsonCollection.EnsureCollectionDeletedAsync(CancellationToken.None); }
+
+    // Root the generated metadata and execute nested vector selection/removal in the native binary.
+    // Merely declaring NestedVectorMapper does not establish trimming or NativeAOT coverage.
+    store.RegisterMapper(new NestedVectorMapper());
+    using var nested = store.GetJsonCollection<NestedVectorRecord>("nested-vectors");
+    try
+    {
+        await nested.EnsureCollectionExistsAsync(deadline.Token);
+        await nested.UpsertAsync(new[]
+        {
+            new NestedVectorRecord("1", new([1, 0], "Arrival")),
+            new NestedVectorRecord("2", new([0, 1], "Other")),
+        }, deadline.Token);
+        if (!await store.CollectionExistsAsync("nested-vectors", deadline.Token))
+            throw new InvalidOperationException("Nested collection lifecycle smoke failed.");
+        var records = 0;
+        await foreach (var record in nested.GetAsync(new[] { "1", "2" }, new() { IncludeVectors = true }, deadline.Token))
+        {
+            if (record.Data.Values?.Length != 2) throw new InvalidOperationException("Nested batch retrieval smoke failed.");
+            records++;
+        }
+        if (records != 2) throw new InvalidOperationException("Nested batch retrieval smoke failed.");
+        var omitted = await nested.GetAsync("1", cancellationToken: deadline.Token);
+        if (omitted?.Data.Values is not null || omitted?.Data.Caption != "Arrival")
+            throw new InvalidOperationException("Nested vector omission smoke failed.");
+        while (true)
+        {
+            var found = false;
+            await foreach (var result in nested.SearchAsync(new ReadOnlyMemory<float>([1, 0]), 1,
+                new() { IncludeVectors = true, VectorProperty = record => record.Data.Values }, deadline.Token))
+            {
+                if (result.Record.Id != "1" || result.Score != 0 || result.Record.Data.Values?.Length != 2)
+                    throw new InvalidOperationException("Nested HNSW search smoke failed.");
+                found = true;
+            }
+            if (found) break;
+            await Task.Delay(20, deadline.Token);
+        }
+        var hybridCount = 0;
+        await foreach (var result in nested.HybridSearchAsync(new Memory<float>([1, 0]), ["Arrival"], 1,
+            new() { VectorProperty = record => record.Data.Values, AdditionalProperty = record => record.Data.Caption }, deadline.Token))
+        {
+            if (result.Record.Id != "1" || result.Score is not > 0 || result.Record.Data.Values is not null)
+                throw new InvalidOperationException("Nested hybrid search smoke failed.");
+            hybridCount++;
+        }
+        if (hybridCount != 1) throw new InvalidOperationException("Nested hybrid search smoke failed.");
+        await nested.DeleteAsync(new[] { "1", "2" }, deadline.Token);
+        if (await nested.GetAsync("1", cancellationToken: deadline.Token) is not null
+            || await nested.GetAsync("2", cancellationToken: deadline.Token) is not null)
+            throw new InvalidOperationException("Nested batch deletion smoke failed.");
+        Console.WriteLine($"VectorData nested JSON, batch CRUD, HNSW and hybrid smoke passed ({protocol}).");
+    }
+    finally { await store.EnsureCollectionDeletedAsync("nested-vectors", CancellationToken.None); }
 }

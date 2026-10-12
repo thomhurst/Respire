@@ -93,4 +93,5 @@ internal sealed class JsonConformanceMapper<TRecord> : RespireVectorDataJsonMapp
 [JsonSerializable(typeof(IndexKindTests<string>.SearchRecord), TypeInfoPropertyName = "IndexRecord")]
 [JsonSerializable(typeof(HybridSearchTests<string>.VectorAndStringRecord<string>))]
 [JsonSerializable(typeof(HybridSearchTests<string>.MultiTextStringRecord<string>))]
+[JsonSerializable(typeof(EmbeddingGenerationTests<string>.RawRecord))]
 internal partial class JsonModelsContext : JsonSerializerContext;
