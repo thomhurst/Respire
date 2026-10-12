@@ -3448,9 +3448,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 return false;
             }
 
-            var payload = buffer.Slice(headerEnd, length);
-            if (stringSource is not null) stringSource.SetDirectResult(Utf8String.GetString(payload));
-            else bytesSource!.SetDirectResult(payload.ToArray());
+            // A canceled or timed-out head still owns this frame, but nobody will read its
+            // result; consume it without decoding or copying. Completion is monotonic, so the
+            // scheduler's reservation below also fails for it.
+            if (!IsBulkPayloadAbandoned(head))
+            {
+                var payload = buffer.Slice(headerEnd, length);
+                if (stringSource is not null) stringSource.SetDirectResult(Utf8String.GetString(payload));
+                else bytesSource!.SetDirectResult(payload.ToArray());
+            }
+
             frameEnd = headerEnd + length + 2;
         }
 

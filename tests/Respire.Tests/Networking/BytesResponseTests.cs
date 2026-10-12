@@ -53,8 +53,8 @@ public class BytesResponseTests
     [Test]
     public async Task PipelinedRepliesInOneReceiveCompleteInOrder()
     {
-        // Every frame lands in one receive, so buffered bulk replies complete straight from the
-        // receive buffer while the error and the split tail fall back to the general parser.
+        // TCP may coalesce or split these sends, so this covers reply order across whatever
+        // receive boundaries occur; DirectBulkCompletion* below pin the boundaries exactly.
         byte[][] payloads = [null!, [], "x"u8.ToArray(), Pattern(4095), Pattern(4096), null!, Pattern(64)];
         await using var server = new FakeRespServer { SuppressReply = _ => true };
         await using var connection = await Connect(server);
@@ -89,6 +89,95 @@ public class BytesResponseTests
         var tail = await pending[6].WaitAsync(deadline.Token);
         await Assert.That(tail!.AsSpan().SequenceEqual(last)).IsTrue();
     }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(4095)]
+    [Arguments(4096)]
+    [Arguments(-1)]
+    public async Task DirectBulkCompletionUsesOnlyCompleteBufferedFrames(int length)
+    {
+        var expected = length < 0 ? null : Pattern(length);
+        byte[] header = Encoding.ASCII.GetBytes($"${length}\r\n");
+        byte[] frame = expected is null ? header : [.. header, .. expected, 13, 10];
+        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        await using var connection = await Connect(server);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pending = connection.SendBytesAsync(new Cmd1(Verbs.Get, "key"), deadline.Token, "GET").AsTask();
+        await WaitForCommands(server, 1, deadline.Token);
+
+        if (expected is not null)
+        {
+            // Every strict prefix of the frame, and a bad terminator, leaves the head in place.
+            for (var cut = header.Length; cut < frame.Length; cut++)
+            {
+                await Assert.That(TryCompleteBulkDirect(connection, frame.AsSpan(0, cut), header.Length, length, out _)).IsFalse();
+            }
+            byte[] malformed = [.. frame[..^2], 0, 0];
+            await Assert.That(TryCompleteBulkDirect(connection, malformed, header.Length, length, out _)).IsFalse();
+            await Assert.That(Inflight(connection).TryPeek(out var head)).IsTrue();
+            await Assert.That(head is BytesPendingResponseSource).IsTrue();
+            await Assert.That(pending.IsCompleted).IsFalse();
+        }
+
+        // Trailing bytes from the next reply are not consumed.
+        byte[] buffer = [.. frame, .. "$1\r\nz\r\n"u8];
+        await Assert.That(TryCompleteBulkDirect(connection, buffer, header.Length, length, out var frameEnd)).IsTrue();
+        await Assert.That(frameEnd).IsEqualTo(frame.Length);
+        Completions(connection).Flush();
+        var result = await pending.WaitAsync(deadline.Token);
+        if (expected is null) await Assert.That(result).IsNull();
+        else await Assert.That(result!.AsSpan().SequenceEqual(expected)).IsTrue();
+    }
+
+    [Test]
+    public async Task DirectBulkCompletionSkipsCopyForAbandonedHead()
+    {
+        const int length = 1 << 20;
+        byte[] header = Encoding.ASCII.GetBytes($"${length}\r\n");
+        byte[] frame = [.. header, .. new byte[length], 13, 10];
+        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        await using var connection = await Connect(server);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var command = new Cmd1(Verbs.Get, "key");
+        using var cancellation = new CancellationTokenSource();
+        var canceled = connection.SendBytesAsync(command, cancellation.Token, "GET").AsTask();
+        var live = connection.SendBytesAsync(command, deadline.Token, "GET").AsTask();
+        await WaitForCommands(server, 2, deadline.Token);
+        cancellation.Cancel();
+        await Assert.That(async () => await canceled.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+
+        // A megabyte-scale threshold stays far above concurrent-GC counter noise.
+        var abandonedBytes = MeasureDirectCompletion(connection, frame, header.Length, length);
+        var liveBytes = MeasureDirectCompletion(connection, frame, header.Length, length);
+        Completions(connection).Flush();
+        await Assert.That(abandonedBytes).IsLessThan(length / 4);
+        await Assert.That(liveBytes).IsGreaterThanOrEqualTo(length);
+        await Assert.That((await live.WaitAsync(deadline.Token))!.Length).IsEqualTo(length);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureDirectCompletion(RespireConnection connection, byte[] frame, int headerEnd, long length)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        if (!TryCompleteBulkDirect(connection, frame, headerEnd, length, out var frameEnd) || frameEnd != frame.Length)
+            throw new InvalidOperationException("Direct completion did not consume the frame.");
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    // Called while the receive loop is parked on an empty socket, so the test thread is the
+    // ring's only consumer, as the receive loop would be.
+    private static bool TryCompleteBulkDirect(
+        RespireConnection connection, ReadOnlySpan<byte> buffer, int headerEnd, long length, out int frameEnd)
+        => TryCompleteBulkDirect(connection, buffer, RespDataType.BulkString, length, headerEnd, out frameEnd);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "TryCompleteBulkDirect")]
+    private static extern bool TryCompleteBulkDirect(
+        RespireConnection connection, ReadOnlySpan<byte> buffer, RespDataType type, long payloadLength, int headerEnd, out int frameEnd);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_completions")]
+    private static extern ref CompletionScheduler Completions(RespireConnection connection);
 
     private static byte[] Pattern(int length) => Enumerable.Range(0, length).Select(i => (byte)(i % 251)).ToArray();
 
