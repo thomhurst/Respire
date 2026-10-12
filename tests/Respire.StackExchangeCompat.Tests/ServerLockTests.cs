@@ -142,7 +142,7 @@ public class ServerLockTests(RedisTestContainer fixture)
         var error = await Assert.ThrowsAsync<RespireServerException>(() => database.LockExtendAsync("wrongtype", "owner", TimeSpan.FromSeconds(1)));
         Assert.Contains("WRONGTYPE", error.Message);
         Assert.Equal("value", (string?)database.HashGet("wrongtype", "field"));
-        Assert.Throws<NotSupportedException>(() => database.ScriptEvaluate("return 1"));
+        Assert.Equal(1, (long)database.ScriptEvaluate("return 1"));
     }
 
     [Test]

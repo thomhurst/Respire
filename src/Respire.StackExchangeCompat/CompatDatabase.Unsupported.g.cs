@@ -212,9 +212,6 @@ partial class CompatDatabase
     public global::System.Int64 SortedSetRemoveRangeByScore(global::StackExchange.Redis.RedisKey @key, global::System.Double @start, global::System.Double @stop, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRemoveRangeByScore");
     /// <inheritdoc />
-    public global::System.Int64 SortedSetRemoveRangeByValue(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRemoveRangeByValue");
-    /// <inheritdoc />
     public global::System.Int64 SortedSetUpdate(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.SortedSetEntry[] @values, global::StackExchange.Redis.SortedSetWhen @when, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetUpdate");
     /// <inheritdoc />
@@ -399,9 +396,6 @@ partial class CompatDatabase
         => throw Compatibility.Unsupported("ScriptEvaluate");
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisResult ScriptEvaluate(global::StackExchange.Redis.LuaScript @script, global::System.Object @parameters, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("ScriptEvaluate");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.RedisResult ScriptEvaluate(global::System.String @script, global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ScriptEvaluate");
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisResult ScriptEvaluateReadOnly(global::System.Byte[] @hash, global::StackExchange.Redis.RedisKey[] @keys, global::StackExchange.Redis.RedisValue[] @values, global::StackExchange.Redis.CommandFlags @flags)
@@ -592,12 +586,6 @@ partial class CompatDatabase
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue[] SortedSetRandomMembers(global::StackExchange.Redis.RedisKey @key, global::System.Int64 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SortedSetRandomMembers");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue[] SortedSetRangeByValue(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByValue");
-    /// <inheritdoc />
-    public global::StackExchange.Redis.RedisValue[] SortedSetRangeByValue(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @min, global::StackExchange.Redis.RedisValue @max, global::StackExchange.Redis.Exclude @exclude, global::StackExchange.Redis.Order @order, global::System.Int64 @skip, global::System.Int64 @take, global::StackExchange.Redis.CommandFlags @flags)
-        => throw Compatibility.Unsupported("SortedSetRangeByValue");
     /// <inheritdoc />
     public global::StackExchange.Redis.RedisValue[] StreamClaimIdsOnly(global::StackExchange.Redis.RedisKey @key, global::StackExchange.Redis.RedisValue @consumerGroup, global::StackExchange.Redis.RedisValue @claimingConsumer, global::System.Int64 @minIdleTimeInMs, global::StackExchange.Redis.RedisValue[] @messageIds, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("StreamClaimIdsOnly");

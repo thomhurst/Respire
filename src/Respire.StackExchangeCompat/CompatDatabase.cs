@@ -60,11 +60,21 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
                 }
                 else
                 {
-                    var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
-                    pending = client.ExecuteWithAdmissionAsync(command, nativeArguments, nativeFlags, cancellationToken, admission).AsTask();
-                    // Cache hits and pre-admission failures may settle the response without publishing a command.
-                    await Task.WhenAny(admission.Task, pending).ConfigureAwait(false);
+                    if (command.Name == "EVALSHA")
+                    {
+                        // The native stored-procedure telemetry path cannot expose admission yet.
+                        // Keep dispatch order by holding the gate until this reply completes.
+                        pending = client.ExecuteAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
+                        await pending.ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        pending = client.ExecuteWithAdmissionAsync(command, nativeArguments, nativeFlags, cancellationToken, admission).AsTask();
+                        // Cache hits and pre-admission failures may settle the response without publishing a command.
+                        await Task.WhenAny(admission.Task, pending).ConfigureAwait(false);
+                    }
                 }
             }
             finally { _dispatch.Release(); }

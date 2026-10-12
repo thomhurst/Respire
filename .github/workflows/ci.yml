@@ -148,7 +148,7 @@ jobs:
         run: |
           for protocol in 2 3; do
             RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.StackExchangeCompat.Tests -c Release \
-              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 209 --report-trx \
+              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 219 --report-trx \
               --results-directory "TestResults/stackexchange/${{ matrix.framework }}/resp$protocol"
           done
       - name: Build pinned Hangfire upstream acceptance
@@ -162,14 +162,14 @@ jobs:
               -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 95 --report-trx \
               --results-directory "TestResults/hangfire/${{ matrix.framework }}/resp$protocol"
           done
-      - name: Build pinned Orleans provider assessment
+      - name: Build pinned Orleans provider acceptance
         run: dotnet build tests/Respire.Orleans.Acceptance.Tests -c Release -f ${{ matrix.framework }}
-      - name: Assess Orleans providers on RESP2 and RESP3
+      - name: Test Orleans providers on RESP2 and RESP3
         shell: bash
         run: |
           for protocol in 2 3; do
             RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release \
-              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 9 --report-trx \
+              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 18 --report-trx \
               --results-directory "TestResults/orleans/${{ matrix.framework }}/resp$protocol"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

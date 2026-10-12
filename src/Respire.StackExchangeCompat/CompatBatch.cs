@@ -27,7 +27,8 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
         or "LREM" or "LTRIM" or "RPOPLPUSH" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"
         or "EXISTS" or "PTTL" or "GET" or "MGET" or "INCR" or "DECR" or "INCRBY" or "DECRBY"
         or "SADD" or "SREM" or "SMEMBERS" or "SCARD" or "ZADD" or "ZREM" or "ZCARD" or "ZCOUNT"
-        or "ZRANGE" or "ZREVRANGE" or "ZRANGEBYSCORE" or "ZREVRANGEBYSCORE" or "ZSCAN";
+        or "ZRANGE" or "ZREVRANGE" or "ZRANGEBYSCORE" or "ZREVRANGEBYSCORE" or "ZSCAN"
+        or "ZRANGEBYLEX" or "ZREVRANGEBYLEX" or "ZREMRANGEBYLEX" or "EVAL" or "EVALSHA";
 
     public void Execute()
     {
