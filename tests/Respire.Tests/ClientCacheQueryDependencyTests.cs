@@ -383,6 +383,55 @@ public class ClientCacheQueryDependencyTests
     }
 
     [Test]
+    public async Task OversizedIntegerReplyRetiresReusedLease()
+    {
+        var cache = new ClientSideCacheCoordinator(new() { MaxSizeBytes = 1 });
+        var request = Request("STRLEN");
+        using var response = RespValue.Integer(3);
+        var previous = cache.BeginRead("STRLEN", in request);
+        for (var iteration = 0; iteration < 4; iteration++)
+        {
+            cache.CompleteRead(in previous, in response, allowInsert: true);
+            await Assert.That(cache.Count).IsEqualTo(0);
+            await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+            await Assert.That(cache.InspectForTests().IdleQueryStorage.RetainedDependencies).IsEqualTo(0);
+            var current = cache.BeginRead("STRLEN", in request);
+            await Assert.That(ReferenceEquals(previous.Lease, current.Lease)).IsTrue();
+            cache.CompleteRead(in previous, in response, allowInsert: false);
+            await Assert.That(PendingDependencies(cache)).IsEqualTo(1);
+            previous = current;
+        }
+        cache.CompleteRead(in previous, in response, allowInsert: false);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task PayloadCopyStaysOutsideGateAndRechecksInvalidation()
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var request = Request("STRLEN");
+        var token = cache.BeginRead("STRLEN", in request);
+        const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
+        var gate = typeof(ClientSideCacheCoordinator).GetField("_queryLock", members)!.GetValue(cache)!;
+        var isHeld = gate.GetType().GetProperty("IsHeldByCurrentThread")!;
+        var copies = 0;
+        using var memory = new CopyObservedMemory(() =>
+        {
+            if ((bool)isHeld.GetValue(gate)!) throw new InvalidOperationException("Payload copied under the query gate.");
+            copies++;
+            RespireKey key = "first";
+            cache.Invalidate(in key);
+        });
+        using var response = RespValue.BulkString(memory.Memory);
+        memory.Armed = true;
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Assert.That(copies).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(PendingDependencies(cache)).IsEqualTo(0);
+        await Assert.That(cache.InspectForTests().IdleQueryStorage.RetainedDependencies).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task UncoveredDependenciesNeverRegisterPendingState()
     {
         var cache = new ClientSideCacheCoordinator(new() { KeyPrefixes = ["first"] });
@@ -459,6 +508,20 @@ public class ClientCacheQueryDependencyTests
                 throw new InvalidOperationException("An older query escaped the completed invalidation.");
         }
         await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    private sealed class CopyObservedMemory(Action onCopy) : MemoryManager<byte>
+    {
+        private readonly byte[] _bytes = [1, 2, 3];
+        internal bool Armed;
+        public override Span<byte> GetSpan()
+        {
+            if (Armed) onCopy();
+            return _bytes;
+        }
+        public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
+        public override void Unpin() { }
+        protected override void Dispose(bool disposing) { }
     }
 
     private sealed class FaultingDependencyMemory : MemoryManager<byte>

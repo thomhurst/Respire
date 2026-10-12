@@ -27,6 +27,11 @@ public class ClientCacheQueryBenchmarks
     private RespireClient _sharing = null!;
     private RespireClient _independent = null!;
     private RespireClient _cacheOff = null!;
+    private bool _recordIndependentPublications;
+    private long _independentInvocations;
+    private long _independentPublications;
+    private int _minimumIndependentPublications = int.MaxValue;
+    private int _maximumIndependentPublications;
 
     [GlobalSetup]
     public async Task Setup()
@@ -51,7 +56,8 @@ public class ClientCacheQueryBenchmarks
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             _cacheOff = await RespireClient.ConnectAsync(options);
-            _independent = await RespireClient.ConnectAsync(options with { ClientSideCache = new() });
+            // Publication cardinality below relies on entries surviving until producers join.
+            _independent = await RespireClient.ConnectAsync(options with { ClientSideCache = new() { LocalExpiration = null } });
             _sharing = await RespireClient.ConnectAsync(options with
             {
                 ClientSideCache = new() { CoalesceConcurrentMisses = true },
@@ -74,6 +80,7 @@ public class ClientCacheQueryBenchmarks
             _sharing.ClientSideCache!.Clear();
             _independent.ClientSideCache!.Clear();
             ReportMemory("after-churn");
+            _recordIndependentPublications = true;
         }
         catch
         {
@@ -134,7 +141,19 @@ public class ClientCacheQueryBenchmarks
             }) : Task.FromResult(0L);
         }
         start.SetResult();
-        return (await Task.WhenAll(_workers)).Sum();
+        var result = (await Task.WhenAll(_workers)).Sum();
+        if (_recordIndependentPublications && queries && ReferenceEquals(client, _independent))
+        {
+            // Each invocation clears the store, reads 800 distinct keys, and has only
+            // unrelated writes. No capacity eviction or expiration can remove entries,
+            // so the final count measures distinct successful query publications.
+            var publications = client.ClientSideCache!.Count;
+            _independentInvocations++;
+            _independentPublications += publications;
+            _minimumIndependentPublications = Math.Min(_minimumIndependentPublications, publications);
+            _maximumIndependentPublications = Math.Max(_maximumIndependentPublications, publications);
+        }
+        return result;
     }
 
     private async Task ValidateQueries(string workload, RespireClient client, bool writes, bool affected)
@@ -400,6 +419,16 @@ public class ClientCacheQueryBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
+        if (_independentInvocations != 0)
+            Console.WriteLine("QUERY_PUBLICATIONS " + JsonSerializer.Serialize(new
+            {
+                workload = "unrelated-independent", invocations = _independentInvocations,
+                distinctPublications = _independentPublications,
+                minimumPerInvocation = _minimumIndependentPublications,
+                maximumPerInvocation = _maximumIndependentPublications,
+                expectedPerInvocation = Callers * Rounds,
+                scope = "workload invocations including pilot, warmup and actual; setup excluded",
+            }));
         if (_sharing is not null) { await _sharing.DisposeAsync(); _sharing = null!; }
         if (_independent is not null) { await _independent.DisposeAsync(); _independent = null!; }
         if (_cacheOff is not null) { await _cacheOff.DisposeAsync(); _cacheOff = null!; }

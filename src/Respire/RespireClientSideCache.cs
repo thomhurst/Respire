@@ -394,18 +394,30 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         var published = false;
         try
         {
-            if (!allowInsert) return;
+            if (!allowInsert || !token.CanCache) return;
+            var query = token.Query;
             lock (_queryLock)
             {
                 if (!CanPublishQuery(in token)) return;
+                // Integer replies have no payload to copy. Create their fixed-size entry,
+                // publish and retire the lease under this acquisition. Other replies keep
+                // deep copies outside the gate and recheck their dependencies afterwards.
+                if (response.Type == RespDataType.Integer)
+                {
+                    if (token.Store.TryCreateEntry(in query, token.Dependencies, in response, out var scalarEntry))
+                        published = token.Store.Set(in query, scalarEntry);
+                    ReleaseQueryRead(lease, token.LeaseGeneration);
+                }
             }
-            var query = token.Query;
-            if (!token.Store.TryCreateEntry(in query, token.Dependencies, in response, out var entry)) return;
-            lock (_queryLock)
+            if (response.Type != RespDataType.Integer)
             {
-                if (CanPublishQuery(in token)) published = token.Store.Set(in query, entry);
-                // Retire dependencies under the publication gate we already own.
-                ReleaseQueryRead(lease, token.LeaseGeneration);
+                if (!token.Store.TryCreateEntry(in query, token.Dependencies, in response, out var entry)) return;
+                lock (_queryLock)
+                {
+                    if (CanPublishQuery(in token)) published = token.Store.Set(in query, entry);
+                    // Retire dependencies under the publication gate we already own.
+                    ReleaseQueryRead(lease, token.LeaseGeneration);
+                }
             }
         }
         finally
