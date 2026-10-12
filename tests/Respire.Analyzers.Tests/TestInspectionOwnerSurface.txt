@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 388 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 397 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 61
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -236,7 +236,9 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 97
+# Count: Respire.Networking.RespireConnection | 98
+# Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
+Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
@@ -342,6 +344,12 @@ Respire.Networking.RespireConnection | readonly struct CredentialSequenceLease(S
 Respire.Networking.RespireConnection.CredentialSequenceLease | method Dispose() : void
 # Count: Respire.Networking.RespireConnection.IBatchCommand | 1
 Respire.Networking.RespireConnection.IBatchCommand | method StartSend(RespireConnection, CancellationToken, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<RespValue>
+# Count: Respire.Networking.RespireConnection.StreamPayloadReader | 5
+Respire.Networking.RespireConnection.StreamPayloadReader | method Dispose() : void
+Respire.Networking.RespireConnection.StreamPayloadReader | method StartRead(CancellationToken) : Task<ReadOnlyMemory<byte>>
+Respire.Networking.RespireConnection.StreamPayloadReader | property ConsumedPrefix [internal; get] : ReadOnlyMemory<byte>
+Respire.Networking.RespireConnection.StreamPayloadReader | property IsComplete [internal; get] : bool
+Respire.Networking.RespireConnection.StreamPayloadReader | property UnknownPositionReadError [internal; get] : Exception?
 # Count: Respire.Networking.StringPendingResponseSource | 10
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetResult(short) : string?
 Respire.Networking.StringPendingResponseSource | method IValueTaskSource<string?>.GetStatus(short) : ValueTaskSourceStatus

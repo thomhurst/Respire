@@ -4,7 +4,7 @@
     {
       "Name": "upload-payload-read",
       "Role": "borrower",
-      "Member": "Respire.Networking.RespireConnection.StreamPayloadReader.ReadChunkAsync(byte[],CancellationToken):Task<ReadOnlyMemory<byte>>",
+      "Member": "Respire.Networking.RespireConnection.StreamPayloadReader.ReadChunkAsync(byte[],CancellationToken):ValueTask<ReadOnlyMemory<byte>>",
       "Owner": "Respire.RespireClient.SendStreamedUploadAsync`1(string,TCommand,CancellationToken,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
       "Contract": "Awaited source reads borrow upload ownership. Caller cancellation can finish independently of a detached fill. That fill owns its pooled chunk until all reads settle and retains its cancellation source until callbacks settle. It cannot publish another caller failure and never disposes the caller's source stream."
     }
