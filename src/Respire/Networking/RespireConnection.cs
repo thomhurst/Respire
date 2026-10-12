@@ -2847,7 +2847,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         else
                         {
                             if (hasBulkHeader
-                                && TryCompleteStringDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd))
+                                && TryCompleteBulkDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd))
                             {
                                 start = frameEnd;
                                 responseBytes = 0;
@@ -3398,30 +3398,35 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Completes the head in-flight command with a string decoded straight from the receive
-    /// buffer when the reply is a fully buffered bulk string and the head source asked
-    /// for a <c>string?</c>. Skips the pooled payload rent/copy/return and the
-    /// <see cref="RespValue"/> round-trip of the general path. A bulk string is never a push
-    /// frame, so FIFO pairing with the ring head is safe. Returns false — leaving the general
-    /// parser to handle the frame — for any other reply shape, an incomplete or malformed
-    /// frame, or a head source of another type.
+    /// Completes the head in-flight command straight from the receive buffer when the reply is
+    /// a fully buffered bulk string and the head source asked for a <c>string?</c> (decoded
+    /// here) or a <c>byte[]?</c> (copied once into the caller's array). Skips the pooled
+    /// payload rent/copy/return and the <see cref="RespValue"/> round-trip of the general path.
+    /// A bulk string is never a push frame, so FIFO pairing with the ring head is safe. Returns
+    /// false — leaving the general parser to handle the frame — for any other reply shape, an
+    /// incomplete or malformed frame, or a head source of another type.
     /// </summary>
-    private bool TryCompleteStringDirect(
+    private bool TryCompleteBulkDirect(
         ReadOnlySpan<byte> buffer, RespDataType type, long payloadLength, int headerEnd, out int frameEnd)
     {
         frameEnd = 0;
-        if (type != RespDataType.BulkString
-            || !_inflight.TryPeek(out var head)
-            || head is not StringPendingResponseSource source)
+        if (type != RespDataType.BulkString || !_inflight.TryPeek(out var head))
         {
             return false;
         }
 
-        string? result;
+        var stringSource = head as StringPendingResponseSource;
+        var bytesSource = stringSource is null ? head as BytesPendingResponseSource : null;
+        if (stringSource is null && bytesSource is null)
+        {
+            return false;
+        }
+
         if (payloadLength == -1)
         {
-            result = null;
             frameEnd = headerEnd;
+            if (stringSource is not null) stringSource.SetDirectResult(null);
+            else bytesSource!.SetDirectResult(null);
         }
         else
         {
@@ -3443,14 +3448,15 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 return false;
             }
 
-            result = Utf8String.GetString(buffer.Slice(headerEnd, length));
+            var payload = buffer.Slice(headerEnd, length);
+            if (stringSource is not null) stringSource.SetDirectResult(Utf8String.GetString(payload));
+            else bytesSource!.SetDirectResult(payload.ToArray());
             frameEnd = headerEnd + length + 2;
         }
 
-        source.SetDirectResult(result);
         _inflight.TryDequeue(out _);
         MarkReplyReceived();
-        _completions.Add(source, default);
+        _completions.Add(head, default);
         return true;
     }
 

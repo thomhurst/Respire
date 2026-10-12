@@ -51,6 +51,48 @@ public class BytesResponseTests
     }
 
     [Test]
+    public async Task PipelinedRepliesInOneReceiveCompleteInOrder()
+    {
+        // Every frame lands in one receive, so buffered bulk replies complete straight from the
+        // receive buffer while the error and the split tail fall back to the general parser.
+        byte[][] payloads = [null!, [], "x"u8.ToArray(), Pattern(4095), Pattern(4096), null!, Pattern(64)];
+        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        await using var connection = await Connect(server);
+        var command = new Cmd1(Verbs.Get, "key");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pending = new Task<byte[]?>[payloads.Length];
+        for (var i = 0; i < pending.Length; i++)
+            pending[i] = connection.SendBytesAsync(command, deadline.Token, "GET").AsTask();
+        await WaitForCommands(server, pending.Length, deadline.Token);
+
+        var frames = new List<byte>();
+        for (var i = 0; i < payloads.Length - 1; i++)
+        {
+            if (i == 5) frames.AddRange("-ERR failed\r\n"u8.ToArray());
+            else if (payloads[i] is null) frames.AddRange("$-1\r\n"u8.ToArray());
+            else frames.AddRange([.. Encoding.ASCII.GetBytes($"${payloads[i].Length}\r\n"), .. payloads[i], 13, 10]);
+        }
+
+        // The last reply's payload arrives in a later receive than its header.
+        var last = payloads[^1];
+        frames.AddRange([.. "$64\r\n"u8, .. last[..10]]);
+        await server.SendRawAsync([.. frames]);
+        await server.SendRawAsync([.. last[10..], 13, 10]);
+
+        await Assert.That(await pending[0].WaitAsync(deadline.Token)).IsNull();
+        for (var i = 1; i < 5; i++)
+        {
+            var result = await pending[i].WaitAsync(deadline.Token);
+            await Assert.That(result!.AsSpan().SequenceEqual(payloads[i])).IsTrue();
+        }
+        await Assert.That(async () => await pending[5].WaitAsync(deadline.Token)).Throws<RespireServerException>();
+        var tail = await pending[6].WaitAsync(deadline.Token);
+        await Assert.That(tail!.AsSpan().SequenceEqual(last)).IsTrue();
+    }
+
+    private static byte[] Pattern(int length) => Enumerable.Range(0, length).Select(i => (byte)(i % 251)).ToArray();
+
+    [Test]
     public async Task NullEmptyAndErrorPreserveReplyOrder()
     {
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray(), "$0\r\n\r\n"u8.ToArray(), "-ERR failed\r\n"u8.ToArray(), "$1\r\nx\r\n"u8.ToArray());
