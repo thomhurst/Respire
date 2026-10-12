@@ -180,12 +180,51 @@ under a coverage collector.
 ### Failure report
 
 Issue [#937](https://github.com/thomhurst/Respire/issues/937) records one net8.0 CI
-failure of 272 bytes, from before the child process existed. That is exactly twice the
-136 bytes one worker start allocated in #1067's controlled pool-growth probe, so it fits
-two worker starts in the shared pool. No allocation stack was kept, so this is a
-consistent explanation, not a proven one. A later investigation could not reproduce it in
-full Linux suite runs, and in-process `EventListener` sessions do not receive per-object
-allocation events (`GCSampledObjectAllocationHigh` takes effect only at runtime startup).
+failure of 272 bytes, from before the child process existed. The CI run kept no
+allocation stack, and full Linux suite runs did not reproduce it.
+
+A Windows x64 reproduction on .NET 8.0.31 shows the cause with allocation stacks. A
+standalone probe, built as an assembly named `Respire.Tests` so that it can use the real
+`AsyncFlushSignal`, ran the test's park-then-wake loop: 200 dispatched wakes, counted with
+`GC.GetAllocatedBytesForCurrentThread`, from a dedicated thread. It recreates a state the shared pool of the old test could
+reach in a full suite: the pool's thread goal is above the number of live workers, and
+the existing workers are busy. Before each round, the probe
+raised the minimum to 64 threads and queued 12 blocking work items. One of three runs
+measured exactly 272 bytes in a 200-wake interval. The bytes came in two steps of 136 bytes,
+at wakes 2 and 42, and `ThreadPool.ThreadCount` rose at each step. A stand-in work item,
+queued through the same `UnsafeQueueUserWorkItem` overload, gave the same 136-byte steps on
+.NET 8.0.31 and .NET 10.0.12, including 272-byte intervals. Every step was exactly 136
+bytes, the same as `new Thread(start)` with a cached delegate.
+
+A startup EventPipe session with `GCSampledObjectAllocationHigh` and type names enabled
+(`DOTNET_EnableEventPipe=1`,
+`DOTNET_EventPipeConfig=Microsoft-Windows-DotNETRuntime:0x1210001:5`) recorded every
+object the measuring thread allocated in that interval. There were two pairs, one for
+each worker start: a 72-byte `Thread` and its 64-byte `Thread+StartHelper`. Both have
+this stack:
+
+```text
+Thread..ctor(ThreadStart)                       (StartHelper only)
+PortableThreadPool+WorkerThread.CreateWorkerThread()
+PortableThreadPool+WorkerThread.MaybeAddWorkingWorker(PortableThreadPool)
+PortableThreadPool.RequestWorker()
+ThreadPool.UnsafeQueueUserWorkItem(IThreadPoolWorkItem, bool)
+Respire.Networking.AsyncFlushSignal.Signal(bool)
+```
+
+When the pool's thread goal is above its worker count and no worker is idle, the
+thread that queues a wake creates the new worker. That thread pays 136 bytes on x64 for
+each worker it starts. The signal itself allocated nothing in these runs. Only some
+rounds start a worker on the measuring thread, because worker threads and the gate
+thread also start workers. The original CI interval cannot be recovered, but it has the
+same signature: 272 bytes is exactly two worker starts.
+
+The two-worker child from #1067 removes this hazard. Its pool minimum and maximum are both
+two, and both workers exist before measurement, so the pool cannot start a worker during
+the interval. The child also checks that the worker count stays at two and fails if it
+does not. In-process `EventListener` sessions still receive no per-object allocation
+events, because the allocation sampling must be enabled when the runtime starts. Use a
+startup EventPipe session like the one above to collect allocation stacks.
 
 So each measured interval now carries its own evidence:
 
