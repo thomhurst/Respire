@@ -1,0 +1,54 @@
+name: Command retry owner benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  policies:
+    if: github.event.label.name == 'run-command-retry-owner-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/CommandRetryOwnerBenchmarks.cs
+      filter: '*CommandRetryOwnerBenchmarks*'
+      expected-case-count: 15
+      expected-methods: Read
+      artifact-prefix: command-retry-owner-policies
+      job: Short
+      redis-server: true
+      retry-topologies: true
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      retained-memory-dimensions: owner,policy
+
+  historical-default:
+    if: github.event.label.name == 'run-command-retry-default-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      # Last main revision before the immediate retry foundation, PR #1500.
+      # This historical control includes intervening changes; it is not an isolated retry ablation.
+      control-sha: 15b7adf5090cce616d5fa395f96fb5f38d344ce1
+      fixture: benchmarks/Respire.Benchmarks/CommandRetryOwnerBenchmarks.cs
+      filter: '*CommandRetryOwnerBenchmarks*'
+      expected-case-count: 5
+      expected-methods: Read
+      artifact-prefix: command-retry-historical-default
+      default-policy-only: true
+      redis-server: true
+      retry-topologies: true
+      retained-memory: true
+      retained-memory-stages: before-connect,connected-idle,after-churn,after-dispose
+      retained-memory-dimensions: owner,policy
