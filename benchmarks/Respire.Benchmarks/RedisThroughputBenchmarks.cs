@@ -34,10 +34,26 @@ public class RedisThroughputBenchmarks
     private static int[] ReadCounts(string variable, string fallback)
     {
         var value = Environment.GetEnvironmentVariable(variable);
-        return (string.IsNullOrWhiteSpace(value) ? fallback : value)
+        var raw = string.IsNullOrWhiteSpace(value) ? fallback : value;
+        var counts = raw
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(count => int.Parse(count, System.Globalization.CultureInfo.InvariantCulture))
+            .Select(count => int.TryParse(
+                count,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsed) && parsed > 0
+                    ? parsed
+                    : throw new InvalidOperationException(
+                        $"{variable} must be a comma-separated list of positive integers, but '{count}' in '{raw}' is not."))
             .ToArray();
+
+        if (counts.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"{variable} must contain at least one positive integer, but was '{raw}'.");
+        }
+
+        return counts;
     }
     
     private class Config : ManualConfig
