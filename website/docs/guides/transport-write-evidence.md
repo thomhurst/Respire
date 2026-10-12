@@ -17,6 +17,648 @@ The source evidence is [the per-attempt owner and observation](https://github.co
 
 Gathered SET uses a separate ownership barrier. Array-backed payloads of at least 8 KiB take `GatheredSetCommand`'s borrowed path. Its `GatheredSetWriteLease` has a pool retention capacity of 4,096 leases; that capacity is not an active-operation limit. One logical operation and every accepted write retain references. The response's `finally` waits for `FinishOperation`, and the sender releases each accepted write only after its send returns. Abort releases queued writes. Consuming the barrier's result returns the lease to the pool. The lease fields do not directly store the payload, but accepted write-buffer descriptors hold the caller array until write ownership ends. Cancellation, a deadline, a failed reply or a captured write outcome must not release that array early. See [the gathered command and lease](https://github.com/thomhurst/Respire/blob/622972d400b96d111b18272ba011fd3edb6958f4/src/Respire/Commands/GatheredSetCommand.cs) and [the sender](https://github.com/thomhurst/Respire/blob/622972d400b96d111b18272ba011fd3edb6958f4/src/Respire/Networking/RespireConnection.GatheredSet.cs).
 
+## Aggregate child evidence audit: 2026-10-12 (#1481)
+
+**Aggregate transport performance acceptance remains unmet.** [#1481](https://github.com/thomhurst/Respire/issues/1481) completes the audit of the merged completed-fill, residual stream/GET, batch and selection deliverables. It does not certify a passing transport comparison. [#1474](https://github.com/thomhurst/Respire/issues/1474), [#1214](https://github.com/thomhurst/Respire/issues/1214) and [#862](https://github.com/thomhurst/Respire/issues/862) remain open. Native child [#1520](https://github.com/thomhurst/Respire/issues/1520) owns the remaining corrected selection comparison, with verified dependencies on #1480 and this audit. Large non-streamed SET remains #976's separate scope.
+
+### Pinned artifacts and coverage
+
+This audit downloads the existing completed comparisons; it launches no new evidence and does not wait for asynchronous results. Each comparison uses one runner for its A/candidate/B bracket. Different runs and metric jobs are separate experiments; their absolute times and totals must not be subtracted to manufacture restoration or a cause. Earlier #1483 summaries of runs 38193605271 and 38197496226 remain historical targeted summaries, not substitutes for the latest comparison audited here.
+
+| Deliverable / completed run | Disabled / enabled artifact ID | Baseline A and B | Measured candidate merge | Event head |
+| --- | --- | --- | --- | --- |
+| Batch #1479 / [38193859429](https://github.com/thomhurst/Respire/actions/runs/38193859429) | 11724425724 / 11724110941 | `e28016d4041c5ab417f6b6f6565c63a46ed8af56` | `815eec226f2e97fe7f8b28591950e73c4b881da2` | `9c04cc60fb3ca438cd833d279495e6733e210239` |
+| Selection #1480 / [38195553203](https://github.com/thomhurst/Respire/actions/runs/38195553203) | 11723939593 / 11723884967 | `dfa7564f3946695f00c48f8d71679fdce935c8c2` | `fbc7af5a11404398455df510a2ddb93415d05c05` | `ba10a10c7132e891d1bd02431a97ba31cbd9d3e5` |
+| Completed fills #1477 / [38201983679](https://github.com/thomhurst/Respire/actions/runs/38201983679) | 11727401522 / 11726499816 | `82a6fda724b1e79f95ac3eb778547586e286b4fc` | `f35ff1482dd5e5bcb05bf89eee71ecc61e6072a2` | `3c5b806bca77451f28ef8c151edebfdcdff1e392` |
+
+All six artifacts were available and unexpired at download. Their revision files distinguish the event head from the measured merge. The latest fill comparison's library diff is confined to the reader; the remaining diff contains inspection metadata, tests and documentation. The normal public timing body still covers all 24 cases, including both upload sources, circuit-enabled GET, 32/100-command batches and both connection profiles. The separate stream diagnostics in #1478 do not alter those public bodies or require an unchanged comparison.
+
+All runs report BenchmarkDotNet 0.15.8, Linux Ubuntu 24.04.5 x64, AMD EPYC 7763 with four logical CPUs, .NET 10.0.12 and SDK 10.0.401. These measurements do not cover net8.0, Windows or TLS performance. Each phase publishes the requested error-metric instrument. The benchmark children report permission denied when requesting high priority; this is retained as an experimental limitation.
+
+The audit checks **144 case rows, 864 measured public launches, 12,960 raw actual workload samples, 12,470 retained result samples, 288 Dry launches and 4,608 full-GC samples**. The full-GC count includes both validation phases and all three measured phases. Every measured launch has 15 sequential actual iterations, positive durations, consistent operation counts, matching native GC operation counts and exit code zero. PID is bound to case, phase and launch by its native log; PID alone is not a durable cross-run identity. Tables below preserve both reported allocation columns and raw GC bytes/operations for both launches, every latency interval and control drift. The SHA-256 manifest and machine-readable audit remain at `C:/git/Respire-evidence/issue-1481` alongside the downloaded artifacts.
+
+### Completed fills and residual public paths
+
+The causal reader test removes seven repeated 80-byte successful fill tasks after the first fill on both supported runtimes: original boundary 560 bytes, changed boundary zero, positive control 560 bytes. That is isolated attribution, not a whole-upload promise. In the latest public comparison, every instant-upload candidate launch allocates less than every corresponding A/B launch. Reported A/candidate/B B/op are disabled **6452/5953/6477** and **6483/5914/6467**, enabled **6363/5979/6483** and **6518/5690/6387**, for one/two connections. This supports the removed allocation site without assigning the process-wide reduction to it exactly.
+
+Latency does not uniformly improve. Disabled one-connection instant upload is +4.50%/+2.45%, with candidate interval 370.357–392.878 us separated above A's 361.582–368.763 us and overlapping B's 367.266–377.734 us. Enabled two-connection instant upload is faster than A with separated intervals and overlaps B; neither that overlap nor the other overlapping rows proves equivalence.
+
+Delayed uploads remain mixed and required scope. Latest disabled/two-connection candidate latency is slower with separated intervals against both controls: 10133.532–10274.091 us versus A 10000.222–10118.057 and B 9741.874–9892.959 us (+1.44%/+3.94%, B/A drift -2.40%). Disabled/one-connection is separated above B. Enabled/two-connection is faster with separated intervals against both controls, but its exported allocation is 12759 B/op versus A/B 12547/12544. Disabled/one-connection candidate raw allocations 12734.750/12628.000 exceed every matching control launch; enabled/one-connection 12719.750/12774.625 also exceed every matching control. Background offload, delay tasks, cancellation waits and payload-copy suspension explain nonzero owners; they cannot assign these public launch deltas without matching traces.
+
+Circuit-enabled GET remains mixed. Latest disabled report A/candidate/B is 18605/18522/17313 and 19814/19694/19027 B/op; enabled is 22690/24192/23382 and 22718/22095/23328. Enabled/one-connection raw candidate allocations 24140.023/24191.857 exceed all four control launches. Its aggregate latency intervals overlap both controls; overlap does not explain the allocation increase. The historical enabled/two-connection 220.570/266.072 us regime from run 38141963234 remains explicitly unresolved: its 223.319–263.323 us interval is slower and separated from A's 213.105–221.602 us, despite overlapping B. Neither the new lower GET means nor unrelated diagnostic processes retrospectively identify that regime's cause.
+
+The latest disabled one-connection/100 batch report is 32398/32414/32408 B/op; both candidate launches 32408.398/32414.488 exceed every A launch, and the second exceeds every B launch. Enabled/two-connection/100 latency is +4.83%/+2.00%, separated above A, with control drift +2.77%. The historical enabled/one-connection/100 30015.758/30016.531 B/op versus controls 30013.080–30014.564, and the disabled/two-connection second-launch drop, remain unattributed. Different baselines and process counters prevent subtraction of those older totals from the new 32,000-byte rows.
+
+Other public paths are not omitted. The complete tables retain PING, server error, small/large SET, raw/public pipeline and all batch rows, including separated slow intervals. Examples include latest disabled SmallSet/two connections separated above both controls (+1.20%/+1.35%); batch-diagnostic run enabled LargeSet/two connections separated above both (+6.36%/+4.72%); and selection run enabled one-connection/100 batch separated above both (+6.27%/+5.15%). Unchanged timed call graphs exclude a direct call to the modified streaming helper in batches and selection, but do not make their unexplained launch differences harmless noise. No sampled control establishes a focused production defect behind these timing regimes, so this audit changes no transport implementation and requests no unchanged rerun.
+
+### Allocation stacks and suspension controls
+
+The two batch-instrumented comparisons contain **96 separate diagnostic launches and 145,681 allocation samples**, with zero lost events, zero missing types and **18 missing stacks**. Every revision/case/phase/mode/launch tuple is present exactly once. Identity metadata matches the trace header; samples carry its process ID. All held reply and pool-demand controls are incomplete before release. Both frameworks' original local batch evidence remains the causal validation of the construction, fixture and suspension boundaries; these new Linux processes confirm the sampled owners against independently pinned libraries.
+
+Samples identify `RespirePending<long>` and `Op<IncrementCommand,long>` under construction, list expansion as `Op[]`, the public `StandaloneBatch` Task box, `TryExecuteAsync` completion boxes, and pooled `CompleteSendAsync`/`RunStandaloneAsync` demand misses. Held replies distinguish actual suspension from construction. The pooled wrapper removes only its own fixture Task boundary; it does not erase transport completion owners. Idle and background-positive controls retain collector/background work, including worker `byte[]` stacks. Samples with missing stacks cannot attribute a stack. Allocation intervals and sample counts are not exact bytes by object type and cannot explain a historical fractional B/op delta.
+
+The residual stream evidence is independently rechecked against its metadata/trace hashes: **48 processes, 5,917 samples, zero lost events, zero missing types and three missing stacks**, at revision `6412839d802d87d4e0ef48748832ac2b3db9f156`. The two frameworks each contain all case/profile/mode/launch identities. Its actual-reader identity check, derived-reader suspension, linked cancellation, cancellable/non-cancellable write waits, held payload writes/GET receives, public Task/pooled ValueTask fixtures and overlapping final-wait owners retain the causal boundaries described below. Sampled payload-copy boxes, cancellation promises, derived fills, pooled final-wait demand misses and GET pending/circuit/read owners are separate from reused completed fill tasks. These Windows diagnostic PIDs are not the historical Linux public launch PIDs. Neither sample counts nor process allocation totals establish an isolated whole-upload cost or retrospectively assign mixed public deltas.
+
+### Selection code, scheduling and evidence gap
+
+Run 38195553203 contains **128 selection processes**: 32 Dry/public processes and 96 separate diagnostic processes across both metric modes and three bracket phases. Every process has matching before/after identity, JIT code/tier output, perf-map addresses, scheduling snapshots and raw workload samples. Required overhead samples are present; no-subtraction and Dry controls omit them as designed. Diagnostic unroll factor is explicitly 16. Tiering-off controls stamp `DOTNET_TieredCompilation=0`. These checks establish capture provenance, not which tier ran throughout a timed iteration or a causal layout effect.
+
+The current full provenance gate rejects all six diagnostic phase/mode combinations with **`Missing affinity target`**. All **24 pinned launches** lack the later `affinityMask` identity. Their captured process/task masks are singleton masks, but the missing requested target prevents verification against the corrected control, and this run predates the pre-runtime `taskset` correction. Do not weaken the current verifier to accept the old artifacts. The remaining historical records were audited separately without treating affinity as verified. Local corrected captures at `a88a40e80fc397073e5bec48f6d845f999c76dd8` pass the current gate for 32 Linux diagnostic processes; shortened local sampling validates instrumentation, not the required pinned acceptance comparison. #1520 owns that specific remaining evidence gap and reuses the merged corrections.
+
+Frequency snapshots are absent in all 64 disabled-mode captures and present in all 64 enabled-mode captures. Enabled candidate public selection snapshots span 2,300,000–3,026,946 kHz only as recorded per launch; the exact per-launch ranges are retained in the machine-readable audit. Snapshot variation cannot establish frequency across an iteration or attribute a timing regime. No comparison of absolute means between these separate metric jobs identifies an instrumentation cost.
+
+Candidate public one-connection selection launches are 1.000877/1.295964 ns disabled and 1.935580/2.039203 ns enabled; two-connection launches are 6.833738/7.067786 and 10.504373/10.556460 ns. Captures include Tier0/Tier1/FullOpts listings. In disabled mode the one-connection aggregate is +14.11%/+13.79% and separated above both controls; the two-connection enabled aggregate is separated above A and separated below B. The older batch run's disabled/two-connection launches 17.567/6.419 ns and +78.49%/+86.58% also remain visible. The historical 9.798/8.538 ns and +17.80%/+18.49% regimes lack launch-bound historical code/scheduling controls and remain unattributed.
+
+The selection method calls the connection multiplexer: one connection bypasses the round-robin atomic increment, while two connections execute it. Neither path calls the streamed final-frame wait. New code/tier captures and separate affinity/tiering/subtraction controls do not prove a streaming effect, causally attribute the older regimes or remove observer effects. Both adjusted results and raw overhead/workload records remain in the artifact and audit archive.
+
+### Retention and disposition
+
+Every full-GC sample retains **5,767,168 bytes of caller arrays**; process memory includes clients, pools, collector, runtime and background work. The tables retain before-connect, connected, after-churn and after-dispose ranges for each connection profile and phase, including working-set/private-memory growth and nonzero post-dispose POH values. They cannot prove isolated transport retention, complete reclamation or a global observation cap. The constant state per attempt, admission-waiter limits, unfinished write ownership and gathered lease barriers at the top of this guide remain the applicable contracts.
+
+This is a completed **negative aggregate disposition**. The fill-task cause is established locally and supported by both public launch allocations; residual stream and batch owners are identified with explicit sampling limits. Historical attribution, separated public timing rows, mixed allocation rows and the corrected selection comparison remain unestablished. #1474 must not close on this audit or on a successful workflow alone. #1214 and #862 remain open until their full acceptance is established; #976 remains separate. No defaults, ownership limits, FIFO, cancellation, source generation, original exceptions or mutation barriers change here.
+
+### Complete public evidence
+
+Positive deltas mean slower. All intervals/launch means below use microseconds, including the internal selection rows; allocation is B/op. Batch operations are whole batches, pipeline operations are individual commands. Exported allocation uses the last launch's GC statistics; raw ratios show each launch separately. Retained overhead-adjusted result samples are not independent repetitions of the whole bracket. Confidence interval overlap proves neither equivalence nor zero cost. Each expandable table preserves all public rows, native process identities and retention groups for its pinned artifact.
+
+<details>
+<summary>Every aggregate interval separated above a control</summary>
+
+| Run / error metrics | Case | Separated slower than | Candidate/A; candidate/B |
+| --- | --- | --- | ---: |
+| 38193859429 / disabled | ClientPing / Connections=2 | A | +1.08%; -0.18% |
+| 38193859429 / disabled | SelectConnection / Connections=2 | A, B | +78.49%; +86.58% |
+| 38193859429 / disabled | StandaloneBatch / Connections=1&count=100 | A | +1.19%; +1.08% |
+| 38193859429 / enabled | ClientServerError / Connections=1 | A, B | +1.42%; +1.30% |
+| 38193859429 / enabled | LargeSet / Connections=2 | A, B | +6.36%; +4.72% |
+| 38193859429 / enabled | StandaloneBatch / Connections=2&count=32 | B | +0.48%; +0.67% |
+| 38195553203 / disabled | SelectConnection / Connections=1 | A, B | +14.11%; +13.79% |
+| 38195553203 / disabled | StandaloneBatch / Connections=1&count=32 | A | +3.97%; +1.57% |
+| 38195553203 / enabled | ClientPing / Connections=1 | A | +3.40%; +0.86% |
+| 38195553203 / enabled | ClientServerError / Connections=1 | A | +2.53%; -0.41% |
+| 38195553203 / enabled | LargeSet / Connections=1 | A | +6.29%; +3.31% |
+| 38195553203 / enabled | Pipeline / Connections=1 | B | +0.80%; +1.36% |
+| 38195553203 / enabled | Pipeline / Connections=2 | A | +6.71%; +2.97% |
+| 38195553203 / enabled | PublicPipeline / Connections=1 | A | +2.13%; +0.53% |
+| 38195553203 / enabled | PublicPipeline / Connections=2 | A | +3.64%; +3.01% |
+| 38195553203 / enabled | SelectConnection / Connections=2 | A | +1.97%; -1.79% |
+| 38195553203 / enabled | StandaloneBatch / Connections=1&count=100 | A, B | +6.27%; +5.15% |
+| 38195553203 / enabled | StandaloneBatch / Connections=1&count=32 | A | +1.84%; +0.47% |
+| 38195553203 / enabled | StandaloneBatch / Connections=2&count=32 | A | +1.53%; -0.96% |
+| 38201983679 / disabled | ClientServerError / Connections=2 | A | +1.24%; +0.55% |
+| 38201983679 / disabled | PublicPipeline / Connections=2 | B | +1.04%; +1.55% |
+| 38201983679 / disabled | SmallSet / Connections=2 | A, B | +1.20%; +1.35% |
+| 38201983679 / disabled | StandaloneBatch / Connections=2&count=100 | B | +0.27%; +1.03% |
+| 38201983679 / disabled | StandaloneBatch / Connections=2&count=32 | B | +0.22%; +0.88% |
+| 38201983679 / disabled | StreamedSetWithDelayedSource / Connections=1 | B | +0.64%; +2.67% |
+| 38201983679 / disabled | StreamedSetWithDelayedSource / Connections=2 | A, B | +1.44%; +3.94% |
+| 38201983679 / disabled | StreamedSetWithInstantSource / Connections=1 | A | +4.50%; +2.45% |
+| 38201983679 / enabled | LargeSet / Connections=1 | B | -5.29%; +3.30% |
+| 38201983679 / enabled | SmallSet / Connections=2 | B | -0.56%; +2.40% |
+| 38201983679 / enabled | StandaloneBatch / Connections=2&count=100 | A | +4.83%; +2.00% |
+
+</details>
+
+### Run 38193859429: error metrics disabled
+
+Baseline `e28016d4041c5ab417f6b6f6565c63a46ed8af56`; measured candidate `815eec226f2e97fe7f8b28591950e73c4b881da2`; event head `9c04cc60fb3ca438cd833d279495e6733e210239`.
+
+<details>
+<summary>Every public interval, allocation row, launch and retention group</summary>
+
+| Case / parameters | Candidate/A; candidate/B | B/A drift | 99.9% interval us: A / candidate / B | Reported B/op: A / candidate / B |
+| --- | ---: | ---: | --- | --- |
+| CircuitStreamedGet / Connections=1 | -0.40%; -1.45% | +1.07% | 386.377253–394.912471 / 386.072746–392.105352 / 390.015950–399.638056 | 19012 / 18778 / 17834 |
+| CircuitStreamedGet / Connections=2 | +1.67%; +1.14% | +0.52% | 376.080866–384.853713 / 380.281663–393.322557 / 376.475965–388.410805 | 20941 / 19691 / 18878 |
+| ClientPing / Connections=1 | -0.27%; -1.18% | +0.92% | 190.404492–192.457096 / 189.736253–192.085143 / 192.211477–194.168556 | 184 / 184 / 184 |
+| ClientPing / Connections=2 | +1.08%; -0.18% | +1.26% | 190.589716–192.535259 / 192.998133–194.256958 / 193.345385–194.623868 | 184 / 184 / 183 |
+| ClientServerError / Connections=1 | -0.16%; -1.52% | +1.38% | 221.352509–224.421554 / 221.420864–223.635229 / 224.806989–227.097154 | 952 / 952 / 952 |
+| ClientServerError / Connections=2 | +1.00%; -0.48% | +1.48% | 221.792444–223.748246 / 223.574829–226.400354 / 224.490941–227.664537 | 953 / 952 / 952 |
+| LargeSet / Connections=1 | +1.67%; +0.19% | +1.47% | 1744.382622–1851.823105 / 1780.037934–1876.143779 / 1771.058681–1878.072171 | 176 / 176 / 176 |
+| LargeSet / Connections=2 | +1.30%; -2.37% | +3.76% | 1744.847032–1826.842099 / 1762.467853–1855.749981 / 1780.262978–1925.778392 | 176 / 176 / 180 |
+| Pipeline / Connections=1 | -0.42%; -0.97% | +0.56% | 6.709123–6.772011 / 6.692247–6.732681 / 6.754328–6.801646 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | +0.86%; -0.97% | +1.84% | 7.644128–7.743327 / 7.692868–7.826265 / 7.775335–7.895807 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | +0.45%; -0.06% | +0.51% | 6.733065–6.786784 / 6.765444–6.814738 / 6.772020–6.816639 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | -0.83%; -1.43% | +0.61% | 7.831569–7.942054 / 7.744635–7.898769 / 7.880324–7.989748 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | -0.86%; -0.27% | -0.59% | 0.002646–0.002675 / 0.002632–0.002644 / 0.002634–0.002656 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | +78.49%; +86.58% | -4.34% | 0.006475–0.006963 / 0.008035–0.015951 / 0.006397–0.006459 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | -0.23%; -0.60% | +0.37% | 194.843438–196.932204 / 194.639267–196.219475 / 195.830646–197.389475 | 176 / 176 / 175 |
+| SmallSet / Connections=2 | -0.13%; -1.40% | +1.29% | 195.593987–198.031397 / 195.844392–197.264945 / 198.897503–199.798045 | 176 / 176 / 176 |
+| StandaloneBatch / Connections=1&count=100 | +1.19%; +1.08% | +0.11% | 358.560057–362.030690 / 362.438160–366.699190 / 358.207005–363.164782 | 32407 / 32410 / 32413 |
+| StandaloneBatch / Connections=1&count=32 | -0.58%; -0.66% | +0.08% | 259.346598–261.375840 / 257.746460–259.975076 / 259.823004–261.319470 | 11253 / 11252 / 11253 |
+| StandaloneBatch / Connections=2&count=100 | -0.46%; -0.04% | -0.42% | 358.622846–364.847628 / 358.472918–361.664257 / 357.895665–362.536613 | 32411 / 32411 / 32408 |
+| StandaloneBatch / Connections=2&count=32 | +0.39%; -0.62% | +1.01% | 256.776492–258.746867 / 256.905797–260.610693 / 259.024851–261.716214 | 11253 / 11253 / 11252 |
+| StreamedSetWithDelayedSource / Connections=1 | -3.77%; -4.09% | +0.33% | 10004.800625–10127.925036 / 9384.274745–9988.464538 / 10041.417844–10158.336278 | 12402 / 12360 / 12462 |
+| StreamedSetWithDelayedSource / Connections=2 | -4.02%; -4.92% | +0.94% | 10060.977444–10178.790267 / 9389.571518–10036.325563 / 10135.584073–10294.645105 | 12468 / 12488 / 12552 |
+| StreamedSetWithInstantSource / Connections=1 | +0.41%; +0.05% | +0.36% | 364.335836–372.010545 / 366.252780–373.089015 / 365.142915–373.840062 | 6486 / 6518 / 6504 |
+| StreamedSetWithInstantSource / Connections=2 | +0.27%; -0.07% | +0.34% | 361.582237–371.013315 / 362.933020–371.635876 / 362.560277–372.552659 | 6533 / 6454 / 6485 |
+
+| Case / parameters | PID 1, 2: A / candidate / B | Launch 1, 2 mean us: A / candidate / B | Raw launch 1, 2 B/op: A / candidate / B |
+| --- | --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 9657, 9749 / 15546, 15631 / 21273, 21344 | 393.520545, 387.547973 / 389.741105, 388.436993 / 393.770655, 395.883352 | 17782.641, 19011.961 / 16859.273, 18777.953 / 17366.781, 17834.250 |
+| CircuitStreamedGet / Connections=2 | 11965, 12053 / 17877, 17956 / 23637, 23721 | 380.396602, 380.543414 / 387.245129, 386.359092 / 386.837550, 377.735351 | 18519.273, 20940.523 / 19872.102, 19691.188 / 18896.008, 18878.117 |
+| ClientPing / Connections=1 | 9881, 10009 / 15700, 15822 / 21428, 21535 | 192.190337, 190.671251 / 192.313961, 189.507436 / 192.939426, 193.458506 | 183.979, 184.104 / 183.754, 184.068 / 184.135, 183.848 |
+| ClientPing / Connections=2 | 12124, 12249 / 18045, 18146 / 23789, 23922 | 191.792572, 191.332403 / 194.001206, 193.253886 / 193.799891, 194.144731 | 184.219, 184.225 / 184.225, 183.666 / 184.225, 183.334 |
+| ClientServerError / Connections=1 | 10120, 10201 / 15927, 16049 / 21658, 21779 | 222.710870, 223.063194 / 222.251760, 222.824067 / 225.762693, 226.141451 | 952.293, 952.355 / 952.193, 951.928 / 952.178, 952.193 |
+| ClientServerError / Connections=2 | 12364, 12483 / 18271, 18328 / 24040, 24098 | 222.900901, 222.639788 / 225.327924, 224.669947 / 226.950652, 225.142475 | 952.283, 952.535 / 952.207, 952.207 / 952.117, 952.086 |
+| LargeSet / Connections=1 | 9150, 9228 / 14928, 15054 / 20747, 20809 | 1768.912764, 1827.292964 / 1832.286346, 1823.895367 / 1825.961559, 1823.169293 | 178.156, 176.000 / 177.078, 176.000 / 176.000, 176.000 |
+| LargeSet / Connections=2 | 11438, 11521 / 17350, 17426 / 23073, 23152 | 1787.453641, 1784.342761 / 1809.608320, 1808.609514 / 1834.752781, 1870.070729 | 176.719, 176.000 / 176.000, 176.000 / 176.000, 179.594 |
+| Pipeline / Connections=1 | 8546, 8625 / 14322, 14469 / 20096, 20176 | 6.709118, 6.772015 / 6.712565, 6.712363 / 6.788397, 6.767577 | 6.758, 6.763 / 6.763, 6.765 / 6.770, 6.765 |
+| Pipeline / Connections=2 | 10887, 10967 / 16770, 16851 / 22505, 22587 | 7.662673, 7.724783 / 7.689510, 7.820283 / 7.819508, 7.851635 | 6.770, 6.757 / 6.778, 6.767 / 6.764, 6.768 |
+| PublicPipeline / Connections=1 | 8756, 8819 / 14534, 14615 / 20299, 20380 | 6.751880, 6.767432 / 6.794841, 6.785658 / 6.798362, 6.790585 | 5.764, 5.769 / 5.772, 5.771 / 5.762, 5.770 |
+| PublicPipeline / Connections=2 | 11048, 11131 / 16932, 17017 / 22687, 22767 | 7.865078, 7.910098 / 7.884166, 7.754777 / 7.958910, 7.909327 | 5.776, 5.787 / 5.777, 5.762 / 5.776, 5.776 |
+| SelectConnection / Connections=1 | 8213, 8366 / 14010, 14176 / 19782, 19932 | 0.002648, 0.002674 / 0.002635, 0.002641 / 0.002648, 0.002642 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 10636, 10763 / 16546, 16647 / 22270, 22403 | 0.007025, 0.006388 / 0.017567, 0.006419 / 0.006467, 0.006388 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 8904, 9042 / 14694, 14799 / 20502, 20621 | 195.527933, 196.303077 / 195.442730, 195.415058 / 196.156029, 197.096523 | 176.000, 176.074 / 176.045, 175.982 / 176.000, 174.918 |
+| SmallSet / Connections=2 | 11212, 11334 / 17099, 17224 / 22851, 22953 | 198.221210, 195.404174 / 196.685177, 196.414838 / 199.537697, 199.157851 | 176.209, 175.934 / 176.008, 176.180 / 176.100, 176.209 |
+| StandaloneBatch / Connections=1&count=100 | 8025, 8131 / 13774, 13898 / 19642, 19706 | 361.263545, 359.327201 / 366.034874, 363.200223 / 360.303220, 361.043056 | 32406.898, 32407.219 / 32413.629, 32410.219 / 32406.594, 32412.711 |
+| StandaloneBatch / Connections=1&count=32 | 7855, 7943 / 13610, 13693 / 19480, 19564 | 260.939750, 259.741365 / 258.299560, 259.384562 / 260.354568, 260.787906 | 11252.449, 11253.137 / 11252.539, 11251.699 / 11252.199, 11253.449 |
+| StandaloneBatch / Connections=2&count=100 | 10447, 10549 / 16359, 16464 / 22083, 22187 | 359.660360, 363.533464 / 360.527741, 359.609434 / 358.444949, 362.113843 | 32408.777, 32411.438 / 32415.527, 32411.117 / 32407.098, 32407.938 |
+| StandaloneBatch / Connections=2&count=32 | 10282, 10364 / 16193, 16276 / 21902, 21984 | 258.618514, 256.904845 / 259.963937, 257.632932 / 259.239463, 261.501602 | 11250.398, 11252.988 / 11248.738, 11252.988 / 11251.398, 11252.438 |
+| StreamedSetWithDelayedSource / Connections=1 | 9306, 9432 / 15135, 15214 / 20888, 20989 | 10096.605647, 10036.120014 / 9264.010239, 10108.729044 / 10088.892345, 10112.551733 | 12586.250, 12401.625 / 12365.500, 12360.125 / 12557.250, 12461.625 |
+| StreamedSetWithDelayedSource / Connections=2 | 11601, 11699 / 17490, 17591 / 23234, 23333 | 10141.362999, 10098.404712 / 9249.931589, 10175.965492 / 10262.882569, 10167.346609 | 12375.000, 12467.875 / 12424.875, 12488.500 / 12423.125, 12551.500 |
+| StreamedSetWithInstantSource / Connections=1 | 9515, 9597 / 15314, 15435 / 21088, 21192 | 368.163088, 368.184014 / 369.642107, 369.697769 / 368.824572, 370.158404 | 6424.867, 6485.703 / 6459.496, 6518.387 / 6502.977, 6504.398 |
+| StreamedSetWithInstantSource / Connections=2 | 11779, 11903 / 17675, 17798 / 23434, 23533 | 365.730394, 366.952446 / 367.177971, 367.390926 / 366.898667, 368.170416 | 6483.250, 6533.484 / 6233.605, 6453.531 / 6480.914, 6485.492 |
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | POH fragmentation | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5913264–5927632 | 8184–8184 | 0–0 | 49553408–49860608 | 134438912–134479872 |
+| baseline-a | 1 | connected | 24 | 8680680–8697176 | 24528–24528 | 0–0 | 67948544–68386816 | 261181440–261410816 |
+| baseline-a | 1 | after-churn | 24 | 9704288–9724752 | 24528–24528 | 0–0 | 71360512–71868416 | 263585792–280649728 |
+| baseline-a | 1 | after-dispose | 24 | 8243144–8862120 | 24528–24528 | 0–0 | 75034624–102412288 | 246202368–456126464 |
+| baseline-a | 2 | before-connect | 24 | 5913144–5927616 | 8184–8184 | 0–0 | 49541120–49942528 | 134451200–134676480 |
+| baseline-a | 2 | connected | 24 | 10289544–10306184 | 24528–24528 | 0–0 | 69787648–70205440 | 263671808–263872512 |
+| baseline-a | 2 | after-churn | 24 | 11319408–11350008 | 24528–24528 | 0–0 | 74076160–74539008 | 283693056–283942912 |
+| baseline-a | 2 | after-dispose | 24 | 8970768–10546608 | 24528–24528 | 0–0 | 75116544–103141376 | 262860800–473804800 |
+| candidate | 1 | before-connect | 24 | 5913232–5927640 | 8184–8184 | 0–0 | 49467392–49876992 | 134438912–134676480 |
+| candidate | 1 | connected | 24 | 8680696–8701304 | 24528–24528 | 0–0 | 67936256–68378624 | 261148672–261451776 |
+| candidate | 1 | after-churn | 24 | 9706976–9715704 | 24528–24528 | 0–0 | 71450624–71794688 | 263634944–280625152 |
+| candidate | 1 | after-dispose | 24 | 8245640–9042112 | 24528–24528 | 0–0 | 74928128–106610688 | 246280192–406065152 |
+| candidate | 2 | before-connect | 24 | 5913248–5927720 | 8184–8184 | 0–0 | 49586176–49897472 | 134434816–134479872 |
+| candidate | 2 | connected | 24 | 10289648–10306224 | 24528–24528 | 0–0 | 69869568–70369280 | 263602176–263876608 |
+| candidate | 2 | after-churn | 24 | 11262232–11339784 | 24528–24528 | 0–0 | 74145792–74584064 | 283697152–283942912 |
+| candidate | 2 | after-dispose | 24 | 8963760–10039688 | 24528–24528 | 0–0 | 75456512–102637568 | 263241728–474107904 |
+| baseline-b | 1 | before-connect | 24 | 5919264–5927632 | 8184–8184 | 0–0 | 49520640–49975296 | 134434816–134676480 |
+| baseline-b | 1 | connected | 24 | 8680584–8697216 | 24528–24528 | 0–0 | 67948544–68407296 | 261201920–261439488 |
+| baseline-b | 1 | after-churn | 24 | 9702744–9718168 | 24528–24528 | 0–0 | 71385088–71974912 | 263610368–280686592 |
+| baseline-b | 1 | after-dispose | 24 | 8243384–9000776 | 24528–24528 | 0–0 | 74956800–105897984 | 246210560–410271744 |
+| baseline-b | 2 | before-connect | 24 | 5913128–5927616 | 8184–8184 | 0–0 | 49557504–49840128 | 134438912–134479872 |
+| baseline-b | 2 | connected | 24 | 10298792–10314304 | 24528–24528 | 0–0 | 69861376–70209536 | 263655424–263864320 |
+| baseline-b | 2 | after-churn | 24 | 11320120–11336728 | 24528–24528 | 0–0 | 74141696–74444800 | 283693056–283947008 |
+| baseline-b | 2 | after-dispose | 24 | 9022120–9967800 | 24528–24528 | 0–0 | 75005952–103690240 | 262770688–476291072 |
+
+</details>
+
+### Run 38193859429: error metrics enabled
+
+Baseline `e28016d4041c5ab417f6b6f6565c63a46ed8af56`; measured candidate `815eec226f2e97fe7f8b28591950e73c4b881da2`; event head `9c04cc60fb3ca438cd833d279495e6733e210239`.
+
+<details>
+<summary>Every public interval, allocation row, launch and retention group</summary>
+
+| Case / parameters | Candidate/A; candidate/B | B/A drift | 99.9% interval us: A / candidate / B | Reported B/op: A / candidate / B |
+| --- | ---: | ---: | --- | --- |
+| CircuitStreamedGet / Connections=1 | -0.05%; +1.46% | -1.48% | 285.532567–292.027493 / 284.319982–292.977973 / 282.055064–286.942241 | 21979 / 22780 / 22706 |
+| CircuitStreamedGet / Connections=2 | +0.58%; -0.19% | +0.78% | 273.480324–278.433330 / 274.673875–280.455231 / 275.135537–281.071322 | 23998 / 21373 / 20502 |
+| ClientPing / Connections=1 | -0.77%; -1.30% | +0.53% | 90.438841–94.999575 / 89.541219–94.469474 / 90.724898–95.704273 | 183 / 183 / 183 |
+| ClientPing / Connections=2 | -1.11%; +1.61% | -2.68% | 94.496184–97.770377 / 92.515226–97.608625 / 90.991043–96.128582 | 184 / 182 / 183 |
+| ClientServerError / Connections=1 | +1.42%; +1.30% | +0.12% | 129.661646–131.458195 / 131.686999–133.145994 / 129.956615–131.480545 | 952 / 952 / 952 |
+| ClientServerError / Connections=2 | +0.82%; +1.06% | -0.23% | 131.010255–132.625168 / 132.124841–133.685238 / 130.564030–132.465787 | 952 / 952 / 952 |
+| LargeSet / Connections=1 | +3.01%; -0.45% | +3.48% | 1227.880601–1265.751157 / 1256.159938–1312.570271 / 1262.013493–1318.320563 | 177 / 176 / 176 |
+| LargeSet / Connections=2 | +6.36%; +4.72% | +1.57% | 1192.073042–1227.770136 / 1260.886603–1312.941830 / 1206.017500–1251.862206 | 177 / 176 / 177 |
+| Pipeline / Connections=1 | -0.22%; +0.08% | -0.30% | 4.010606–4.044883 / 4.003622–4.034022 / 4.001236–4.030097 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | -0.57%; -0.27% | -0.31% | 4.658201–4.792989 / 4.637501–4.759553 / 4.669895–4.752441 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | +0.02%; -0.03% | +0.04% | 4.007703–4.042302 / 4.010859–4.040409 / 4.002035–4.051381 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | -0.40%; +0.74% | -1.14% | 4.694293–4.874547 / 4.705919–4.824461 / 4.667118–4.792994 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | -9.83%; -4.87% | -5.22% | 0.001632–0.001672 / 0.001478–0.001501 / 0.001537–0.001594 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | -0.30%; -7.27% | +7.52% | 0.004759–0.004780 / 0.004748–0.004762 / 0.004898–0.005358 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | -1.30%; +0.04% | -1.34% | 105.667541–107.157237 / 104.228303–105.836469 / 102.771486–107.200778 | 176 / 174 / 175 |
+| SmallSet / Connections=2 | -2.16%; -1.95% | -0.21% | 105.955753–108.009862 / 103.439137–105.913479 / 105.313480–108.201071 | 176 / 176 / 176 |
+| StandaloneBatch / Connections=1&count=100 | -0.12%; -0.21% | +0.09% | 243.364713–245.923203 / 243.341850–245.341946 / 243.986176–245.749286 | 32407 / 32391 / 32402 |
+| StandaloneBatch / Connections=1&count=32 | +0.26%; +0.04% | +0.22% | 159.150272–159.927687 / 159.460715–160.462673 / 159.510689–160.270554 | 11242 / 11247 / 11247 |
+| StandaloneBatch / Connections=2&count=100 | +0.22%; -0.13% | +0.35% | 240.925626–243.618397 / 241.671366–243.956499 / 241.585704–244.676776 | 32394 / 32400 / 32390 |
+| StandaloneBatch / Connections=2&count=32 | +0.48%; +0.67% | -0.18% | 158.951346–160.348795 / 159.773482–161.075235 / 158.954247–159.765950 | 11248 / 11250 / 11248 |
+| StreamedSetWithDelayedSource / Connections=1 | +1.02%; +0.70% | +0.32% | 9343.853501–9513.078911 / 9458.732819–9591.479644 / 9395.628979–9522.226057 | 12522 / 12366 / 12396 |
+| StreamedSetWithDelayedSource / Connections=2 | -0.16%; -0.76% | +0.60% | 9017.286748–9445.842578 / 9073.487123–9359.262609 / 9118.386959–9456.114386 | 12270 / 12578 / 12360 |
+| StreamedSetWithInstantSource / Connections=1 | -4.17%; -0.08% | -4.09% | 250.638238–261.662047 / 242.118657–248.797121 / 241.097814–250.227649 | 6472 / 6487 / 6464 |
+| StreamedSetWithInstantSource / Connections=2 | +2.30%; +1.44% | +0.85% | 240.929321–247.292544 / 246.372534–253.090397 / 242.514328–249.878215 | 6521 / 6526 / 6487 |
+
+| Case / parameters | PID 1, 2: A / candidate / B | Launch 1, 2 mean us: A / candidate / B | Raw launch 1, 2 B/op: A / candidate / B |
+| --- | --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 8806, 8916 / 14410, 14515 / 19980, 20082 | 288.683702, 288.876358 / 289.573850, 287.724106 / 286.052778, 283.055536 | 21641.234, 21978.750 / 20569.469, 22780.094 / 22245.023, 22705.781 |
+| CircuitStreamedGet / Connections=2 | 11139, 11238 / 16688, 16777 / 22319, 22402 | 274.160187, 277.633691 / 277.828289, 277.260242 / 277.924703, 278.309652 | 21478.031, 23997.820 / 21711.309, 21373.055 / 20494.316, 20501.594 |
+| ClientPing / Connections=1 | 9001, 9123 / 14606, 14730 / 20235, 20354 | 91.878295, 93.560122 / 93.787409, 90.223285 / 91.611106, 94.818064 | 182.743, 182.984 / 180.044, 182.510 / 181.772, 183.278 |
+| ClientPing / Connections=2 | 11323, 11450 / 16884, 16990 / 22512, 22611 | 96.224280, 96.048348 / 94.366932, 95.756919 / 91.197921, 95.921704 | 182.315, 183.688 / 183.804, 182.021 / 182.731, 183.358 |
+| ClientServerError / Connections=1 | 9228, 9312 / 14831, 14911 / 20456, 20543 | 129.798065, 131.376194 / 132.976857, 131.856136 / 131.413622, 129.916609 | 952.193, 952.088 / 951.934, 952.059 / 952.104, 952.162 |
+| ClientServerError / Connections=2 | 11550, 11639 / 17117, 17200 / 22741, 22821 | 132.649514, 131.041363 / 132.164098, 133.698906 / 132.594540, 130.507253 | 952.043, 951.926 / 952.059, 952.043 / 952.059, 952.104 |
+| LargeSet / Connections=1 | 8261, 8342 / 13875, 13959 / 19459, 19564 | 1248.802152, 1244.829606 / 1267.743250, 1300.986959 / 1309.102825, 1271.231230 | 177.078, 177.078 / 177.078, 176.000 / 177.078, 176.359 |
+| LargeSet / Connections=2 | 10611, 10712 / 16152, 16248 / 21800, 21879 | 1205.902873, 1214.227355 / 1286.324935, 1287.464213 / 1244.051345, 1212.748969 | 176.000, 177.438 / 176.000, 175.875 / 177.797, 177.438 |
+| Pipeline / Connections=1 | 7657, 7739 / 13279, 13360 / 18860, 18943 | 4.017865, 4.036919 / 4.025910, 4.011734 / 4.014072, 4.017262 | 6.759, 6.759 / 6.752, 6.753 / 6.760, 6.715 |
+| Pipeline / Connections=2 | 10006, 10104 / 15563, 15671 / 21172, 21271 | 4.755184, 4.696007 / 4.690850, 4.706204 / 4.705974, 4.716015 | 6.727, 6.706 / 6.703, 6.724 / 6.736, 6.738 |
+| PublicPipeline / Connections=1 | 7840, 7922 / 13459, 13540 / 19045, 19124 | 4.024026, 4.026048 / 4.023781, 4.027355 / 4.023086, 4.030072 | 5.743, 5.747 / 5.762, 5.752 / 5.759, 5.756 |
+| PublicPipeline / Connections=2 | 10213, 10300 / 15765, 15845 / 21356, 21454 | 4.808228, 4.760612 / 4.736626, 4.795794 / 4.733191, 4.727145 | 5.732, 5.731 / 5.733, 5.675 / 5.726, 5.698 |
+| SelectConnection / Connections=1 | 7394, 7529 / 13012, 13153 / 18588, 18731 | 0.001634, 0.001672 / 0.001481, 0.001498 / 0.001557, 0.001574 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 9803, 9906 / 15355, 15457 / 20964, 21069 | 0.004760, 0.004778 / 0.004757, 0.004753 / 0.005413, 0.004796 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 8003, 8133 / 13625, 13753 / 19206, 19332 | 106.909935, 105.879304 / 105.418924, 104.618238 / 103.056837, 106.915427 | 175.192, 175.606 / 175.685, 173.730 / 175.450, 174.866 |
+| SmallSet / Connections=2 | 10360, 10487 / 15904, 16026 / 21554, 21657 | 107.324084, 106.641531 / 104.303911, 105.048705 / 105.005953, 108.508598 | 175.926, 175.843 / 175.495, 175.987 / 175.621, 175.878 |
+| StandaloneBatch / Connections=1&count=100 | 7248, 7312 / 12849, 12929 / 18423, 18504 | 243.670197, 245.617718 / 245.555916, 243.289749 / 245.471311, 244.264151 | 32391.719, 32406.668 / 32389.348, 32390.539 / 32374.438, 32402.449 |
+| StandaloneBatch / Connections=1&count=32 | 7050, 7141 / 12660, 12769 / 18239, 18322 | 159.714045, 159.363914 / 160.176524, 159.762210 / 159.754734, 160.008390 | 11249.998, 11242.143 / 11248.730, 11247.498 / 11249.199, 11246.824 |
+| StandaloneBatch / Connections=2&count=100 | 9639, 9722 / 15199, 15276 / 20826, 20905 | 243.068476, 241.528645 / 242.267826, 243.360039 / 241.385985, 244.760145 | 32404.078, 32394.148 / 32394.258, 32399.898 / 32412.148, 32389.977 |
+| StandaloneBatch / Connections=2&count=32 | 9393, 9455 / 14994, 15096 / 20622, 20724 | 159.130498, 160.169643 / 159.977189, 160.841716 / 159.041960, 159.678237 | 11251.273, 11247.842 / 11248.748, 11249.623 / 11248.076, 11248.250 |
+| StreamedSetWithDelayedSource / Connections=1 | 8443, 8545 / 14058, 14157 / 19642, 19740 | 9450.804595, 9406.127817 / 9531.468844, 9518.289147 / 9477.756279, 9438.753846 | 12458.375, 12522.500 / 12237.875, 12366.250 / 12489.500, 12396.500 |
+| StreamedSetWithDelayedSource / Connections=2 | 10814, 10893 / 16344, 16422 / 21975, 22055 | 9472.603030, 8953.443470 / 9384.112735, 9048.636997 / 9335.115648, 9239.385697 | 12810.750, 12270.125 / 12278.875, 12578.500 / 12527.625, 12360.125 |
+| StreamedSetWithInstantSource / Connections=1 | 8631, 8721 / 14237, 14325 / 19821, 19900 | 262.138902, 250.161383 / 247.335606, 243.714295 / 247.436190, 243.889272 | 6529.000, 6471.562 / 6535.730, 6487.199 / 6521.059, 6464.492 |
+| StreamedSetWithInstantSource / Connections=2 | 10973, 11058 / 16520, 16603 / 22153, 22237 | 246.044017, 241.880450 / 249.440284, 250.003235 / 247.225264, 245.008972 | 6528.500, 6520.531 / 6446.340, 6525.762 / 6465.328, 6486.547 |
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | POH fragmentation | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5913432–5921784 | 8184–8184 | 0–0 | 49709056–49954816 | 134438912–134483968 |
+| baseline-a | 1 | connected | 24 | 8681288–8693768 | 24528–24528 | 0–0 | 68038656–68460544 | 261185536–261406720 |
+| baseline-a | 1 | after-churn | 24 | 9701552–9719256 | 24528–24528 | 0–0 | 71483392–72015872 | 263442432–280608768 |
+| baseline-a | 1 | after-dispose | 24 | 8365680–9086592 | 24528–24528 | 0–0 | 75448320–102653952 | 263069696–406573056 |
+| baseline-a | 2 | before-connect | 24 | 5913424–5927800 | 8184–8184 | 0–0 | 49598464–49995776 | 134443008–134676480 |
+| baseline-a | 2 | connected | 24 | 10287176–10310808 | 24528–24528 | 0–0 | 69910528–70230016 | 263667712–280674304 |
+| baseline-a | 2 | after-churn | 24 | 11321032–11347896 | 24528–24528 | 0–0 | 74133504–74571776 | 266944512–283893760 |
+| baseline-a | 2 | after-dispose | 24 | 8972760–9809936 | 24528–24528 | 0–0 | 75710464–102707200 | 280027136–388866048 |
+| candidate | 1 | before-connect | 24 | 5913544–5921896 | 8184–8184 | 0–0 | 49676288–50012160 | 134443008–134676480 |
+| candidate | 1 | connected | 24 | 8681416–8698016 | 24528–24528 | 0–0 | 68046848–68407296 | 261210112–261378048 |
+| candidate | 1 | after-churn | 24 | 9702112–9721200 | 24528–24528 | 0–0 | 71483392–71917568 | 263479296–280563712 |
+| candidate | 1 | after-dispose | 24 | 8304248–9057472 | 24528–24528 | 0–0 | 75223040–102809600 | 263118848–389296128 |
+| candidate | 2 | before-connect | 24 | 5913536–5921904 | 8184–8184 | 0–0 | 49635328–50008064 | 134443008–134676480 |
+| candidate | 2 | connected | 24 | 10290400–10307936 | 24528–24528 | 0–0 | 69890048–70262784 | 263614464–280768512 |
+| candidate | 2 | after-churn | 24 | 11321504–11345120 | 24528–24528 | 0–0 | 74215424–74592256 | 266899456–283971584 |
+| candidate | 2 | after-dispose | 24 | 8997296–10112248 | 24528–24528 | 0–0 | 75276288–102965248 | 262885376–473894912 |
+| baseline-b | 1 | before-connect | 24 | 5913536–5927912 | 8184–8184 | 0–0 | 49532928–50053120 | 134443008–134479872 |
+| baseline-b | 1 | connected | 24 | 8681472–8697912 | 24528–24528 | 0–0 | 68005888–68501504 | 261193728–261361664 |
+| baseline-b | 1 | after-churn | 24 | 9699392–9721824 | 24528–24528 | 0–0 | 71544832–71979008 | 263528448–280555520 |
+| baseline-b | 1 | after-dispose | 24 | 8306728–9005584 | 24528–24528 | 0–0 | 75329536–103444480 | 263049216–490668032 |
+| baseline-b | 2 | before-connect | 24 | 5913424–5927808 | 8184–8184 | 0–0 | 49590272–50020352 | 134438912–134483968 |
+| baseline-b | 2 | connected | 24 | 10290376–10314208 | 24528–24528 | 0–0 | 69906432–70352896 | 263602176–263856128 |
+| baseline-b | 2 | after-churn | 24 | 11317888–11343768 | 24528–24528 | 0–0 | 74166272–74645504 | 266764288–283930624 |
+| baseline-b | 2 | after-dispose | 24 | 9063032–10109512 | 24528–24528 | 0–0 | 74547200–102891520 | 280227840–406056960 |
+
+</details>
+
+### Run 38195553203: error metrics disabled
+
+Baseline `dfa7564f3946695f00c48f8d71679fdce935c8c2`; measured candidate `fbc7af5a11404398455df510a2ddb93415d05c05`; event head `ba10a10c7132e891d1bd02431a97ba31cbd9d3e5`.
+
+<details>
+<summary>Every public interval, allocation row, launch and retention group</summary>
+
+| Case / parameters | Candidate/A; candidate/B | B/A drift | 99.9% interval us: A / candidate / B | Reported B/op: A / candidate / B |
+| --- | ---: | ---: | --- | --- |
+| CircuitStreamedGet / Connections=1 | -1.26%; -3.32% | +2.12% | 192.186861–202.197356 / 190.118201–199.287099 / 198.442792–204.313973 | 24205 / 23873 / 21299 |
+| CircuitStreamedGet / Connections=2 | -0.14%; -3.02% | +2.97% | 195.822544–201.345818 / 194.870354–201.756025 / 201.654417–207.316961 | 22607 / 22035 / 23022 |
+| ClientPing / Connections=1 | +1.91%; -2.61% | +4.64% | 68.630647–71.916776 / 71.022348–72.209725 / 72.014956–75.052089 | 183 / 184 / 183 |
+| ClientPing / Connections=2 | -0.22%; -1.46% | +1.26% | 73.494355–75.269965 / 73.532570–74.907173 / 73.986352–76.651236 | 179 / 184 / 183 |
+| ClientServerError / Connections=1 | -0.13%; -1.17% | +1.05% | 80.561426–83.659803 / 80.539901–83.471271 / 81.190365–84.759284 | 949 / 951 / 952 |
+| ClientServerError / Connections=2 | +0.88%; -4.45% | +5.59% | 81.541826–84.704410 / 82.556568–85.160812 / 85.173205–90.362662 | 952 / 948 / 950 |
+| LargeSet / Connections=1 | -2.03%; -3.01% | +1.01% | 954.928564–993.526615 / 943.278101–965.697966 / 968.606307–999.613791 | 177 / 177 / 176 |
+| LargeSet / Connections=2 | -4.52%; -2.61% | -1.95% | 957.589935–999.126006 / 920.078084–948.284319 / 951.520922–966.954247 | 176 / 177 / 178 |
+| Pipeline / Connections=1 | -0.79%; -1.20% | +0.41% | 3.149487–3.244416 / 3.139910–3.203321 / 3.176715–3.243571 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | -0.87%; -4.31% | +3.60% | 3.666087–3.778908 / 3.631674–3.748365 / 3.794893–3.917873 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | -0.54%; -0.70% | +0.16% | 3.188448–3.266032 / 3.188036–3.231526 / 3.182972–3.281593 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | -1.24%; -3.39% | +2.23% | 3.695387–3.879572 / 3.680581–3.800564 / 3.814087–3.929779 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | +14.11%; +13.79% | +0.28% | 0.001000–0.001032 / 0.001047–0.001272 / 0.000994–0.001044 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | +0.74%; -1.89% | +2.68% | 0.006872–0.006928 / 0.006840–0.007061 / 0.007012–0.007158 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | -1.45%; -2.11% | +0.67% | 73.170657–75.494615 / 71.985066–74.519609 / 73.809765–75.856966 | 175 / 174 / 173 |
+| SmallSet / Connections=2 | -3.54%; -4.54% | +1.04% | 72.908923–75.678200 / 70.803050–72.519349 / 73.786321–76.347709 | 175 / 176 / 173 |
+| StandaloneBatch / Connections=1&count=100 | +1.50%; -2.08% | +3.65% | 169.950064–174.989782 / 173.673064–176.429713 / 177.387773–180.155702 | 32410 / 32416 / 32414 |
+| StandaloneBatch / Connections=1&count=32 | +3.97%; +1.57% | +2.36% | 116.825095–120.215701 / 121.835622–124.606774 / 120.330989–122.296607 | 11252 / 11250 / 11250 |
+| StandaloneBatch / Connections=2&count=100 | -1.12%; -4.54% | +3.58% | 170.960306–173.243756 / 169.113246–171.232759 / 175.799213–180.721828 | 32417 / 32416 / 32416 |
+| StandaloneBatch / Connections=2&count=32 | +0.12%; -3.51% | +3.76% | 118.771759–121.350938 / 119.242810–121.171467 / 123.530653–125.617652 | 11241 / 11251 / 11249 |
+| StreamedSetWithDelayedSource / Connections=1 | +0.40%; -0.01% | +0.40% | 9155.447951–9372.588517 / 9208.658227–9393.265533 / 9215.936398–9387.103704 | 12335 / 12608 / 12541 |
+| StreamedSetWithDelayedSource / Connections=2 | -1.49%; -0.60% | -0.89% | 9106.616712–9455.829733 / 9001.637527–9283.987014 / 9041.582847–9355.242206 | 12326 / 12424 / 12451 |
+| StreamedSetWithInstantSource / Connections=1 | -0.81%; -0.22% | -0.59% | 175.431915–182.561406 / 175.540006–179.558918 / 175.923040–179.963853 | 6358 / 6119 / 6342 |
+| StreamedSetWithInstantSource / Connections=2 | -4.37%; -4.42% | +0.05% | 178.882552–184.426937 / 172.622216–174.820680 / 179.472343–184.028643 | 6511 / 6415 / 6094 |
+
+| Case / parameters | PID 1, 2: A / candidate / B | Launch 1, 2 mean us: A / candidate / B | Raw launch 1, 2 B/op: A / candidate / B |
+| --- | --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 8720, 8789 / 14336, 14425 / 20089, 20192 | 197.203101, 197.181115 / 198.838394, 190.842622 / 201.950643, 200.718081 | 22420.227, 24205.193 / 22787.418, 23873.254 / 23119.459, 21299.064 |
+| CircuitStreamedGet / Connections=2 | 11128, 11194 / 16719, 16801 / 22496, 22623 | 200.176515, 197.114334 / 195.392570, 201.233810 / 204.309039, 204.674957 | 21780.016, 22607.211 / 23807.480, 22035.135 / 23772.846, 23021.727 |
+| ClientPing / Connections=1 | 8914, 8994 / 14487, 14590 / 20316, 20416 | 72.234593, 68.574281 / 71.773390, 71.458683 / 74.656012, 72.411034 | 183.719, 182.622 / 183.500, 183.742 / 183.351, 183.315 |
+| ClientPing / Connections=2 | 11278, 11366 / 16906, 17015 / 22701, 22798 | 74.898986, 73.828417 / 74.341777, 74.114220 / 74.822216, 75.850842 | 183.190, 178.554 / 183.440, 183.620 / 182.849, 183.272 |
+| ClientServerError / Connections=1 | 9097, 9177 / 14666, 14762 / 20496, 20594 | 83.104385, 81.045860 / 81.526792, 82.452461 / 83.223033, 82.726615 | 951.776, 949.273 / 951.339, 951.409 / 950.963, 951.974 |
+| ClientServerError / Connections=2 | 11472, 11567 / 17099, 17202 / 22896, 22998 | 82.170279, 84.075958 / 84.146360, 83.571021 / 88.622955, 86.912911 | 952.098, 951.779 / 952.029, 948.058 / 951.720, 950.126 |
+| LargeSet / Connections=1 | 8088, 8236 / 13810, 13869 / 19528, 19605 | 993.953005, 953.093216 / 955.643731, 953.332336 / 978.754977, 989.847627 | 176.539, 177.078 / 176.719, 177.078 / 177.078, 176.359 |
+| LargeSet / Connections=2 | 10568, 10645 / 16128, 16210 / 21879, 22023 | 965.128314, 991.587626 / 920.174433, 950.342857 / 961.353253, 957.262960 | 177.797, 176.000 / 176.359, 176.898 / 176.898, 178.047 |
+| Pipeline / Connections=1 | 7552, 7634 / 13338, 13400 / 19020, 19083 | 3.175902, 3.218001 / 3.146222, 3.197009 / 3.221151, 3.200603 | 6.755, 6.754 / 6.745, 6.749 / 6.754, 6.746 |
+| Pipeline / Connections=2 | 9998, 10078 / 15578, 15705 / 21305, 21459 | 3.675621, 3.763125 / 3.674633, 3.705406 / 3.825828, 3.886938 | 6.646, 6.611 / 6.580, 6.671 / 6.606, 6.671 |
+| PublicPipeline / Connections=1 | 7763, 7825 / 13481, 13540 / 19164, 19240 | 3.247852, 3.208002 / 3.208512, 3.211051 / 3.285437, 3.182672 | 5.750, 5.756 / 5.755, 5.748 / 5.746, 5.708 |
+| PublicPipeline / Connections=2 | 10160, 10246 / 15789, 15870 / 21546, 21626 | 3.721689, 3.848884 / 3.776203, 3.704942 / 3.851184, 3.892683 | 5.608, 5.593 / 5.685, 5.627 / 5.692, 5.571 |
+| SelectConnection / Connections=1 | 7170, 7371 / 12927, 13126 / 18643, 18838 | 0.001014, 0.001019 / 0.001001, 0.001296 / 0.001024, 0.001014 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 9786, 9891 / 15348, 15453 / 21100, 21203 | 0.006911, 0.006889 / 0.006834, 0.007068 / 0.007093, 0.007077 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 7909, 7988 / 13622, 13707 / 19348, 19449 | 73.592815, 75.195760 / 73.614301, 72.862530 / 75.127392, 74.539339 | 175.567, 175.351 / 175.643, 174.096 / 168.262, 173.290 |
+| SmallSet / Connections=2 | 10331, 10489 / 15948, 16026 / 21706, 21806 | 73.803268, 74.751168 / 71.497179, 71.814285 / 75.506265, 74.627765 | 167.190, 175.494 / 172.312, 175.703 / 173.239, 172.792 |
+| StandaloneBatch / Connections=1&count=100 | 6921, 7028 / 12714, 12821 / 18413, 18538 | 171.620179, 173.450396 / 176.356428, 173.653132 / 177.689318, 179.854157 | 32406.840, 32409.668 / 32414.672, 32415.951 / 32413.385, 32413.824 |
+| StandaloneBatch / Connections=1&count=32 | 6671, 6757 / 12553, 12636 / 18196, 18333 | 120.241803, 116.676035 / 121.989793, 124.370510 / 121.262260, 121.365336 | 11250.783, 11251.604 / 11249.600, 11250.053 / 11248.815, 11249.520 |
+| StandaloneBatch / Connections=2&count=100 | 9578, 9683 / 15134, 15241 / 20851, 20915 | 171.579224, 172.555130 / 169.106447, 171.239558 / 177.988609, 178.532431 | 32417.760, 32417.494 / 32417.465, 32415.838 / 32412.488, 32416.057 |
+| StandaloneBatch / Connections=2&count=32 | 9281, 9433 / 14864, 14991 / 20691, 20773 | 121.023058, 119.030945 / 120.512956, 119.879477 / 125.564977, 123.512555 | 11249.827, 11240.968 / 11251.366, 11251.187 / 11247.559, 11249.012 |
+| StreamedSetWithDelayedSource / Connections=1 | 8294, 8393 / 13951, 14047 / 19683, 19784 | 9362.850379, 9171.774898 / 9279.132004, 9322.791757 / 9388.136426, 9214.903676 | 12393.125, 12335.250 / 12494.500, 12607.500 / 12554.625, 12540.625 |
+| StreamedSetWithDelayedSource / Connections=2 | 10723, 10805 / 16332, 16431 / 22106, 22187 | 9457.399726, 9105.046720 / 9270.851344, 9014.773197 / 9372.473834, 9024.351219 | 12398.000, 12325.875 / 12324.500, 12423.625 / 12558.750, 12450.750 |
+| StreamedSetWithInstantSource / Connections=1 | 8477, 8602 / 14129, 14231 / 19862, 19963 | 180.480442, 177.512879 / 177.604876, 177.494048 / 177.285108, 178.601785 | 6293.828, 6357.908 / 6497.580, 6118.736 / 6321.414, 6342.252 |
+| StreamedSetWithInstantSource / Connections=2 | 10907, 11005 / 16510, 16619 / 22265, 22389 | 182.591876, 180.717614 / 174.038134, 173.382141 / 181.899428, 181.601558 | 6083.150, 6510.959 / 6527.607, 6414.613 / 6352.984, 6094.225 |
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | POH fragmentation | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5921672–5927960 | 8184–8184 | 0–0 | 49713152–50139136 | 134443008–134688768 |
+| baseline-a | 1 | connected | 24 | 8678816–8701424 | 24528–24528 | 0–0 | 68091904–68415488 | 261222400–261382144 |
+| baseline-a | 1 | after-churn | 24 | 9702056–9718464 | 24528–24528 | 0–0 | 71458816–71921664 | 263495680–280571904 |
+| baseline-a | 1 | after-dispose | 24 | 8234672–8833448 | 24528–24528 | 0–0 | 75309056–103608320 | 246087680–354381824 |
+| baseline-a | 2 | before-connect | 24 | 5913464–5927968 | 8184–8184 | 0–0 | 49627136–50143232 | 134447104–134676480 |
+| baseline-a | 2 | connected | 24 | 10286872–10307288 | 24528–24528 | 0–0 | 69791744–70242304 | 263630848–280698880 |
+| baseline-a | 2 | after-churn | 24 | 11319088–11334416 | 24528–24528 | 0–0 | 74133504–74543104 | 266838016–283992064 |
+| baseline-a | 2 | after-dispose | 24 | 9003824–10060720 | 24528–24528 | 0–0 | 75849728–102842368 | 263254016–439365632 |
+| candidate | 1 | before-connect | 24 | 5913600–5921928 | 8184–8184 | 0–0 | 49610752–50032640 | 134443008–134483968 |
+| candidate | 1 | connected | 24 | 8677712–8693488 | 24528–24528 | 0–0 | 67915776–68403200 | 261177344–261382144 |
+| candidate | 1 | after-churn | 24 | 9697664–9719112 | 24528–24528 | 0–0 | 71290880–71974912 | 263446528–280580096 |
+| candidate | 1 | after-dispose | 24 | 8397952–8843872 | 24528–24528 | 0–0 | 75563008–102383616 | 247296000–456036352 |
+| candidate | 2 | before-connect | 24 | 5913680–5927976 | 8184–8184 | 0–0 | 49664000–50221056 | 134443008–134684672 |
+| candidate | 2 | connected | 24 | 10287056–10306520 | 24528–24528 | 0–0 | 69816320–70295552 | 263655424–280711168 |
+| candidate | 2 | after-churn | 24 | 11314440–11332656 | 24528–24528 | 0–0 | 73986048–74539008 | 266854400–283934720 |
+| candidate | 2 | after-dispose | 24 | 9044864–9968720 | 24528–24528 | 0–0 | 75763712–104079360 | 268722176–388780032 |
+| baseline-b | 1 | before-connect | 24 | 5921672–5927960 | 8184–8184 | 0–0 | 49659904–50139136 | 134443008–134483968 |
+| baseline-b | 1 | connected | 24 | 8677640–8697416 | 24528–24528 | 0–0 | 68014080–68493312 | 261189632–261451776 |
+| baseline-b | 1 | after-churn | 24 | 9697520–9717704 | 24528–24528 | 0–0 | 71479296–72011776 | 263446528–280723456 |
+| baseline-b | 1 | after-dispose | 24 | 8238712–9043416 | 24528–24528 | 0–0 | 75440128–105504768 | 246120448–359215104 |
+| baseline-b | 2 | before-connect | 24 | 5913472–5921824 | 8184–8184 | 0–0 | 49709056–50151424 | 134447104–134684672 |
+| baseline-b | 2 | connected | 24 | 10287744–10306448 | 24528–24528 | 0–0 | 69885952–70250496 | 263622656–263933952 |
+| baseline-b | 2 | after-churn | 24 | 11313064–11337280 | 24528–24528 | 0–0 | 74141696–74567680 | 266842112–283975680 |
+| baseline-b | 2 | after-dispose | 24 | 8968152–9995984 | 24528–24528 | 0–0 | 75599872–102789120 | 263270400–399290368 |
+
+</details>
+
+### Run 38195553203: error metrics enabled
+
+Baseline `dfa7564f3946695f00c48f8d71679fdce935c8c2`; measured candidate `fbc7af5a11404398455df510a2ddb93415d05c05`; event head `ba10a10c7132e891d1bd02431a97ba31cbd9d3e5`.
+
+<details>
+<summary>Every public interval, allocation row, launch and retention group</summary>
+
+| Case / parameters | Candidate/A; candidate/B | B/A drift | 99.9% interval us: A / candidate / B | Reported B/op: A / candidate / B |
+| --- | ---: | ---: | --- | --- |
+| CircuitStreamedGet / Connections=1 | -1.46%; -0.14% | -1.32% | 251.074639–258.520470 / 248.832881–253.319662 / 247.694660–255.157265 | 13044 / 14310 / 16038 |
+| CircuitStreamedGet / Connections=2 | -1.55%; -1.43% | -0.13% | 253.797851–259.136171 / 249.200860–255.777665 / 252.657031–259.621857 | 14839 / 15375 / 14207 |
+| ClientPing / Connections=1 | +3.40%; +0.86% | +2.52% | 105.317949–106.940530 / 109.104035–110.372522 / 108.103661–109.503192 | 184 / 184 / 184 |
+| ClientPing / Connections=2 | -1.49%; -0.59% | -0.91% | 109.949906–112.100493 / 108.633726–110.099507 / 109.197329–110.828342 | 182 / 184 / 184 |
+| ClientServerError / Connections=1 | +2.53%; -0.41% | +2.95% | 125.220496–126.855038 / 128.326309–130.124263 / 128.598561–130.915704 | 952 / 952 / 952 |
+| ClientServerError / Connections=2 | -1.13%; +0.34% | -1.47% | 131.291669–132.681439 / 129.444284–131.548612 / 129.398346–130.701512 | 952 / 952 / 952 |
+| LargeSet / Connections=1 | +6.29%; +3.31% | +2.88% | 1161.465559–1195.103876 / 1227.591611–1277.159489 / 1195.167719–1229.265094 | 177 / 176 / 177 |
+| LargeSet / Connections=2 | +1.06%; +0.55% | +0.50% | 1198.492610–1251.108516 / 1215.561184–1259.956552 / 1208.888486–1253.010996 | 177 / 178 / 178 |
+| Pipeline / Connections=1 | +0.80%; +1.36% | -0.55% | 4.046496–4.085535 / 4.076214–4.120694 / 4.024901–4.062409 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | +6.71%; +2.97% | +3.63% | 4.212029–4.327441 / 4.470843–4.641237 / 4.375559–4.473749 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | +2.13%; +0.53% | +1.59% | 4.049299–4.088298 / 4.127884–4.182998 / 4.111575–4.155395 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | +3.64%; +3.01% | +0.61% | 4.332074–4.447060 / 4.471572–4.626849 / 4.333145–4.499409 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | -65.90%; -2.66% | -64.97% | 0.003073–0.008604 / 0.001952–0.002030 / 0.002020–0.002071 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | +1.97%; -1.79% | +3.83% | 0.010198–0.010455 / 0.010506–0.010555 / 0.010607–0.010836 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | +1.63%; +1.80% | -0.17% | 109.015913–110.950062 / 110.511511–113.031893 / 109.052434–110.529708 | 176 / 176 / 176 |
+| SmallSet / Connections=2 | +0.34%; -0.48% | +0.82% | 111.143885–112.342379 / 111.137331–113.102339 / 111.730223–113.592858 | 176 / 176 / 176 |
+| StandaloneBatch / Connections=1&count=100 | +6.27%; +5.15% | +1.06% | 255.116837–266.436929 / 272.241489–282.004093 / 259.397141–267.693029 | 32407 / 32403 / 32398 |
+| StandaloneBatch / Connections=1&count=32 | +1.84%; +0.47% | +1.37% | 161.977835–163.341853 / 164.613374–166.701985 / 163.751434–166.016142 | 11250 / 11246 / 11249 |
+| StandaloneBatch / Connections=2&count=100 | +0.25%; -3.58% | +3.97% | 255.815449–264.992083 / 255.756818–266.342156 / 265.211981–276.254496 | 32405 / 32405 / 32404 |
+| StandaloneBatch / Connections=2&count=32 | +1.53%; -0.96% | +2.51% | 160.653941–162.783059 / 163.253569–165.132900 / 163.712058–167.854728 | 11252 / 11249 / 11252 |
+| StreamedSetWithDelayedSource / Connections=1 | -5.08%; -1.24% | -3.89% | 9572.085768–9688.012357 / 9086.192542–9195.845862 / 9091.367925–9420.308167 | 12335 / 12111 / 12305 |
+| StreamedSetWithDelayedSource / Connections=2 | +0.51%; +0.72% | -0.21% | 9615.072673–9713.106881 / 9646.644690–9780.001152 / 9457.062733–9830.063818 | 12454 / 11986 / 12297 |
+| StreamedSetWithInstantSource / Connections=1 | +2.07%; +1.71% | +0.36% | 205.503196–211.125225 / 210.197751–215.060015 / 206.297843–211.813663 | 6086 / 6364 / 6461 |
+| StreamedSetWithInstantSource / Connections=2 | -1.03%; -0.43% | -0.61% | 209.918909–215.501295 / 208.172891–212.856822 / 208.443755–214.401763 | 6449 / 6289 / 6471 |
+
+| Case / parameters | PID 1, 2: A / candidate / B | Launch 1, 2 mean us: A / candidate / B | Raw launch 1, 2 B/op: A / candidate / B |
+| --- | --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 9445, 9532 / 15409, 15500 / 21087, 21193 | 254.815195, 254.779914 / 250.638515, 251.455660 / 253.749816, 249.102109 | 14814.152, 13043.805 / 14381.746, 14310.418 / 14505.375, 16038.328 |
+| CircuitStreamedGet / Connections=2 | 11901, 11998 / 17633, 17717 / 23415, 23499 | 255.921878, 256.975802 / 252.160706, 252.817819 / 256.994858, 255.284030 | 15017.195, 14838.695 / 14215.332, 15374.605 / 14476.094, 14206.914 |
+| ClientPing / Connections=1 | 9616, 9743 / 15586, 15710 / 21340, 21461 | 106.606627, 105.651852 / 109.324951, 110.124051 / 108.997480, 108.609373 | 184.036, 184.060 / 184.028, 184.044 / 184.052, 184.044 |
+| ClientPing / Connections=2 | 12092, 12214 / 17825, 17960 / 23585, 23718 | 110.266558, 111.733264 / 108.797963, 109.897360 / 109.802113, 110.223559 | 184.104, 181.948 / 184.089, 184.058 / 184.081, 184.065 |
+| ClientServerError / Connections=1 | 9869, 9960 / 15837, 15919 / 21586, 21668 | 125.421819, 126.653715 / 128.486991, 129.963582 / 130.340031, 129.213094 | 952.117, 952.193 / 952.193, 952.178 / 952.193, 952.193 |
+| ClientServerError / Connections=2 | 12355, 12432 / 18081, 18156 / 23844, 23920 | 131.864024, 132.109085 / 129.984347, 131.008549 / 130.337747, 129.762111 | 952.059, 952.059 / 952.283, 952.043 / 952.283, 952.189 |
+| LargeSet / Connections=1 | 8905, 9010 / 14884, 14963 / 20582, 20681 | 1188.062824, 1168.506610 / 1242.259578, 1262.491522 / 1221.157254, 1203.275558 | 177.078, 177.078 / 176.719, 176.359 / 176.359, 177.078 |
+| LargeSet / Connections=2 | 11373, 11453 / 17101, 17198 / 22884, 22963 | 1218.611352, 1230.989774 / 1221.029758, 1252.257430 / 1238.377387, 1223.522095 | 176.000, 177.438 / 177.797, 177.797 / 177.672, 177.797 |
+| Pipeline / Connections=1 | 8295, 8381 / 14267, 14367 / 19986, 20066 | 4.057940, 4.074091 / 4.118697, 4.076765 / 4.031327, 4.055983 | 6.758, 6.747 / 6.757, 6.756 / 6.761, 6.754 |
+| Pipeline / Connections=2 | 10759, 10844 / 16510, 16610 / 22292, 22373 | 4.281654, 4.257817 / 4.628124, 4.478807 / 4.463074, 4.388796 | 6.757, 6.742 / 6.754, 6.761 / 6.758, 6.766 |
+| PublicPipeline / Connections=1 | 8482, 8566 / 14448, 14526 / 20149, 20251 | 4.073115, 4.064482 / 4.168521, 4.142361 / 4.134498, 4.132317 | 5.758, 5.757 / 5.735, 5.757 / 5.758, 5.753 |
+| PublicPipeline / Connections=2 | 10929, 11033 / 16693, 16791 / 22434, 22516 | 4.350559, 4.428574 / 4.537826, 4.560594 / 4.426008, 4.407195 | 5.741, 5.759 / 5.733, 5.751 / 5.760, 5.758 |
+| SelectConnection / Connections=1 | 7928, 8123 / 13879, 14096 / 19577, 19791 | 0.001944, 0.009733 / 0.001936, 0.002039 / 0.002036, 0.002055 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 10422, 10655 / 16326, 16426 / 22089, 22189 | 0.010157, 0.010496 / 0.010504, 0.010556 / 0.010567, 0.010865 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 8646, 8773 / 14606, 14757 / 20333, 20457 | 111.005740, 108.960235 / 113.067177, 110.476227 / 109.855242, 109.731179 | 175.999, 176.067 / 175.856, 176.060 / 176.052, 176.060 |
+| SmallSet / Connections=2 | 11111, 11234 / 16854, 16974 / 22616, 22739 | 111.550295, 111.949742 / 111.652976, 112.586694 / 112.286436, 113.036644 | 176.089, 176.097 / 176.089, 175.847 / 176.104, 176.104 |
+| StandaloneBatch / Connections=1&count=100 | 7754, 7842 / 13713, 13795 / 19407, 19487 | 264.660933, 256.892833 / 279.884381, 274.361201 / 265.502859, 261.727152 | 32406.180, 32406.699 / 32401.039, 32402.539 / 32409.219, 32398.219 |
+| StandaloneBatch / Connections=1&count=32 | 7539, 7651 / 13524, 13590 / 19220, 19305 | 162.843438, 162.476249 / 166.224466, 165.090893 / 165.158013, 164.627844 | 11251.234, 11249.939 / 11252.020, 11246.199 / 11247.266, 11248.873 |
+| StandaloneBatch / Connections=2&count=100 | 10239, 10319 / 16180, 16219 / 21907, 22008 | 262.245953, 258.429994 / 256.898748, 265.519514 / 271.648610, 269.817867 | 32406.715, 32404.848 / 32404.578, 32404.578 / 32406.188, 32404.488 |
+| StandaloneBatch / Connections=2&count=32 | 10039, 10138 / 15997, 16100 / 21745, 21847 | 162.482529, 160.954470 / 164.073250, 164.313219 / 163.576313, 167.843335 | 11250.973, 11252.174 / 11248.934, 11249.414 / 11251.383, 11251.969 |
+| StreamedSetWithDelayedSource / Connections=1 | 9090, 9189 / 15062, 15164 / 20760, 20840 | 9660.322293, 9599.775833 / 9073.027405, 9199.297885 / 9023.063932, 9488.612159 | 12424.000, 12335.125 / 12520.000, 12111.125 / 12236.875, 12305.125 |
+| StreamedSetWithDelayedSource / Connections=2 | 11557, 11655 / 17296, 17379 / 23061, 23164 | 9677.852410, 9651.244653 / 9715.876415, 9710.769427 / 9800.274167, 9486.852384 | 12329.500, 12453.750 / 12384.375, 11985.750 / 12422.875, 12296.875 |
+| StreamedSetWithInstantSource / Connections=1 | 9274, 9361 / 15245, 15327 / 20937, 21020 | 207.330949, 209.297472 / 212.353702, 212.904064 / 209.677198, 208.389920 | 6512.723, 6085.953 / 6444.934, 6363.672 / 6422.625, 6461.031 |
+| StreamedSetWithInstantSource / Connections=2 | 11734, 11816 / 17481, 17568 / 23244, 23328 | 213.607391, 211.743791 / 211.155258, 209.775931 / 212.311196, 210.470862 | 6481.305, 6449.289 / 6491.195, 6288.785 / 6488.250, 6471.484 |
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | POH fragmentation | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5913416–5921784 | 8184–8184 | 0–0 | 49655808–50094080 | 134438912–134676480 |
+| baseline-a | 1 | connected | 24 | 8681288–8698520 | 24528–24528 | 0–0 | 68096000–68435968 | 261169152–261390336 |
+| baseline-a | 1 | after-churn | 24 | 9701712–9718912 | 24528–24528 | 0–0 | 71589888–71921664 | 263475200–280580096 |
+| baseline-a | 1 | after-dispose | 24 | 8249384–8823904 | 24528–24528 | 0–0 | 75669504–156856320 | 247853056–407916544 |
+| baseline-a | 2 | before-connect | 24 | 5913440–5927936 | 8184–8184 | 0–0 | 49680384–50077696 | 134447104–134483968 |
+| baseline-a | 2 | connected | 24 | 10299448–10310800 | 24528–24528 | 0–0 | 69935104–70270976 | 263659520–280788992 |
+| baseline-a | 2 | after-churn | 24 | 11319480–11338072 | 24528–24528 | 0–0 | 74203136–74563584 | 267018240–283918336 |
+| baseline-a | 2 | after-dispose | 24 | 8916216–9870568 | 24528–24528 | 0–0 | 75952128–157175808 | 281784320–476344320 |
+| candidate | 1 | before-connect | 24 | 5913528–5928024 | 8184–8184 | 0–0 | 49680384–50061312 | 134438912–134483968 |
+| candidate | 1 | connected | 24 | 8681400–8701912 | 24528–24528 | 0–0 | 68059136–68509696 | 261165056–261382144 |
+| candidate | 1 | after-churn | 24 | 9699792–9718496 | 24528–24528 | 0–0 | 71528448–71999488 | 280334336–280580096 |
+| candidate | 1 | after-dispose | 24 | 8246456–8787408 | 24528–24528 | 0–0 | 75636736–155693056 | 264564736–491610112 |
+| candidate | 2 | before-connect | 24 | 5913656–5921904 | 8184–8184 | 0–0 | 49643520–49999872 | 134438912–134676480 |
+| candidate | 2 | connected | 24 | 10287280–10310800 | 24528–24528 | 0–0 | 69906432–70299648 | 263639040–263864320 |
+| candidate | 2 | after-churn | 24 | 11318400–11333488 | 24528–24528 | 0–0 | 74170368–74526720 | 283701248–283893760 |
+| candidate | 2 | after-dispose | 24 | 8972544–10150240 | 24528–24528 | 0–0 | 75898880–156143616 | 281632768–423845888 |
+| baseline-b | 1 | before-connect | 24 | 5913456–5927928 | 8184–8184 | 0–0 | 49680384–50016256 | 134443008–134676480 |
+| baseline-b | 1 | connected | 24 | 8685520–8697936 | 24528–24528 | 0–0 | 68055040–68464640 | 261201920–261423104 |
+| baseline-b | 1 | after-churn | 24 | 9701736–9739072 | 24528–24528 | 0–0 | 71512064–71954432 | 263524352–280633344 |
+| baseline-b | 1 | after-dispose | 24 | 8252208–8866320 | 24528–24528 | 0–0 | 75587584–155680768 | 264642560–461164544 |
+| baseline-b | 2 | before-connect | 24 | 5913424–5927832 | 8184–8184 | 0–0 | 49610752–50040832 | 134443008–134676480 |
+| baseline-b | 2 | connected | 24 | 10287272–10306696 | 24528–24528 | 0–0 | 69783552–70377472 | 263651328–263839744 |
+| baseline-b | 2 | after-churn | 24 | 11321280–11336904 | 24528–24528 | 0–0 | 74117120–74665984 | 283697152–283910144 |
+| baseline-b | 2 | after-dispose | 24 | 9051168–10185544 | 24528–24528 | 0–0 | 74915840–157261824 | 281673728–441364480 |
+
+</details>
+
+### Run 38201983679: error metrics disabled
+
+Baseline `82a6fda724b1e79f95ac3eb778547586e286b4fc`; measured candidate `f35ff1482dd5e5bcb05bf89eee71ecc61e6072a2`; event head `3c5b806bca77451f28ef8c151edebfdcdff1e392`.
+
+<details>
+<summary>Every public interval, allocation row, launch and retention group</summary>
+
+| Case / parameters | Candidate/A; candidate/B | B/A drift | 99.9% interval us: A / candidate / B | Reported B/op: A / candidate / B |
+| --- | ---: | ---: | --- | --- |
+| CircuitStreamedGet / Connections=1 | +0.14%; +0.54% | -0.40% | 391.570507–399.985996 / 391.930554–400.739361 / 390.417882–398.002315 | 18605 / 18522 / 17313 |
+| CircuitStreamedGet / Connections=2 | +0.86%; +1.58% | -0.71% | 374.899532–389.119044 / 380.701736–389.913803 / 376.984639–381.629117 | 19814 / 19694 / 19027 |
+| ClientPing / Connections=1 | +0.20%; +0.67% | -0.46% | 188.180185–189.783726 / 188.580081–190.139108 / 187.348794–188.862495 | 183 / 184 / 184 |
+| ClientPing / Connections=2 | +0.51%; +0.29% | +0.21% | 188.182333–190.033656 / 189.422341–190.715802 / 188.815121–190.205784 | 184 / 184 / 184 |
+| ClientServerError / Connections=1 | +0.15%; +0.42% | -0.27% | 218.832554–220.889560 / 219.245122–221.134659 / 218.410146–220.146102 | 952 / 952 / 952 |
+| ClientServerError / Connections=2 | +1.24%; +0.55% | +0.69% | 218.253704–219.711687 / 220.590977–222.826541 / 219.555983–221.442660 | 952 / 952 / 952 |
+| LargeSet / Connections=1 | +3.71%; +2.76% | +0.93% | 1774.531131–1884.601313 / 1842.664878–1952.235750 / 1790.186476–1902.966124 | 176 / 177 / 176 |
+| LargeSet / Connections=2 | +1.38%; +1.73% | -0.34% | 1773.020454–1864.377695 / 1786.905879–1900.738102 / 1754.112768–1870.740064 | 179 / 176 / 176 |
+| Pipeline / Connections=1 | +0.52%; +0.43% | +0.09% | 6.631080–6.707585 / 6.674627–6.732863 / 6.655904–6.694525 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | +0.61%; +1.44% | -0.82% | 7.638713–7.718824 / 7.682373–7.768315 / 7.538086–7.692983 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | +0.30%; +0.09% | +0.21% | 6.682864–6.731101 / 6.695382–6.759035 / 6.692580–6.749069 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | +1.04%; +1.55% | -0.50% | 7.634906–7.760134 / 7.731250–7.823937 / 7.599734–7.718467 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | +0.32%; +0.53% | -0.21% | 0.002642–0.002665 / 0.002651–0.002673 / 0.002641–0.002655 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | +0.02%; +0.14% | -0.12% | 0.006377–0.006433 / 0.006384–0.006429 / 0.006381–0.006414 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | +0.18%; -0.03% | +0.21% | 192.598577–194.060125 / 192.661463–194.691659 / 193.073797–194.392078 | 176 / 176 / 176 |
+| SmallSet / Connections=2 | +1.20%; +1.35% | -0.15% | 192.516853–193.933054 / 195.051504–196.040203 / 192.287596–193.599895 | 176 / 176 / 176 |
+| StandaloneBatch / Connections=1&count=100 | +0.11%; +0.24% | -0.14% | 357.261345–361.025640 / 357.713909–361.348625 / 357.060016–360.249842 | 32398 / 32414 / 32408 |
+| StandaloneBatch / Connections=1&count=32 | +0.32%; +0.16% | +0.16% | 254.317698–256.055024 / 255.138197–256.869304 / 254.868212–256.330387 | 11251 / 11249 / 11251 |
+| StandaloneBatch / Connections=2&count=100 | +0.27%; +1.03% | -0.75% | 355.777862–360.071796 / 357.595773–360.184639 / 353.785763–356.674448 | 32410 / 32405 / 32405 |
+| StandaloneBatch / Connections=2&count=32 | +0.22%; +0.88% | -0.65% | 255.227096–256.639296 / 255.819740–257.192313 / 253.205679–255.329734 | 11253 / 11251 / 11248 |
+| StreamedSetWithDelayedSource / Connections=1 | +0.64%; +2.67% | -1.97% | 10045.195842–10159.103499 / 10093.745167–10240.159812 / 9857.580407–9948.275675 | 12396 / 12628 / 12396 |
+| StreamedSetWithDelayedSource / Connections=2 | +1.44%; +3.94% | -2.40% | 10000.222380–10118.057372 / 10133.532360–10274.091183 / 9741.874498–9892.958608 | 12498 / 12684 / 12275 |
+| StreamedSetWithInstantSource / Connections=1 | +4.50%; +2.45% | +2.01% | 361.581966–368.763271 / 370.356858–392.877700 / 367.266347–377.734203 | 6452 / 5953 / 6477 |
+| StreamedSetWithInstantSource / Connections=2 | -1.46%; +1.73% | -3.14% | 360.026602–391.490015 / 365.630170–374.926522 / 359.833740–368.096673 | 6483 / 5914 / 6467 |
+
+| Case / parameters | PID 1, 2: A / candidate / B | Launch 1, 2 mean us: A / candidate / B | Raw launch 1, 2 B/op: A / candidate / B |
+| --- | --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 9709, 9779 / 15489, 15560 / 21518, 21586 | 398.105701, 393.284556 / 394.085690, 398.584225 / 395.300882, 393.264753 | 19310.664, 18604.688 / 18330.891, 18522.086 / 16551.516, 17312.766 |
+| CircuitStreamedGet / Connections=2 | 11951, 12015 / 17869, 17938 / 23854, 23970 | 384.513229, 379.505347 / 383.218425, 387.397113 / 378.823699, 379.830322 | 19719.734, 19813.562 / 19727.383, 19693.570 / 20135.957, 19027.016 |
+| ClientPing / Connections=1 | 9872, 9977 / 15649, 15774 / 21711, 21838 | 189.132428, 188.831483 / 189.895075, 188.824114 / 188.012842, 188.198446 | 184.104, 182.541 / 184.057, 184.059 / 183.748, 184.090 |
+| ClientPing / Connections=2 | 12101, 12213 / 18079, 18179 / 24052, 24151 | 189.017840, 189.198149 / 190.412390, 189.725753 / 189.255685, 189.783417 | 184.117, 183.646 / 184.225, 184.193 / 184.225, 183.990 |
+| ClientServerError / Connections=1 | 10103, 10231 / 15878, 16010 / 21940, 22063 | 220.279716, 219.442399 / 220.733602, 219.646178 / 218.307801, 220.119071 | 952.193, 952.355 / 952.146, 952.387 / 952.193, 952.387 |
+| ClientServerError / Connections=2 | 12347, 12467 / 18302, 18429 / 24275, 24409 | 219.130655, 218.834737 / 222.136680, 221.280837 / 220.104302, 220.868006 | 952.283, 952.158 / 952.238, 952.020 / 952.104, 952.088 |
+| LargeSet / Connections=1 | 9182, 9244 / 14858, 14982 / 20949, 21023 | 1846.198132, 1811.746318 / 1899.422123, 1895.478505 / 1833.851158, 1859.301442 | 176.250, 176.000 / 177.078, 177.438 / 176.000, 176.000 |
+| LargeSet / Connections=2 | 11424, 11507 / 17273, 17351 / 23331, 23408 | 1825.465798, 1811.449015 / 1850.810930, 1836.833051 / 1829.057664, 1795.795168 | 176.000, 178.875 / 176.000, 176.000 / 176.000, 176.000 |
+| Pipeline / Connections=1 | 8521, 8580 / 14320, 14405 / 20382, 20442 | 6.688329, 6.648979 / 6.725167, 6.682323 / 6.668597, 6.682305 | 6.765, 6.767 / 6.765, 6.764 / 6.767, 6.764 |
+| Pipeline / Connections=2 | 10855, 10938 / 16726, 16803 / 22782, 22869 | 7.662132, 7.694296 / 7.753725, 7.696963 / 7.621739, 7.609330 | 6.801, 6.767 / 6.757, 6.760 / 6.771, 6.767 |
+| PublicPipeline / Connections=1 | 8726, 8811 / 14470, 14550 / 20565, 20646 | 6.725894, 6.689332 / 6.726248, 6.728169 / 6.708553, 6.731460 | 5.772, 5.757 / 5.768, 5.770 / 5.770, 5.770 |
+| PublicPipeline / Connections=2 | 11022, 11122 / 16885, 16967 / 22950, 23031 | 7.700280, 7.694760 / 7.770213, 7.784447 / 7.631280, 7.683210 | 5.737, 5.752 / 5.773, 5.776 / 5.749, 5.746 |
+| SelectConnection / Connections=1 | 8181, 8352 / 14003, 14152 / 20065, 20215 | 0.002647, 0.002660 / 0.002660, 0.002664 / 0.002655, 0.002640 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 10621, 10735 / 16478, 16600 / 22532, 22656 | 0.006410, 0.006399 / 0.006390, 0.006422 / 0.006387, 0.006409 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 8934, 9050 / 14631, 14735 / 20724, 20828 | 193.047204, 193.592688 / 193.151729, 194.201393 / 194.168987, 193.296888 | 176.088, 176.119 / 176.119, 176.135 / 176.119, 176.119 |
+| SmallSet / Connections=2 | 11203, 11307 / 17048, 17171 / 23109, 23209 | 192.701357, 193.748550 / 195.607369, 195.488439 / 192.702799, 193.184692 | 176.193, 176.193 / 176.000, 176.045 / 176.209, 176.193 |
+| StandaloneBatch / Connections=1&count=100 | 7940, 8071 / 13811, 13873 / 19878, 19940 | 357.580069, 360.818589 / 359.190048, 359.924982 / 358.240996, 359.041267 | 32403.898, 32398.469 / 32408.398, 32414.488 / 32404.156, 32408.457 |
+| StandaloneBatch / Connections=1&count=32 | 7770, 7860 / 13641, 13730 / 19685, 19797 | 255.751688, 254.621034 / 255.345277, 256.618326 / 255.055644, 256.106712 | 11248.227, 11251.008 / 11252.527, 11248.539 / 11250.477, 11251.039 |
+| StandaloneBatch / Connections=2&count=100 | 10477, 10538 / 16253, 16374 / 22306, 22430 | 356.838439, 359.011219 / 358.362539, 359.417873 / 355.908890, 354.499108 | 32410.938, 32409.617 / 32410.277, 32404.566 / 32387.395, 32404.707 |
+| StandaloneBatch / Connections=2&count=32 | 10294, 10395 / 16093, 16174 / 22144, 22223 | 255.820248, 256.046143 / 256.366242, 256.635826 / 255.261673, 253.273740 | 11247.738, 11252.988 / 11252.488, 11250.828 / 11250.707, 11247.707 |
+| StreamedSetWithDelayedSource / Connections=1 | 9322, 9420 / 15062, 15161 / 21104, 21183 | 10097.904068, 10106.395274 / 10156.364733, 10177.540246 / 9944.240556, 9864.369693 | 12398.125, 12396.000 / 12734.750, 12628.000 / 12275.875, 12395.750 |
+| StreamedSetWithDelayedSource / Connections=2 | 11566, 11665 / 17434, 17540 / 23488, 23566 | 10020.256329, 10098.023423 / 10211.167059, 10196.946836 / 9899.483255, 9735.349851 | 12404.000, 12497.750 / 12467.375, 12683.625 / 12499.500, 12275.250 |
+| StreamedSetWithInstantSource / Connections=1 | 9523, 9582 / 15263, 15364 / 21286, 21411 | 363.764702, 366.392812 / 366.668770, 396.565788 / 377.070787, 367.929763 | 6466.680, 6452.430 / 5909.801, 5952.785 / 6499.035, 6477.141 |
+| StreamedSetWithInstantSource / Connections=2 | 11764, 11869 / 17639, 17743 / 23667, 23771 | 363.580212, 387.936405 / 372.109666, 368.447026 / 365.169809, 362.575280 | 6490.352, 6483.141 / 5946.414, 5913.707 / 6481.000, 6467.195 |
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | POH fragmentation | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5911808–5926168 | 8184–8184 | 0–0 | 49524736–49938432 | 134430720–134672384 |
+| baseline-a | 1 | connected | 24 | 8679136–8691592 | 24528–24528 | 0–0 | 67964928–68403200 | 261201920–261378048 |
+| baseline-a | 1 | after-churn | 24 | 9700696–9716840 | 24528–24528 | 0–0 | 71389184–71872512 | 280383488–280559616 |
+| baseline-a | 1 | after-dispose | 24 | 8247232–8971936 | 24528–24528 | 0–0 | 75149312–102453248 | 246300672–474378240 |
+| baseline-a | 2 | before-connect | 24 | 5911688–5926200 | 8184–8184 | 0–0 | 49582080–49905664 | 134434816–134672384 |
+| baseline-a | 2 | connected | 24 | 10288096–10304720 | 24528–24528 | 0–0 | 69853184–70258688 | 263675904–280735744 |
+| baseline-a | 2 | after-churn | 24 | 11318152–11339248 | 24528–24528 | 0–0 | 74133504–74534912 | 283701248–283938816 |
+| baseline-a | 2 | after-dispose | 24 | 9011528–9865784 | 24528–24528 | 0–0 | 75120640–103260160 | 263725056–456482816 |
+| candidate | 1 | before-connect | 24 | 5911776–5926288 | 8184–8184 | 0–0 | 49508352–49864704 | 134434816–134672384 |
+| candidate | 1 | connected | 24 | 8675944–8695728 | 24528–24528 | 0–0 | 67821568–68313088 | 261197824–261337088 |
+| candidate | 1 | after-churn | 24 | 9703520–9721776 | 24528–24528 | 0–0 | 71270400–71823360 | 280367104–280580096 |
+| candidate | 1 | after-dispose | 24 | 8241616–9043512 | 24528–24528 | 0–0 | 75075584–102608896 | 246079488–473722880 |
+| candidate | 2 | before-connect | 24 | 5911928–5926264 | 8184–8184 | 0–0 | 49565696–50008064 | 134430720–134672384 |
+| candidate | 2 | connected | 24 | 10288128–10304912 | 24528–24528 | 0–0 | 69779456–70201344 | 263630848–263880704 |
+| candidate | 2 | after-churn | 24 | 11315992–11342384 | 24528–24528 | 0–0 | 74059776–74498048 | 283676672–283947008 |
+| candidate | 2 | after-dispose | 24 | 8963992–9932536 | 24528–24528 | 0–0 | 74620928–103084032 | 263340032–474173440 |
+| baseline-b | 1 | before-connect | 24 | 5911680–5926192 | 8184–8184 | 0–0 | 49532928–49934336 | 134434816–134475776 |
+| baseline-b | 1 | connected | 24 | 8679128–8691560 | 24528–24528 | 0–0 | 68018176–68333568 | 261214208–261386240 |
+| baseline-b | 1 | after-churn | 24 | 9703016–9720904 | 24528–24528 | 0–0 | 71540736–71868416 | 263528448–280547328 |
+| baseline-b | 1 | after-dispose | 24 | 8237864–8847384 | 24528–24528 | 0–0 | 75284480–105885696 | 246181888–393408512 |
+| baseline-b | 2 | before-connect | 24 | 5911832–5926096 | 8184–8184 | 0–0 | 49528832–49917952 | 134434816–134475776 |
+| baseline-b | 2 | connected | 24 | 10285208–10304744 | 24528–24528 | 0–0 | 69750784–70180864 | 263663616–280702976 |
+| baseline-b | 2 | after-churn | 24 | 11316064–11335032 | 24528–24528 | 0–0 | 73977856–74473472 | 266956800–283926528 |
+| baseline-b | 2 | after-dispose | 24 | 8967664–10046968 | 24528–24528 | 0–0 | 75300864–103763968 | 263684096–442585088 |
+
+</details>
+
+### Run 38201983679: error metrics enabled
+
+Baseline `82a6fda724b1e79f95ac3eb778547586e286b4fc`; measured candidate `f35ff1482dd5e5bcb05bf89eee71ecc61e6072a2`; event head `3c5b806bca77451f28ef8c151edebfdcdff1e392`.
+
+<details>
+<summary>Every public interval, allocation row, launch and retention group</summary>
+
+| Case / parameters | Candidate/A; candidate/B | B/A drift | 99.9% interval us: A / candidate / B | Reported B/op: A / candidate / B |
+| --- | ---: | ---: | --- | --- |
+| CircuitStreamedGet / Connections=1 | +2.02%; +0.13% | +1.89% | 180.201523–186.039709 / 182.095451–191.551443 / 181.738104–191.421362 | 22690 / 24192 / 23382 |
+| CircuitStreamedGet / Connections=2 | -1.06%; +0.50% | -1.56% | 191.653179–198.849089 / 190.099728–196.254297 / 188.596954–195.829041 | 22718 / 22095 / 23328 |
+| ClientPing / Connections=1 | -1.86%; +1.55% | -3.36% | 68.757873–70.861447 / 67.608974–69.407483 / 66.212048–68.711426 | 182 / 183 / 184 |
+| ClientPing / Connections=2 | +1.19%; +2.01% | -0.80% | 67.086442–69.294878 / 68.280046–69.729230 / 66.199860–69.095447 | 177 / 180 / 182 |
+| ClientServerError / Connections=1 | +0.15%; +0.52% | -0.37% | 78.713376–81.000982 / 78.554593–81.400193 / 78.120214–81.002342 | 951 / 951 / 951 |
+| ClientServerError / Connections=2 | +1.90%; +1.03% | +0.86% | 76.916435–79.732621 / 78.542554–81.084535 / 77.856513–80.137277 | 951 / 952 / 952 |
+| LargeSet / Connections=1 | -5.29%; +3.30% | -8.31% | 935.100844–993.124105 / 901.087816–925.148251 / 873.075555–894.889926 | 177 / 177 / 177 |
+| LargeSet / Connections=2 | -0.34%; +1.01% | -1.34% | 909.621851–944.192121 / 916.444158–931.035909 / 906.119558–922.910389 | 176 / 176 / 177 |
+| Pipeline / Connections=1 | +1.63%; +4.11% | -2.38% | 2.739437–2.951699 / 2.813813–2.970009 / 2.674204–2.881403 | 7 / 7 / 7 |
+| Pipeline / Connections=2 | -0.31%; +2.48% | -2.73% | 3.598684–3.733374 / 3.592980–3.716055 / 3.506479–3.625720 | 7 / 7 / 7 |
+| PublicPipeline / Connections=1 | -3.79%; +2.58% | -6.21% | 2.965331–3.106030 / 2.850105–2.990954 / 2.756769–2.937518 | 6 / 6 / 6 |
+| PublicPipeline / Connections=2 | +0.90%; +1.80% | -0.88% | 3.614703–3.725635 / 3.651917–3.754828 / 3.575212–3.700259 | 6 / 6 / 6 |
+| SelectConnection / Connections=1 | +7.14%; -14.28% | +25.00% | 0.000887–0.000957 / 0.000943–0.001033 / 0.001119–0.001187 | 0 / 0 / 0 |
+| SelectConnection / Connections=2 | -0.44%; -0.58% | +0.14% | 0.006509–0.006680 / 0.006452–0.006680 / 0.006522–0.006686 | 0 / 0 / 0 |
+| SmallSet / Connections=1 | -1.39%; +2.16% | -3.48% | 69.270115–71.111203 / 68.185141–70.243451 / 66.667274–68.834618 | 176 / 176 / 174 |
+| SmallSet / Connections=2 | -0.56%; +2.40% | -2.89% | 69.581519–71.917638 / 69.715633–70.990875 / 67.830540–69.574400 | 175 / 176 / 175 |
+| StandaloneBatch / Connections=1&count=100 | -0.37%; +1.39% | -1.74% | 161.931436–165.270043 / 161.261921–164.712875 / 159.458959–162.061231 | 32417 / 32422 / 32420 |
+| StandaloneBatch / Connections=1&count=32 | +0.14%; +0.49% | -0.35% | 109.481542–112.741222 / 109.480872–113.051292 / 109.598011–111.841134 | 11247 / 11242 / 11247 |
+| StandaloneBatch / Connections=2&count=100 | +4.83%; +2.00% | +2.77% | 159.210713–162.501678 / 167.287677–169.951813 / 163.208536–167.413741 | 32418 / 32415 / 32419 |
+| StandaloneBatch / Connections=2&count=32 | -3.21%; -3.58% | +0.39% | 114.795459–116.762965 / 110.181626–113.949656 / 115.418295–117.045106 | 11251 / 11250 / 11251 |
+| StreamedSetWithDelayedSource / Connections=1 | +0.76%; +2.01% | -1.23% | 9055.722371–9331.681183 / 9139.216408–9387.942719 / 8925.024240–9236.295160 | 12420 / 12775 / 12648 |
+| StreamedSetWithDelayedSource / Connections=2 | -2.40%; -2.57% | +0.17% | 9233.206521–9327.061862 / 8912.461773–9202.570590 / 9234.206956–9357.729149 | 12547 / 12759 / 12544 |
+| StreamedSetWithInstantSource / Connections=1 | -0.43%; -0.38% | -0.04% | 166.618617–172.965551 / 166.255572–171.880515 / 166.996102–172.437108 | 6363 / 5979 / 6483 |
+| StreamedSetWithInstantSource / Connections=2 | -3.31%; -1.17% | -2.17% | 174.182914–178.021484 / 168.178333–172.357922 / 169.849270–174.719680 | 6518 / 5690 / 6387 |
+
+| Case / parameters | PID 1, 2: A / candidate / B | Launch 1, 2 mean us: A / candidate / B | Raw launch 1, 2 B/op: A / candidate / B |
+| --- | --- | --- | --- |
+| CircuitStreamedGet / Connections=1 | 8712, 8826 / 14423, 14503 / 20131, 20252 | 183.361083, 182.896180 / 187.695437, 186.009590 / 191.807450, 181.700530 | 23106.215, 22690.404 / 24140.023, 24191.857 / 22704.930, 23382.369 |
+| CircuitStreamedGet / Connections=2 | 11091, 11190 / 16786, 16861 / 22544, 22647 | 195.828110, 194.674159 / 195.676295, 190.844349 / 195.228693, 189.398349 | 23915.709, 22717.867 / 21078.051, 22094.643 / 22748.037, 23327.836 |
+| ClientPing / Connections=1 | 8960, 9043 / 14609, 14688 / 20365, 20444 | 69.031492, 70.532246 / 68.568532, 68.443286 / 67.634673, 67.288801 | 183.341, 182.489 / 183.544, 182.528 / 183.383, 183.708 |
+| ClientPing / Connections=2 | 11329, 11411 / 16998, 17077 / 22786, 22867 | 69.086486, 67.157015 / 68.650778, 69.358498 / 66.987530, 68.354929 | 174.556, 177.470 / 182.648, 179.921 / 183.500, 182.422 |
+| ClientServerError / Connections=1 | 9123, 9224 / 14785, 14866 / 20542, 20627 | 79.554003, 80.160355 / 80.729774, 79.171271 / 79.752584, 79.369972 | 951.881, 951.356 / 951.508, 950.536 / 951.769, 950.692 |
+| ClientServerError / Connections=2 | 11512, 11594 / 17157, 17259 / 22945, 23041 | 78.148533, 78.500523 / 79.727319, 79.899770 / 78.644525, 79.374434 | 950.470, 950.704 / 951.713, 951.787 / 952.048, 951.576 |
+| LargeSet / Connections=1 | 8085, 8169 / 13834, 13914 / 19567, 19625 | 975.689253, 952.535696 / 910.621557, 915.281647 / 875.518537, 893.749130 | 177.078, 177.078 / 176.000, 176.539 / 177.078, 176.539 |
+| LargeSet / Connections=2 | 10484, 10626 / 16202, 16320 / 21951, 22008 | 916.033709, 938.556925 / 926.515256, 920.964810 / 915.724468, 913.119404 | 176.898, 176.000 / 176.898, 176.000 / 176.359, 176.898 |
+| Pipeline / Connections=1 | 7542, 7667 / 13340, 13464 / 19019, 19136 | 2.833185, 2.857950 / 2.836522, 2.939914 / 2.707290, 2.853353 | 6.706, 6.746 / 6.754, 6.758 / 6.748, 6.747 |
+| Pipeline / Connections=2 | 9938, 10073 / 15592, 15675 / 21360, 21485 | 3.638688, 3.693370 / 3.630085, 3.678950 / 3.561747, 3.570452 | 6.523, 6.509 / 6.653, 6.555 / 6.643, 6.677 |
+| PublicPipeline / Connections=1 | 7775, 7840 / 13527, 13590 / 19215, 19318 | 3.086481, 2.984879 / 2.916741, 2.924588 / 2.888324, 2.808707 | 5.750, 5.721 / 5.741, 5.754 / 5.753, 5.707 |
+| PublicPipeline / Connections=2 | 10155, 10238 / 15752, 15895 / 21565, 21688 | 3.637884, 3.702454 / 3.735692, 3.666081 / 3.612535, 3.666813 | 5.633, 5.700 / 5.595, 5.654 / 5.509, 5.586 |
+| SelectConnection / Connections=1 | 7172, 7372 / 13005, 13172 / 18659, 18848 | 0.000885, 0.000957 / 0.001014, 0.000962 / 0.001134, 0.001170 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SelectConnection / Connections=2 | 9738, 9839 / 15377, 15487 / 21156, 21259 | 0.006637, 0.006555 / 0.006588, 0.006545 / 0.006624, 0.006581 | 0.000, 0.000 / 0.000, 0.000 / 0.000, 0.000 |
+| SmallSet / Connections=1 | 7918, 8005 / 13669, 13754 / 19380, 19465 | 70.171943, 70.208127 / 69.477098, 68.932723 / 67.648649, 67.860550 | 175.185, 175.564 / 175.317, 175.692 / 168.976, 174.248 |
+| SmallSet / Connections=2 | 10318, 10402 / 16019, 16121 / 21770, 21849 | 70.285665, 71.284863 / 70.757729, 69.919887 / 68.244967, 69.159973 | 175.784, 175.492 / 175.069, 175.758 / 175.917, 175.034 |
+| StandaloneBatch / Connections=1&count=100 | 6974, 7084 / 12801, 12903 / 18455, 18559 | 165.079759, 162.121720 / 161.310176, 164.552805 / 161.707210, 159.655128 | 32414.730, 32416.902 / 32409.732, 32421.633 / 32420.133, 32419.953 |
+| StandaloneBatch / Connections=1&count=32 | 6658, 6797 / 12525, 12655 / 18201, 18330 | 110.843816, 111.361110 / 112.232570, 110.299595 / 111.169321, 110.269824 | 11246.277, 11247.462 / 11252.113, 11242.077 / 11252.598, 11247.171 |
+| StandaloneBatch / Connections=2&count=100 | 9534, 9635 / 15168, 15268 / 20959, 21057 | 161.600034, 160.055140 / 168.097208, 169.142282 / 165.015270, 165.607007 | 32420.764, 32417.959 / 32418.934, 32414.947 / 32418.500, 32419.148 |
+| StandaloneBatch / Connections=2&count=32 | 9324, 9407 / 14967, 15044 / 20731, 20809 | 115.714104, 115.844320 / 110.265515, 113.865767 / 116.290253, 116.173147 | 11252.707, 11251.180 / 11248.881, 11250.242 / 11251.740, 11251.227 |
+| StreamedSetWithDelayedSource / Connections=1 | 8247, 8329 / 14037, 14141 / 19745, 19845 | 9035.874173, 9351.529381 / 9376.837215, 9122.007499 / 9052.021842, 9109.297558 | 12330.625, 12420.125 / 12719.750, 12774.625 / 12520.875, 12648.500 |
+| StreamedSetWithDelayedSource / Connections=2 | 10704, 10783 / 16400, 16480 / 22158, 22237 | 9294.702688, 9265.565695 / 9097.366593, 9022.979159 / 9321.376082, 9268.745164 | 12827.500, 12547.375 / 12684.000, 12758.625 / 12833.250, 12544.250 |
+| StreamedSetWithInstantSource / Connections=1 | 8436, 8604 / 14220, 14323 / 19925, 20027 | 167.530970, 172.214707 / 171.117212, 166.872506 / 172.004332, 167.428877 | 6319.996, 6363.227 / 5821.494, 5978.631 / 6434.893, 6483.088 |
+| StreamedSetWithInstantSource / Connections=2 | 10862, 10981 / 16578, 16685 / 22333, 22437 | 175.923757, 176.280641 / 170.559656, 169.955776 / 172.593371, 171.996171 | 6425.463, 6517.625 / 5783.312, 5690.318 / 6457.645, 6386.902 |
+
+| Phase | Connections | Stage | Samples | Managed bytes | POH bytes | POH fragmentation | Working set bytes | Private bytes |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| baseline-a | 1 | before-connect | 24 | 5920232–5926392 | 8184–8184 | 0–0 | 49672192–50110464 | 134434816–134672384 |
+| baseline-a | 1 | connected | 24 | 8675816–8700392 | 24528–24528 | 0–0 | 68005888–68558848 | 261173248–261341184 |
+| baseline-a | 1 | after-churn | 24 | 9701472–9717376 | 24528–24528 | 0–0 | 71475200–72105984 | 263499776–280621056 |
+| baseline-a | 1 | after-dispose | 24 | 8244664–8844888 | 24528–24528 | 0–0 | 75493376–102322176 | 246202368–406740992 |
+| baseline-a | 2 | before-connect | 24 | 5920240–5926400 | 8184–8184 | 0–0 | 49672192–49991680 | 134430720–134672384 |
+| baseline-a | 2 | connected | 24 | 10288488–10305496 | 24528–24528 | 0–0 | 69890048–70152192 | 263606272–263827456 |
+| baseline-a | 2 | after-churn | 24 | 11316904–11335288 | 24528–24528 | 0–0 | 74174464–74547200 | 266739712–283877376 |
+| baseline-a | 2 | after-dispose | 24 | 9061688–9992696 | 24528–24528 | 0–0 | 75468800–105242624 | 263376896–425111552 |
+| candidate | 1 | before-connect | 24 | 5912104–5926584 | 8184–8184 | 0–0 | 49684480–50135040 | 134434816–134479872 |
+| candidate | 1 | connected | 24 | 8679976–8692408 | 24528–24528 | 0–0 | 68055040–68505600 | 261169152–261419008 |
+| candidate | 1 | after-churn | 24 | 9698152–9715256 | 24528–24528 | 0–0 | 71512064–71995392 | 263479296–280625152 |
+| candidate | 1 | after-dispose | 24 | 8243664–8830376 | 24528–24528 | 0–0 | 75448320–101957632 | 262733824–355246080 |
+| candidate | 2 | before-connect | 24 | 5912112–5926520 | 8184–8184 | 0–0 | 49680384–49979392 | 134434816–134672384 |
+| candidate | 2 | connected | 24 | 10288896–10305720 | 24528–24528 | 0–0 | 69902336–70270976 | 263581696–263819264 |
+| candidate | 2 | after-churn | 24 | 11315328–11336368 | 24528–24528 | 0–0 | 74129408–74510336 | 266833920–283889664 |
+| candidate | 2 | after-dispose | 24 | 9032456–10000904 | 24528–24528 | 0–0 | 75726848–107540480 | 263450624–527048704 |
+| baseline-b | 1 | before-connect | 24 | 5920232–5926392 | 8184–8184 | 0–0 | 49639424–50016256 | 134438912–134672384 |
+| baseline-b | 1 | connected | 24 | 8675888–8696512 | 24528–24528 | 0–0 | 67997696–68509696 | 261181440–261398528 |
+| baseline-b | 1 | after-churn | 24 | 9633128–9715048 | 24528–24528 | 0–0 | 71385088–71962624 | 263426048–280649728 |
+| baseline-b | 1 | after-dispose | 24 | 8237272–9036064 | 24528–24528 | 0–0 | 75272192–102924288 | 246317056–473088000 |
+| baseline-b | 2 | before-connect | 24 | 5912136–5920384 | 8184–8184 | 0–0 | 49618944–49950720 | 134434816–134672384 |
+| baseline-b | 2 | connected | 24 | 10285864–10305496 | 24528–24528 | 0–0 | 69668864–70307840 | 263565312–280571904 |
+| baseline-b | 2 | after-churn | 24 | 11315552–11343160 | 24528–24528 | 0–0 | 74035200–74596352 | 266809344–283873280 |
+| baseline-b | 2 | after-dispose | 24 | 9037640–9903216 | 24528–24528 | 0–0 | 75468800–104402944 | 263094272–456945664 |
+
+</details>
+
 ## Evidence audit: 2026-10-12
 
 ### Pinned final-frame wait comparison
