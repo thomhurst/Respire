@@ -112,11 +112,11 @@ public class RedisThroughputBenchmarks
         
         var port = _redisContainer.GetMappedPublicPort(6379);
         
-        // Setup Respire client with larger pool for concurrent operations
+        // Setup Respire client with one multiplexed connection, matching StackExchange.Redis
         _kevaClient = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("localhost", port) },
-            Connections = 10
+            Connections = 1
         });
         
         // Setup StackExchange.Redis with similar configuration
