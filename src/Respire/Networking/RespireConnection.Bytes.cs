@@ -28,10 +28,10 @@ internal sealed partial class RespireConnection
         var source = BytesPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
             observeErrors: observation.IsEmpty, duration: duration);
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
+            enqueued = TryEnqueue(in command, source, commandDeadline, out wake);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
@@ -50,7 +50,7 @@ internal sealed partial class RespireConnection
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
+            ScheduleFlush(wake);
             return source.Task;
         }
         return SendBytesSlowAsync(command, source, cancellationToken, commandName, commandDeadline, errorAttempts, observation, durationStarted, pinToConnection);
@@ -65,10 +65,10 @@ internal sealed partial class RespireConnection
         RespireTelemetry.OperationStart durationStarted, bool pinToConnection)
         where TCommand : struct, IRespCommand
     {
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            startedBatch = await WaitForInflightCapacityAsync(
+            wake = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
@@ -85,7 +85,7 @@ internal sealed partial class RespireConnection
             throw;
         }
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return await source.Task.ConfigureAwait(false);
     }
 }

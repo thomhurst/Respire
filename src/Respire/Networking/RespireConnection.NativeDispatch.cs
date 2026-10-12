@@ -16,10 +16,10 @@ internal sealed partial class RespireConnection
         deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         retirement = null;
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            enqueued = TryEnqueue(in command, source, deadline, out startedBatch);
+            enqueued = TryEnqueue(in command, source, deadline, out wake);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(false, deadline, out destination, out deadline, preferredZone: null))
         {
@@ -49,7 +49,7 @@ internal sealed partial class RespireConnection
             return false;
         }
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return true;
     }
 

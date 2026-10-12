@@ -8,11 +8,11 @@ namespace Respire.Networking;
 internal sealed partial class RespireConnection
 {
     private bool TryEnqueueGathered(in GatheredSetCommand command, PendingResponse source,
-        CommandDeadline deadline, out bool startedBatch, out Task? writeTask, bool trackWrite,
+        CommandDeadline deadline, out FlushWake wake, out Task? writeTask, bool trackWrite,
         int discardRepliesBefore, bool retainRepliesBefore, string? discardedOperation, int discardedErrorAttempts,
         CommandWriteObservation? writeObservation = null)
     {
-        startedBatch = false;
+        wake = FlushWake.Dispatch;
         writeTask = null;
         lock (_writeGate)
         {
@@ -22,11 +22,11 @@ internal sealed partial class RespireConnection
                 return false;
             if (!_activeBuffer.PrepareBorrowedPayload())
                 return TryEnqueueDirect(in command, command.GetWriteSizeHint(), source, deadline,
-                    out startedBatch, out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore,
+                    out wake, out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore,
                     discardedOperation, discardedErrorAttempts, writeObservation);
 
             var mark = _activeBuffer.Count;
-            startedBatch = mark == 0 && _inflight.Count == 0;
+            wake = CaptureFlushWake();
             int offset;
             int frameLength;
             try

@@ -1026,13 +1026,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         ValueTask<RespValue>[] sends, RespireTelemetry.ErrorObservation[] observations,
         CancellationToken cancellationToken, CommandDeadline deadline) where TCommand : IBatchCommand
     {
-        var startedBatch = false;
+        var wake = FlushWake.Dispatch;
         lock (_writeGate)
         {
             // Capacity and maintenance fences need ordered asynchronous admission instead.
             if (_dead || _retired || _streamingActive || _credentialRenewalPending
                 || !_inflight.HasCapacity(commands.Count)) return false;
-            startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
+            wake = CaptureFlushWake();
             for (var index = 0; index < commands.Count; index++)
             {
                 try
@@ -1050,7 +1050,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 }
             }
         }
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return true;
     }
 
@@ -1074,8 +1074,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var source = _sourcePool.Rent(throwOnError: false, commandName);
         source.ErrorAttempts = observation.Attempts;
         bool enqueued;
-        bool startedBatch;
-        try { enqueued = TryEnqueue(in command, source, deadline, out startedBatch); }
+        FlushWake wake;
+        try { enqueued = TryEnqueue(in command, source, deadline, out wake); }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
         {
             ReclaimUnpublished(source);
@@ -1088,7 +1088,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             try
             {
-                startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore: 0,
+                wake = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore: 0,
                     cancellationToken, commandDeadline: deadline).ConfigureAwait(false);
             }
             catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
@@ -1100,7 +1100,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
         }
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
     }
 
@@ -1245,10 +1245,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             state, converter, transferOwnership, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
             observeErrors: observation.IsEmpty, duration: duration);
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
+            enqueued = TryEnqueue(in command, source, commandDeadline, out wake);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
@@ -1269,7 +1269,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
+            ScheduleFlush(wake);
             return source.Task;
         }
 
@@ -1328,10 +1328,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var source = StringPendingResponseSource.Rent(commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
             observeErrors: observation.IsEmpty, duration: duration);
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch);
+            enqueued = TryEnqueue(in command, source, commandDeadline, out wake);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
         {
@@ -1352,7 +1352,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
+            ScheduleFlush(wake);
             return source.Task;
         }
 
@@ -1405,10 +1405,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (!commandDeadline.IsSet) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            enqueued = TryEnqueue(in command, source, commandDeadline, out startedBatch,
+            enqueued = TryEnqueue(in command, source, commandDeadline, out wake,
                 discardRepliesBefore, retainRepliesBefore);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
@@ -1431,7 +1431,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken);
-            ScheduleFlush(startedBatch);
+            ScheduleFlush(wake);
             return source.Task;
         }
 
@@ -1469,10 +1469,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int errorAttempts, bool pinToConnection)
         where TCommand : struct, IRespCommand
     {
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            startedBatch = await WaitForInflightCapacityAsync(
+            wake = await WaitForInflightCapacityAsync(
                 command, source, discardRepliesBefore, cancellationToken,
                 retainRepliesBefore: retainRepliesBefore, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
@@ -1489,7 +1489,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -1502,10 +1502,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.OperationStart durationStarted, bool pinToConnection)
         where TCommand : struct, IRespCommand
     {
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            startedBatch = await WaitForInflightCapacityAsync(
+            wake = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
@@ -1524,7 +1524,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -1712,11 +1712,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         source.ConfigureTimeout(this, cancellationTimeout, callerCancellationToken, cancellationToken);
 
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
             enqueued = TryEnqueue(
-                in command, source, commandDeadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true,
+                in command, source, commandDeadline, out wake, repliesBeforeFinal, retainRepliesBefore: true,
                 writeObservation: writeObservation);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone))
@@ -1744,7 +1744,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
     }
 
@@ -1781,11 +1781,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var source = _sourcePool.Rent(throwOnError, commandName);
         source.ErrorAttempts = (observation.IsEmpty ? errorAttempts : observation.Attempts);
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         try
         {
             enqueued = TryEnqueue(
-                in command, source, commandDeadline, out startedBatch, discardRepliesBefore,
+                in command, source, commandDeadline, out wake, discardRepliesBefore,
                 retainRepliesBefore: false, writeObservation: writeObservation);
         }
         catch (RespireConnectionRetiredException error) when (!IsMaintenanceDrainBarrier<TCommand>()
@@ -1807,7 +1807,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-            if (!deferFlush) ScheduleFlush(startedBatch);
+            if (!deferFlush) ScheduleFlush(wake);
             return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
         }
 
@@ -1870,12 +1870,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 });
         cancellationToken.ThrowIfCancellationRequested();
         bool enqueued;
-        bool startedBatch;
+        FlushWake wake;
         Task writeTask;
         try
         {
             enqueued = TryEnqueueForWrite(in command, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
-                out startedBatch, out writeTask);
+                out wake, out writeTask);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, capacityDeadline, out var target, out var rerouted, preferredZone))
         {
@@ -1887,7 +1887,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            ScheduleFlush(startedBatch);
+            ScheduleFlush(wake);
             return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
@@ -1921,7 +1921,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         PendingResponse source,
         CommandDeadline commandDeadline,
-        out bool startedBatch,
+        out FlushWake wake,
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false,
         CommandWriteObservation? writeObservation = null)
@@ -1930,7 +1930,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             in command,
             source,
             commandDeadline,
-            out startedBatch,
+            out wake,
             out _,
             trackWrite: false,
             discardRepliesBefore,
@@ -1940,17 +1940,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         string? commandName,
         int errorAttempts,
-        out bool startedBatch,
+        out FlushWake wake,
         out Task writeTask)
         where TCommand : struct, IRespCommand
     {
         if (command.GetMutationFence().IsRequired)
-            return TryEnqueueMutationForWrite(in command, commandName, out startedBatch, out writeTask);
+            return TryEnqueueMutationForWrite(in command, commandName, out wake, out writeTask);
         var enqueued = TryEnqueue(
             in command,
             InflightRing.DiscardSentinel,
             CommandDeadline.None,
-            out startedBatch,
+            out wake,
             out var trackedWrite,
             trackWrite: true,
             discardedOperation: _generation is not null || RespireTelemetry.ShouldRetainPublication(commandName) ? commandName : null,
@@ -1960,14 +1960,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     private bool TryEnqueueMutationForWrite<TCommand>(in TCommand command, string? commandName,
-        out bool startedBatch, out Task writeTask) where TCommand : struct, IRespCommand
+        out FlushWake wake, out Task writeTask) where TCommand : struct, IRespCommand
     {
         var source = MutationDiscardPendingResponse.Rent(commandName);
         bool enqueued;
         Task? trackedWrite;
         try
         {
-            enqueued = TryEnqueue(in command, source, CommandDeadline.None, out startedBatch,
+            enqueued = TryEnqueue(in command, source, CommandDeadline.None, out wake,
                 out trackedWrite, trackWrite: true);
         }
         catch
@@ -1985,7 +1985,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         in TCommand command,
         PendingResponse source,
         CommandDeadline commandDeadline,
-        out bool startedBatch,
+        out FlushWake wake,
         out Task? writeTask,
         bool trackWrite,
         int discardRepliesBefore = 0,
@@ -1994,7 +1994,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardedErrorAttempts = 0, CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
-        startedBatch = false;
+        wake = FlushWake.Dispatch;
         writeTask = null;
         if (!ReferenceEquals(source, InflightRing.DiscardSentinel)) source.ErrorEndpoint = new(Host, Port);
 
@@ -2015,7 +2015,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         if (_stream is null && writeSizeHint > 0 && typeof(TCommand) == typeof(GatheredSetCommand))
         {
             var gathered = Unsafe.As<TCommand, GatheredSetCommand>(ref Unsafe.AsRef(in command));
-            return TryEnqueueGathered(in gathered, source, commandDeadline, out startedBatch,
+            return TryEnqueueGathered(in gathered, source, commandDeadline, out wake,
                 out writeTask, trackWrite, discardRepliesBefore, retainRepliesBefore, discardedOperation,
                 discardedErrorAttempts, writeObservation);
         }
@@ -2026,7 +2026,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 writeSizeHint,
                 source,
                 commandDeadline,
-                out startedBatch,
+                out wake,
                 out writeTask,
                 trackWrite,
                 discardRepliesBefore,
@@ -2065,7 +2065,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 command.ValidateAdmission();
                 if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
                     source.BindMutationFence(command.GetMutationFence());
-                startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
+                wake = CaptureFlushWake();
                 _activeBuffer.Append(frame);
                 if (_responseTimeout is not null)
                 {
@@ -2117,7 +2117,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int writeSizeHint,
         PendingResponse source,
         CommandDeadline commandDeadline,
-        out bool startedBatch,
+        out FlushWake wake,
         out Task? writeTask,
         bool trackWrite,
         int discardRepliesBefore,
@@ -2126,7 +2126,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         int discardedErrorAttempts, CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
-        startedBatch = false;
+        wake = FlushWake.Dispatch;
         writeTask = null;
         using (new WriteGateScope(_writeGate))
         {
@@ -2144,7 +2144,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
 
             var mark = _activeBuffer.Count;
-            startedBatch = mark == 0 && _inflight.Count == 0;
+            wake = CaptureFlushWake();
             try
             {
                 var writer = new RespWriter(_activeBuffer, writeSizeHint);
@@ -2294,10 +2294,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null)
         where TCommand : struct, IRespCommand
     {
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            startedBatch = await WaitForInflightCapacityAsync(
+            wake = await WaitForInflightCapacityAsync(
                     command, source, discardRepliesBefore, cancellationToken,
                     commandDeadline: commandDeadline, writeObservation: writeObservation)
                 .ConfigureAwait(false);
@@ -2313,7 +2313,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
 
@@ -2334,7 +2334,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null, bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
-        bool startedBatch;
+        FlushWake wake;
         try
         {
             var deadline = commandDeadline;
@@ -2343,13 +2343,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
                 if (TryEnqueue(
-                    in command, source, deadline, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true,
+                    in command, source, deadline, out wake, repliesBeforeFinal, retainRepliesBefore: true,
                     writeObservation: writeObservation))
                 {
                     break;
                 }
 
-                ScheduleFlush(startedBatch: false);
+                ScheduleFlush(FlushWake.Dispatch);
                 await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -2378,7 +2378,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
 
@@ -2397,10 +2397,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireTelemetry.OperationStart durationStarted, bool pinToConnection)
         where TCommand : struct, IRespCommand
     {
-        bool startedBatch;
+        FlushWake wake;
         try
         {
-            startedBatch = await WaitForInflightCapacityAsync(
+            wake = await WaitForInflightCapacityAsync(
                 command, source, 0, cancellationToken, commandDeadline: commandDeadline).ConfigureAwait(false);
         }
         catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, commandDeadline, out var target, out var rerouted, preferredZone: null))
@@ -2419,7 +2419,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -2433,7 +2433,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         // A rerouted send keeps the capacity budget that started on the retired socket.
         var deadline = capacityDeadline.IsSet ? capacityDeadline : CommandDeadline.After(_commandTimeoutMilliseconds);
-        bool startedBatch;
+        FlushWake wake;
         Task writeTask;
         try
         {
@@ -2442,12 +2442,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
                 if (TryEnqueueForWrite(in command, commandName, (observation.IsEmpty ? errorAttempts : observation.Attempts),
-                    out startedBatch, out writeTask))
+                    out wake, out writeTask))
                 {
                     break;
                 }
 
-                ScheduleFlush(startedBatch: false);
+                ScheduleFlush(FlushWake.Dispatch);
                 await WaitForCapacityAsync(capacityAvailable, deadline, commandName: null, cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -2467,18 +2467,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        ScheduleFlush(startedBatch);
+        ScheduleFlush(wake);
         await WaitForWriteAsync(writeTask, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// In-flight ring full: flush, then park until the receive loop frees capacity. Returns
-    /// whether the eventual enqueue started a new write batch.
+    /// how the eventual enqueue must wake the flush loop.
     /// </summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<bool> WaitForInflightCapacityAsync<TCommand>(
+    private async ValueTask<FlushWake> WaitForInflightCapacityAsync<TCommand>(
         TCommand command,
         PendingResponse source,
         int discardRepliesBefore,
@@ -2498,13 +2498,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // Arm before retrying so a concurrent dequeue cannot pulse between the
                 // failed enqueue and waiter registration.
                 if (TryEnqueue(
-                    in command, source, commandDeadline, out var startedBatch, discardRepliesBefore,
+                    in command, source, commandDeadline, out var wake, discardRepliesBefore,
                     retainRepliesBefore, writeObservation))
                 {
-                    return startedBatch;
+                    return wake;
                 }
 
-                ScheduleFlush(startedBatch: false);
+                ScheduleFlush(FlushWake.Dispatch);
                 await WaitForCapacityAsync(capacityAvailable, commandDeadline, source.CommandName, cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -2603,6 +2603,42 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </remarks>
     private void ScheduleFlush(bool startedBatch)
         => _flushSignal.Signal(preferInline: startedBatch && Thread.CurrentThread.IsThreadPoolThread);
+
+    private void ScheduleFlush(FlushWake wake)
+    {
+        if (wake != FlushWake.Covered)
+            _flushSignal.Signal(preferInline: wake == FlushWake.Inline && Thread.CurrentThread.IsThreadPoolThread);
+    }
+
+    /// <summary>How an append must wake the flush loop, decided under the write gate.</summary>
+    private enum FlushWake : byte
+    {
+        Dispatch,
+        Inline,
+        /// <summary>The flush loop is mid-send and re-checks the buffer without a signal.</summary>
+        Covered,
+    }
+
+    /// <summary>
+    /// Call while holding <see cref="_writeGate"/>, in the same hold as the append and before it.
+    /// </summary>
+    /// <remarks>
+    /// Only <see cref="FlushLoopAsync"/> writes <see cref="_sending"/>: <c>true</c> under the
+    /// gate when it takes a buffer, <c>false</c> once that send completes, and then it takes
+    /// the gate again to re-check the active buffer. It parks only after a re-check finds the
+    /// buffer empty. Consider the loop's last gate hold before this one: its writes, and the
+    /// clear that preceded it, are visible here. If that hold took a buffer, the re-check for
+    /// that send follows this hold and sees the append. If it found the buffer empty, this read
+    /// returns <c>false</c>. So reading <c>true</c> proves a later re-check, and the append
+    /// needs no signal. A failed send aborts the connection instead, which fails the active
+    /// buffer. Skipping the signal skips its full fence, which pipelined load would otherwise
+    /// pay on nearly every command.
+    /// </remarks>
+    private FlushWake CaptureFlushWake()
+    {
+        if (Volatile.Read(ref _sending)) return FlushWake.Covered;
+        return _activeBuffer.Count == 0 && _inflight.Count == 0 ? FlushWake.Inline : FlushWake.Dispatch;
+    }
 
     /// <summary>
     /// Caps how many consecutive batches the flush loop sends without ever suspending before
@@ -4279,7 +4315,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         break;
                     }
                 }
-                ScheduleFlush(startedBatch: false);
+                ScheduleFlush(FlushWake.Dispatch);
                 await Task.WhenAny(progress, _receiveTask).ConfigureAwait(false);
             }
             await DisposeAsync().ConfigureAwait(false);

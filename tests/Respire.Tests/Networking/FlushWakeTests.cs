@@ -70,6 +70,46 @@ public class FlushWakeTests
     }
 
     [Test]
+    public async Task ConcurrentSmallBurstsNeverStrandACommand()
+    {
+        // Appends that land while a send is in progress skip the wake and rely on the flush
+        // loop's re-check. Short bursts from many producers keep the loop moving between
+        // sending, re-checking and parking, so a lost wake would leave a reply missing.
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        const int producers = 16;
+        const int rounds = 150;
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workers = new Task[producers];
+        for (var p = 0; p < producers; p++)
+        {
+            var burst = 1 + p % 3;
+            workers[p] = Task.Run(async () =>
+            {
+                await start.Task;
+                var pending = new Task<RespValue>[burst];
+                for (var round = 0; round < rounds; round++)
+                {
+                    for (var i = 0; i < burst; i++)
+                        pending[i] = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+                    foreach (var reply in pending)
+                    {
+                        using var value = await reply.WaitAsync(TimeSpan.FromSeconds(10));
+                        if (value.AsString() != "PONG") throw new InvalidOperationException("Unexpected reply.");
+                    }
+
+                    // Let the loop drain and park between some rounds, not only mid-send.
+                    if (round % 16 == 0) await Task.Yield();
+                }
+            });
+        }
+
+        start.SetResult();
+        await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(60));
+        await Assert.That(workers.All(worker => worker.IsCompletedSuccessfully)).IsTrue();
+    }
+
+    [Test]
     public async Task DedicatedThreadWriterOnAnIdleConnectionGetsItsReply()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
