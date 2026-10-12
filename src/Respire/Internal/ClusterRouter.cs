@@ -539,8 +539,29 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (node is not { IsInitialized: true, IsRetired: false, IsConnected: false }) return default;
         // An open circuit rejects before the wait, and again at dispatch admission. The ignored
         // permit releases half-open probe capacity without completing the probe or recording a sample.
-        _circuits?.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose();
+        if (_circuits is not null)
+        {
+            try { _circuits.Acquire(node.ActiveConnectionEndpoint, cancellationToken).Dispose(); }
+            catch (RespireCircuitOpenException rejection) when (slot is { } owned && HasAlternateMaster(node))
+            {
+                // The open owner is never retried, but another master can report that the slot
+                // moved to a healthy node. Dispatch then acquires fresh admission on that owner.
+                return RefreshRouteAfterCircuitRejectionAsync(owned, node, rejection, cancellationToken);
+            }
+        }
         return WaitForRouteReplacementCoreAsync(slot, node, cancellationToken);
+    }
+
+    // Asks the other known masters for the slot's owner without contacting the rejected node, as
+    // ordinary routing does after a failed owner. A refresh that still names the open owner, or
+    // finds no owner, rethrows the observed rejection without consulting the circuit again: the
+    // circuit can reach half-open during the refresh, and must not admit a resend to that node.
+    private async ValueTask RefreshRouteAfterCircuitRejectionAsync(int slot, RespireConnectionMultiplexer node,
+        RespireCircuitOpenException rejection, CancellationToken cancellationToken)
+    {
+        if (await TryRefreshSlotThroughKnownMastersAsync(slot, node, cancellationToken, discovery: null,
+                rejectedOwner: node).ConfigureAwait(false) is null)
+            ExceptionDispatchInfo.Throw(rejection);
     }
 
     // The owner's disconnect already requested a topology refresh. Stop waiting when that refresh
@@ -1629,7 +1650,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer node,
         CancellationToken cancellationToken, DiscoveryRound? discovery,
         long? expectedTopologyVersion = null, object? snapshotBatch = null, bool keepUncoveredOwners = false,
-        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null)
+        int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null,
+        RespireConnectionMultiplexer? rejectedOwner = null)
     {
         try
         {
@@ -1637,7 +1659,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var load = await TryLoadSlotsAsync(node, cancellationToken,
                 expectedTopologyVersion: expectedTopologyVersion, snapshotBatch: snapshotBatch,
                 keepUncoveredOwners: keepUncoveredOwners, requiredSlot: requiredSlot,
-                replicaRefresh: replicaRefresh).ConfigureAwait(false);
+                replicaRefresh: replicaRefresh, rejectedOwner: rejectedOwner).ConfigureAwait(false);
             // Retained owners are not evidence that this reply revalidated the requested slot.
             var complete = load.Loaded && (requiredSlot.HasValue ? load.CoversRequiredSlot : HasCompleteTopology());
             if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
@@ -1657,7 +1679,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         int slot,
         RespireConnectionMultiplexer? failedOwner,
         CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation = default,
-        bool keepUncoveredOwners = false)
+        bool keepUncoveredOwners = false, RespireConnectionMultiplexer? rejectedOwner = null)
     {
         var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
@@ -1669,7 +1691,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // Each contacted node names a failure that escapes this refresh.
             observation.UseEndpoint(master.ActiveConnectionEndpoint, cancellationToken);
             var refreshed = await TryRefreshTopologyAsync(master, cancellationToken, discovery, expectedTopologyVersion, snapshotBatch,
-                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners ? slot : null).ConfigureAwait(false);
+                    keepUncoveredOwners, requiredSlot: keepUncoveredOwners || rejectedOwner is not null ? slot : null,
+                    rejectedOwner: rejectedOwner).ConfigureAwait(false);
             if (!refreshed)
             {
                 continue;
@@ -1678,6 +1701,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var owner = RoutingSnapshot[slot].Primary;
             if (owner is null)
             {
+                continue;
+            }
+
+            // A stale master may still name the rejected owner. Let later masters correct
+            // that snapshot without losing the round's fence against concurrent redirects.
+            if (ReferenceEquals(owner, rejectedOwner))
+            {
+                snapshotBatch = new object();
                 continue;
             }
 
@@ -2522,7 +2553,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         long? expectedTopologyVersion = null,
         object? snapshotBatch = null,
         int? requiredSlot = null, ReplicaRefreshRound? replicaRefresh = null,
-        RespireConnection? queryConnection = null)
+        RespireConnection? queryConnection = null, RespireConnectionMultiplexer? rejectedOwner = null)
     {
         long topologyVersion;
         long discoveryGeneration;
@@ -2610,6 +2641,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 var coversAllSlots = CoversAllSlots(topology);
                 var coversRequiredSlot = requiredSlot is not { } slot
                     || topology.Any(range => range.Start <= slot && slot <= range.End);
+                if (rejectedOwner is not null && requiredSlot is { } rejectedSlot)
+                {
+                    var range = topology.Find(range => range.Start <= rejectedSlot && rejectedSlot <= range.End);
+                    var rejectedEndpoint = new RespireEndpoint(rejectedOwner.Host, rejectedOwner.Port);
+                    // A reply without a replacement must not retire unvisited topology sources.
+                    // Identity reuse requires the transport's immutable endpoint to be advertised,
+                    // either as the preferred address or an alias.
+                    if (range is null || RespireEndpointComparer.Instance.Equals(range.Preferred, rejectedEndpoint)
+                        || range.Aliases.Contains(rejectedEndpoint, RespireEndpointComparer.Instance))
+                        // Consult the current snapshot, which may contain a newer MOVED route.
+                        return (true, coversAllSlots, coversRequiredSlot);
+                }
                 if (replicaRefresh is not null && !replicaRefresh.Accept(topology, topologyVersion, discoveryGeneration))
                     return (false, coversAllSlots, coversRequiredSlot);
                 ApplyTopologyCore(topology, topologyVersion, discoveryGeneration, keepUncoveredOwners, snapshotBatch);

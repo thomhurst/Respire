@@ -219,9 +219,10 @@ A circuit rejection never authorizes a resend to that endpoint, even though the
 command was not submitted. A retry that waits for a replacement connection first
 rejects an open circuit again. A `READONLY` retry requires dispatch to refresh its
 primary route. Standalone dispatch selects the current multiplexer on every attempt,
-and Sentinel dispatch selects the current generation. The full circuit and retry
-composition, including half-open contention and failover switches, remains tracked by
-[#1256](https://github.com/thomhurst/Respire/issues/1256).
+and Sentinel dispatch selects the current generation. A retry that moves to another
+endpoint acquires fresh admission there. See
+[retries and circuit breakers](./circuit-breakers#retries) for half-open contention,
+failover switches and Cluster route changes.
 
 Immediate replica reads, streams, fire-and-forget operations, individual deferred batch/transaction
 members (batches retry only as complete units, described below), connection
@@ -242,7 +243,13 @@ The `respire.command.retries` counter records `respire.command.retry.category` a
 accepted resends. Cluster, script, function and failover-group owners have no transport
 acceptance signal, so `attempted` counts started resends. `succeeded` and `exhausted`
 report one terminal outcome per producer that made a resend.
-Failed circuit admission does not invent an attempt. Coalesced waiters do not duplicate
+Failed circuit admission does not invent an attempt for immediate commands, batches and
+transactions. A circuit rejection during standalone or Sentinel script/function route preparation
+also records no `attempted`, although an earlier resend's `exhausted` outcome still follows. A script's
+EVAL fallback, a function's library reload and a failover-group operation can run other
+commands before a later one is rejected, so such a rejected resend counts as `attempted`.
+Cluster script/function owners conservatively count every started resend, including rejection
+of its first command, because they have no transport acceptance signal. Coalesced waiters do not duplicate
 producer retry events. Handled attempt failures and final caller errors retain their
 separate error owners. Exporter exceptions cannot change retry decisions or replies.
 
@@ -659,7 +666,7 @@ complete reclamation. A successful workflow validates reports, not acceptance.
 [#1215](https://github.com/thomhurst/Respire/issues/1215) are closed. The performance gaps
 above are still unmet, and this guide keeps them on record. The retry epic
 [#862](https://github.com/thomhurst/Respire/issues/862) stays open. Whole-unit status is below.
-Full circuit composition is still tracked by [#1256](https://github.com/thomhurst/Respire/issues/1256).
+Circuit composition is described in [retries and circuit breakers](./circuit-breakers#retries).
 
 ### Whole-unit acceptance
 

@@ -237,7 +237,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         return LogicalCommandRetry.RunAsync(_retries, "FAILOVER GROUP", retryCategory, commandTimeout: null,
             (Group: this, Operation: operation),
             static (state, attempt) => state.Operation(state.Group.ActiveClient, attempt.Token),
-            default, cancellationToken);
+            default, cancellationToken,
+            // The operation may run several commands, so a member's circuit rejection does not
+            // prove that the resend executed nothing.
+            rejectionProvesUnexecuted: false);
     }
 
     /// <summary>Returns a snapshot of endpoint health and circuit state.</summary>

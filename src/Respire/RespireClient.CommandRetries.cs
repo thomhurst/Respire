@@ -256,30 +256,34 @@ public sealed partial class RespireClient
             observation, attempt.Deadline).ConfigureAwait(false);
     }
 
-    // Scripts and functions retry only with an explicit category.
+    // Scripts and functions retry only with an explicit category. Their operation can issue several
+    // independently admitted commands (EVALSHA then EVAL, or FCALL around a library reload), so a
+    // circuit rejection inside it does not prove the resend unexecuted; only one from the resend's
+    // preparation does. Cluster has no preparation: its first command's routing admits inside the
+    // operation, so a Cluster resend rejected before any send still counts as attempted.
     internal ValueTask<TResult> RunWithDeclaredRetriesAsync<TState, TResult>(string operation,
         RespireCommandRetryCategory category, TState state,
         Func<TState, LogicalCommandRetry.Attempt, ValueTask<TResult>> send,
         RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken)
         => LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, category, _core.Options.CommandTimeout,
             (Client: this, State: state, Send: send, Observation: observation),
-            static (retry, attempt) => retry.Client.SendDeclaredAttemptAsync(retry.State, retry.Send, attempt, retry.Observation),
-            observation, cancellationToken);
+            static (retry, attempt) => retry.Send(retry.State, attempt),
+            observation, cancellationToken, rejectionProvesUnexecuted: false,
+            prepareResend: static (retry, attempt) => retry.Client.PrepareDeclaredResendAsync(attempt, retry.Observation));
 
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<TResult> SendDeclaredAttemptAsync<TState, TResult>(TState state,
-        Func<TState, LogicalCommandRetry.Attempt, ValueTask<TResult>> send, LogicalCommandRetry.Attempt attempt,
+    // Initialization alone does not wait for an established socket's replacement. As in the
+    // standalone owner, an open circuit rejects before the wait and again at admission.
+    private ValueTask PrepareDeclaredResendAsync(LogicalCommandRetry.Attempt attempt,
+        RespireTelemetry.ErrorObservation observation)
+        => _core.Cluster is null ? PrepareDeclaredStandaloneResendAsync(attempt.Token, observation) : default;
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    private async ValueTask PrepareDeclaredStandaloneResendAsync(CancellationToken token,
         RespireTelemetry.ErrorObservation observation)
     {
-        // Initialization alone does not wait for an established socket's replacement. As in the
-        // standalone owner, an open circuit rejects before the wait and again at admission.
-        if (attempt.Number > 1 && _core.Cluster is null)
-        {
-            await _core.EnsureConnectedAsync(attempt.Token, observation).ConfigureAwait(false);
-            if (_core.Circuits is not null) RejectOpenCircuit(attempt.Token);
-            _ = await _core.Multiplexer.GetHealthyConnectionAsync(attempt.Token).ConfigureAwait(false);
-        }
-        return await send(state, attempt).ConfigureAwait(false);
+        await _core.EnsureConnectedAsync(token, observation).ConfigureAwait(false);
+        if (_core.Circuits is not null) RejectOpenCircuit(token);
+        _ = await _core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
     }
 
     // A complete unit resends on the current primary, selected as for the immediate owner. An
