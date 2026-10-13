@@ -1,0 +1,25 @@
+#nullable enable
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxObservedKeys.get -> int
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxObservedKeys.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxRememberedTagInvalidations.get -> int
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxRememberedTagInvalidations.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxTagInvalidationMessageBytes.get -> int
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxTagInvalidationMessageBytes.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxTagsPerEntry.get -> int
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.MaxTagsPerEntry.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.ObservationSweepInterval.get -> System.TimeSpan
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.ObservationSweepInterval.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.RespireHybridCacheCoherenceOptions() -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TagInvalidationBufferSize.get -> int
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TagInvalidationBufferSize.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TagInvalidationChannel.get -> string?
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TagInvalidationChannel.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TagInvalidationNamespace.get -> string?
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TagInvalidationNamespace.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TrackingOptions.get -> Respire.RespireClientSideCacheOptions!
+Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions.TrackingOptions.set -> void
+Respire.Caching.Hybrid.RespireHybridCacheServiceCollectionExtensions
+static Respire.Caching.Hybrid.RespireHybridCacheServiceCollectionExtensions.AddRespireHybridCache(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Respire.Caching.RespireCacheRegistrationOptions!>? configureCache = null, System.Action<Microsoft.Extensions.Caching.Hybrid.HybridCacheOptions!>? configureHybridCache = null) -> Microsoft.Extensions.Caching.Hybrid.IHybridCacheBuilder!
+static Respire.Caching.Hybrid.RespireHybridCacheServiceCollectionExtensions.AddRespireHybridCache(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! connectionString, string? instanceName = null, System.Action<Microsoft.Extensions.Caching.Hybrid.HybridCacheOptions!>? configureHybridCache = null) -> Microsoft.Extensions.Caching.Hybrid.IHybridCacheBuilder!
+static Respire.Caching.Hybrid.RespireHybridCacheServiceCollectionExtensions.WithRespireClientSideCoherence(this Microsoft.Extensions.Caching.Hybrid.IHybridCacheBuilder! builder, System.Action<Respire.Caching.Hybrid.RespireHybridCacheCoherenceOptions!>? configure = null) -> Microsoft.Extensions.Caching.Hybrid.IHybridCacheBuilder!

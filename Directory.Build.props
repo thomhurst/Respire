@@ -115,7 +115,15 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
 
+  <Target Name="_RespireValidatePublicApiFiles" BeforeTargets="CoreCompile"
+          Condition="'$(IsRespirePackageProject)' == 'true' And '$(TargetFramework)' != ''">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/PublicAPI.Shipped.txt') Or !Exists('$(MSBuildProjectDirectory)/PublicAPI.Unshipped.txt')"
+           Text="$(MSBuildProjectName) requires shipped and unshipped API baselines. See website/docs/packages.md." />
+  </Target>
+
   <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
+    <!-- The package's buildTransitive targets include the two PublicAPI files as AdditionalFiles. -->
     <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

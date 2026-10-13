@@ -1,0 +1,831 @@
+#nullable enable
+Respire.Search.IRespireSearchSchema<TModel>
+Respire.Search.IRespireSearchSchema<TModel>.Definition.get -> Respire.Search.RespireSearchIndexDefinition!
+Respire.Search.IRespireSearchSchema<TModel>.GetKey(TModel value) -> Respire.RespireKey
+Respire.Search.IRespireSearchSchema<TModel>.IndexName.get -> string!
+Respire.Search.IRespireSearchSchema<TModel>.Validate(TModel value) -> void
+Respire.Search.RespireHybridSearchQuery
+Respire.Search.RespireHybridSearchQuery.<Clone>$() -> Respire.Search.RespireHybridSearchQuery!
+Respire.Search.RespireHybridSearchQuery.Deconstruct(out Respire.Search.RespireSearchExpression TextExpression, out string! VectorField, out System.ReadOnlyMemory<byte> Vector, out int K, out int Limit) -> void
+Respire.Search.RespireHybridSearchQuery.Equals(Respire.Search.RespireHybridSearchQuery? other) -> bool
+Respire.Search.RespireHybridSearchQuery.K.get -> int
+Respire.Search.RespireHybridSearchQuery.K.init -> void
+Respire.Search.RespireHybridSearchQuery.Limit.get -> int
+Respire.Search.RespireHybridSearchQuery.Limit.init -> void
+Respire.Search.RespireHybridSearchQuery.LoadFields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireHybridSearchQuery.LoadFields.init -> void
+Respire.Search.RespireHybridSearchQuery.Parameters.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.RespireValue>!
+Respire.Search.RespireHybridSearchQuery.Parameters.init -> void
+Respire.Search.RespireHybridSearchQuery.RespireHybridSearchQuery(Respire.Search.RespireSearchExpression TextExpression, string! VectorField, System.ReadOnlyMemory<byte> Vector, int K, int Limit = 10) -> void
+Respire.Search.RespireHybridSearchQuery.RrfConstant.get -> int
+Respire.Search.RespireHybridSearchQuery.RrfConstant.init -> void
+Respire.Search.RespireHybridSearchQuery.RrfWindow.get -> int?
+Respire.Search.RespireHybridSearchQuery.RrfWindow.init -> void
+Respire.Search.RespireHybridSearchQuery.Skip.get -> int
+Respire.Search.RespireHybridSearchQuery.Skip.init -> void
+Respire.Search.RespireHybridSearchQuery.TextExpression.get -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireHybridSearchQuery.TextExpression.init -> void
+Respire.Search.RespireHybridSearchQuery.TimeoutMilliseconds.get -> int?
+Respire.Search.RespireHybridSearchQuery.TimeoutMilliseconds.init -> void
+Respire.Search.RespireHybridSearchQuery.Vector.get -> System.ReadOnlyMemory<byte>
+Respire.Search.RespireHybridSearchQuery.Vector.init -> void
+Respire.Search.RespireHybridSearchQuery.VectorField.get -> string!
+Respire.Search.RespireHybridSearchQuery.VectorField.init -> void
+Respire.Search.RespireHybridSearchQuery.VectorFilter.get -> Respire.Search.RespireSearchExpression?
+Respire.Search.RespireHybridSearchQuery.VectorFilter.init -> void
+Respire.Search.RespireSearchAggregateApply
+Respire.Search.RespireSearchAggregateApply.Alias.get -> string!
+Respire.Search.RespireSearchAggregateApply.Alias.init -> void
+Respire.Search.RespireSearchAggregateApply.Deconstruct(out string! Expression, out string! Alias) -> void
+Respire.Search.RespireSearchAggregateApply.Equals(Respire.Search.RespireSearchAggregateApply? other) -> bool
+Respire.Search.RespireSearchAggregateApply.Expression.get -> string!
+Respire.Search.RespireSearchAggregateApply.Expression.init -> void
+Respire.Search.RespireSearchAggregateApply.RespireSearchAggregateApply(string! Expression, string! Alias) -> void
+Respire.Search.RespireSearchAggregateCursorPage
+Respire.Search.RespireSearchAggregateCursorPage.<Clone>$() -> Respire.Search.RespireSearchAggregateCursorPage!
+Respire.Search.RespireSearchAggregateCursorPage.CursorId.get -> long
+Respire.Search.RespireSearchAggregateCursorPage.CursorId.init -> void
+Respire.Search.RespireSearchAggregateCursorPage.Deconstruct(out Respire.Search.RespireSearchAggregateResult! Result, out long CursorId) -> void
+Respire.Search.RespireSearchAggregateCursorPage.Equals(Respire.Search.RespireSearchAggregateCursorPage? other) -> bool
+Respire.Search.RespireSearchAggregateCursorPage.Index.get -> string?
+Respire.Search.RespireSearchAggregateCursorPage.Index.init -> void
+Respire.Search.RespireSearchAggregateCursorPage.IsComplete.get -> bool
+Respire.Search.RespireSearchAggregateCursorPage.RespireSearchAggregateCursorPage(Respire.Search.RespireSearchAggregateResult! Result, long CursorId) -> void
+Respire.Search.RespireSearchAggregateCursorPage.Result.get -> Respire.Search.RespireSearchAggregateResult!
+Respire.Search.RespireSearchAggregateCursorPage.Result.init -> void
+Respire.Search.RespireSearchAggregateFilter
+Respire.Search.RespireSearchAggregateFilter.Deconstruct(out string! Expression) -> void
+Respire.Search.RespireSearchAggregateFilter.Equals(Respire.Search.RespireSearchAggregateFilter? other) -> bool
+Respire.Search.RespireSearchAggregateFilter.Expression.get -> string!
+Respire.Search.RespireSearchAggregateFilter.Expression.init -> void
+Respire.Search.RespireSearchAggregateFilter.RespireSearchAggregateFilter(string! Expression) -> void
+Respire.Search.RespireSearchAggregateGroupBy
+Respire.Search.RespireSearchAggregateGroupBy.Deconstruct(out System.Collections.Generic.IReadOnlyList<string!>! Properties, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchReducer!>! Reducers) -> void
+Respire.Search.RespireSearchAggregateGroupBy.Equals(Respire.Search.RespireSearchAggregateGroupBy? other) -> bool
+Respire.Search.RespireSearchAggregateGroupBy.Properties.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchAggregateGroupBy.Properties.init -> void
+Respire.Search.RespireSearchAggregateGroupBy.Reducers.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchReducer!>!
+Respire.Search.RespireSearchAggregateGroupBy.Reducers.init -> void
+Respire.Search.RespireSearchAggregateGroupBy.RespireSearchAggregateGroupBy(System.Collections.Generic.IReadOnlyList<string!>! Properties, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchReducer!>! Reducers) -> void
+Respire.Search.RespireSearchAggregateLimit
+Respire.Search.RespireSearchAggregateLimit.Count.get -> int
+Respire.Search.RespireSearchAggregateLimit.Count.init -> void
+Respire.Search.RespireSearchAggregateLimit.Deconstruct(out int Offset, out int Count) -> void
+Respire.Search.RespireSearchAggregateLimit.Equals(Respire.Search.RespireSearchAggregateLimit? other) -> bool
+Respire.Search.RespireSearchAggregateLimit.Offset.get -> int
+Respire.Search.RespireSearchAggregateLimit.Offset.init -> void
+Respire.Search.RespireSearchAggregateLimit.RespireSearchAggregateLimit(int Offset, int Count) -> void
+Respire.Search.RespireSearchAggregateLoad
+Respire.Search.RespireSearchAggregateLoad.Deconstruct(out System.Collections.Generic.IReadOnlyList<string!>! Fields) -> void
+Respire.Search.RespireSearchAggregateLoad.Equals(Respire.Search.RespireSearchAggregateLoad? other) -> bool
+Respire.Search.RespireSearchAggregateLoad.Fields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchAggregateLoad.Fields.init -> void
+Respire.Search.RespireSearchAggregateLoad.RespireSearchAggregateLoad(System.Collections.Generic.IReadOnlyList<string!>! Fields) -> void
+Respire.Search.RespireSearchAggregateOptions
+Respire.Search.RespireSearchAggregateOptions.<Clone>$() -> Respire.Search.RespireSearchAggregateOptions!
+Respire.Search.RespireSearchAggregateOptions.Dialect.get -> int?
+Respire.Search.RespireSearchAggregateOptions.Dialect.init -> void
+Respire.Search.RespireSearchAggregateOptions.Equals(Respire.Search.RespireSearchAggregateOptions? other) -> bool
+Respire.Search.RespireSearchAggregateOptions.RespireSearchAggregateOptions() -> void
+Respire.Search.RespireSearchAggregateOptions.Stages.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchAggregateStage!>!
+Respire.Search.RespireSearchAggregateOptions.Stages.init -> void
+Respire.Search.RespireSearchAggregateResult
+Respire.Search.RespireSearchAggregateResult.<Clone>$() -> Respire.Search.RespireSearchAggregateResult!
+Respire.Search.RespireSearchAggregateResult.Deconstruct(out long Total, out System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string!, string?>!>! Rows) -> void
+Respire.Search.RespireSearchAggregateResult.Equals(Respire.Search.RespireSearchAggregateResult? other) -> bool
+Respire.Search.RespireSearchAggregateResult.RespireSearchAggregateResult(long Total, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string!, string?>!>! Rows) -> void
+Respire.Search.RespireSearchAggregateResult.Rows.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string!, string?>!>!
+Respire.Search.RespireSearchAggregateResult.Rows.init -> void
+Respire.Search.RespireSearchAggregateResult.StructuredRows.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>!>!
+Respire.Search.RespireSearchAggregateResult.StructuredRows.init -> void
+Respire.Search.RespireSearchAggregateResult.Total.get -> long
+Respire.Search.RespireSearchAggregateResult.Total.init -> void
+Respire.Search.RespireSearchAggregateSort
+Respire.Search.RespireSearchAggregateSort.<Clone>$() -> Respire.Search.RespireSearchAggregateSort!
+Respire.Search.RespireSearchAggregateSort.Deconstruct(out string! Field, out Respire.Search.RespireSearchSortDirection Direction) -> void
+Respire.Search.RespireSearchAggregateSort.Direction.get -> Respire.Search.RespireSearchSortDirection
+Respire.Search.RespireSearchAggregateSort.Direction.init -> void
+Respire.Search.RespireSearchAggregateSort.Equals(Respire.Search.RespireSearchAggregateSort? other) -> bool
+Respire.Search.RespireSearchAggregateSort.Field.get -> string!
+Respire.Search.RespireSearchAggregateSort.Field.init -> void
+Respire.Search.RespireSearchAggregateSort.RespireSearchAggregateSort(string! Field, Respire.Search.RespireSearchSortDirection Direction = Respire.Search.RespireSearchSortDirection.Ascending) -> void
+Respire.Search.RespireSearchAggregateSortBy
+Respire.Search.RespireSearchAggregateSortBy.Deconstruct(out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchAggregateSort!>! Keys) -> void
+Respire.Search.RespireSearchAggregateSortBy.Equals(Respire.Search.RespireSearchAggregateSortBy? other) -> bool
+Respire.Search.RespireSearchAggregateSortBy.Keys.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchAggregateSort!>!
+Respire.Search.RespireSearchAggregateSortBy.Keys.init -> void
+Respire.Search.RespireSearchAggregateSortBy.Max.get -> int?
+Respire.Search.RespireSearchAggregateSortBy.Max.init -> void
+Respire.Search.RespireSearchAggregateSortBy.RespireSearchAggregateSortBy(System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchAggregateSort!>! Keys) -> void
+Respire.Search.RespireSearchAggregateStage
+Respire.Search.RespireSearchAggregateStage.RespireSearchAggregateStage(Respire.Search.RespireSearchAggregateStage! original) -> void
+Respire.Search.RespireSearchAttribute
+Respire.Search.RespireSearchAttribute.IndexName.get -> string!
+Respire.Search.RespireSearchAttribute.Prefixes.get -> string![]!
+Respire.Search.RespireSearchAttribute.Prefixes.set -> void
+Respire.Search.RespireSearchAttribute.RespireSearchAttribute(string! indexName) -> void
+Respire.Search.RespireSearchClient
+Respire.Search.RespireSearchClient.AddAliasAsync(string! alias, string! index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.AddDictionaryTermsAsync(string! dictionary, System.Collections.Generic.IReadOnlyList<string!>! terms, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Search.RespireSearchClient.AddSuggestionAsync(Respire.RespireKey key, string! suggestion, double score, Respire.Search.RespireSearchSuggestionAddOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Search.RespireSearchClient.AggregateAsync(string! index, Respire.Search.RespireSearchExpression expression, Respire.Search.RespireSearchAggregateOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchAggregateResult!>
+Respire.Search.RespireSearchClient.AggregatePagesAsync(string! index, Respire.Search.RespireSearchExpression expression, Respire.Search.RespireSearchAggregateOptions? options = null, Respire.Search.RespireSearchCursorOptions? cursor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.Search.RespireSearchAggregateResult!>!
+Respire.Search.RespireSearchClient.AggregateWithCursorAsync(string! index, Respire.Search.RespireSearchExpression expression, Respire.Search.RespireSearchAggregateOptions? options = null, Respire.Search.RespireSearchCursorOptions? cursor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchAggregateCursorPage!>
+Respire.Search.RespireSearchClient.AlterIndexAsync(string! name, Respire.Search.RespireSearchField! field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.CreateIndexAsync(string! name, Respire.Search.RespireSearchIndexDefinition! definition, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.DeleteAliasAsync(string! alias, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.DeleteCursorAsync(Respire.Search.RespireSearchAggregateCursorPage! page, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.DeleteCursorAsync(string! index, long cursorId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.DeleteDictionaryTermsAsync(string! dictionary, System.Collections.Generic.IReadOnlyList<string!>! terms, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Search.RespireSearchClient.DeleteSuggestionAsync(Respire.RespireKey key, string! suggestion, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Search.RespireSearchClient.DropIndexAsync(string! name, bool deleteDocuments = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.DumpDictionaryAsync(string! dictionary, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<string!>!>
+Respire.Search.RespireSearchClient.ExplainAsync(string! index, Respire.Search.RespireSearchExpression expression, Respire.Search.RespireSearchExplainOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+Respire.Search.RespireSearchClient.GetConfigurationAsync(string! option = "*", System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyDictionary<string!, string?>!>
+Respire.Search.RespireSearchClient.GetIndexInfoAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchIndexInfo!>
+Respire.Search.RespireSearchClient.GetSuggestionCountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Search.RespireSearchClient.GetSuggestionsAsync(Respire.RespireKey key, string! prefix, Respire.Search.RespireSearchSuggestionOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchSuggestion!>!>
+Respire.Search.RespireSearchClient.GetSynonymsAsync(string! index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyList<string!>!>!>
+Respire.Search.RespireSearchClient.GetTagValuesAsync(string! index, string! field, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<string!>!>
+Respire.Search.RespireSearchClient.HybridSearchAsync(string! index, Respire.Search.RespireHybridSearchQuery! query, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchResult!>
+Respire.Search.RespireSearchClient.ListAliasesAsync(string! index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<string!>!>
+Respire.Search.RespireSearchClient.ListIndexesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<string!>!>
+Respire.Search.RespireSearchClient.ProfileAggregateAsync(string! index, Respire.Search.RespireSearchExpression expression, Respire.Search.RespireSearchAggregateOptions? options = null, bool limited = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchProfileResult<Respire.Search.RespireSearchAggregateResult!>!>
+Respire.Search.RespireSearchClient.ProfileHybridSearchAsync(string! index, Respire.Search.RespireHybridSearchQuery! query, bool limited = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchProfileResult<Respire.Search.RespireSearchResult!>!>
+Respire.Search.RespireSearchClient.ProfileSearchAsync(string! index, Respire.Search.RespireSearchQuery! query, bool limited = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchProfileResult<Respire.Search.RespireSearchResult!>!>
+Respire.Search.RespireSearchClient.ReadCursorAsync(Respire.Search.RespireSearchAggregateCursorPage! page, int? count = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchAggregateCursorPage!>
+Respire.Search.RespireSearchClient.ReadCursorAsync(string! index, long cursorId, int? count = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchAggregateCursorPage!>
+Respire.Search.RespireSearchClient.RespireSearchClient(Respire.IRespireClient! client) -> void
+Respire.Search.RespireSearchClient.SearchAsync(string! index, Respire.Search.RespireSearchQuery! query, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchResult!>
+Respire.Search.RespireSearchClient.SetConfigurationAsync(string! option, string! value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.SpellCheckAsync(string! index, string! query, Respire.Search.RespireSearchSpellCheckOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchSpellingCorrection!>!>
+Respire.Search.RespireSearchClient.UpdateAliasAsync(string! alias, string! index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.UpdateSynonymsAsync(string! index, string! groupId, System.Collections.Generic.IReadOnlyList<string!>! terms, bool skipInitialScan = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Search.RespireSearchClient.VectorSearchAsync(string! index, Respire.Search.RespireVectorSearchRequest! vector, Respire.Search.RespireSearchQueryOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchResult!>
+Respire.Search.RespireSearchClientExtensions
+Respire.Search.RespireSearchClientExtensions.extension(Respire.IRespireClient!)
+Respire.Search.RespireSearchClientExtensions.extension(Respire.IRespireClient!).Search.get -> Respire.Search.RespireSearchClient!
+Respire.Search.RespireSearchCollectOptions
+Respire.Search.RespireSearchCollectOptions.<Clone>$() -> Respire.Search.RespireSearchCollectOptions!
+Respire.Search.RespireSearchCollectOptions.AllFields.get -> bool
+Respire.Search.RespireSearchCollectOptions.AllFields.init -> void
+Respire.Search.RespireSearchCollectOptions.Distinct.get -> bool
+Respire.Search.RespireSearchCollectOptions.Distinct.init -> void
+Respire.Search.RespireSearchCollectOptions.Equals(Respire.Search.RespireSearchCollectOptions? other) -> bool
+Respire.Search.RespireSearchCollectOptions.Fields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchCollectOptions.Fields.init -> void
+Respire.Search.RespireSearchCollectOptions.Limit.get -> (int Offset, int Count)?
+Respire.Search.RespireSearchCollectOptions.Limit.init -> void
+Respire.Search.RespireSearchCollectOptions.RespireSearchCollectOptions() -> void
+Respire.Search.RespireSearchCollectOptions.SortBy.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchAggregateSort!>!
+Respire.Search.RespireSearchCollectOptions.SortBy.init -> void
+Respire.Search.RespireSearchCursorOptions
+Respire.Search.RespireSearchCursorOptions.<Clone>$() -> Respire.Search.RespireSearchCursorOptions!
+Respire.Search.RespireSearchCursorOptions.Count.get -> int?
+Respire.Search.RespireSearchCursorOptions.Count.init -> void
+Respire.Search.RespireSearchCursorOptions.Equals(Respire.Search.RespireSearchCursorOptions? other) -> bool
+Respire.Search.RespireSearchCursorOptions.MaxIdleMilliseconds.get -> int?
+Respire.Search.RespireSearchCursorOptions.MaxIdleMilliseconds.init -> void
+Respire.Search.RespireSearchCursorOptions.RespireSearchCursorOptions() -> void
+Respire.Search.RespireSearchDistanceMetric
+Respire.Search.RespireSearchDistanceMetric.Cosine = 2 -> Respire.Search.RespireSearchDistanceMetric
+Respire.Search.RespireSearchDistanceMetric.InnerProduct = 1 -> Respire.Search.RespireSearchDistanceMetric
+Respire.Search.RespireSearchDistanceMetric.L2 = 0 -> Respire.Search.RespireSearchDistanceMetric
+Respire.Search.RespireSearchDocument
+Respire.Search.RespireSearchDocument.<Clone>$() -> Respire.Search.RespireSearchDocument!
+Respire.Search.RespireSearchDocument.Deconstruct(out string! Id, out System.Collections.Generic.IReadOnlyDictionary<string!, string?>! Fields, out double? Score) -> void
+Respire.Search.RespireSearchDocument.DocumentKey.get -> Respire.RespireKey
+Respire.Search.RespireSearchDocument.DocumentKey.init -> void
+Respire.Search.RespireSearchDocument.Equals(Respire.Search.RespireSearchDocument? other) -> bool
+Respire.Search.RespireSearchDocument.Fields.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string?>!
+Respire.Search.RespireSearchDocument.Fields.init -> void
+Respire.Search.RespireSearchDocument.Id.get -> string!
+Respire.Search.RespireSearchDocument.Id.init -> void
+Respire.Search.RespireSearchDocument.Payload.get -> System.ReadOnlyMemory<byte>?
+Respire.Search.RespireSearchDocument.Payload.init -> void
+Respire.Search.RespireSearchDocument.RespireSearchDocument(string! Id, System.Collections.Generic.IReadOnlyDictionary<string!, string?>! Fields, double? Score = null) -> void
+Respire.Search.RespireSearchDocument.Score.get -> double?
+Respire.Search.RespireSearchDocument.Score.init -> void
+Respire.Search.RespireSearchDocument.ScoreExplanation.get -> Respire.Search.RespireSearchValue?
+Respire.Search.RespireSearchDocument.ScoreExplanation.init -> void
+Respire.Search.RespireSearchDocument.SortKey.get -> Respire.Search.RespireSearchValue?
+Respire.Search.RespireSearchDocument.SortKey.init -> void
+Respire.Search.RespireSearchDocument.StructuredFields.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>!
+Respire.Search.RespireSearchDocument.StructuredFields.init -> void
+Respire.Search.RespireSearchDocument.TextResults.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchTextResult!>!
+Respire.Search.RespireSearchDocument.TextResults.init -> void
+Respire.Search.RespireSearchExplainOptions
+Respire.Search.RespireSearchExplainOptions.<Clone>$() -> Respire.Search.RespireSearchExplainOptions!
+Respire.Search.RespireSearchExplainOptions.Cli.get -> bool
+Respire.Search.RespireSearchExplainOptions.Cli.init -> void
+Respire.Search.RespireSearchExplainOptions.Dialect.get -> int?
+Respire.Search.RespireSearchExplainOptions.Dialect.init -> void
+Respire.Search.RespireSearchExplainOptions.Equals(Respire.Search.RespireSearchExplainOptions? other) -> bool
+Respire.Search.RespireSearchExplainOptions.RespireSearchExplainOptions() -> void
+Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchExpression.Equals(Respire.Search.RespireSearchExpression other) -> bool
+Respire.Search.RespireSearchExpression.RespireSearchExpression() -> void
+Respire.Search.RespireSearchExpression.Value.get -> string!
+Respire.Search.RespireSearchField
+Respire.Search.RespireSearchField.<Clone>$() -> Respire.Search.RespireSearchField!
+Respire.Search.RespireSearchField.Alias.get -> string?
+Respire.Search.RespireSearchField.Alias.init -> void
+Respire.Search.RespireSearchField.CaseSensitive.get -> bool
+Respire.Search.RespireSearchField.CaseSensitive.init -> void
+Respire.Search.RespireSearchField.Deconstruct(out string! Identifier, out Respire.Search.RespireSearchFieldType Type, out string? Alias, out bool Sortable, out bool NoIndex, out System.Collections.Generic.IReadOnlyList<string!>? Options) -> void
+Respire.Search.RespireSearchField.Equals(Respire.Search.RespireSearchField? other) -> bool
+Respire.Search.RespireSearchField.Identifier.get -> string!
+Respire.Search.RespireSearchField.Identifier.init -> void
+Respire.Search.RespireSearchField.NoIndex.get -> bool
+Respire.Search.RespireSearchField.NoIndex.init -> void
+Respire.Search.RespireSearchField.NoStem.get -> bool
+Respire.Search.RespireSearchField.NoStem.init -> void
+Respire.Search.RespireSearchField.Options.get -> System.Collections.Generic.IReadOnlyList<string!>?
+Respire.Search.RespireSearchField.Options.init -> void
+Respire.Search.RespireSearchField.Phonetic.get -> Respire.Search.RespireSearchPhoneticMatcher?
+Respire.Search.RespireSearchField.Phonetic.init -> void
+Respire.Search.RespireSearchField.RespireSearchField(string! Identifier, Respire.Search.RespireSearchFieldType Type, string? Alias = null, bool Sortable = false, bool NoIndex = false, System.Collections.Generic.IReadOnlyList<string!>? Options = null) -> void
+Respire.Search.RespireSearchField.Separator.get -> char?
+Respire.Search.RespireSearchField.Separator.init -> void
+Respire.Search.RespireSearchField.Sortable.get -> bool
+Respire.Search.RespireSearchField.Sortable.init -> void
+Respire.Search.RespireSearchField.Type.get -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchField.Type.init -> void
+Respire.Search.RespireSearchField.Vector.get -> Respire.Search.RespireSearchVectorOptions?
+Respire.Search.RespireSearchField.Vector.init -> void
+Respire.Search.RespireSearchField.Weight.get -> double?
+Respire.Search.RespireSearchField.Weight.init -> void
+Respire.Search.RespireSearchFieldAttribute
+Respire.Search.RespireSearchFieldAttribute.Algorithm.get -> Respire.Search.RespireSearchVectorAlgorithm
+Respire.Search.RespireSearchFieldAttribute.Algorithm.set -> void
+Respire.Search.RespireSearchFieldAttribute.Alias.get -> string?
+Respire.Search.RespireSearchFieldAttribute.Alias.set -> void
+Respire.Search.RespireSearchFieldAttribute.CaseSensitive.get -> bool
+Respire.Search.RespireSearchFieldAttribute.CaseSensitive.set -> void
+Respire.Search.RespireSearchFieldAttribute.Dimensions.get -> int
+Respire.Search.RespireSearchFieldAttribute.Dimensions.set -> void
+Respire.Search.RespireSearchFieldAttribute.DistanceMetric.get -> Respire.Search.RespireSearchDistanceMetric
+Respire.Search.RespireSearchFieldAttribute.DistanceMetric.set -> void
+Respire.Search.RespireSearchFieldAttribute.NoIndex.get -> bool
+Respire.Search.RespireSearchFieldAttribute.NoIndex.set -> void
+Respire.Search.RespireSearchFieldAttribute.NoStem.get -> bool
+Respire.Search.RespireSearchFieldAttribute.NoStem.set -> void
+Respire.Search.RespireSearchFieldAttribute.RespireSearchFieldAttribute(Respire.Search.RespireSearchFieldType type) -> void
+Respire.Search.RespireSearchFieldAttribute.Separator.get -> char
+Respire.Search.RespireSearchFieldAttribute.Separator.set -> void
+Respire.Search.RespireSearchFieldAttribute.Sortable.get -> bool
+Respire.Search.RespireSearchFieldAttribute.Sortable.set -> void
+Respire.Search.RespireSearchFieldAttribute.Type.get -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldAttribute.VectorType.get -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchFieldAttribute.VectorType.set -> void
+Respire.Search.RespireSearchFieldAttribute.Weight.get -> double
+Respire.Search.RespireSearchFieldAttribute.Weight.set -> void
+Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldType.Geo = 3 -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldType.GeoShape = 4 -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldType.Numeric = 2 -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldType.Tag = 1 -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldType.Text = 0 -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchFieldType.Vector = 5 -> Respire.Search.RespireSearchFieldType
+Respire.Search.RespireSearchHighlightOptions
+Respire.Search.RespireSearchHighlightOptions.<Clone>$() -> Respire.Search.RespireSearchHighlightOptions!
+Respire.Search.RespireSearchHighlightOptions.Equals(Respire.Search.RespireSearchHighlightOptions? other) -> bool
+Respire.Search.RespireSearchHighlightOptions.Fields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchHighlightOptions.Fields.init -> void
+Respire.Search.RespireSearchHighlightOptions.RespireSearchHighlightOptions() -> void
+Respire.Search.RespireSearchHighlightOptions.Tags.get -> (string! Open, string! Close)?
+Respire.Search.RespireSearchHighlightOptions.Tags.init -> void
+Respire.Search.RespireSearchIndexAttribute
+Respire.Search.RespireSearchIndexAttribute.<Clone>$() -> Respire.Search.RespireSearchIndexAttribute!
+Respire.Search.RespireSearchIndexAttribute.Attribute.get -> string!
+Respire.Search.RespireSearchIndexAttribute.Attribute.init -> void
+Respire.Search.RespireSearchIndexAttribute.Deconstruct(out string! Identifier, out string! Attribute, out string! Type) -> void
+Respire.Search.RespireSearchIndexAttribute.Equals(Respire.Search.RespireSearchIndexAttribute? other) -> bool
+Respire.Search.RespireSearchIndexAttribute.Flags.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchIndexAttribute.Flags.init -> void
+Respire.Search.RespireSearchIndexAttribute.Identifier.get -> string!
+Respire.Search.RespireSearchIndexAttribute.Identifier.init -> void
+Respire.Search.RespireSearchIndexAttribute.Options.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>!
+Respire.Search.RespireSearchIndexAttribute.Options.init -> void
+Respire.Search.RespireSearchIndexAttribute.RespireSearchIndexAttribute(string! Identifier, string! Attribute, string! Type) -> void
+Respire.Search.RespireSearchIndexAttribute.Type.get -> string!
+Respire.Search.RespireSearchIndexAttribute.Type.init -> void
+Respire.Search.RespireSearchIndexDefinition
+Respire.Search.RespireSearchIndexDefinition.<Clone>$() -> Respire.Search.RespireSearchIndexDefinition!
+Respire.Search.RespireSearchIndexDefinition.Equals(Respire.Search.RespireSearchIndexDefinition? other) -> bool
+Respire.Search.RespireSearchIndexDefinition.Fields.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchField!>!
+Respire.Search.RespireSearchIndexDefinition.Fields.init -> void
+Respire.Search.RespireSearchIndexDefinition.Language.get -> string?
+Respire.Search.RespireSearchIndexDefinition.Language.init -> void
+Respire.Search.RespireSearchIndexDefinition.LanguageField.get -> string?
+Respire.Search.RespireSearchIndexDefinition.LanguageField.init -> void
+Respire.Search.RespireSearchIndexDefinition.Prefixes.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchIndexDefinition.Prefixes.init -> void
+Respire.Search.RespireSearchIndexDefinition.RespireSearchIndexDefinition() -> void
+Respire.Search.RespireSearchIndexDefinition.Score.get -> double?
+Respire.Search.RespireSearchIndexDefinition.Score.init -> void
+Respire.Search.RespireSearchIndexDefinition.SkipInitialScan.get -> bool
+Respire.Search.RespireSearchIndexDefinition.SkipInitialScan.init -> void
+Respire.Search.RespireSearchIndexDefinition.Source.get -> Respire.Search.RespireSearchSource
+Respire.Search.RespireSearchIndexDefinition.Source.init -> void
+Respire.Search.RespireSearchIndexDefinition.StopWords.get -> System.Collections.Generic.IReadOnlyList<string!>?
+Respire.Search.RespireSearchIndexDefinition.StopWords.init -> void
+Respire.Search.RespireSearchIndexDefinition.TemporarySeconds.get -> int?
+Respire.Search.RespireSearchIndexDefinition.TemporarySeconds.init -> void
+Respire.Search.RespireSearchIndexInfo
+Respire.Search.RespireSearchIndexInfo.<Clone>$() -> Respire.Search.RespireSearchIndexInfo!
+Respire.Search.RespireSearchIndexInfo.Attributes.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchIndexAttribute!>!
+Respire.Search.RespireSearchIndexInfo.Attributes.init -> void
+Respire.Search.RespireSearchIndexInfo.Deconstruct(out string! Name, out long DocumentCount, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchIndexAttribute!>! Attributes) -> void
+Respire.Search.RespireSearchIndexInfo.DocumentCount.get -> long
+Respire.Search.RespireSearchIndexInfo.DocumentCount.init -> void
+Respire.Search.RespireSearchIndexInfo.Equals(Respire.Search.RespireSearchIndexInfo? other) -> bool
+Respire.Search.RespireSearchIndexInfo.Name.get -> string!
+Respire.Search.RespireSearchIndexInfo.Name.init -> void
+Respire.Search.RespireSearchIndexInfo.Properties.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>!
+Respire.Search.RespireSearchIndexInfo.Properties.init -> void
+Respire.Search.RespireSearchIndexInfo.RespireSearchIndexInfo(string! Name, long DocumentCount, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchIndexAttribute!>! Attributes) -> void
+Respire.Search.RespireSearchPhoneticMatcher
+Respire.Search.RespireSearchPhoneticMatcher.English = 0 -> Respire.Search.RespireSearchPhoneticMatcher
+Respire.Search.RespireSearchPhoneticMatcher.French = 1 -> Respire.Search.RespireSearchPhoneticMatcher
+Respire.Search.RespireSearchPhoneticMatcher.Portuguese = 2 -> Respire.Search.RespireSearchPhoneticMatcher
+Respire.Search.RespireSearchPhoneticMatcher.Spanish = 3 -> Respire.Search.RespireSearchPhoneticMatcher
+Respire.Search.RespireSearchProfileNode
+Respire.Search.RespireSearchProfileNode.<Clone>$() -> Respire.Search.RespireSearchProfileNode!
+Respire.Search.RespireSearchProfileNode.Children.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchProfileNode!>!
+Respire.Search.RespireSearchProfileNode.Children.init -> void
+Respire.Search.RespireSearchProfileNode.Deconstruct(out string! Name, out System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>! Properties, out System.Collections.Generic.IReadOnlyDictionary<string!, double>! Metrics, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchProfileNode!>! Children) -> void
+Respire.Search.RespireSearchProfileNode.Equals(Respire.Search.RespireSearchProfileNode? other) -> bool
+Respire.Search.RespireSearchProfileNode.Metrics.get -> System.Collections.Generic.IReadOnlyDictionary<string!, double>!
+Respire.Search.RespireSearchProfileNode.Metrics.init -> void
+Respire.Search.RespireSearchProfileNode.Name.get -> string!
+Respire.Search.RespireSearchProfileNode.Name.init -> void
+Respire.Search.RespireSearchProfileNode.Properties.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>!
+Respire.Search.RespireSearchProfileNode.Properties.init -> void
+Respire.Search.RespireSearchProfileNode.RespireSearchProfileNode(string! Name, System.Collections.Generic.IReadOnlyDictionary<string!, Respire.Search.RespireSearchValue!>! Properties, System.Collections.Generic.IReadOnlyDictionary<string!, double>! Metrics, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchProfileNode!>! Children) -> void
+Respire.Search.RespireSearchProfileNode.TimeMilliseconds.get -> double?
+Respire.Search.RespireSearchProfileNode.Type.get -> string?
+Respire.Search.RespireSearchProfileResult<TResult>
+Respire.Search.RespireSearchProfileResult<TResult>.<Clone>$() -> Respire.Search.RespireSearchProfileResult<TResult>!
+Respire.Search.RespireSearchProfileResult<TResult>.Deconstruct(out TResult Result, out Respire.Search.RespireSearchProfileNode! Profile) -> void
+Respire.Search.RespireSearchProfileResult<TResult>.Equals(Respire.Search.RespireSearchProfileResult<TResult>? other) -> bool
+Respire.Search.RespireSearchProfileResult<TResult>.Profile.get -> Respire.Search.RespireSearchProfileNode!
+Respire.Search.RespireSearchProfileResult<TResult>.Profile.init -> void
+Respire.Search.RespireSearchProfileResult<TResult>.RespireSearchProfileResult(TResult Result, Respire.Search.RespireSearchProfileNode! Profile) -> void
+Respire.Search.RespireSearchProfileResult<TResult>.Result.get -> TResult
+Respire.Search.RespireSearchProfileResult<TResult>.Result.init -> void
+Respire.Search.RespireSearchQuery
+Respire.Search.RespireSearchQuery.<Clone>$() -> Respire.Search.RespireSearchQuery!
+Respire.Search.RespireSearchQuery.Deconstruct(out Respire.Search.RespireSearchExpression Expression, out Respire.Search.RespireSearchQueryOptions? Options) -> void
+Respire.Search.RespireSearchQuery.Equals(Respire.Search.RespireSearchQuery? other) -> bool
+Respire.Search.RespireSearchQuery.Expression.get -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchQuery.Expression.init -> void
+Respire.Search.RespireSearchQuery.Options.get -> Respire.Search.RespireSearchQueryOptions?
+Respire.Search.RespireSearchQuery.Options.init -> void
+Respire.Search.RespireSearchQuery.RespireSearchQuery(Respire.Search.RespireSearchExpression Expression, Respire.Search.RespireSearchQueryOptions? Options = null) -> void
+Respire.Search.RespireSearchQueryBuilder
+Respire.Search.RespireSearchQueryOptions
+Respire.Search.RespireSearchQueryOptions.<Clone>$() -> Respire.Search.RespireSearchQueryOptions!
+Respire.Search.RespireSearchQueryOptions.Dialect.get -> int?
+Respire.Search.RespireSearchQueryOptions.Dialect.init -> void
+Respire.Search.RespireSearchQueryOptions.Equals(Respire.Search.RespireSearchQueryOptions? other) -> bool
+Respire.Search.RespireSearchQueryOptions.ExplainScore.get -> bool
+Respire.Search.RespireSearchQueryOptions.ExplainScore.init -> void
+Respire.Search.RespireSearchQueryOptions.Highlight.get -> Respire.Search.RespireSearchHighlightOptions?
+Respire.Search.RespireSearchQueryOptions.Highlight.init -> void
+Respire.Search.RespireSearchQueryOptions.InFields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchQueryOptions.InFields.init -> void
+Respire.Search.RespireSearchQueryOptions.InKeys.get -> System.Collections.Generic.IReadOnlyList<Respire.RespireKey>!
+Respire.Search.RespireSearchQueryOptions.InKeys.init -> void
+Respire.Search.RespireSearchQueryOptions.InOrder.get -> bool
+Respire.Search.RespireSearchQueryOptions.InOrder.init -> void
+Respire.Search.RespireSearchQueryOptions.Language.get -> string?
+Respire.Search.RespireSearchQueryOptions.Language.init -> void
+Respire.Search.RespireSearchQueryOptions.Limit.get -> (int Offset, int Count)?
+Respire.Search.RespireSearchQueryOptions.Limit.init -> void
+Respire.Search.RespireSearchQueryOptions.NoContent.get -> bool
+Respire.Search.RespireSearchQueryOptions.NoContent.init -> void
+Respire.Search.RespireSearchQueryOptions.NoStopWords.get -> bool
+Respire.Search.RespireSearchQueryOptions.NoStopWords.init -> void
+Respire.Search.RespireSearchQueryOptions.Parameters.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.RespireValue>!
+Respire.Search.RespireSearchQueryOptions.Parameters.init -> void
+Respire.Search.RespireSearchQueryOptions.RespireSearchQueryOptions() -> void
+Respire.Search.RespireSearchQueryOptions.ReturnFields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchQueryOptions.ReturnFields.init -> void
+Respire.Search.RespireSearchQueryOptions.Scorer.get -> string?
+Respire.Search.RespireSearchQueryOptions.Scorer.init -> void
+Respire.Search.RespireSearchQueryOptions.Slop.get -> int?
+Respire.Search.RespireSearchQueryOptions.Slop.init -> void
+Respire.Search.RespireSearchQueryOptions.SortBy.get -> (string! Field, Respire.Search.RespireSearchSortDirection Direction)?
+Respire.Search.RespireSearchQueryOptions.SortBy.init -> void
+Respire.Search.RespireSearchQueryOptions.Summarize.get -> Respire.Search.RespireSearchSummaryOptions?
+Respire.Search.RespireSearchQueryOptions.Summarize.init -> void
+Respire.Search.RespireSearchQueryOptions.TimeoutMilliseconds.get -> int?
+Respire.Search.RespireSearchQueryOptions.TimeoutMilliseconds.init -> void
+Respire.Search.RespireSearchQueryOptions.Verbatim.get -> bool
+Respire.Search.RespireSearchQueryOptions.Verbatim.init -> void
+Respire.Search.RespireSearchQueryOptions.WithPayloads.get -> bool
+Respire.Search.RespireSearchQueryOptions.WithPayloads.init -> void
+Respire.Search.RespireSearchQueryOptions.WithScores.get -> bool
+Respire.Search.RespireSearchQueryOptions.WithScores.init -> void
+Respire.Search.RespireSearchQueryOptions.WithSortKeys.get -> bool
+Respire.Search.RespireSearchQueryOptions.WithSortKeys.init -> void
+Respire.Search.RespireSearchReducer
+Respire.Search.RespireSearchReducer.<Clone>$() -> Respire.Search.RespireSearchReducer!
+Respire.Search.RespireSearchReducer.Alias.get -> string?
+Respire.Search.RespireSearchReducer.Alias.init -> void
+Respire.Search.RespireSearchReducer.Arguments.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchReducer.Arguments.init -> void
+Respire.Search.RespireSearchReducer.Deconstruct(out string! Function, out System.Collections.Generic.IReadOnlyList<string!>! Arguments, out string? Alias) -> void
+Respire.Search.RespireSearchReducer.Equals(Respire.Search.RespireSearchReducer? other) -> bool
+Respire.Search.RespireSearchReducer.Function.get -> string!
+Respire.Search.RespireSearchReducer.Function.init -> void
+Respire.Search.RespireSearchReducer.RespireSearchReducer(string! Function, System.Collections.Generic.IReadOnlyList<string!>! Arguments, string? Alias = null) -> void
+Respire.Search.RespireSearchResult
+Respire.Search.RespireSearchResult.<Clone>$() -> Respire.Search.RespireSearchResult!
+Respire.Search.RespireSearchResult.Deconstruct(out long Total, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchDocument!>! Documents, out System.Collections.Generic.IReadOnlyList<string!>! Warnings) -> void
+Respire.Search.RespireSearchResult.Documents.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchDocument!>!
+Respire.Search.RespireSearchResult.Documents.init -> void
+Respire.Search.RespireSearchResult.Equals(Respire.Search.RespireSearchResult? other) -> bool
+Respire.Search.RespireSearchResult.RespireSearchResult(long Total, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchDocument!>! Documents, System.Collections.Generic.IReadOnlyList<string!>! Warnings) -> void
+Respire.Search.RespireSearchResult.Total.get -> long
+Respire.Search.RespireSearchResult.Total.init -> void
+Respire.Search.RespireSearchResult.Warnings.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchResult.Warnings.init -> void
+Respire.Search.RespireSearchSortDirection
+Respire.Search.RespireSearchSortDirection.Ascending = 0 -> Respire.Search.RespireSearchSortDirection
+Respire.Search.RespireSearchSortDirection.Descending = 1 -> Respire.Search.RespireSearchSortDirection
+Respire.Search.RespireSearchSource
+Respire.Search.RespireSearchSource.Hash = 0 -> Respire.Search.RespireSearchSource
+Respire.Search.RespireSearchSource.Json = 1 -> Respire.Search.RespireSearchSource
+Respire.Search.RespireSearchSpellCheckOptions
+Respire.Search.RespireSearchSpellCheckOptions.<Clone>$() -> Respire.Search.RespireSearchSpellCheckOptions!
+Respire.Search.RespireSearchSpellCheckOptions.Dialect.get -> int?
+Respire.Search.RespireSearchSpellCheckOptions.Dialect.init -> void
+Respire.Search.RespireSearchSpellCheckOptions.Distance.get -> int?
+Respire.Search.RespireSearchSpellCheckOptions.Distance.init -> void
+Respire.Search.RespireSearchSpellCheckOptions.Equals(Respire.Search.RespireSearchSpellCheckOptions? other) -> bool
+Respire.Search.RespireSearchSpellCheckOptions.ExcludeDictionaries.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchSpellCheckOptions.ExcludeDictionaries.init -> void
+Respire.Search.RespireSearchSpellCheckOptions.IncludeDictionaries.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchSpellCheckOptions.IncludeDictionaries.init -> void
+Respire.Search.RespireSearchSpellCheckOptions.RespireSearchSpellCheckOptions() -> void
+Respire.Search.RespireSearchSpellingCorrection
+Respire.Search.RespireSearchSpellingCorrection.<Clone>$() -> Respire.Search.RespireSearchSpellingCorrection!
+Respire.Search.RespireSearchSpellingCorrection.Deconstruct(out string! Term, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchSpellingSuggestion!>! Suggestions) -> void
+Respire.Search.RespireSearchSpellingCorrection.Equals(Respire.Search.RespireSearchSpellingCorrection? other) -> bool
+Respire.Search.RespireSearchSpellingCorrection.RespireSearchSpellingCorrection(string! Term, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchSpellingSuggestion!>! Suggestions) -> void
+Respire.Search.RespireSearchSpellingCorrection.Suggestions.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchSpellingSuggestion!>!
+Respire.Search.RespireSearchSpellingCorrection.Suggestions.init -> void
+Respire.Search.RespireSearchSpellingCorrection.Term.get -> string!
+Respire.Search.RespireSearchSpellingCorrection.Term.init -> void
+Respire.Search.RespireSearchSpellingSuggestion
+Respire.Search.RespireSearchSpellingSuggestion.<Clone>$() -> Respire.Search.RespireSearchSpellingSuggestion!
+Respire.Search.RespireSearchSpellingSuggestion.Deconstruct(out string! Term, out double Score) -> void
+Respire.Search.RespireSearchSpellingSuggestion.Equals(Respire.Search.RespireSearchSpellingSuggestion? other) -> bool
+Respire.Search.RespireSearchSpellingSuggestion.RespireSearchSpellingSuggestion(string! Term, double Score) -> void
+Respire.Search.RespireSearchSpellingSuggestion.Score.get -> double
+Respire.Search.RespireSearchSpellingSuggestion.Score.init -> void
+Respire.Search.RespireSearchSpellingSuggestion.Term.get -> string!
+Respire.Search.RespireSearchSpellingSuggestion.Term.init -> void
+Respire.Search.RespireSearchSuggestion
+Respire.Search.RespireSearchSuggestion.<Clone>$() -> Respire.Search.RespireSearchSuggestion!
+Respire.Search.RespireSearchSuggestion.Deconstruct(out string! Text, out double? Score, out System.ReadOnlyMemory<byte>? Payload) -> void
+Respire.Search.RespireSearchSuggestion.Equals(Respire.Search.RespireSearchSuggestion? other) -> bool
+Respire.Search.RespireSearchSuggestion.Payload.get -> System.ReadOnlyMemory<byte>?
+Respire.Search.RespireSearchSuggestion.Payload.init -> void
+Respire.Search.RespireSearchSuggestion.RespireSearchSuggestion(string! Text, double? Score, System.ReadOnlyMemory<byte>? Payload) -> void
+Respire.Search.RespireSearchSuggestion.Score.get -> double?
+Respire.Search.RespireSearchSuggestion.Score.init -> void
+Respire.Search.RespireSearchSuggestion.Text.get -> string!
+Respire.Search.RespireSearchSuggestion.Text.init -> void
+Respire.Search.RespireSearchSuggestionAddOptions
+Respire.Search.RespireSearchSuggestionAddOptions.<Clone>$() -> Respire.Search.RespireSearchSuggestionAddOptions!
+Respire.Search.RespireSearchSuggestionAddOptions.Equals(Respire.Search.RespireSearchSuggestionAddOptions? other) -> bool
+Respire.Search.RespireSearchSuggestionAddOptions.Increment.get -> bool
+Respire.Search.RespireSearchSuggestionAddOptions.Increment.init -> void
+Respire.Search.RespireSearchSuggestionAddOptions.Payload.get -> System.ReadOnlyMemory<byte>?
+Respire.Search.RespireSearchSuggestionAddOptions.Payload.init -> void
+Respire.Search.RespireSearchSuggestionAddOptions.RespireSearchSuggestionAddOptions() -> void
+Respire.Search.RespireSearchSuggestionOptions
+Respire.Search.RespireSearchSuggestionOptions.<Clone>$() -> Respire.Search.RespireSearchSuggestionOptions!
+Respire.Search.RespireSearchSuggestionOptions.Equals(Respire.Search.RespireSearchSuggestionOptions? other) -> bool
+Respire.Search.RespireSearchSuggestionOptions.Fuzzy.get -> bool
+Respire.Search.RespireSearchSuggestionOptions.Fuzzy.init -> void
+Respire.Search.RespireSearchSuggestionOptions.Max.get -> int?
+Respire.Search.RespireSearchSuggestionOptions.Max.init -> void
+Respire.Search.RespireSearchSuggestionOptions.RespireSearchSuggestionOptions() -> void
+Respire.Search.RespireSearchSuggestionOptions.WithPayloads.get -> bool
+Respire.Search.RespireSearchSuggestionOptions.WithPayloads.init -> void
+Respire.Search.RespireSearchSuggestionOptions.WithScores.get -> bool
+Respire.Search.RespireSearchSuggestionOptions.WithScores.init -> void
+Respire.Search.RespireSearchSummaryOptions
+Respire.Search.RespireSearchSummaryOptions.<Clone>$() -> Respire.Search.RespireSearchSummaryOptions!
+Respire.Search.RespireSearchSummaryOptions.Equals(Respire.Search.RespireSearchSummaryOptions? other) -> bool
+Respire.Search.RespireSearchSummaryOptions.Fields.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.Search.RespireSearchSummaryOptions.Fields.init -> void
+Respire.Search.RespireSearchSummaryOptions.Fragments.get -> int?
+Respire.Search.RespireSearchSummaryOptions.Fragments.init -> void
+Respire.Search.RespireSearchSummaryOptions.Length.get -> int?
+Respire.Search.RespireSearchSummaryOptions.Length.init -> void
+Respire.Search.RespireSearchSummaryOptions.RespireSearchSummaryOptions() -> void
+Respire.Search.RespireSearchSummaryOptions.Separator.get -> string?
+Respire.Search.RespireSearchSummaryOptions.Separator.init -> void
+Respire.Search.RespireSearchTextResult
+Respire.Search.RespireSearchTextResult.<Clone>$() -> Respire.Search.RespireSearchTextResult!
+Respire.Search.RespireSearchTextResult.Deconstruct(out string! Text, out bool HighlightRequested, out bool SummaryRequested) -> void
+Respire.Search.RespireSearchTextResult.Equals(Respire.Search.RespireSearchTextResult? other) -> bool
+Respire.Search.RespireSearchTextResult.HighlightRequested.get -> bool
+Respire.Search.RespireSearchTextResult.HighlightRequested.init -> void
+Respire.Search.RespireSearchTextResult.RespireSearchTextResult(string! Text, bool HighlightRequested, bool SummaryRequested) -> void
+Respire.Search.RespireSearchTextResult.SummaryRequested.get -> bool
+Respire.Search.RespireSearchTextResult.SummaryRequested.init -> void
+Respire.Search.RespireSearchTextResult.Text.get -> string!
+Respire.Search.RespireSearchTextResult.Text.init -> void
+Respire.Search.RespireSearchValue
+Respire.Search.RespireSearchValue.<Clone>$() -> Respire.Search.RespireSearchValue!
+Respire.Search.RespireSearchValue.Bytes.get -> System.ReadOnlyMemory<byte>?
+Respire.Search.RespireSearchValue.Bytes.init -> void
+Respire.Search.RespireSearchValue.Deconstruct(out Respire.Protocol.RespDataType Type, out string? Scalar, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>! Items, out System.ReadOnlyMemory<byte>? Bytes) -> void
+Respire.Search.RespireSearchValue.Equals(Respire.Search.RespireSearchValue? other) -> bool
+Respire.Search.RespireSearchValue.Items.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>!
+Respire.Search.RespireSearchValue.Items.init -> void
+Respire.Search.RespireSearchValue.RespireSearchValue(Respire.Protocol.RespDataType Type, string? Scalar, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>! Items, System.ReadOnlyMemory<byte>? Bytes = null) -> void
+Respire.Search.RespireSearchValue.Scalar.get -> string?
+Respire.Search.RespireSearchValue.Scalar.init -> void
+Respire.Search.RespireSearchValue.Type.get -> Respire.Protocol.RespDataType
+Respire.Search.RespireSearchValue.Type.init -> void
+Respire.Search.RespireSearchVectorAlgorithm
+Respire.Search.RespireSearchVectorAlgorithm.Flat = 0 -> Respire.Search.RespireSearchVectorAlgorithm
+Respire.Search.RespireSearchVectorAlgorithm.Hnsw = 1 -> Respire.Search.RespireSearchVectorAlgorithm
+Respire.Search.RespireSearchVectorOptions
+Respire.Search.RespireSearchVectorOptions.<Clone>$() -> Respire.Search.RespireSearchVectorOptions!
+Respire.Search.RespireSearchVectorOptions.Algorithm.get -> Respire.Search.RespireSearchVectorAlgorithm
+Respire.Search.RespireSearchVectorOptions.Algorithm.init -> void
+Respire.Search.RespireSearchVectorOptions.Attributes.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+Respire.Search.RespireSearchVectorOptions.Attributes.init -> void
+Respire.Search.RespireSearchVectorOptions.Deconstruct(out Respire.Search.RespireSearchVectorAlgorithm Algorithm, out Respire.Search.RespireSearchVectorType Type, out int Dimensions, out Respire.Search.RespireSearchDistanceMetric DistanceMetric) -> void
+Respire.Search.RespireSearchVectorOptions.Dimensions.get -> int
+Respire.Search.RespireSearchVectorOptions.Dimensions.init -> void
+Respire.Search.RespireSearchVectorOptions.DistanceMetric.get -> Respire.Search.RespireSearchDistanceMetric
+Respire.Search.RespireSearchVectorOptions.DistanceMetric.init -> void
+Respire.Search.RespireSearchVectorOptions.Equals(Respire.Search.RespireSearchVectorOptions? other) -> bool
+Respire.Search.RespireSearchVectorOptions.RespireSearchVectorOptions(Respire.Search.RespireSearchVectorAlgorithm Algorithm, Respire.Search.RespireSearchVectorType Type, int Dimensions, Respire.Search.RespireSearchDistanceMetric DistanceMetric) -> void
+Respire.Search.RespireSearchVectorOptions.Type.get -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorOptions.Type.init -> void
+Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorType.BFloat16 = 2 -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorType.Float16 = 3 -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorType.Float32 = 0 -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorType.Float64 = 1 -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorType.Int8 = 4 -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorType.UInt8 = 5 -> Respire.Search.RespireSearchVectorType
+Respire.Search.RespireSearchVectorValidation
+Respire.Search.RespireVectorSearchRequest
+Respire.Search.RespireVectorSearchRequest.<Clone>$() -> Respire.Search.RespireVectorSearchRequest!
+Respire.Search.RespireVectorSearchRequest.Deconstruct(out string! Field, out System.ReadOnlyMemory<byte> Vector, out int K) -> void
+Respire.Search.RespireVectorSearchRequest.Equals(Respire.Search.RespireVectorSearchRequest? other) -> bool
+Respire.Search.RespireVectorSearchRequest.Expression.get -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireVectorSearchRequest.Field.get -> string!
+Respire.Search.RespireVectorSearchRequest.Field.init -> void
+Respire.Search.RespireVectorSearchRequest.Filter.get -> Respire.Search.RespireSearchExpression?
+Respire.Search.RespireVectorSearchRequest.Filter.init -> void
+Respire.Search.RespireVectorSearchRequest.K.get -> int
+Respire.Search.RespireVectorSearchRequest.K.init -> void
+Respire.Search.RespireVectorSearchRequest.RespireVectorSearchRequest(string! Field, System.ReadOnlyMemory<byte> Vector, int K) -> void
+Respire.Search.RespireVectorSearchRequest.ScoreField.get -> string!
+Respire.Search.RespireVectorSearchRequest.ScoreField.init -> void
+Respire.Search.RespireVectorSearchRequest.Vector.get -> System.ReadOnlyMemory<byte>
+Respire.Search.RespireVectorSearchRequest.Vector.init -> void
+abstract Respire.Search.RespireSearchAggregateStage.<Clone>$() -> Respire.Search.RespireSearchAggregateStage!
+const Respire.Search.RespireVectorSearchRequest.VectorParameterName = "vector" -> string!
+override Respire.Search.RespireHybridSearchQuery.Equals(object? obj) -> bool
+override Respire.Search.RespireHybridSearchQuery.GetHashCode() -> int
+override Respire.Search.RespireHybridSearchQuery.ToString() -> string!
+override Respire.Search.RespireSearchAggregateApply.<Clone>$() -> Respire.Search.RespireSearchAggregateApply!
+override Respire.Search.RespireSearchAggregateApply.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateApply.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateApply.ToString() -> string!
+override Respire.Search.RespireSearchAggregateCursorPage.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateCursorPage.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateCursorPage.ToString() -> string!
+override Respire.Search.RespireSearchAggregateFilter.<Clone>$() -> Respire.Search.RespireSearchAggregateFilter!
+override Respire.Search.RespireSearchAggregateFilter.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateFilter.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateFilter.ToString() -> string!
+override Respire.Search.RespireSearchAggregateGroupBy.<Clone>$() -> Respire.Search.RespireSearchAggregateGroupBy!
+override Respire.Search.RespireSearchAggregateGroupBy.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateGroupBy.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateGroupBy.ToString() -> string!
+override Respire.Search.RespireSearchAggregateLimit.<Clone>$() -> Respire.Search.RespireSearchAggregateLimit!
+override Respire.Search.RespireSearchAggregateLimit.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateLimit.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateLimit.ToString() -> string!
+override Respire.Search.RespireSearchAggregateLoad.<Clone>$() -> Respire.Search.RespireSearchAggregateLoad!
+override Respire.Search.RespireSearchAggregateLoad.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateLoad.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateLoad.ToString() -> string!
+override Respire.Search.RespireSearchAggregateOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateOptions.ToString() -> string!
+override Respire.Search.RespireSearchAggregateResult.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateResult.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateResult.ToString() -> string!
+override Respire.Search.RespireSearchAggregateSort.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateSort.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateSort.ToString() -> string!
+override Respire.Search.RespireSearchAggregateSortBy.<Clone>$() -> Respire.Search.RespireSearchAggregateSortBy!
+override Respire.Search.RespireSearchAggregateSortBy.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateSortBy.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateSortBy.ToString() -> string!
+override Respire.Search.RespireSearchAggregateStage.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchAggregateStage.GetHashCode() -> int
+override Respire.Search.RespireSearchAggregateStage.ToString() -> string!
+override Respire.Search.RespireSearchCollectOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchCollectOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchCollectOptions.ToString() -> string!
+override Respire.Search.RespireSearchCursorOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchCursorOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchCursorOptions.ToString() -> string!
+override Respire.Search.RespireSearchDocument.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchDocument.GetHashCode() -> int
+override Respire.Search.RespireSearchDocument.ToString() -> string!
+override Respire.Search.RespireSearchExplainOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchExplainOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchExplainOptions.ToString() -> string!
+override Respire.Search.RespireSearchExpression.GetHashCode() -> int
+override Respire.Search.RespireSearchExpression.ToString() -> string!
+override Respire.Search.RespireSearchField.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchField.GetHashCode() -> int
+override Respire.Search.RespireSearchField.ToString() -> string!
+override Respire.Search.RespireSearchHighlightOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchHighlightOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchHighlightOptions.ToString() -> string!
+override Respire.Search.RespireSearchIndexAttribute.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchIndexAttribute.GetHashCode() -> int
+override Respire.Search.RespireSearchIndexAttribute.ToString() -> string!
+override Respire.Search.RespireSearchIndexDefinition.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchIndexDefinition.GetHashCode() -> int
+override Respire.Search.RespireSearchIndexDefinition.ToString() -> string!
+override Respire.Search.RespireSearchIndexInfo.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchIndexInfo.GetHashCode() -> int
+override Respire.Search.RespireSearchIndexInfo.ToString() -> string!
+override Respire.Search.RespireSearchProfileNode.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchProfileNode.GetHashCode() -> int
+override Respire.Search.RespireSearchProfileNode.ToString() -> string!
+override Respire.Search.RespireSearchProfileResult<TResult>.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchProfileResult<TResult>.GetHashCode() -> int
+override Respire.Search.RespireSearchProfileResult<TResult>.ToString() -> string!
+override Respire.Search.RespireSearchQuery.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchQuery.GetHashCode() -> int
+override Respire.Search.RespireSearchQuery.ToString() -> string!
+override Respire.Search.RespireSearchQueryOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchQueryOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchQueryOptions.ToString() -> string!
+override Respire.Search.RespireSearchReducer.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchReducer.GetHashCode() -> int
+override Respire.Search.RespireSearchReducer.ToString() -> string!
+override Respire.Search.RespireSearchResult.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchResult.GetHashCode() -> int
+override Respire.Search.RespireSearchResult.ToString() -> string!
+override Respire.Search.RespireSearchSpellCheckOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSpellCheckOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchSpellCheckOptions.ToString() -> string!
+override Respire.Search.RespireSearchSpellingCorrection.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSpellingCorrection.GetHashCode() -> int
+override Respire.Search.RespireSearchSpellingCorrection.ToString() -> string!
+override Respire.Search.RespireSearchSpellingSuggestion.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSpellingSuggestion.GetHashCode() -> int
+override Respire.Search.RespireSearchSpellingSuggestion.ToString() -> string!
+override Respire.Search.RespireSearchSuggestion.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSuggestion.GetHashCode() -> int
+override Respire.Search.RespireSearchSuggestion.ToString() -> string!
+override Respire.Search.RespireSearchSuggestionAddOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSuggestionAddOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchSuggestionAddOptions.ToString() -> string!
+override Respire.Search.RespireSearchSuggestionOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSuggestionOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchSuggestionOptions.ToString() -> string!
+override Respire.Search.RespireSearchSummaryOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchSummaryOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchSummaryOptions.ToString() -> string!
+override Respire.Search.RespireSearchTextResult.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchTextResult.GetHashCode() -> int
+override Respire.Search.RespireSearchTextResult.ToString() -> string!
+override Respire.Search.RespireSearchValue.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchValue.GetHashCode() -> int
+override Respire.Search.RespireSearchValue.ToString() -> string!
+override Respire.Search.RespireSearchVectorOptions.Equals(object? obj) -> bool
+override Respire.Search.RespireSearchVectorOptions.GetHashCode() -> int
+override Respire.Search.RespireSearchVectorOptions.ToString() -> string!
+override Respire.Search.RespireVectorSearchRequest.Equals(object? obj) -> bool
+override Respire.Search.RespireVectorSearchRequest.GetHashCode() -> int
+override Respire.Search.RespireVectorSearchRequest.ToString() -> string!
+override sealed Respire.Search.RespireSearchAggregateApply.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+override sealed Respire.Search.RespireSearchAggregateFilter.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+override sealed Respire.Search.RespireSearchAggregateGroupBy.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+override sealed Respire.Search.RespireSearchAggregateLimit.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+override sealed Respire.Search.RespireSearchAggregateLoad.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+override sealed Respire.Search.RespireSearchAggregateSortBy.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+static Respire.Search.RespireHybridSearchQuery.operator !=(Respire.Search.RespireHybridSearchQuery? left, Respire.Search.RespireHybridSearchQuery? right) -> bool
+static Respire.Search.RespireHybridSearchQuery.operator ==(Respire.Search.RespireHybridSearchQuery? left, Respire.Search.RespireHybridSearchQuery? right) -> bool
+static Respire.Search.RespireSearchAggregateApply.operator !=(Respire.Search.RespireSearchAggregateApply? left, Respire.Search.RespireSearchAggregateApply? right) -> bool
+static Respire.Search.RespireSearchAggregateApply.operator ==(Respire.Search.RespireSearchAggregateApply? left, Respire.Search.RespireSearchAggregateApply? right) -> bool
+static Respire.Search.RespireSearchAggregateCursorPage.operator !=(Respire.Search.RespireSearchAggregateCursorPage? left, Respire.Search.RespireSearchAggregateCursorPage? right) -> bool
+static Respire.Search.RespireSearchAggregateCursorPage.operator ==(Respire.Search.RespireSearchAggregateCursorPage? left, Respire.Search.RespireSearchAggregateCursorPage? right) -> bool
+static Respire.Search.RespireSearchAggregateFilter.operator !=(Respire.Search.RespireSearchAggregateFilter? left, Respire.Search.RespireSearchAggregateFilter? right) -> bool
+static Respire.Search.RespireSearchAggregateFilter.operator ==(Respire.Search.RespireSearchAggregateFilter? left, Respire.Search.RespireSearchAggregateFilter? right) -> bool
+static Respire.Search.RespireSearchAggregateGroupBy.operator !=(Respire.Search.RespireSearchAggregateGroupBy? left, Respire.Search.RespireSearchAggregateGroupBy? right) -> bool
+static Respire.Search.RespireSearchAggregateGroupBy.operator ==(Respire.Search.RespireSearchAggregateGroupBy? left, Respire.Search.RespireSearchAggregateGroupBy? right) -> bool
+static Respire.Search.RespireSearchAggregateLimit.operator !=(Respire.Search.RespireSearchAggregateLimit? left, Respire.Search.RespireSearchAggregateLimit? right) -> bool
+static Respire.Search.RespireSearchAggregateLimit.operator ==(Respire.Search.RespireSearchAggregateLimit? left, Respire.Search.RespireSearchAggregateLimit? right) -> bool
+static Respire.Search.RespireSearchAggregateLoad.operator !=(Respire.Search.RespireSearchAggregateLoad? left, Respire.Search.RespireSearchAggregateLoad? right) -> bool
+static Respire.Search.RespireSearchAggregateLoad.operator ==(Respire.Search.RespireSearchAggregateLoad? left, Respire.Search.RespireSearchAggregateLoad? right) -> bool
+static Respire.Search.RespireSearchAggregateOptions.operator !=(Respire.Search.RespireSearchAggregateOptions? left, Respire.Search.RespireSearchAggregateOptions? right) -> bool
+static Respire.Search.RespireSearchAggregateOptions.operator ==(Respire.Search.RespireSearchAggregateOptions? left, Respire.Search.RespireSearchAggregateOptions? right) -> bool
+static Respire.Search.RespireSearchAggregateResult.operator !=(Respire.Search.RespireSearchAggregateResult? left, Respire.Search.RespireSearchAggregateResult? right) -> bool
+static Respire.Search.RespireSearchAggregateResult.operator ==(Respire.Search.RespireSearchAggregateResult? left, Respire.Search.RespireSearchAggregateResult? right) -> bool
+static Respire.Search.RespireSearchAggregateSort.operator !=(Respire.Search.RespireSearchAggregateSort? left, Respire.Search.RespireSearchAggregateSort? right) -> bool
+static Respire.Search.RespireSearchAggregateSort.operator ==(Respire.Search.RespireSearchAggregateSort? left, Respire.Search.RespireSearchAggregateSort? right) -> bool
+static Respire.Search.RespireSearchAggregateSortBy.operator !=(Respire.Search.RespireSearchAggregateSortBy? left, Respire.Search.RespireSearchAggregateSortBy? right) -> bool
+static Respire.Search.RespireSearchAggregateSortBy.operator ==(Respire.Search.RespireSearchAggregateSortBy? left, Respire.Search.RespireSearchAggregateSortBy? right) -> bool
+static Respire.Search.RespireSearchAggregateStage.Apply(string! expression, string! alias) -> Respire.Search.RespireSearchAggregateApply!
+static Respire.Search.RespireSearchAggregateStage.Filter(string! expression) -> Respire.Search.RespireSearchAggregateFilter!
+static Respire.Search.RespireSearchAggregateStage.GroupBy(System.Collections.Generic.IReadOnlyList<string!>! properties, params Respire.Search.RespireSearchReducer![]! reducers) -> Respire.Search.RespireSearchAggregateGroupBy!
+static Respire.Search.RespireSearchAggregateStage.Limit(int offset, int count) -> Respire.Search.RespireSearchAggregateLimit!
+static Respire.Search.RespireSearchAggregateStage.Load(params string![]! fields) -> Respire.Search.RespireSearchAggregateLoad!
+static Respire.Search.RespireSearchAggregateStage.SortBy(params Respire.Search.RespireSearchAggregateSort![]! keys) -> Respire.Search.RespireSearchAggregateSortBy!
+static Respire.Search.RespireSearchAggregateStage.operator !=(Respire.Search.RespireSearchAggregateStage? left, Respire.Search.RespireSearchAggregateStage? right) -> bool
+static Respire.Search.RespireSearchAggregateStage.operator ==(Respire.Search.RespireSearchAggregateStage? left, Respire.Search.RespireSearchAggregateStage? right) -> bool
+static Respire.Search.RespireSearchClientExtensions.get_Search(Respire.IRespireClient! client) -> Respire.Search.RespireSearchClient!
+static Respire.Search.RespireSearchCollectOptions.operator !=(Respire.Search.RespireSearchCollectOptions? left, Respire.Search.RespireSearchCollectOptions? right) -> bool
+static Respire.Search.RespireSearchCollectOptions.operator ==(Respire.Search.RespireSearchCollectOptions? left, Respire.Search.RespireSearchCollectOptions? right) -> bool
+static Respire.Search.RespireSearchCursorOptions.operator !=(Respire.Search.RespireSearchCursorOptions? left, Respire.Search.RespireSearchCursorOptions? right) -> bool
+static Respire.Search.RespireSearchCursorOptions.operator ==(Respire.Search.RespireSearchCursorOptions? left, Respire.Search.RespireSearchCursorOptions? right) -> bool
+static Respire.Search.RespireSearchDocument.operator !=(Respire.Search.RespireSearchDocument? left, Respire.Search.RespireSearchDocument? right) -> bool
+static Respire.Search.RespireSearchDocument.operator ==(Respire.Search.RespireSearchDocument? left, Respire.Search.RespireSearchDocument? right) -> bool
+static Respire.Search.RespireSearchExplainOptions.operator !=(Respire.Search.RespireSearchExplainOptions? left, Respire.Search.RespireSearchExplainOptions? right) -> bool
+static Respire.Search.RespireSearchExplainOptions.operator ==(Respire.Search.RespireSearchExplainOptions? left, Respire.Search.RespireSearchExplainOptions? right) -> bool
+static Respire.Search.RespireSearchExpression.FromRaw(string! value) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchExpression.operator !=(Respire.Search.RespireSearchExpression left, Respire.Search.RespireSearchExpression right) -> bool
+static Respire.Search.RespireSearchExpression.operator ==(Respire.Search.RespireSearchExpression left, Respire.Search.RespireSearchExpression right) -> bool
+static Respire.Search.RespireSearchField.operator !=(Respire.Search.RespireSearchField? left, Respire.Search.RespireSearchField? right) -> bool
+static Respire.Search.RespireSearchField.operator ==(Respire.Search.RespireSearchField? left, Respire.Search.RespireSearchField? right) -> bool
+static Respire.Search.RespireSearchHighlightOptions.operator !=(Respire.Search.RespireSearchHighlightOptions? left, Respire.Search.RespireSearchHighlightOptions? right) -> bool
+static Respire.Search.RespireSearchHighlightOptions.operator ==(Respire.Search.RespireSearchHighlightOptions? left, Respire.Search.RespireSearchHighlightOptions? right) -> bool
+static Respire.Search.RespireSearchIndexAttribute.operator !=(Respire.Search.RespireSearchIndexAttribute? left, Respire.Search.RespireSearchIndexAttribute? right) -> bool
+static Respire.Search.RespireSearchIndexAttribute.operator ==(Respire.Search.RespireSearchIndexAttribute? left, Respire.Search.RespireSearchIndexAttribute? right) -> bool
+static Respire.Search.RespireSearchIndexDefinition.operator !=(Respire.Search.RespireSearchIndexDefinition? left, Respire.Search.RespireSearchIndexDefinition? right) -> bool
+static Respire.Search.RespireSearchIndexDefinition.operator ==(Respire.Search.RespireSearchIndexDefinition? left, Respire.Search.RespireSearchIndexDefinition? right) -> bool
+static Respire.Search.RespireSearchIndexInfo.operator !=(Respire.Search.RespireSearchIndexInfo? left, Respire.Search.RespireSearchIndexInfo? right) -> bool
+static Respire.Search.RespireSearchIndexInfo.operator ==(Respire.Search.RespireSearchIndexInfo? left, Respire.Search.RespireSearchIndexInfo? right) -> bool
+static Respire.Search.RespireSearchProfileNode.operator !=(Respire.Search.RespireSearchProfileNode? left, Respire.Search.RespireSearchProfileNode? right) -> bool
+static Respire.Search.RespireSearchProfileNode.operator ==(Respire.Search.RespireSearchProfileNode? left, Respire.Search.RespireSearchProfileNode? right) -> bool
+static Respire.Search.RespireSearchProfileResult<TResult>.operator !=(Respire.Search.RespireSearchProfileResult<TResult>? left, Respire.Search.RespireSearchProfileResult<TResult>? right) -> bool
+static Respire.Search.RespireSearchProfileResult<TResult>.operator ==(Respire.Search.RespireSearchProfileResult<TResult>? left, Respire.Search.RespireSearchProfileResult<TResult>? right) -> bool
+static Respire.Search.RespireSearchQuery.operator !=(Respire.Search.RespireSearchQuery? left, Respire.Search.RespireSearchQuery? right) -> bool
+static Respire.Search.RespireSearchQuery.operator ==(Respire.Search.RespireSearchQuery? left, Respire.Search.RespireSearchQuery? right) -> bool
+static Respire.Search.RespireSearchQueryBuilder.And(params Respire.Search.RespireSearchExpression[]! expressions) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.MatchAll() -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.NumericRange(string! field, double minimum, double maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.NumericRange(string! field, long minimum, long maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.Or(params Respire.Search.RespireSearchExpression[]! expressions) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.Tag(string! field, string! value) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.Text(string! term) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryBuilder.TextField(string! field, string! term) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchQueryOptions.operator !=(Respire.Search.RespireSearchQueryOptions? left, Respire.Search.RespireSearchQueryOptions? right) -> bool
+static Respire.Search.RespireSearchQueryOptions.operator ==(Respire.Search.RespireSearchQueryOptions? left, Respire.Search.RespireSearchQueryOptions? right) -> bool
+static Respire.Search.RespireSearchReducer.Collect(Respire.Search.RespireSearchCollectOptions! options, string? alias = null) -> Respire.Search.RespireSearchReducer!
+static Respire.Search.RespireSearchReducer.operator !=(Respire.Search.RespireSearchReducer? left, Respire.Search.RespireSearchReducer? right) -> bool
+static Respire.Search.RespireSearchReducer.operator ==(Respire.Search.RespireSearchReducer? left, Respire.Search.RespireSearchReducer? right) -> bool
+static Respire.Search.RespireSearchResult.operator !=(Respire.Search.RespireSearchResult? left, Respire.Search.RespireSearchResult? right) -> bool
+static Respire.Search.RespireSearchResult.operator ==(Respire.Search.RespireSearchResult? left, Respire.Search.RespireSearchResult? right) -> bool
+static Respire.Search.RespireSearchSpellCheckOptions.operator !=(Respire.Search.RespireSearchSpellCheckOptions? left, Respire.Search.RespireSearchSpellCheckOptions? right) -> bool
+static Respire.Search.RespireSearchSpellCheckOptions.operator ==(Respire.Search.RespireSearchSpellCheckOptions? left, Respire.Search.RespireSearchSpellCheckOptions? right) -> bool
+static Respire.Search.RespireSearchSpellingCorrection.operator !=(Respire.Search.RespireSearchSpellingCorrection? left, Respire.Search.RespireSearchSpellingCorrection? right) -> bool
+static Respire.Search.RespireSearchSpellingCorrection.operator ==(Respire.Search.RespireSearchSpellingCorrection? left, Respire.Search.RespireSearchSpellingCorrection? right) -> bool
+static Respire.Search.RespireSearchSpellingSuggestion.operator !=(Respire.Search.RespireSearchSpellingSuggestion? left, Respire.Search.RespireSearchSpellingSuggestion? right) -> bool
+static Respire.Search.RespireSearchSpellingSuggestion.operator ==(Respire.Search.RespireSearchSpellingSuggestion? left, Respire.Search.RespireSearchSpellingSuggestion? right) -> bool
+static Respire.Search.RespireSearchSuggestion.operator !=(Respire.Search.RespireSearchSuggestion? left, Respire.Search.RespireSearchSuggestion? right) -> bool
+static Respire.Search.RespireSearchSuggestion.operator ==(Respire.Search.RespireSearchSuggestion? left, Respire.Search.RespireSearchSuggestion? right) -> bool
+static Respire.Search.RespireSearchSuggestionAddOptions.operator !=(Respire.Search.RespireSearchSuggestionAddOptions? left, Respire.Search.RespireSearchSuggestionAddOptions? right) -> bool
+static Respire.Search.RespireSearchSuggestionAddOptions.operator ==(Respire.Search.RespireSearchSuggestionAddOptions? left, Respire.Search.RespireSearchSuggestionAddOptions? right) -> bool
+static Respire.Search.RespireSearchSuggestionOptions.operator !=(Respire.Search.RespireSearchSuggestionOptions? left, Respire.Search.RespireSearchSuggestionOptions? right) -> bool
+static Respire.Search.RespireSearchSuggestionOptions.operator ==(Respire.Search.RespireSearchSuggestionOptions? left, Respire.Search.RespireSearchSuggestionOptions? right) -> bool
+static Respire.Search.RespireSearchSummaryOptions.operator !=(Respire.Search.RespireSearchSummaryOptions? left, Respire.Search.RespireSearchSummaryOptions? right) -> bool
+static Respire.Search.RespireSearchSummaryOptions.operator ==(Respire.Search.RespireSearchSummaryOptions? left, Respire.Search.RespireSearchSummaryOptions? right) -> bool
+static Respire.Search.RespireSearchTextResult.operator !=(Respire.Search.RespireSearchTextResult? left, Respire.Search.RespireSearchTextResult? right) -> bool
+static Respire.Search.RespireSearchTextResult.operator ==(Respire.Search.RespireSearchTextResult? left, Respire.Search.RespireSearchTextResult? right) -> bool
+static Respire.Search.RespireSearchValue.operator !=(Respire.Search.RespireSearchValue? left, Respire.Search.RespireSearchValue? right) -> bool
+static Respire.Search.RespireSearchValue.operator ==(Respire.Search.RespireSearchValue? left, Respire.Search.RespireSearchValue? right) -> bool
+static Respire.Search.RespireSearchVectorOptions.operator !=(Respire.Search.RespireSearchVectorOptions? left, Respire.Search.RespireSearchVectorOptions? right) -> bool
+static Respire.Search.RespireSearchVectorOptions.operator ==(Respire.Search.RespireSearchVectorOptions? left, Respire.Search.RespireSearchVectorOptions? right) -> bool
+static Respire.Search.RespireSearchVectorValidation.ValidateHash(byte[]! value, Respire.Search.RespireSearchVectorOptions! options) -> void
+static Respire.Search.RespireSearchVectorValidation.ValidateJson(double[]! value, Respire.Search.RespireSearchVectorOptions! options) -> void
+static Respire.Search.RespireSearchVectorValidation.ValidateJson(float[]! value, Respire.Search.RespireSearchVectorOptions! options) -> void
+static Respire.Search.RespireVectorSearchRequest.operator !=(Respire.Search.RespireVectorSearchRequest? left, Respire.Search.RespireVectorSearchRequest? right) -> bool
+static Respire.Search.RespireVectorSearchRequest.operator ==(Respire.Search.RespireVectorSearchRequest? left, Respire.Search.RespireVectorSearchRequest? right) -> bool
+virtual Respire.Search.RespireSearchAggregateStage.EqualityContract.get -> System.Type!
+virtual Respire.Search.RespireSearchAggregateStage.Equals(Respire.Search.RespireSearchAggregateStage? other) -> bool
+virtual Respire.Search.RespireSearchAggregateStage.PrintMembers(System.Text.StringBuilder! builder) -> bool
+~override Respire.Search.RespireSearchExpression.Equals(object obj) -> bool

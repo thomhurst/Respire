@@ -10,6 +10,9 @@ Each linked guide lists its server and protocol requirements.
 
 ## Available now
 
+- [Public API baselines and deprecation policy](packages.md#public-api-review-and-deprecation)
+  cover all shipping packages, with build failures for undeclared API changes.
+
 ### Connections, routing, and recovery
 
 - [Connections](fundamentals/connections.md) from Redis URIs, StackExchange.Redis connection

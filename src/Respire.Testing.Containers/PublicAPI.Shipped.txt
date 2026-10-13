@@ -1,0 +1,40 @@
+#nullable enable
+Respire.Testing.Containers.RespireContainerFixture
+Respire.Testing.Containers.RespireContainerFixture.ContainerId.get -> string!
+Respire.Testing.Containers.RespireContainerFixture.CreateOptions() -> Respire.RespireOptions!
+Respire.Testing.Containers.RespireContainerFixture.DataEndpoints.get -> System.Collections.Generic.IReadOnlyList<Respire.RespireEndpoint>!
+Respire.Testing.Containers.RespireContainerFixture.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Testing.Containers.RespireContainerFixture.SentinelEndpoints.get -> System.Collections.Generic.IReadOnlyList<Respire.RespireEndpoint>!
+Respire.Testing.Containers.RespireContainerFixture.StartDataNodeAsync(int index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Respire.Testing.Containers.RespireContainerFixture.StopDataNodeAsync(int index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Respire.Testing.Containers.RespireContainerFixture.WaitForDataNodeReplicaAsync(int index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Respire.Testing.Containers.RespireContainerOptions
+Respire.Testing.Containers.RespireContainerOptions.<Clone>$() -> Respire.Testing.Containers.RespireContainerOptions!
+Respire.Testing.Containers.RespireContainerOptions.Equals(Respire.Testing.Containers.RespireContainerOptions? other) -> bool
+Respire.Testing.Containers.RespireContainerOptions.Image.get -> string?
+Respire.Testing.Containers.RespireContainerOptions.Image.init -> void
+Respire.Testing.Containers.RespireContainerOptions.RespireContainerOptions() -> void
+Respire.Testing.Containers.RespireContainerOptions.SentinelDownAfter.get -> System.TimeSpan
+Respire.Testing.Containers.RespireContainerOptions.SentinelDownAfter.init -> void
+Respire.Testing.Containers.RespireContainerOptions.SentinelFailoverTimeout.get -> System.TimeSpan
+Respire.Testing.Containers.RespireContainerOptions.SentinelFailoverTimeout.init -> void
+Respire.Testing.Containers.RespireContainerOptions.Server.get -> Respire.Testing.Containers.RespireContainerServer
+Respire.Testing.Containers.RespireContainerOptions.Server.init -> void
+Respire.Testing.Containers.RespireContainerOptions.StartupTimeout.get -> System.TimeSpan
+Respire.Testing.Containers.RespireContainerOptions.StartupTimeout.init -> void
+Respire.Testing.Containers.RespireContainerOptions.Topology.get -> Respire.Testing.Containers.RespireContainerTopology
+Respire.Testing.Containers.RespireContainerOptions.Topology.init -> void
+Respire.Testing.Containers.RespireContainerServer
+Respire.Testing.Containers.RespireContainerServer.Redis = 0 -> Respire.Testing.Containers.RespireContainerServer
+Respire.Testing.Containers.RespireContainerServer.Valkey = 1 -> Respire.Testing.Containers.RespireContainerServer
+Respire.Testing.Containers.RespireContainerTopology
+Respire.Testing.Containers.RespireContainerTopology.Cluster = 1 -> Respire.Testing.Containers.RespireContainerTopology
+Respire.Testing.Containers.RespireContainerTopology.Sentinel = 2 -> Respire.Testing.Containers.RespireContainerTopology
+Respire.Testing.Containers.RespireContainerTopology.Standalone = 0 -> Respire.Testing.Containers.RespireContainerTopology
+const Respire.Testing.Containers.RespireContainerFixture.SentinelServiceName = "respire-test" -> string!
+override Respire.Testing.Containers.RespireContainerOptions.Equals(object? obj) -> bool
+override Respire.Testing.Containers.RespireContainerOptions.GetHashCode() -> int
+override Respire.Testing.Containers.RespireContainerOptions.ToString() -> string!
+static Respire.Testing.Containers.RespireContainerFixture.StartAsync(Respire.Testing.Containers.RespireContainerOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Respire.Testing.Containers.RespireContainerFixture!>!
+static Respire.Testing.Containers.RespireContainerOptions.operator !=(Respire.Testing.Containers.RespireContainerOptions? left, Respire.Testing.Containers.RespireContainerOptions? right) -> bool
+static Respire.Testing.Containers.RespireContainerOptions.operator ==(Respire.Testing.Containers.RespireContainerOptions? left, Respire.Testing.Containers.RespireContainerOptions? right) -> bool

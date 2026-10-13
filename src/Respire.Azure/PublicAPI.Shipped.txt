@@ -1,0 +1,5 @@
+#nullable enable
+Respire.Azure.AzureManagedRedisCredentialProvider
+Respire.Azure.AzureManagedRedisCredentialProvider.AzureManagedRedisCredentialProvider(Azure.Core.TokenCredential! credential, string! username) -> void
+Respire.Azure.AzureManagedRedisCredentialProvider.GetCredentialsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireCredentials!>
+const Respire.Azure.AzureManagedRedisCredentialProvider.Scope = "https://redis.azure.com/.default" -> string!

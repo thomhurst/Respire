@@ -1,0 +1,25 @@
+#nullable enable
+Respire.OutputCaching.RespireOutputCacheOptions
+Respire.OutputCaching.RespireOutputCacheOptions.CleanupInterval.get -> System.TimeSpan
+Respire.OutputCaching.RespireOutputCacheOptions.CleanupInterval.set -> void
+Respire.OutputCaching.RespireOutputCacheOptions.InstanceName.get -> string?
+Respire.OutputCaching.RespireOutputCacheOptions.InstanceName.set -> void
+Respire.OutputCaching.RespireOutputCacheOptions.RespireOutputCacheOptions() -> void
+Respire.OutputCaching.RespireOutputCacheOptions.TaggingMode.get -> Respire.OutputCaching.RespireOutputCacheTaggingMode
+Respire.OutputCaching.RespireOutputCacheOptions.TaggingMode.set -> void
+Respire.OutputCaching.RespireOutputCacheOptions.TimeProvider.get -> System.TimeProvider!
+Respire.OutputCaching.RespireOutputCacheOptions.TimeProvider.set -> void
+Respire.OutputCaching.RespireOutputCacheServiceCollectionExtensions
+Respire.OutputCaching.RespireOutputCacheStore
+Respire.OutputCaching.RespireOutputCacheStore.CollectExpiredTagsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.OutputCaching.RespireOutputCacheStore.EvictByTagAsync(string! tag, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.OutputCaching.RespireOutputCacheStore.GetAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]?>
+Respire.OutputCaching.RespireOutputCacheStore.RespireOutputCacheStore(Respire.IRespireClient! client, Respire.OutputCaching.RespireOutputCacheOptions? options = null, Microsoft.Extensions.Logging.ILogger<Respire.OutputCaching.RespireOutputCacheStore!>? logger = null) -> void
+Respire.OutputCaching.RespireOutputCacheStore.SetAsync(string! key, System.Buffers.ReadOnlySequence<byte> value, System.ReadOnlyMemory<string!> tags, System.TimeSpan validFor, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.OutputCaching.RespireOutputCacheStore.SetAsync(string! key, byte[]! value, string![]? tags, System.TimeSpan validFor, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.OutputCaching.RespireOutputCacheStore.TryGetAsync(string! key, System.IO.Pipelines.PipeWriter! destination, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.OutputCaching.RespireOutputCacheTaggingMode
+Respire.OutputCaching.RespireOutputCacheTaggingMode.GenerationAware = 1 -> Respire.OutputCaching.RespireOutputCacheTaggingMode
+Respire.OutputCaching.RespireOutputCacheTaggingMode.MicrosoftCompatible = 0 -> Respire.OutputCaching.RespireOutputCacheTaggingMode
+static Respire.OutputCaching.RespireOutputCacheServiceCollectionExtensions.AddRespireOutputCache(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Respire.OutputCaching.RespireOutputCacheOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.OutputCaching.RespireOutputCacheServiceCollectionExtensions.AddRespireOutputCache(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Respire.OutputCaching.RespireOutputCacheOptions!>? configure, System.Func<System.IServiceProvider!, Respire.IRespireClient!>! clientFactory) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
