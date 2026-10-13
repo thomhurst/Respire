@@ -180,6 +180,24 @@ public class ClientCacheHitAllocationTests
     }
 
     [Test]
+    public async Task DecodedHashTextOverTheLimitStillReturnsAndTrimsTheEntry()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new() { MaxSizeBytes = 400 },
+        });
+        var cache = client.Core.ClientCache!;
+        // The binary entry fits the limit; its decoded text adds 224 bytes and does not.
+        PublishHashField(cache, RespValue.BulkString(new byte[100]));
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(cache.SizeBytes).IsLessThanOrEqualTo(400);
+        await Assert.That((await client.Hashes.GetStringAsync("hash", "field"))!.Length).IsEqualTo(100);
+        await Assert.That(cache.SizeBytes).IsLessThanOrEqualTo(400);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.SizeBytes).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task HitOnlyProbesLeaveMissesToTheCountedRoute()
     {
         var cache = new ClientSideCacheCoordinator(new());
