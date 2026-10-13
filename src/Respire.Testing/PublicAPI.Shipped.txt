@@ -1,0 +1,29 @@
+#nullable enable
+Respire.Testing.RespireFakeClock
+Respire.Testing.RespireFakeClock.Advance(System.TimeSpan elapsed) -> void
+Respire.Testing.RespireFakeClock.RespireFakeClock(System.DateTimeOffset? start = null) -> void
+Respire.Testing.RespireFakeFault
+Respire.Testing.RespireFakeFaultScope
+Respire.Testing.RespireFakeFaultScope.Dispose() -> void
+Respire.Testing.RespireFakeFaultScope.ExecutionCount.get -> long
+Respire.Testing.RespireFakeFaultScope.Matched.get -> System.Threading.Tasks.Task!
+Respire.Testing.RespireFakeFaultScope.MatchedCount.get -> long
+Respire.Testing.RespireFakeGate
+Respire.Testing.RespireFakeGate.Release() -> void
+Respire.Testing.RespireFakeGate.RespireFakeGate() -> void
+Respire.Testing.RespireFakeServer
+Respire.Testing.RespireFakeServer.CreateOptions() -> Respire.RespireOptions!
+Respire.Testing.RespireFakeServer.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Testing.RespireFakeServer.InjectFault(string! command, Respire.Testing.RespireFakeFault! fault, int? occurrences = 1, System.ReadOnlyMemory<byte>? firstArgument = null) -> Respire.Testing.RespireFakeFaultScope!
+Respire.Testing.RespireFakeServer.ResetFaults() -> void
+Respire.Testing.RespireFakeServer.RespireFakeServer(System.TimeProvider? clock = null) -> void
+Respire.Testing.RespireFakeServer.RespireFakeServer(System.TimeProvider? clock, bool createConsumersOnEmptyReads) -> void
+Respire.Testing.RespireFakeServer.RespireFakeServer(System.TimeProvider? clock, bool createConsumersOnEmptyReads, bool autoClaimDeletesPendingEntries) -> void
+Respire.Testing.RespireFakeServer.RespireFakeServer(System.TimeProvider? clock, bool createConsumersOnEmptyReads, bool autoClaimDeletesPendingEntries, System.Version! streamWorkerVersion) -> void
+override Respire.Testing.RespireFakeClock.GetUtcNow() -> System.DateTimeOffset
+static Respire.Testing.RespireFakeFault.Delay(System.TimeSpan duration, bool afterExecution = false) -> Respire.Testing.RespireFakeFault!
+static Respire.Testing.RespireFakeFault.Disconnect(bool afterExecution = false) -> Respire.Testing.RespireFakeFault!
+static Respire.Testing.RespireFakeFault.Loading() -> Respire.Testing.RespireFakeFault!
+static Respire.Testing.RespireFakeFault.Moved(int slot, Respire.RespireEndpoint destination) -> Respire.Testing.RespireFakeFault!
+static Respire.Testing.RespireFakeFault.Pause(Respire.Testing.RespireFakeGate! gate, bool afterExecution = false) -> Respire.Testing.RespireFakeFault!
+static Respire.Testing.RespireFakeFault.ReadOnly() -> Respire.Testing.RespireFakeFault!

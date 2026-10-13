@@ -1,0 +1,50 @@
+#nullable enable
+Respire.FusionCache.RespireFusionCacheBackplane
+Respire.FusionCache.RespireFusionCacheBackplane.Dispose() -> void
+Respire.FusionCache.RespireFusionCacheBackplane.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheBackplane.Publish(ZiggyCreatures.Caching.Fusion.Backplane.BackplaneMessage! message, ZiggyCreatures.Caching.Fusion.FusionCacheEntryOptions! options, System.Threading.CancellationToken token = default(System.Threading.CancellationToken)) -> void
+Respire.FusionCache.RespireFusionCacheBackplane.PublishAsync(ZiggyCreatures.Caching.Fusion.Backplane.BackplaneMessage! message, ZiggyCreatures.Caching.Fusion.FusionCacheEntryOptions! options, System.Threading.CancellationToken token = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheBackplane.RespireFusionCacheBackplane(Respire.IRespireClient! client, Respire.RespireSubscriptionOptions subscriptionOptions = default(Respire.RespireSubscriptionOptions), Microsoft.Extensions.Logging.ILogger<Respire.FusionCache.RespireFusionCacheBackplane!>? logger = null) -> void
+Respire.FusionCache.RespireFusionCacheBackplane.Subscribe(ZiggyCreatures.Caching.Fusion.Backplane.BackplaneSubscriptionOptions! options) -> void
+Respire.FusionCache.RespireFusionCacheBackplane.SubscribeAsync(ZiggyCreatures.Caching.Fusion.Backplane.BackplaneSubscriptionOptions! options) -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheBackplane.Unsubscribe() -> void
+Respire.FusionCache.RespireFusionCacheBackplane.UnsubscribeAsync() -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheDistributedLocker
+Respire.FusionCache.RespireFusionCacheDistributedLocker.AcquireLock(string! cacheName, string! cacheInstanceId, string! operationId, string! key, string! lockName, System.TimeSpan timeout, Microsoft.Extensions.Logging.ILogger? logger, System.Threading.CancellationToken token) -> object?
+Respire.FusionCache.RespireFusionCacheDistributedLocker.AcquireLockAsync(string! cacheName, string! cacheInstanceId, string! operationId, string! key, string! lockName, System.TimeSpan timeout, Microsoft.Extensions.Logging.ILogger? logger, System.Threading.CancellationToken token) -> System.Threading.Tasks.ValueTask<object?>
+Respire.FusionCache.RespireFusionCacheDistributedLocker.Dispose() -> void
+Respire.FusionCache.RespireFusionCacheDistributedLocker.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheDistributedLocker.ReleaseLock(string! cacheName, string! cacheInstanceId, string! operationId, string! key, string! lockName, object? lockObj, Microsoft.Extensions.Logging.ILogger? logger, System.Threading.CancellationToken token) -> void
+Respire.FusionCache.RespireFusionCacheDistributedLocker.ReleaseLockAsync(string! cacheName, string! cacheInstanceId, string! operationId, string! key, string! lockName, object? lockObj, Microsoft.Extensions.Logging.ILogger? logger, System.Threading.CancellationToken token) -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheDistributedLocker.RespireFusionCacheDistributedLocker(Respire.IRespireClient! client, Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? options = null, Microsoft.Extensions.Logging.ILogger<Respire.FusionCache.RespireFusionCacheDistributedLocker!>? logger = null) -> void
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.<Clone>$() -> Respire.FusionCache.RespireFusionCacheDistributedLockerOptions!
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.Equals(Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? other) -> bool
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.LeaseDuration.get -> System.TimeSpan
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.LeaseDuration.init -> void
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.MaximumIndependentLeaseLifetime.get -> System.TimeSpan?
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.MaximumIndependentLeaseLifetime.init -> void
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.PollInterval.get -> System.TimeSpan
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.PollInterval.init -> void
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.ReleaseOnCallerCancellation.get -> bool
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.ReleaseOnCallerCancellation.init -> void
+Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.RespireFusionCacheDistributedLockerOptions() -> void
+Respire.FusionCache.RespireFusionCacheExtensions
+Respire.FusionCache.RespireFusionCacheLock
+Respire.FusionCache.RespireFusionCacheLock.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.FusionCache.RespireFusionCacheLock.FencingCounterKey.get -> Respire.RespireKey
+Respire.FusionCache.RespireFusionCacheLock.FencingToken.get -> long
+Respire.FusionCache.RespireFusionCacheLock.LeaseKey.get -> Respire.RespireKey
+Respire.FusionCache.RespireFusionCacheLock.LifetimeLimitExpired.get -> bool
+Respire.FusionCache.RespireFusionCacheLock.OwnershipCancellationToken.get -> System.Threading.CancellationToken
+Respire.FusionCache.RespireFusionCacheLock.OwnershipLost.get -> bool
+Respire.FusionCache.RespireFusionCacheLock.RenewalFailure.get -> System.Exception?
+override Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.Equals(object? obj) -> bool
+override Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.GetHashCode() -> int
+override Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.ToString() -> string!
+static Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.operator !=(Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? left, Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? right) -> bool
+static Respire.FusionCache.RespireFusionCacheDistributedLockerOptions.operator ==(Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? left, Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? right) -> bool
+static Respire.FusionCache.RespireFusionCacheExtensions.AddFusionCacheRespireBackplane(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, Respire.RespireSubscriptionOptions subscriptionOptions = default(Respire.RespireSubscriptionOptions)) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.FusionCache.RespireFusionCacheExtensions.AddFusionCacheRespireDistributedLocker(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? options = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.FusionCache.RespireFusionCacheExtensions.WithRespireBackplane(this ZiggyCreatures.Caching.Fusion.IFusionCacheBuilder! builder, Respire.RespireSubscriptionOptions subscriptionOptions = default(Respire.RespireSubscriptionOptions)) -> ZiggyCreatures.Caching.Fusion.IFusionCacheBuilder!
+static Respire.FusionCache.RespireFusionCacheExtensions.WithRespireDistributedLocker(this ZiggyCreatures.Caching.Fusion.IFusionCacheBuilder! builder, Respire.FusionCache.RespireFusionCacheDistributedLockerOptions? options = null) -> ZiggyCreatures.Caching.Fusion.IFusionCacheBuilder!

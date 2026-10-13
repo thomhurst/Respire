@@ -1,0 +1,88 @@
+#nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder
+Respire.DependencyInjection.RespireOptionsBuilder.AllowAdmin.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.AllowAdmin.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ClientName.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.ClientName.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ClientSideCache.get -> Respire.RespireClientSideCacheOptions?
+Respire.DependencyInjection.RespireOptionsBuilder.ClientSideCache.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.CommandTimeout.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.CommandTimeout.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectTimeout.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectTimeout.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionIdleReadTimeout.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionIdleReadTimeout.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Connections.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.Connections.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.CredentialProvider.get -> Respire.IRespireCredentialProvider?
+Respire.DependencyInjection.RespireOptionsBuilder.CredentialProvider.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.CredentialRefreshBeforeExpiry.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.CredentialRefreshBeforeExpiry.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.CredentialRefreshRetryDelay.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.CredentialRefreshRetryDelay.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Database.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.Database.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Endpoints.get -> System.Collections.Generic.IList<Respire.RespireEndpoint>!
+Respire.DependencyInjection.RespireOptionsBuilder.GatheredWriteStallTimeout.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.GatheredWriteStallTimeout.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.LoggerFactory.get -> Microsoft.Extensions.Logging.ILoggerFactory?
+Respire.DependencyInjection.RespireOptionsBuilder.LoggerFactory.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.MaxInflightCommands.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.MaxInflightCommands.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Password.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.Password.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Protocol.get -> Respire.RespProtocol
+Respire.DependencyInjection.RespireOptionsBuilder.Protocol.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.PubSubPrefix.get -> Respire.RespireKey
+Respire.DependencyInjection.RespireOptionsBuilder.PubSubPrefix.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReceiveBufferSize.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.ReceiveBufferSize.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReconnectPolicy.get -> Respire.RespireReconnectPolicy?
+Respire.DependencyInjection.RespireOptionsBuilder.ReconnectPolicy.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.RespireOptionsBuilder() -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelCredentialProvider.get -> Respire.IRespireCredentialProvider?
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelCredentialProvider.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelPassword.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelPassword.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelPrimaryName.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelPrimaryName.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelTlsOptions.get -> System.Net.Security.SslClientAuthenticationOptions?
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelTlsOptions.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelUseTls.get -> bool?
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelUseTls.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelUsername.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.SentinelUsername.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Serializer.get -> Respire.Serialization.IRespireSerializer!
+Respire.DependencyInjection.RespireOptionsBuilder.Serializer.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionBufferSize.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionBufferSize.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionOverflow.get -> Respire.SubscriptionOverflow
+Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionOverflow.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveInterval.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveInterval.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveRetryCount.get -> int?
+Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveRetryCount.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveTime.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveTime.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ThreadPoolMonitoring.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.ThreadPoolMonitoring.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ThreadPoolWarningThreshold.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.ThreadPoolWarningThreshold.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.TlsOptions.get -> System.Net.Security.SslClientAuthenticationOptions?
+Respire.DependencyInjection.RespireOptionsBuilder.TlsOptions.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.UseClientSideCaching(Respire.RespireClientSideCacheOptions? options = null) -> Respire.DependencyInjection.RespireOptionsBuilder!
+Respire.DependencyInjection.RespireOptionsBuilder.UseCluster.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.UseCluster.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.UseTls.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.UseTls.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Username.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.Username.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.WriteBufferSize.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.WriteBufferSize.set -> void
+Respire.DependencyInjection.RespireServiceCollectionExtensions
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddKeyedRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! serviceKey, System.Action<Respire.DependencyInjection.RespireOptionsBuilder!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddKeyedRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! serviceKey, System.Func<System.IServiceProvider!, Respire.RespireOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddKeyedRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! serviceKey, string! connectionString) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Respire.DependencyInjection.RespireOptionsBuilder!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Func<System.IServiceProvider!, Respire.RespireOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! connectionString) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

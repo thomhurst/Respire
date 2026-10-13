@@ -1,0 +1,8 @@
+#nullable enable
+Respire.DataProtection.RespireDataProtectionBuilderExtensions
+Respire.DataProtection.RespireXmlRepository
+Respire.DataProtection.RespireXmlRepository.GetAllElements() -> System.Collections.Generic.IReadOnlyCollection<System.Xml.Linq.XElement!>!
+Respire.DataProtection.RespireXmlRepository.RespireXmlRepository(System.Func<Respire.IRespireClient!>! clientFactory, Respire.RespireKey key) -> void
+Respire.DataProtection.RespireXmlRepository.StoreElement(System.Xml.Linq.XElement! element, string! friendlyName) -> void
+static Respire.DataProtection.RespireDataProtectionBuilderExtensions.PersistKeysToRespire(this Microsoft.AspNetCore.DataProtection.IDataProtectionBuilder! builder, System.Func<Respire.IRespireClient!>! clientFactory, Respire.RespireKey key) -> Microsoft.AspNetCore.DataProtection.IDataProtectionBuilder!
+static Respire.DataProtection.RespireDataProtectionBuilderExtensions.PersistKeysToRespireFromServices(this Microsoft.AspNetCore.DataProtection.IDataProtectionBuilder! builder, System.Func<System.IServiceProvider!, Respire.IRespireClient!>! clientFactory, Respire.RespireKey key) -> Microsoft.AspNetCore.DataProtection.IDataProtectionBuilder!

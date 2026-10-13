@@ -1,0 +1,145 @@
+#nullable enable
+Respire.Json.IRespireJsonCommands
+Respire.Json.IRespireJsonCommands.ArrayAppendAsync(Respire.RespireKey key, string! path, string![]! jsonValues, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ArrayIndexAsync(Respire.RespireKey key, string! path, string! jsonValue, long start, long stop, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ArrayInsertAsync(Respire.RespireKey key, string! path, long index, string![]! jsonValues, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ArrayLengthAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ArrayPopAsync(Respire.RespireKey key, string! path, long index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ArrayTrimAsync(Respire.RespireKey key, string! path, long start, long stop, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ClearAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.DeleteAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ForgetAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.GetAsync(Respire.RespireKey key, string![]! optionsAndPaths, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.GetPathAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.MergeAsync(Respire.RespireKey key, string! path, Respire.RespireValue json, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.MultiGetAsync(Respire.RespireKey[]! keys, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.MultiSetAsync(Respire.RespireValue[]! keyPathJsonTriples, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.NumberIncrementByAsync(Respire.RespireKey key, string! path, double increment, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.NumberMultiplyByAsync(Respire.RespireKey key, string! path, double multiplier, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.NumberPowerByAsync(Respire.RespireKey key, string! path, double exponent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ObjectKeysAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ObjectLengthAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ResponseAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.SetAsync(Respire.RespireKey key, string! path, Respire.RespireValue json, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.StringAppendAsync(Respire.RespireKey key, string! path, string! jsonString, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.StringLengthAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.ToggleAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommands.TypeAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation
+Respire.Json.IRespireJsonCommandsImplementation.ArrayAppendAsync(Respire.RespireKey key, string! path, string![]! jsonValues, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ArrayIndexAsync(Respire.RespireKey key, string! path, string! jsonValue, long start, long stop, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ArrayInsertAsync(Respire.RespireKey key, string! path, long index, string![]! jsonValues, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ArrayLengthAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ArrayPopAsync(Respire.RespireKey key, string! path, long index, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ArrayTrimAsync(Respire.RespireKey key, string! path, long start, long stop, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ClearAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.DeleteAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ForgetAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.GetAsync(Respire.RespireKey key, string![]! optionsAndPaths, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.GetPathAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.IRespireJsonCommandsImplementation(Respire.IRespireClient! client) -> void
+Respire.Json.IRespireJsonCommandsImplementation.MergeAsync(Respire.RespireKey key, string! path, Respire.RespireValue json, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.MultiGetAsync(Respire.RespireKey[]! keys, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.MultiSetAsync(Respire.RespireValue[]! keyPathJsonTriples, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.NumberIncrementByAsync(Respire.RespireKey key, string! path, double increment, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.NumberMultiplyByAsync(Respire.RespireKey key, string! path, double multiplier, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.NumberPowerByAsync(Respire.RespireKey key, string! path, double exponent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ObjectKeysAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ObjectLengthAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ResponseAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.SetAsync(Respire.RespireKey key, string! path, Respire.RespireValue json, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.StringAppendAsync(Respire.RespireKey key, string! path, string! jsonString, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.StringLengthAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.ToggleAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.IRespireJsonCommandsImplementation.TypeAsync(Respire.RespireKey key, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.Json.RespireJsonAttribute
+Respire.Json.RespireJsonAttribute.KeyTemplate.get -> string!
+Respire.Json.RespireJsonAttribute.RespireJsonAttribute(string! keyTemplate) -> void
+Respire.Json.RespireJsonClient
+Respire.Json.RespireJsonClient.Commands.get -> Respire.Json.IRespireJsonCommands!
+Respire.Json.RespireJsonClient.DeleteAsync(Respire.RespireKey key, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Json.RespireJsonClient.ForgetAsync(Respire.RespireKey key, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Json.RespireJsonClient.GetAsync<T>(Respire.RespireKey key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Json.RespireJsonValue<T>>
+Respire.Json.RespireJsonClient.GetJsonAsync(Respire.RespireKey key, Respire.Json.RespireJsonGetOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Respire.Json.RespireJsonClient.GetManyAsync<T>(Respire.RespireKey key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, Respire.Json.RespireJsonPath path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Json.RespireJsonValue<T>[]!>
+Respire.Json.RespireJsonClient.GetMemoryUsageAsync(Respire.RespireKey key, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long[]!>
+Respire.Json.RespireJsonClient.MergeAsync<T>(Respire.RespireKey key, T patch, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Json.RespireJsonClient.MultiGetAsync<T>(System.Collections.Generic.IReadOnlyList<Respire.RespireKey>! keys, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Json.RespireJsonValue<T>[]?[]!>
+Respire.Json.RespireJsonClient.MultiSetAsync<T>(System.Collections.Generic.IReadOnlyList<Respire.Json.RespireJsonSetEntry<T>>! entries, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Json.RespireJsonClient.RespireJsonClient(Respire.IRespireClient! client) -> void
+Respire.Json.RespireJsonClient.SetAsync<T>(Respire.RespireKey key, T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), Respire.Json.RespireJsonSetCondition condition = Respire.Json.RespireJsonSetCondition.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Json.RespireJsonClient.SetJsonAsync(Respire.RespireKey key, System.ReadOnlyMemory<byte> utf8Json, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), Respire.Json.RespireJsonSetCondition condition = Respire.Json.RespireJsonSetCondition.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Json.RespireJsonClient.SetJsonAsync(Respire.RespireKey key, string! json, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), Respire.Json.RespireJsonSetCondition condition = Respire.Json.RespireJsonSetCondition.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Json.RespireJsonClientExtensions
+Respire.Json.RespireJsonClientExtensions.extension(Respire.IRespireClient!)
+Respire.Json.RespireJsonClientExtensions.extension(Respire.IRespireClient!).Json.get -> Respire.Json.RespireJsonClient!
+Respire.Json.RespireJsonGetOptions
+Respire.Json.RespireJsonGetOptions.Indent.get -> string?
+Respire.Json.RespireJsonGetOptions.Indent.init -> void
+Respire.Json.RespireJsonGetOptions.NewLine.get -> string?
+Respire.Json.RespireJsonGetOptions.NewLine.init -> void
+Respire.Json.RespireJsonGetOptions.NoEscape.get -> bool
+Respire.Json.RespireJsonGetOptions.NoEscape.init -> void
+Respire.Json.RespireJsonGetOptions.Paths.get -> System.Collections.Generic.IReadOnlyList<Respire.Json.RespireJsonPath>!
+Respire.Json.RespireJsonGetOptions.Paths.init -> void
+Respire.Json.RespireJsonGetOptions.RespireJsonGetOptions() -> void
+Respire.Json.RespireJsonGetOptions.Space.get -> string?
+Respire.Json.RespireJsonGetOptions.Space.init -> void
+Respire.Json.RespireJsonPath
+Respire.Json.RespireJsonPath.Equals(Respire.Json.RespireJsonPath other) -> bool
+Respire.Json.RespireJsonPath.RespireJsonPath() -> void
+Respire.Json.RespireJsonPath.RespireJsonPath(string! value) -> void
+Respire.Json.RespireJsonPath.ResponseShape.get -> Respire.Json.RespireJsonResponseShape
+Respire.Json.RespireJsonPath.UsesJsonPath.get -> bool
+Respire.Json.RespireJsonPath.Value.get -> string!
+Respire.Json.RespireJsonResponseShape
+Respire.Json.RespireJsonResponseShape.MatchedValues = 1 -> Respire.Json.RespireJsonResponseShape
+Respire.Json.RespireJsonResponseShape.SingleValue = 0 -> Respire.Json.RespireJsonResponseShape
+Respire.Json.RespireJsonSetCondition
+Respire.Json.RespireJsonSetCondition.None = 0 -> Respire.Json.RespireJsonSetCondition
+Respire.Json.RespireJsonSetCondition.Nx = 1 -> Respire.Json.RespireJsonSetCondition
+Respire.Json.RespireJsonSetCondition.Xx = 2 -> Respire.Json.RespireJsonSetCondition
+Respire.Json.RespireJsonSetEntry<T>
+Respire.Json.RespireJsonSetEntry<T>.Deconstruct(out Respire.RespireKey Key, out T Value, out Respire.Json.RespireJsonPath Path) -> void
+Respire.Json.RespireJsonSetEntry<T>.Equals(Respire.Json.RespireJsonSetEntry<T> other) -> bool
+Respire.Json.RespireJsonSetEntry<T>.Key.get -> Respire.RespireKey
+Respire.Json.RespireJsonSetEntry<T>.Key.init -> void
+Respire.Json.RespireJsonSetEntry<T>.Path.get -> Respire.Json.RespireJsonPath
+Respire.Json.RespireJsonSetEntry<T>.Path.init -> void
+Respire.Json.RespireJsonSetEntry<T>.RespireJsonSetEntry() -> void
+Respire.Json.RespireJsonSetEntry<T>.RespireJsonSetEntry(Respire.RespireKey Key, T Value, Respire.Json.RespireJsonPath Path = default(Respire.Json.RespireJsonPath)) -> void
+Respire.Json.RespireJsonSetEntry<T>.Value.get -> T
+Respire.Json.RespireJsonSetEntry<T>.Value.init -> void
+Respire.Json.RespireJsonValue<T>
+Respire.Json.RespireJsonValue<T>.Deconstruct(out bool Found, out T? Value) -> void
+Respire.Json.RespireJsonValue<T>.Equals(Respire.Json.RespireJsonValue<T> other) -> bool
+Respire.Json.RespireJsonValue<T>.Found.get -> bool
+Respire.Json.RespireJsonValue<T>.Found.init -> void
+Respire.Json.RespireJsonValue<T>.RespireJsonValue() -> void
+Respire.Json.RespireJsonValue<T>.RespireJsonValue(bool Found, T? Value) -> void
+Respire.Json.RespireJsonValue<T>.Value.get -> T?
+Respire.Json.RespireJsonValue<T>.Value.init -> void
+override Respire.Json.RespireJsonPath.Equals(object? obj) -> bool
+override Respire.Json.RespireJsonPath.GetHashCode() -> int
+override Respire.Json.RespireJsonPath.ToString() -> string!
+override Respire.Json.RespireJsonSetEntry<T>.GetHashCode() -> int
+override Respire.Json.RespireJsonValue<T>.GetHashCode() -> int
+static Respire.Json.RespireJsonClientExtensions.get_Json(Respire.IRespireClient! client) -> Respire.Json.RespireJsonClient!
+static Respire.Json.RespireJsonPath.DirectArray(string! expression) -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.From(string! value) -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.JsonPath(string! path) -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.JsonPathRoot.get -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.Legacy(string! path) -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.Projection(string! expression) -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.Root.get -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.implicit operator Respire.Json.RespireJsonPath(string! value) -> Respire.Json.RespireJsonPath
+static Respire.Json.RespireJsonPath.operator !=(Respire.Json.RespireJsonPath left, Respire.Json.RespireJsonPath right) -> bool
+static Respire.Json.RespireJsonPath.operator ==(Respire.Json.RespireJsonPath left, Respire.Json.RespireJsonPath right) -> bool
+static Respire.Json.RespireJsonSetEntry<T>.operator !=(Respire.Json.RespireJsonSetEntry<T> left, Respire.Json.RespireJsonSetEntry<T> right) -> bool
+static Respire.Json.RespireJsonSetEntry<T>.operator ==(Respire.Json.RespireJsonSetEntry<T> left, Respire.Json.RespireJsonSetEntry<T> right) -> bool
+static Respire.Json.RespireJsonValue<T>.operator !=(Respire.Json.RespireJsonValue<T> left, Respire.Json.RespireJsonValue<T> right) -> bool
+static Respire.Json.RespireJsonValue<T>.operator ==(Respire.Json.RespireJsonValue<T> left, Respire.Json.RespireJsonValue<T> right) -> bool
+~override Respire.Json.RespireJsonSetEntry<T>.Equals(object obj) -> bool
+~override Respire.Json.RespireJsonSetEntry<T>.ToString() -> string
+~override Respire.Json.RespireJsonValue<T>.Equals(object obj) -> bool
+~override Respire.Json.RespireJsonValue<T>.ToString() -> string

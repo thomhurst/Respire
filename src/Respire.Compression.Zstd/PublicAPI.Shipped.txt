@@ -1,0 +1,3 @@
+#nullable enable
+Respire.Compression.Zstd.ZstdValueCodec
+Respire.Compression.Zstd.ZstdValueCodec.ZstdValueCodec(Respire.Compression.RespireValueCodecOptions? options = null, int level = 3) -> void

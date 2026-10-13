@@ -1,0 +1,125 @@
+#nullable enable
+Respire.Coordination.RespireCoordination
+Respire.Coordination.RespireCoordination.AcquireFencedLockAsync(Respire.RespireKey key, Respire.RespireKey fencingCounterKey, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireFencedLock!>
+Respire.Coordination.RespireCoordination.AcquireLeaseAsync(Respire.RespireKey hashKey, Respire.RespireKey field, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireCoordinationLease!>
+Respire.Coordination.RespireCoordination.CreateCountdownLatchAsync(Respire.RespireKey key, long count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireCountdownLatch!>
+Respire.Coordination.RespireCoordination.CreateSemaphore(Respire.RespireKey key, int capacity) -> Respire.Coordination.RespireSemaphore!
+Respire.Coordination.RespireCoordination.JoinCountdownLatchAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireCountdownLatch?>
+Respire.Coordination.RespireCoordination.RateLimiters.get -> Respire.Coordination.RespireRateLimiters!
+Respire.Coordination.RespireCoordination.ResetCountdownLatchAsync(Respire.RespireKey key, long count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireCountdownLatch!>
+Respire.Coordination.RespireCoordination.RespireCoordination(Respire.IRespireClient! client) -> void
+Respire.Coordination.RespireCoordination.TryAcquireFencedLockAsync(Respire.RespireKey key, Respire.RespireKey fencingCounterKey, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireFencedLockAttempt>
+Respire.Coordination.RespireCoordination.TryAcquireLeaseAsync(Respire.RespireKey hashKey, Respire.RespireKey field, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireCoordinationLease?>
+Respire.Coordination.RespireCoordination.TryAcquireReadLockAsync(Respire.RespireKey key, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireReadWriteLockAttempt>
+Respire.Coordination.RespireCoordination.TryAcquireWriteLockAsync(Respire.RespireKey key, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireReadWriteLockAttempt>
+Respire.Coordination.RespireCoordinationClientExtensions
+Respire.Coordination.RespireCoordinationClientExtensions.extension(Respire.IRespireClient!)
+Respire.Coordination.RespireCoordinationClientExtensions.extension(Respire.IRespireClient!).Coordination.get -> Respire.Coordination.RespireCoordination!
+Respire.Coordination.RespireCoordinationLease
+Respire.Coordination.RespireCoordinationLease.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireCoordinationLease.Duration.get -> System.TimeSpan
+Respire.Coordination.RespireCoordinationLease.Field.get -> Respire.RespireKey
+Respire.Coordination.RespireCoordinationLease.HashKey.get -> Respire.RespireKey
+Respire.Coordination.RespireCoordinationLease.IsReleased.get -> bool
+Respire.Coordination.RespireCoordinationLease.OwnerToken.get -> Respire.RespireLockToken
+Respire.Coordination.RespireCoordinationLease.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.LockReleaseOutcome>
+Respire.Coordination.RespireCoordinationLease.RemainingEstimate.get -> System.TimeSpan
+Respire.Coordination.RespireCoordinationLease.ResetExpiryAsync(System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireCoordinationLease.VerifyStillHeldAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireCountdownLatch
+Respire.Coordination.RespireCountdownLatch.CountDownAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.Coordination.RespireCountdownLatch.Generation.get -> string!
+Respire.Coordination.RespireCountdownLatch.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireCountdownLatch.WaitAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireFencedLock
+Respire.Coordination.RespireFencedLock.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireFencedLock.Duration.get -> System.TimeSpan
+Respire.Coordination.RespireFencedLock.FencingCounterKey.get -> Respire.RespireKey
+Respire.Coordination.RespireFencedLock.FencingToken.get -> long
+Respire.Coordination.RespireFencedLock.IsReleased.get -> bool
+Respire.Coordination.RespireFencedLock.KeepAliveAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockKeepAlive!>
+Respire.Coordination.RespireFencedLock.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireFencedLock.OwnerToken.get -> Respire.RespireLockToken
+Respire.Coordination.RespireFencedLock.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.LockReleaseOutcome>
+Respire.Coordination.RespireFencedLock.RemainingEstimate.get -> System.TimeSpan
+Respire.Coordination.RespireFencedLock.ResetExpiryAsync(System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireFencedLock.VerifyStillHeldAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireFencedLockAttempt
+Respire.Coordination.RespireFencedLockAttempt.Acquired.get -> bool
+Respire.Coordination.RespireFencedLockAttempt.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireFencedLockAttempt.Lock.get -> Respire.Coordination.RespireFencedLock!
+Respire.Coordination.RespireFencedLockAttempt.RespireFencedLockAttempt() -> void
+Respire.Coordination.RespireRateLimiters
+Respire.Coordination.RespireRateLimiters.FixedWindow(Respire.RespireKey key, int permitLimit, System.TimeSpan window, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!
+Respire.Coordination.RespireRateLimiters.RespireRateLimiters(Respire.Coordination.RespireCoordination! coordination) -> void
+Respire.Coordination.RespireRateLimiters.SlidingWindow(Respire.RespireKey key, int permitLimit, System.TimeSpan window, int segments, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!
+Respire.Coordination.RespireRateLimiters.TokenBucket(Respire.RespireKey key, int tokenLimit, int tokensPerPeriod, System.TimeSpan replenishmentPeriod, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!
+Respire.Coordination.RespireReadWriteLock
+Respire.Coordination.RespireReadWriteLock.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireReadWriteLock.Duration.get -> System.TimeSpan
+Respire.Coordination.RespireReadWriteLock.IsReleased.get -> bool
+Respire.Coordination.RespireReadWriteLock.IsWriter.get -> bool
+Respire.Coordination.RespireReadWriteLock.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireReadWriteLock.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireReadWriteLock.RemainingEstimate.get -> System.TimeSpan
+Respire.Coordination.RespireReadWriteLock.ResetExpiryAsync(System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireReadWriteLock.VerifyStillHeldAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireReadWriteLockAttempt
+Respire.Coordination.RespireReadWriteLockAttempt.Acquired.get -> bool
+Respire.Coordination.RespireReadWriteLockAttempt.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireReadWriteLockAttempt.Lock.get -> Respire.Coordination.RespireReadWriteLock!
+Respire.Coordination.RespireReadWriteLockAttempt.RespireReadWriteLockAttempt() -> void
+Respire.Coordination.RespireRedlock
+Respire.Coordination.RespireRedlock.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireRedlock.Duration.get -> System.TimeSpan
+Respire.Coordination.RespireRedlock.IsReleased.get -> bool
+Respire.Coordination.RespireRedlock.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireRedlock.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireRedlock.RemainingEstimate.get -> System.TimeSpan
+Respire.Coordination.RespireRedlock.ResetExpiryAsync(System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireRedlock.Token.get -> Respire.RespireLockToken
+Respire.Coordination.RespireRedlock.Validity.get -> System.TimeSpan
+Respire.Coordination.RespireRedlockAttempt
+Respire.Coordination.RespireRedlockAttempt.Acquired.get -> bool
+Respire.Coordination.RespireRedlockAttempt.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireRedlockAttempt.Lock.get -> Respire.Coordination.RespireRedlock!
+Respire.Coordination.RespireRedlockAttempt.RespireRedlockAttempt() -> void
+Respire.Coordination.RespireRedlockGroup
+Respire.Coordination.RespireRedlockGroup.RespireRedlockGroup(System.Collections.Generic.IEnumerable<Respire.IRespireClient!>! clients, Respire.Coordination.RespireRedlockOptions? options = null, System.TimeProvider? timeProvider = null) -> void
+Respire.Coordination.RespireRedlockGroup.TryAcquireAsync(Respire.RespireKey key, System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireRedlockAttempt>
+Respire.Coordination.RespireRedlockOptions
+Respire.Coordination.RespireRedlockOptions.<Clone>$() -> Respire.Coordination.RespireRedlockOptions!
+Respire.Coordination.RespireRedlockOptions.DriftFactor.get -> double
+Respire.Coordination.RespireRedlockOptions.DriftFactor.init -> void
+Respire.Coordination.RespireRedlockOptions.Equals(Respire.Coordination.RespireRedlockOptions? other) -> bool
+Respire.Coordination.RespireRedlockOptions.NodeTimeout.get -> System.TimeSpan
+Respire.Coordination.RespireRedlockOptions.NodeTimeout.init -> void
+Respire.Coordination.RespireRedlockOptions.RespireRedlockOptions() -> void
+Respire.Coordination.RespireSemaphore
+Respire.Coordination.RespireSemaphore.Capacity.get -> int
+Respire.Coordination.RespireSemaphore.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireSemaphore.RespireSemaphore(Respire.IRespireClient! client, Respire.RespireKey key, int capacity) -> void
+Respire.Coordination.RespireSemaphore.TryAcquireAsync(System.TimeSpan? expiry = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireSemaphorePermitAttempt>
+Respire.Coordination.RespireSemaphoreCapacityMismatchException
+Respire.Coordination.RespireSemaphoreCapacityMismatchException.RequestedCapacity.get -> int
+Respire.Coordination.RespireSemaphorePermit
+Respire.Coordination.RespireSemaphorePermit.Capacity.get -> int
+Respire.Coordination.RespireSemaphorePermit.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireSemaphorePermit.Expiry.get -> System.TimeSpan?
+Respire.Coordination.RespireSemaphorePermit.IsReleased.get -> bool
+Respire.Coordination.RespireSemaphorePermit.Key.get -> Respire.RespireKey
+Respire.Coordination.RespireSemaphorePermit.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireSemaphorePermit.RemainingEstimate.get -> System.TimeSpan?
+Respire.Coordination.RespireSemaphorePermit.ResetExpiryAsync(System.TimeSpan? expiry, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireSemaphorePermit.VerifyStillHeldAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireSemaphorePermitAttempt
+Respire.Coordination.RespireSemaphorePermitAttempt.Acquired.get -> bool
+Respire.Coordination.RespireSemaphorePermitAttempt.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireSemaphorePermitAttempt.Permit.get -> Respire.Coordination.RespireSemaphorePermit!
+Respire.Coordination.RespireSemaphorePermitAttempt.RespireSemaphorePermitAttempt() -> void
+override Respire.Coordination.RespireRedlockOptions.Equals(object? obj) -> bool
+override Respire.Coordination.RespireRedlockOptions.GetHashCode() -> int
+override Respire.Coordination.RespireRedlockOptions.ToString() -> string!
+static Respire.Coordination.RespireCoordinationClientExtensions.get_Coordination(Respire.IRespireClient! client) -> Respire.Coordination.RespireCoordination!
+static Respire.Coordination.RespireRedlockOptions.operator !=(Respire.Coordination.RespireRedlockOptions? left, Respire.Coordination.RespireRedlockOptions? right) -> bool
+static Respire.Coordination.RespireRedlockOptions.operator ==(Respire.Coordination.RespireRedlockOptions? left, Respire.Coordination.RespireRedlockOptions? right) -> bool

@@ -1,0 +1,27 @@
+#nullable enable
+Respire.AI.RespireSemanticCacheExtensions
+Respire.AI.RespireSemanticCacheOptions
+Respire.AI.RespireSemanticCacheOptions.<Clone>$() -> Respire.AI.RespireSemanticCacheOptions!
+Respire.AI.RespireSemanticCacheOptions.CacheName.get -> string!
+Respire.AI.RespireSemanticCacheOptions.CacheName.init -> void
+Respire.AI.RespireSemanticCacheOptions.Dimensions.get -> int
+Respire.AI.RespireSemanticCacheOptions.Dimensions.init -> void
+Respire.AI.RespireSemanticCacheOptions.DistanceThreshold.get -> double
+Respire.AI.RespireSemanticCacheOptions.DistanceThreshold.init -> void
+Respire.AI.RespireSemanticCacheOptions.Equals(Respire.AI.RespireSemanticCacheOptions? other) -> bool
+Respire.AI.RespireSemanticCacheOptions.FailOpen.get -> bool
+Respire.AI.RespireSemanticCacheOptions.FailOpen.init -> void
+Respire.AI.RespireSemanticCacheOptions.RespireSemanticCacheOptions() -> void
+Respire.AI.RespireSemanticCacheOptions.ScopeSelector.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Extensions.AI.ChatOptions?, string?>!
+Respire.AI.RespireSemanticCacheOptions.ScopeSelector.init -> void
+Respire.AI.RespireSemanticCacheOptions.ShouldBypass.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Extensions.AI.ChatOptions?, bool>?
+Respire.AI.RespireSemanticCacheOptions.ShouldBypass.init -> void
+Respire.AI.RespireSemanticCacheOptions.TimeToLive.get -> System.TimeSpan
+Respire.AI.RespireSemanticCacheOptions.TimeToLive.init -> void
+const Respire.AI.RespireSemanticCacheOptions.DisableCacheKey = "Respire.SemanticCache.Disabled" -> string!
+override Respire.AI.RespireSemanticCacheOptions.Equals(object? obj) -> bool
+override Respire.AI.RespireSemanticCacheOptions.GetHashCode() -> int
+override Respire.AI.RespireSemanticCacheOptions.ToString() -> string!
+static Respire.AI.RespireSemanticCacheExtensions.UseRespireSemanticCache(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Respire.IRespireClient! client, Microsoft.Extensions.AI.IEmbeddingGenerator<string!, Microsoft.Extensions.AI.Embedding<float>!>! embeddingGenerator, Respire.AI.RespireSemanticCacheOptions! options) -> Microsoft.Extensions.AI.ChatClientBuilder!
+static Respire.AI.RespireSemanticCacheOptions.operator !=(Respire.AI.RespireSemanticCacheOptions? left, Respire.AI.RespireSemanticCacheOptions? right) -> bool
+static Respire.AI.RespireSemanticCacheOptions.operator ==(Respire.AI.RespireSemanticCacheOptions? left, Respire.AI.RespireSemanticCacheOptions? right) -> bool

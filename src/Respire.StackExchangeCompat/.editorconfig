@@ -1,0 +1,4 @@
+# These generated stubs deliberately use #nullable disable to mirror upstream metadata.
+# Keep their oblivious signatures in the API baseline; additions/removals still fail.
+[RespireConnectionMultiplexer.Unsupported.g.cs]
+dotnet_diagnostic.RS0041.severity = none

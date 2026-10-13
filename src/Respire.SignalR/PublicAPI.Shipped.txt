@@ -1,0 +1,35 @@
+#nullable enable
+Respire.SignalR.RespireHubLifetimeManager<THub>
+Respire.SignalR.RespireHubLifetimeManager<THub>.Dispose() -> void
+Respire.SignalR.RespireHubLifetimeManager<THub>.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.SignalR.RespireHubLifetimeManager<THub>.RespireHubLifetimeManager(Respire.RespireClient! client, Microsoft.Extensions.Logging.ILogger<Respire.SignalR.RespireHubLifetimeManager<THub!>!>! logger, Microsoft.Extensions.Options.IOptions<Respire.SignalR.RespireSignalROptions!>! options, Microsoft.AspNetCore.SignalR.IHubProtocolResolver! hubProtocolResolver, Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.SignalR.HubOptions!>? globalHubOptions, Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.SignalR.HubOptions<THub!>!>? hubOptions) -> void
+Respire.SignalR.RespireSignalROptions
+Respire.SignalR.RespireSignalROptions.ChannelPrefix.get -> string!
+Respire.SignalR.RespireSignalROptions.ChannelPrefix.set -> void
+Respire.SignalR.RespireSignalROptions.GroupAckTimeout.get -> System.TimeSpan
+Respire.SignalR.RespireSignalROptions.GroupAckTimeout.set -> void
+Respire.SignalR.RespireSignalROptions.RemoteClientResultTimeout.get -> System.TimeSpan
+Respire.SignalR.RespireSignalROptions.RemoteClientResultTimeout.set -> void
+Respire.SignalR.RespireSignalROptions.RespireSignalROptions() -> void
+Respire.SignalR.RespireSignalROptions.SubscriptionBufferSize.get -> int
+Respire.SignalR.RespireSignalROptions.SubscriptionBufferSize.set -> void
+Respire.SignalR.RespireSignalROptions.UseShardedPubSub.get -> bool
+Respire.SignalR.RespireSignalROptions.UseShardedPubSub.set -> void
+Respire.SignalR.RespireSignalRServiceCollectionExtensions
+override Respire.SignalR.RespireHubLifetimeManager<THub>.AddToGroupAsync(string! connectionId, string! groupName, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.InvokeConnectionAsync<T>(string! connectionId, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<T>!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.OnConnectedAsync(Microsoft.AspNetCore.SignalR.HubConnectionContext! connection) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.OnDisconnectedAsync(Microsoft.AspNetCore.SignalR.HubConnectionContext! connection) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.RemoveFromGroupAsync(string! connectionId, string! groupName, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendAllAsync(string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendAllExceptAsync(string! methodName, object?[]! args, System.Collections.Generic.IReadOnlyList<string!>! excludedConnectionIds, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendConnectionAsync(string! connectionId, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendConnectionsAsync(System.Collections.Generic.IReadOnlyList<string!>! connectionIds, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendGroupAsync(string! groupName, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendGroupExceptAsync(string! groupName, string! methodName, object?[]! args, System.Collections.Generic.IReadOnlyList<string!>! excludedConnectionIds, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendGroupsAsync(System.Collections.Generic.IReadOnlyList<string!>! groupNames, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendUserAsync(string! userId, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SendUsersAsync(System.Collections.Generic.IReadOnlyList<string!>! userIds, string! methodName, object?[]! args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.SetConnectionResultAsync(string! connectionId, Microsoft.AspNetCore.SignalR.Protocol.CompletionMessage! result) -> System.Threading.Tasks.Task!
+override Respire.SignalR.RespireHubLifetimeManager<THub>.TryGetReturnType(string! invocationId, out System.Type? type) -> bool
+static Respire.SignalR.RespireSignalRServiceCollectionExtensions.AddRespire(this Microsoft.AspNetCore.SignalR.ISignalRServerBuilder! builder, System.Action<Respire.SignalR.RespireSignalROptions!>? configure = null) -> Microsoft.AspNetCore.SignalR.ISignalRServerBuilder!

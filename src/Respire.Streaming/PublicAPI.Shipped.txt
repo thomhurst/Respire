@@ -1,0 +1,54 @@
+#nullable enable
+Respire.Streaming.IRespireStreamHandler<TMessage>
+Respire.Streaming.IRespireStreamHandler<TMessage>.HandleAsync(TMessage message, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireStreamWorkerResult>
+Respire.Streaming.RespireStreamWorkerOptions
+Respire.Streaming.RespireStreamWorkerOptions.<Clone>$() -> Respire.Streaming.RespireStreamWorkerOptions!
+Respire.Streaming.RespireStreamWorkerOptions.BatchSize.get -> int
+Respire.Streaming.RespireStreamWorkerOptions.BatchSize.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.ConsumerCount.get -> int
+Respire.Streaming.RespireStreamWorkerOptions.ConsumerCount.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.ConsumerName.get -> string?
+Respire.Streaming.RespireStreamWorkerOptions.ConsumerName.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.CreateGroup.get -> bool
+Respire.Streaming.RespireStreamWorkerOptions.CreateGroup.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.DeadLetterStream.get -> string?
+Respire.Streaming.RespireStreamWorkerOptions.DeadLetterStream.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.DeleteAcknowledgedEntries.get -> bool
+Respire.Streaming.RespireStreamWorkerOptions.DeleteAcknowledgedEntries.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.DeliveryLimit.get -> int?
+Respire.Streaming.RespireStreamWorkerOptions.DeliveryLimit.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.Equals(Respire.Streaming.RespireStreamWorkerOptions? other) -> bool
+Respire.Streaming.RespireStreamWorkerOptions.GroupStart.get -> Respire.RespireStreamId
+Respire.Streaming.RespireStreamWorkerOptions.GroupStart.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.MetricsPollInterval.get -> System.TimeSpan
+Respire.Streaming.RespireStreamWorkerOptions.MetricsPollInterval.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.MetricsPollTimeout.get -> System.TimeSpan
+Respire.Streaming.RespireStreamWorkerOptions.MetricsPollTimeout.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.MinimumIdleTime.get -> System.TimeSpan
+Respire.Streaming.RespireStreamWorkerOptions.MinimumIdleTime.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.ReadWait.get -> System.TimeSpan
+Respire.Streaming.RespireStreamWorkerOptions.ReadWait.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.RecoveryPollInterval.get -> System.TimeSpan
+Respire.Streaming.RespireStreamWorkerOptions.RecoveryPollInterval.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.RespireStreamWorkerOptions() -> void
+Respire.Streaming.RespireStreamWorkerOptions.TelemetryName.get -> string!
+Respire.Streaming.RespireStreamWorkerOptions.TelemetryName.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.TraceParentField.get -> string?
+Respire.Streaming.RespireStreamWorkerOptions.TraceParentField.init -> void
+Respire.Streaming.RespireStreamWorkerOptions.TraceStateField.get -> string?
+Respire.Streaming.RespireStreamWorkerOptions.TraceStateField.init -> void
+Respire.Streaming.RespireStreamWorkerResult
+Respire.Streaming.RespireStreamWorkerResult.Ack = 1 -> Respire.Streaming.RespireStreamWorkerResult
+Respire.Streaming.RespireStreamWorkerResult.DeadLetter = 2 -> Respire.Streaming.RespireStreamWorkerResult
+Respire.Streaming.RespireStreamWorkerResult.Nack = 0 -> Respire.Streaming.RespireStreamWorkerResult
+Respire.Streaming.RespireStreamWorkerServiceCollectionExtensions
+Respire.Streaming.RespireStreamWorkerTelemetry
+const Respire.Streaming.RespireStreamWorkerTelemetry.ActivitySourceName = "Respire.Streaming" -> string!
+const Respire.Streaming.RespireStreamWorkerTelemetry.MeterName = "Respire.Streaming" -> string!
+override Respire.Streaming.RespireStreamWorkerOptions.Equals(object? obj) -> bool
+override Respire.Streaming.RespireStreamWorkerOptions.GetHashCode() -> int
+override Respire.Streaming.RespireStreamWorkerOptions.ToString() -> string!
+static Respire.Streaming.RespireStreamWorkerOptions.operator !=(Respire.Streaming.RespireStreamWorkerOptions? left, Respire.Streaming.RespireStreamWorkerOptions? right) -> bool
+static Respire.Streaming.RespireStreamWorkerOptions.operator ==(Respire.Streaming.RespireStreamWorkerOptions? left, Respire.Streaming.RespireStreamWorkerOptions? right) -> bool
+static Respire.Streaming.RespireStreamWorkerServiceCollectionExtensions.AddRespireStreamWorker<THandler, TMessage>(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! stream, string! group, System.Func<Respire.RespireStreamEntry, TMessage>! deserialize, Respire.Streaming.RespireStreamWorkerOptions? options = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.Streaming.RespireStreamWorkerServiceCollectionExtensions.AddRespireStreamWorker<THandler>(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! stream, string! group, Respire.Streaming.RespireStreamWorkerOptions? options = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

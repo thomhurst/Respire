@@ -1,0 +1,47 @@
+#nullable enable
+Respire.HealthChecks.RespireHealthCheck
+Respire.HealthChecks.RespireHealthCheck.CheckHealthAsync(Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult>!
+Respire.HealthChecks.RespireHealthCheck.RespireHealthCheck(Respire.IRespireClient! client, Respire.HealthChecks.RespireHealthCheckOptions? options = null) -> void
+Respire.HealthChecks.RespireHealthCheck.RespireHealthCheck(Respire.RespireFailoverGroup! group, Respire.HealthChecks.RespireHealthCheckOptions? options = null) -> void
+Respire.HealthChecks.RespireHealthCheckOptions
+Respire.HealthChecks.RespireHealthCheckOptions.<Clone>$() -> Respire.HealthChecks.RespireHealthCheckOptions!
+Respire.HealthChecks.RespireHealthCheckOptions.DegradeOnFailover.get -> bool
+Respire.HealthChecks.RespireHealthCheckOptions.DegradeOnFailover.init -> void
+Respire.HealthChecks.RespireHealthCheckOptions.DegradedLatency.get -> System.TimeSpan?
+Respire.HealthChecks.RespireHealthCheckOptions.DegradedLatency.init -> void
+Respire.HealthChecks.RespireHealthCheckOptions.Equals(Respire.HealthChecks.RespireHealthCheckOptions? other) -> bool
+Respire.HealthChecks.RespireHealthCheckOptions.IncludeClientSideCache.get -> bool
+Respire.HealthChecks.RespireHealthCheckOptions.IncludeClientSideCache.init -> void
+Respire.HealthChecks.RespireHealthCheckOptions.MaxConcurrentProbes.get -> int
+Respire.HealthChecks.RespireHealthCheckOptions.MaxConcurrentProbes.init -> void
+Respire.HealthChecks.RespireHealthCheckOptions.ProbeAllNodes.get -> bool
+Respire.HealthChecks.RespireHealthCheckOptions.ProbeAllNodes.init -> void
+Respire.HealthChecks.RespireHealthCheckOptions.ProbeTimeout.get -> System.TimeSpan
+Respire.HealthChecks.RespireHealthCheckOptions.ProbeTimeout.init -> void
+Respire.HealthChecks.RespireHealthCheckOptions.RespireHealthCheckOptions() -> void
+Respire.HealthChecks.RespireHealthChecksBuilderExtensions
+Respire.HealthChecks.RespireNodeHealth
+Respire.HealthChecks.RespireNodeHealth.<Clone>$() -> Respire.HealthChecks.RespireNodeHealth!
+Respire.HealthChecks.RespireNodeHealth.Deconstruct(out Respire.RespireEndpoint Endpoint, out bool IsConnected, out System.TimeSpan? Latency, out string? ErrorType) -> void
+Respire.HealthChecks.RespireNodeHealth.Endpoint.get -> Respire.RespireEndpoint
+Respire.HealthChecks.RespireNodeHealth.Endpoint.init -> void
+Respire.HealthChecks.RespireNodeHealth.Equals(Respire.HealthChecks.RespireNodeHealth? other) -> bool
+Respire.HealthChecks.RespireNodeHealth.ErrorType.get -> string?
+Respire.HealthChecks.RespireNodeHealth.ErrorType.init -> void
+Respire.HealthChecks.RespireNodeHealth.IsConnected.get -> bool
+Respire.HealthChecks.RespireNodeHealth.IsConnected.init -> void
+Respire.HealthChecks.RespireNodeHealth.Latency.get -> System.TimeSpan?
+Respire.HealthChecks.RespireNodeHealth.Latency.init -> void
+Respire.HealthChecks.RespireNodeHealth.RespireNodeHealth(Respire.RespireEndpoint Endpoint, bool IsConnected, System.TimeSpan? Latency, string? ErrorType) -> void
+override Respire.HealthChecks.RespireHealthCheckOptions.Equals(object? obj) -> bool
+override Respire.HealthChecks.RespireHealthCheckOptions.GetHashCode() -> int
+override Respire.HealthChecks.RespireHealthCheckOptions.ToString() -> string!
+override Respire.HealthChecks.RespireNodeHealth.Equals(object? obj) -> bool
+override Respire.HealthChecks.RespireNodeHealth.GetHashCode() -> int
+override Respire.HealthChecks.RespireNodeHealth.ToString() -> string!
+static Respire.HealthChecks.RespireHealthCheckOptions.operator !=(Respire.HealthChecks.RespireHealthCheckOptions? left, Respire.HealthChecks.RespireHealthCheckOptions? right) -> bool
+static Respire.HealthChecks.RespireHealthCheckOptions.operator ==(Respire.HealthChecks.RespireHealthCheckOptions? left, Respire.HealthChecks.RespireHealthCheckOptions? right) -> bool
+static Respire.HealthChecks.RespireHealthChecksBuilderExtensions.AddRespire(this Microsoft.Extensions.DependencyInjection.IHealthChecksBuilder! builder, Respire.HealthChecks.RespireHealthCheckOptions? options = null, string! name = "respire", Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus? failureStatus = null, System.Collections.Generic.IEnumerable<string!>? tags = null, System.Func<System.IServiceProvider!, Respire.IRespireClient!>? clientFactory = null) -> Microsoft.Extensions.DependencyInjection.IHealthChecksBuilder!
+static Respire.HealthChecks.RespireHealthChecksBuilderExtensions.AddRespireFailoverGroup(this Microsoft.Extensions.DependencyInjection.IHealthChecksBuilder! builder, Respire.HealthChecks.RespireHealthCheckOptions? options = null, string! name = "respire-failover", Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus? failureStatus = null, System.Collections.Generic.IEnumerable<string!>? tags = null, System.Func<System.IServiceProvider!, Respire.RespireFailoverGroup!>? groupFactory = null) -> Microsoft.Extensions.DependencyInjection.IHealthChecksBuilder!
+static Respire.HealthChecks.RespireNodeHealth.operator !=(Respire.HealthChecks.RespireNodeHealth? left, Respire.HealthChecks.RespireNodeHealth? right) -> bool
+static Respire.HealthChecks.RespireNodeHealth.operator ==(Respire.HealthChecks.RespireNodeHealth? left, Respire.HealthChecks.RespireNodeHealth? right) -> bool

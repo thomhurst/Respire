@@ -1,6 +1,12 @@
 # Directory.Build.props enables the full SDK Performance category for source projects
 # and fails builds on warnings. Keep these established rules as errors in editors too.
 [*.cs]
+dotnet_diagnostic.RS0016.severity = error
+dotnet_diagnostic.RS0017.severity = error
+dotnet_diagnostic.RS0048.severity = error
+# Existing optional-parameter overload design is separate from API baseline enforcement.
+dotnet_diagnostic.RS0026.severity = none
+dotnet_diagnostic.RS0027.severity = none
 dotnet_diagnostic.CA1805.severity = error
 dotnet_diagnostic.CA1822.severity = error
 dotnet_diagnostic.CA1823.severity = error

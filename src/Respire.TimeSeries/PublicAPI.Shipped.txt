@@ -1,0 +1,410 @@
+#nullable enable
+Respire.TimeSeries.RespireTimeSeriesAddOptions
+Respire.TimeSeries.RespireTimeSeriesAddOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesAddOptions!
+Respire.TimeSeries.RespireTimeSeriesAddOptions.ChunkSizeBytes.get -> int?
+Respire.TimeSeries.RespireTimeSeriesAddOptions.ChunkSizeBytes.init -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.DuplicatePolicy.get -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy?
+Respire.TimeSeries.RespireTimeSeriesAddOptions.DuplicatePolicy.init -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Encoding.get -> Respire.TimeSeries.RespireTimeSeriesEncoding?
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Encoding.init -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Equals(Respire.TimeSeries.RespireTimeSeriesAddOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Ignore.get -> (long MaxTimeDifference, double MaxValueDifference)?
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Ignore.init -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Labels.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+Respire.TimeSeries.RespireTimeSeriesAddOptions.Labels.init -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.OnDuplicate.get -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy?
+Respire.TimeSeries.RespireTimeSeriesAddOptions.OnDuplicate.init -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.RespireTimeSeriesAddOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesAddOptions.RetentionMilliseconds.get -> long?
+Respire.TimeSeries.RespireTimeSeriesAddOptions.RetentionMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Avg = 0 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Count = 5 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.CountAll = 14 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.CountNaN = 13 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.First = 6 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Last = 7 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Max = 3 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Min = 2 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Range = 4 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.StdP = 8 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.StdS = 9 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Sum = 1 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.Twa = 12 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.VarP = 10 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesAggregation.VarS = 11 -> Respire.TimeSeries.RespireTimeSeriesAggregation
+Respire.TimeSeries.RespireTimeSeriesBucketTimestamp
+Respire.TimeSeries.RespireTimeSeriesBucketTimestamp.End = 2 -> Respire.TimeSeries.RespireTimeSeriesBucketTimestamp
+Respire.TimeSeries.RespireTimeSeriesBucketTimestamp.Mid = 1 -> Respire.TimeSeries.RespireTimeSeriesBucketTimestamp
+Respire.TimeSeries.RespireTimeSeriesBucketTimestamp.Start = 0 -> Respire.TimeSeries.RespireTimeSeriesBucketTimestamp
+Respire.TimeSeries.RespireTimeSeriesClient
+Respire.TimeSeries.RespireTimeSeriesClient.AddAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesTimestamp timestamp, double value, Respire.TimeSeries.RespireTimeSeriesAddOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.TimeSeries.RespireTimeSeriesClient.AlterAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesOptions! options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.TimeSeries.RespireTimeSeriesClient.CreateAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.TimeSeries.RespireTimeSeriesClient.CreateRuleAsync(Respire.RespireKey source, Respire.RespireKey destination, Respire.TimeSeries.RespireTimeSeriesAggregation aggregation, System.TimeSpan bucketDuration, long? alignTimestamp = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.TimeSeries.RespireTimeSeriesClient.CreateRuleAsync(Respire.RespireKey source, Respire.RespireKey destination, Respire.TimeSeries.RespireTimeSeriesAggregation aggregation, long bucketDurationMilliseconds, long? alignTimestamp = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.TimeSeries.RespireTimeSeriesClient.DecrementByAsync(Respire.RespireKey key, double decrement, Respire.TimeSeries.RespireTimeSeriesIncrementOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.TimeSeries.RespireTimeSeriesClient.DeleteRangeAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesRange range, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.TimeSeries.RespireTimeSeriesClient.DeleteRuleAsync(Respire.RespireKey source, Respire.RespireKey destination, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.TimeSeries.RespireTimeSeriesClient.FollowAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesTimestamp timestamp, int batchSize = 256, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.TimeSeries.RespireTimeSeriesSample>!
+Respire.TimeSeries.RespireTimeSeriesClient.FollowAsync(Respire.TimeSeries.RespireTimeSeriesFollowOptions! options, Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesTimestamp timestamp, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.TimeSeries.RespireTimeSeriesSample>!
+Respire.TimeSeries.RespireTimeSeriesClient.GetAsync(Respire.RespireKey key, bool latestPartialBucket = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.TimeSeries.RespireTimeSeriesSample?>
+Respire.TimeSeries.RespireTimeSeriesClient.GetInfoAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.TimeSeries.RespireTimeSeriesInfo!>
+Respire.TimeSeries.RespireTimeSeriesClient.GetRawInfoAsync<T>(Respire.RespireKey key, System.Func<Respire.RespireResult, T>! read, bool debug = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T>
+Respire.TimeSeries.RespireTimeSeriesClient.IncrementByAsync(Respire.RespireKey key, double increment, Respire.TimeSeries.RespireTimeSeriesIncrementOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.TimeSeries.RespireTimeSeriesClient.MultiAddAsync(System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesWrite>! samples, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long[]!>
+Respire.TimeSeries.RespireTimeSeriesClient.MultiAddAsync(System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesWrite>! samples, int maxBatchSize, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long[]!>
+Respire.TimeSeries.RespireTimeSeriesClient.MultiGetAsync(System.Collections.Generic.IReadOnlyList<string!>! filters, bool withLabels = false, System.Collections.Generic.IReadOnlyList<string!>? selectedLabels = null, bool latestPartialBucket = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSeries!>!>
+Respire.TimeSeries.RespireTimeSeriesClient.MultiRangeAsync(Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesRangeOptions! options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSeries!>!>
+Respire.TimeSeries.RespireTimeSeriesClient.MultiReverseRangeAsync(Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesRangeOptions! options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSeries!>!>
+Respire.TimeSeries.RespireTimeSeriesClient.QueryIndexAsync(System.Collections.Generic.IReadOnlyList<string!>! filters, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireKey[]!>
+Respire.TimeSeries.RespireTimeSeriesClient.QueryLabelValuesAsync(string! label, System.Collections.Generic.IReadOnlyList<string!>? filters = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.TimeSeries.RespireTimeSeriesClient.QueryLabelsAsync(System.Collections.Generic.IReadOnlyList<string!>? filters = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.TimeSeries.RespireTimeSeriesClient.RangeAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesRangeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.TimeSeries.RespireTimeSeriesRangeResult!>
+Respire.TimeSeries.RespireTimeSeriesClient.RangeKeysAsync(System.Collections.Generic.IReadOnlyList<Respire.RespireKey>! keys, Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesRow!>!>
+Respire.TimeSeries.RespireTimeSeriesClient.ReadAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesTimestamp timestamp, Respire.TimeSeries.RespireTimeSeriesReadOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.TimeSeries.RespireTimeSeriesRangeResult!>
+Respire.TimeSeries.RespireTimeSeriesClient.RespireTimeSeriesClient(Respire.IRespireClient! client) -> void
+Respire.TimeSeries.RespireTimeSeriesClient.ReverseRangeAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesRangeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.TimeSeries.RespireTimeSeriesRangeResult!>
+Respire.TimeSeries.RespireTimeSeriesClient.ReverseRangeKeysAsync(System.Collections.Generic.IReadOnlyList<Respire.RespireKey>! keys, Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesRow!>!>
+Respire.TimeSeries.RespireTimeSeriesClientExtensions
+Respire.TimeSeries.RespireTimeSeriesClientExtensions.extension(Respire.IRespireClient!)
+Respire.TimeSeries.RespireTimeSeriesClientExtensions.extension(Respire.IRespireClient!).TimeSeries.get -> Respire.TimeSeries.RespireTimeSeriesClient!
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy.Block = 0 -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy.First = 1 -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy.Last = 2 -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy.Max = 4 -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy.Min = 3 -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy.Sum = 5 -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy
+Respire.TimeSeries.RespireTimeSeriesEncoding
+Respire.TimeSeries.RespireTimeSeriesEncoding.Compressed = 0 -> Respire.TimeSeries.RespireTimeSeriesEncoding
+Respire.TimeSeries.RespireTimeSeriesEncoding.Uncompressed = 1 -> Respire.TimeSeries.RespireTimeSeriesEncoding
+Respire.TimeSeries.RespireTimeSeriesFollowOptions
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesFollowOptions!
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.BatchSize.get -> int
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.BatchSize.init -> void
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.Equals(Respire.TimeSeries.RespireTimeSeriesFollowOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.MaximumConsecutiveEmptyReads.get -> int?
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.MaximumConsecutiveEmptyReads.init -> void
+Respire.TimeSeries.RespireTimeSeriesFollowOptions.RespireTimeSeriesFollowOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesIncrementOptions!
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.ChunkSizeBytes.get -> int?
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.ChunkSizeBytes.init -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.DuplicatePolicy.get -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy?
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.DuplicatePolicy.init -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Encoding.get -> Respire.TimeSeries.RespireTimeSeriesEncoding?
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Encoding.init -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Equals(Respire.TimeSeries.RespireTimeSeriesIncrementOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Ignore.get -> (long MaxTimeDifference, double MaxValueDifference)?
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Ignore.init -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Labels.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Labels.init -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.RespireTimeSeriesIncrementOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.RetentionMilliseconds.get -> long?
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.RetentionMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Timestamp.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp?
+Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Timestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo
+Respire.TimeSeries.RespireTimeSeriesInfo.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesInfo!
+Respire.TimeSeries.RespireTimeSeriesInfo.ChunkCount.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.ChunkCount.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.ChunkSizeBytes.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.ChunkSizeBytes.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.ChunkType.get -> string?
+Respire.TimeSeries.RespireTimeSeriesInfo.ChunkType.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.DuplicatePolicy.get -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy?
+Respire.TimeSeries.RespireTimeSeriesInfo.DuplicatePolicy.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.Equals(Respire.TimeSeries.RespireTimeSeriesInfo? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesInfo.FirstTimestamp.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.FirstTimestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.IgnoreMaxTimeDifference.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.IgnoreMaxTimeDifference.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.IgnoreMaxValueDifference.get -> double
+Respire.TimeSeries.RespireTimeSeriesInfo.IgnoreMaxValueDifference.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.Labels.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string?>!
+Respire.TimeSeries.RespireTimeSeriesInfo.Labels.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.LastTimestamp.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.LastTimestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.MemoryUsageBytes.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.MemoryUsageBytes.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.RespireTimeSeriesInfo() -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.RetentionMilliseconds.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.RetentionMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.Rules.get -> System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesRule>!
+Respire.TimeSeries.RespireTimeSeriesInfo.Rules.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.SourceKey.get -> Respire.RespireKey?
+Respire.TimeSeries.RespireTimeSeriesInfo.SourceKey.init -> void
+Respire.TimeSeries.RespireTimeSeriesInfo.TotalSamples.get -> long
+Respire.TimeSeries.RespireTimeSeriesInfo.TotalSamples.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions!
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Aggregators.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesAggregation>!>?
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Aggregators.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Align.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp?
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Align.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.BucketMilliseconds.get -> long?
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.BucketMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.BucketTimestamp.get -> Respire.TimeSeries.RespireTimeSeriesBucketTimestamp?
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.BucketTimestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Count.get -> int?
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Count.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Empty.get -> bool
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Empty.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Equals(Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.FilterByTimestamps.get -> System.Collections.Generic.IReadOnlyList<long>!
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.FilterByTimestamps.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.FilterByValue.get -> (double Minimum, double Maximum)?
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.FilterByValue.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Latest.get -> bool
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Latest.init -> void
+Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.RespireTimeSeriesKeyRangeOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesLabel
+Respire.TimeSeries.RespireTimeSeriesLabel.Deconstruct(out string! Name, out string! Value) -> void
+Respire.TimeSeries.RespireTimeSeriesLabel.Equals(Respire.TimeSeries.RespireTimeSeriesLabel other) -> bool
+Respire.TimeSeries.RespireTimeSeriesLabel.Name.get -> string!
+Respire.TimeSeries.RespireTimeSeriesLabel.Name.init -> void
+Respire.TimeSeries.RespireTimeSeriesLabel.RespireTimeSeriesLabel() -> void
+Respire.TimeSeries.RespireTimeSeriesLabel.RespireTimeSeriesLabel(string! Name, string! Value) -> void
+Respire.TimeSeries.RespireTimeSeriesLabel.Value.get -> string!
+Respire.TimeSeries.RespireTimeSeriesLabel.Value.init -> void
+Respire.TimeSeries.RespireTimeSeriesMultiAddCanceledException
+Respire.TimeSeries.RespireTimeSeriesMultiAddCanceledException.Progress.get -> Respire.TimeSeries.RespireTimeSeriesMultiAddProgress!
+Respire.TimeSeries.RespireTimeSeriesMultiAddException
+Respire.TimeSeries.RespireTimeSeriesMultiAddException.Errors.get -> System.Collections.Generic.IReadOnlyList<string?>!
+Respire.TimeSeries.RespireTimeSeriesMultiAddException.Timestamps.get -> System.Collections.Generic.IReadOnlyList<long?>!
+Respire.TimeSeries.RespireTimeSeriesMultiAddInterruptedException
+Respire.TimeSeries.RespireTimeSeriesMultiAddInterruptedException.Progress.get -> Respire.TimeSeries.RespireTimeSeriesMultiAddProgress!
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.CompletedChunkCount.get -> int
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.CompletedSampleCount.get -> int
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.Errors.get -> System.Collections.Generic.IReadOnlyList<string?>!
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.Timestamps.get -> System.Collections.Generic.IReadOnlyList<long?>!
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.TotalSampleCount.get -> int
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.UnattemptedSampleCount.get -> int
+Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.UncertainSampleCount.get -> int
+Respire.TimeSeries.RespireTimeSeriesOptions
+Respire.TimeSeries.RespireTimeSeriesOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesOptions!
+Respire.TimeSeries.RespireTimeSeriesOptions.ChunkSizeBytes.get -> int?
+Respire.TimeSeries.RespireTimeSeriesOptions.ChunkSizeBytes.init -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.ClearLabels.get -> bool
+Respire.TimeSeries.RespireTimeSeriesOptions.ClearLabels.init -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.DuplicatePolicy.get -> Respire.TimeSeries.RespireTimeSeriesDuplicatePolicy?
+Respire.TimeSeries.RespireTimeSeriesOptions.DuplicatePolicy.init -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.Encoding.get -> Respire.TimeSeries.RespireTimeSeriesEncoding?
+Respire.TimeSeries.RespireTimeSeriesOptions.Encoding.init -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.Equals(Respire.TimeSeries.RespireTimeSeriesOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesOptions.Ignore.get -> (long MaxTimeDifference, double MaxValueDifference)?
+Respire.TimeSeries.RespireTimeSeriesOptions.Ignore.init -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.Labels.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+Respire.TimeSeries.RespireTimeSeriesOptions.Labels.init -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.RespireTimeSeriesOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesOptions.RetentionMilliseconds.get -> long?
+Respire.TimeSeries.RespireTimeSeriesOptions.RetentionMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesRange
+Respire.TimeSeries.RespireTimeSeriesRange.Deconstruct(out Respire.TimeSeries.RespireTimeSeriesTimestamp From, out Respire.TimeSeries.RespireTimeSeriesTimestamp To) -> void
+Respire.TimeSeries.RespireTimeSeriesRange.Equals(Respire.TimeSeries.RespireTimeSeriesRange other) -> bool
+Respire.TimeSeries.RespireTimeSeriesRange.From.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+Respire.TimeSeries.RespireTimeSeriesRange.From.init -> void
+Respire.TimeSeries.RespireTimeSeriesRange.RespireTimeSeriesRange() -> void
+Respire.TimeSeries.RespireTimeSeriesRange.RespireTimeSeriesRange(Respire.TimeSeries.RespireTimeSeriesTimestamp From, Respire.TimeSeries.RespireTimeSeriesTimestamp To) -> void
+Respire.TimeSeries.RespireTimeSeriesRange.To.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+Respire.TimeSeries.RespireTimeSeriesRange.To.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesRangeOptions!
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Aggregation.get -> (Respire.TimeSeries.RespireTimeSeriesAggregation Aggregation, long BucketMilliseconds)?
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Aggregation.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Align.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp?
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Align.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.BucketTimestamp.get -> Respire.TimeSeries.RespireTimeSeriesBucketTimestamp?
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.BucketTimestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Count.get -> int?
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Count.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Empty.get -> bool
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Empty.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Equals(Respire.TimeSeries.RespireTimeSeriesRangeOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.FilterByTimestamps.get -> System.Collections.Generic.IReadOnlyList<long>!
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.FilterByTimestamps.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.FilterByValue.get -> (double Minimum, double Maximum)?
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.FilterByValue.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Filters.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Filters.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.GroupBy.get -> (string! Label, string! Reducer)?
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.GroupBy.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Latest.get -> bool
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.Latest.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.RespireTimeSeriesRangeOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.SelectedLabels.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.SelectedLabels.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.WithLabels.get -> bool
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.WithLabels.init -> void
+Respire.TimeSeries.RespireTimeSeriesRangeResult
+Respire.TimeSeries.RespireTimeSeriesRangeResult.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesRangeResult!
+Respire.TimeSeries.RespireTimeSeriesRangeResult.Deconstruct(out System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSample>! Samples) -> void
+Respire.TimeSeries.RespireTimeSeriesRangeResult.Equals(Respire.TimeSeries.RespireTimeSeriesRangeResult? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesRangeResult.RespireTimeSeriesRangeResult(System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSample>! Samples) -> void
+Respire.TimeSeries.RespireTimeSeriesRangeResult.Samples.get -> System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSample>!
+Respire.TimeSeries.RespireTimeSeriesRangeResult.Samples.init -> void
+Respire.TimeSeries.RespireTimeSeriesReadOptions
+Respire.TimeSeries.RespireTimeSeriesReadOptions.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesReadOptions!
+Respire.TimeSeries.RespireTimeSeriesReadOptions.BlockMilliseconds.get -> long?
+Respire.TimeSeries.RespireTimeSeriesReadOptions.BlockMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesReadOptions.Equals(Respire.TimeSeries.RespireTimeSeriesReadOptions? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesReadOptions.MaximumCount.get -> int?
+Respire.TimeSeries.RespireTimeSeriesReadOptions.MaximumCount.init -> void
+Respire.TimeSeries.RespireTimeSeriesReadOptions.MinimumCount.get -> int
+Respire.TimeSeries.RespireTimeSeriesReadOptions.MinimumCount.init -> void
+Respire.TimeSeries.RespireTimeSeriesReadOptions.RespireTimeSeriesReadOptions() -> void
+Respire.TimeSeries.RespireTimeSeriesRow
+Respire.TimeSeries.RespireTimeSeriesRow.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesRow!
+Respire.TimeSeries.RespireTimeSeriesRow.Deconstruct(out long Timestamp, out System.Collections.Generic.IReadOnlyList<double>! Values) -> void
+Respire.TimeSeries.RespireTimeSeriesRow.Equals(Respire.TimeSeries.RespireTimeSeriesRow? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesRow.RespireTimeSeriesRow(long Timestamp, System.Collections.Generic.IReadOnlyList<double>! Values) -> void
+Respire.TimeSeries.RespireTimeSeriesRow.Timestamp.get -> long
+Respire.TimeSeries.RespireTimeSeriesRow.Timestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesRow.Values.get -> System.Collections.Generic.IReadOnlyList<double>!
+Respire.TimeSeries.RespireTimeSeriesRow.Values.init -> void
+Respire.TimeSeries.RespireTimeSeriesRule
+Respire.TimeSeries.RespireTimeSeriesRule.Aggregation.get -> string!
+Respire.TimeSeries.RespireTimeSeriesRule.Aggregation.init -> void
+Respire.TimeSeries.RespireTimeSeriesRule.AlignTimestamp.get -> long
+Respire.TimeSeries.RespireTimeSeriesRule.AlignTimestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesRule.BucketDurationMilliseconds.get -> long
+Respire.TimeSeries.RespireTimeSeriesRule.BucketDurationMilliseconds.init -> void
+Respire.TimeSeries.RespireTimeSeriesRule.Deconstruct(out Respire.RespireKey DestinationKey, out long BucketDurationMilliseconds, out string! Aggregation, out long AlignTimestamp) -> void
+Respire.TimeSeries.RespireTimeSeriesRule.DestinationKey.get -> Respire.RespireKey
+Respire.TimeSeries.RespireTimeSeriesRule.DestinationKey.init -> void
+Respire.TimeSeries.RespireTimeSeriesRule.Equals(Respire.TimeSeries.RespireTimeSeriesRule other) -> bool
+Respire.TimeSeries.RespireTimeSeriesRule.RespireTimeSeriesRule() -> void
+Respire.TimeSeries.RespireTimeSeriesRule.RespireTimeSeriesRule(Respire.RespireKey DestinationKey, long BucketDurationMilliseconds, string! Aggregation, long AlignTimestamp) -> void
+Respire.TimeSeries.RespireTimeSeriesSample
+Respire.TimeSeries.RespireTimeSeriesSample.Deconstruct(out long Timestamp, out double Value) -> void
+Respire.TimeSeries.RespireTimeSeriesSample.Equals(Respire.TimeSeries.RespireTimeSeriesSample other) -> bool
+Respire.TimeSeries.RespireTimeSeriesSample.RespireTimeSeriesSample() -> void
+Respire.TimeSeries.RespireTimeSeriesSample.RespireTimeSeriesSample(long Timestamp, double Value) -> void
+Respire.TimeSeries.RespireTimeSeriesSample.Timestamp.get -> long
+Respire.TimeSeries.RespireTimeSeriesSample.Timestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesSample.Value.get -> double
+Respire.TimeSeries.RespireTimeSeriesSample.Value.init -> void
+Respire.TimeSeries.RespireTimeSeriesSeries
+Respire.TimeSeries.RespireTimeSeriesSeries.<Clone>$() -> Respire.TimeSeries.RespireTimeSeriesSeries!
+Respire.TimeSeries.RespireTimeSeriesSeries.Deconstruct(out Respire.RespireKey KeyValue, out System.Collections.Generic.IReadOnlyDictionary<string!, string?>! Labels, out System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSample>! Samples) -> void
+Respire.TimeSeries.RespireTimeSeriesSeries.Equals(Respire.TimeSeries.RespireTimeSeriesSeries? other) -> bool
+Respire.TimeSeries.RespireTimeSeriesSeries.Key.get -> string!
+Respire.TimeSeries.RespireTimeSeriesSeries.KeyValue.get -> Respire.RespireKey
+Respire.TimeSeries.RespireTimeSeriesSeries.KeyValue.init -> void
+Respire.TimeSeries.RespireTimeSeriesSeries.Labels.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string?>!
+Respire.TimeSeries.RespireTimeSeriesSeries.Labels.init -> void
+Respire.TimeSeries.RespireTimeSeriesSeries.RespireTimeSeriesSeries(Respire.RespireKey KeyValue, System.Collections.Generic.IReadOnlyDictionary<string!, string?>! Labels, System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSample>! Samples) -> void
+Respire.TimeSeries.RespireTimeSeriesSeries.Samples.get -> System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesSample>!
+Respire.TimeSeries.RespireTimeSeriesSeries.Samples.init -> void
+Respire.TimeSeries.RespireTimeSeriesTimestamp
+Respire.TimeSeries.RespireTimeSeriesTimestamp.Deconstruct(out string! Value) -> void
+Respire.TimeSeries.RespireTimeSeriesTimestamp.Equals(Respire.TimeSeries.RespireTimeSeriesTimestamp other) -> bool
+Respire.TimeSeries.RespireTimeSeriesTimestamp.RespireTimeSeriesTimestamp() -> void
+Respire.TimeSeries.RespireTimeSeriesTimestamp.RespireTimeSeriesTimestamp(string! Value) -> void
+Respire.TimeSeries.RespireTimeSeriesTimestamp.Value.get -> string!
+Respire.TimeSeries.RespireTimeSeriesTimestamp.Value.init -> void
+Respire.TimeSeries.RespireTimeSeriesWrite
+Respire.TimeSeries.RespireTimeSeriesWrite.Deconstruct(out Respire.RespireKey Key, out Respire.TimeSeries.RespireTimeSeriesTimestamp Timestamp, out double Value) -> void
+Respire.TimeSeries.RespireTimeSeriesWrite.Equals(Respire.TimeSeries.RespireTimeSeriesWrite other) -> bool
+Respire.TimeSeries.RespireTimeSeriesWrite.Key.get -> Respire.RespireKey
+Respire.TimeSeries.RespireTimeSeriesWrite.Key.init -> void
+Respire.TimeSeries.RespireTimeSeriesWrite.RespireTimeSeriesWrite() -> void
+Respire.TimeSeries.RespireTimeSeriesWrite.RespireTimeSeriesWrite(Respire.RespireKey Key, Respire.TimeSeries.RespireTimeSeriesTimestamp Timestamp, double Value) -> void
+Respire.TimeSeries.RespireTimeSeriesWrite.Timestamp.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+Respire.TimeSeries.RespireTimeSeriesWrite.Timestamp.init -> void
+Respire.TimeSeries.RespireTimeSeriesWrite.Value.get -> double
+Respire.TimeSeries.RespireTimeSeriesWrite.Value.init -> void
+override Respire.TimeSeries.RespireTimeSeriesAddOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesAddOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesAddOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesFollowOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesFollowOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesFollowOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesIncrementOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesIncrementOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesIncrementOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesInfo.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesInfo.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesInfo.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesLabel.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesRange.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesRangeOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesRangeOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesRangeOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesRangeResult.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesRangeResult.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesRangeResult.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesReadOptions.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesReadOptions.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesReadOptions.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesRow.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesRow.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesRow.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesRule.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesSample.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesSeries.Equals(object? obj) -> bool
+override Respire.TimeSeries.RespireTimeSeriesSeries.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesSeries.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesTimestamp.GetHashCode() -> int
+override Respire.TimeSeries.RespireTimeSeriesTimestamp.ToString() -> string!
+override Respire.TimeSeries.RespireTimeSeriesWrite.GetHashCode() -> int
+static Respire.TimeSeries.RespireTimeSeriesAddOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesAddOptions? left, Respire.TimeSeries.RespireTimeSeriesAddOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesAddOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesAddOptions? left, Respire.TimeSeries.RespireTimeSeriesAddOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesClientExtensions.get_TimeSeries(Respire.IRespireClient! client) -> Respire.TimeSeries.RespireTimeSeriesClient!
+static Respire.TimeSeries.RespireTimeSeriesFollowOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesFollowOptions? left, Respire.TimeSeries.RespireTimeSeriesFollowOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesFollowOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesFollowOptions? left, Respire.TimeSeries.RespireTimeSeriesFollowOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesIncrementOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesIncrementOptions? left, Respire.TimeSeries.RespireTimeSeriesIncrementOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesIncrementOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesIncrementOptions? left, Respire.TimeSeries.RespireTimeSeriesIncrementOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesInfo.operator !=(Respire.TimeSeries.RespireTimeSeriesInfo? left, Respire.TimeSeries.RespireTimeSeriesInfo? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesInfo.operator ==(Respire.TimeSeries.RespireTimeSeriesInfo? left, Respire.TimeSeries.RespireTimeSeriesInfo? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? left, Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? left, Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesLabel.operator !=(Respire.TimeSeries.RespireTimeSeriesLabel left, Respire.TimeSeries.RespireTimeSeriesLabel right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesLabel.operator ==(Respire.TimeSeries.RespireTimeSeriesLabel left, Respire.TimeSeries.RespireTimeSeriesLabel right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesMultiAddProgress.FromException(System.Exception! exception) -> Respire.TimeSeries.RespireTimeSeriesMultiAddProgress?
+static Respire.TimeSeries.RespireTimeSeriesOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesOptions? left, Respire.TimeSeries.RespireTimeSeriesOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesOptions? left, Respire.TimeSeries.RespireTimeSeriesOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRange.operator !=(Respire.TimeSeries.RespireTimeSeriesRange left, Respire.TimeSeries.RespireTimeSeriesRange right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRange.operator ==(Respire.TimeSeries.RespireTimeSeriesRange left, Respire.TimeSeries.RespireTimeSeriesRange right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRangeOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesRangeOptions? left, Respire.TimeSeries.RespireTimeSeriesRangeOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRangeOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesRangeOptions? left, Respire.TimeSeries.RespireTimeSeriesRangeOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRangeResult.operator !=(Respire.TimeSeries.RespireTimeSeriesRangeResult? left, Respire.TimeSeries.RespireTimeSeriesRangeResult? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRangeResult.operator ==(Respire.TimeSeries.RespireTimeSeriesRangeResult? left, Respire.TimeSeries.RespireTimeSeriesRangeResult? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesReadOptions.operator !=(Respire.TimeSeries.RespireTimeSeriesReadOptions? left, Respire.TimeSeries.RespireTimeSeriesReadOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesReadOptions.operator ==(Respire.TimeSeries.RespireTimeSeriesReadOptions? left, Respire.TimeSeries.RespireTimeSeriesReadOptions? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRow.operator !=(Respire.TimeSeries.RespireTimeSeriesRow? left, Respire.TimeSeries.RespireTimeSeriesRow? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRow.operator ==(Respire.TimeSeries.RespireTimeSeriesRow? left, Respire.TimeSeries.RespireTimeSeriesRow? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRule.operator !=(Respire.TimeSeries.RespireTimeSeriesRule left, Respire.TimeSeries.RespireTimeSeriesRule right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesRule.operator ==(Respire.TimeSeries.RespireTimeSeriesRule left, Respire.TimeSeries.RespireTimeSeriesRule right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesSample.operator !=(Respire.TimeSeries.RespireTimeSeriesSample left, Respire.TimeSeries.RespireTimeSeriesSample right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesSample.operator ==(Respire.TimeSeries.RespireTimeSeriesSample left, Respire.TimeSeries.RespireTimeSeriesSample right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesSeries.operator !=(Respire.TimeSeries.RespireTimeSeriesSeries? left, Respire.TimeSeries.RespireTimeSeriesSeries? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesSeries.operator ==(Respire.TimeSeries.RespireTimeSeriesSeries? left, Respire.TimeSeries.RespireTimeSeriesSeries? right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.Maximum.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.Minimum.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.New.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.Now.get -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.implicit operator Respire.TimeSeries.RespireTimeSeriesTimestamp(long value) -> Respire.TimeSeries.RespireTimeSeriesTimestamp
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.operator !=(Respire.TimeSeries.RespireTimeSeriesTimestamp left, Respire.TimeSeries.RespireTimeSeriesTimestamp right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesTimestamp.operator ==(Respire.TimeSeries.RespireTimeSeriesTimestamp left, Respire.TimeSeries.RespireTimeSeriesTimestamp right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesWrite.operator !=(Respire.TimeSeries.RespireTimeSeriesWrite left, Respire.TimeSeries.RespireTimeSeriesWrite right) -> bool
+static Respire.TimeSeries.RespireTimeSeriesWrite.operator ==(Respire.TimeSeries.RespireTimeSeriesWrite left, Respire.TimeSeries.RespireTimeSeriesWrite right) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesLabel.Equals(object obj) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesLabel.ToString() -> string
+~override Respire.TimeSeries.RespireTimeSeriesRange.Equals(object obj) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesRange.ToString() -> string
+~override Respire.TimeSeries.RespireTimeSeriesRule.Equals(object obj) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesRule.ToString() -> string
+~override Respire.TimeSeries.RespireTimeSeriesSample.Equals(object obj) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesSample.ToString() -> string
+~override Respire.TimeSeries.RespireTimeSeriesTimestamp.Equals(object obj) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesWrite.Equals(object obj) -> bool
+~override Respire.TimeSeries.RespireTimeSeriesWrite.ToString() -> string
