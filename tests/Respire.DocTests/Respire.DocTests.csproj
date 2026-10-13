@@ -43,11 +43,11 @@
     <PackageReference Include="Respire.AI" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Probabilistic" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.13" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
   </ItemGroup>
 
