@@ -2,7 +2,7 @@
 title: Generated custom commands
 ---
 
-Declare command interfaces for custom Redis modules without reflection or runtime code generation. The `Respire` NuGet package includes the generator. It creates a sealed class named `<InterfaceName>Implementation` in the interface's namespace; construct it with an `IRespireClient`.
+Declare an interface for custom Redis module commands, and a source generator implements it without reflection or runtime code generation. The generator ships in the `Respire` NuGet package. It creates a sealed `<InterfaceName>Implementation` class in the interface's namespace; construct it with an `IRespireClient`.
 
 <!-- doc-test-ignore: Generator interfaces must be top-level; the documentation harness nests declarations. The packed-package Native AOT smoke project validates the same construction and command shapes. -->
 ```csharp
@@ -25,54 +25,90 @@ public interface IJsonCommands
 }
 ```
 
-Given a connected `IRespireClient client`, construct `new IJsonCommandsImplementation(client)` and call `GetAsync("document")`. The server must provide these module commands. The generator does not install modules or validate server versions.
+Then call `new IJsonCommandsImplementation(client).GetAsync("document")`. The server must provide the module commands; the generator does not install modules or check server versions.
 
 ## Declarations and arguments
 
-Interfaces must be public or internal, top-level, non-generic, and have no base interfaces. Partial interfaces and overloaded methods are supported. Members must be public abstract instance methods with `[RespireCommand]`. Unsupported declarations produce the `RESP003` compilation error, whose message names the violated rule and whose help link points to this guide. The generated class name must be available in the namespace.
+Interface rules:
 
-A command attribute normally contains one printable ASCII token, such as `JSON.GET`; it is normalized to uppercase and encoded once in a static descriptor. Subcommands with a dedicated `RespireCommands` descriptor field, such as `FT.CURSOR READ`, can also appear in the attribute and reuse that descriptor. A catalog entry alone is insufficient: `FT.CURSOR GC` has no dedicated descriptor and produces `RESP003` when used as the attribute name. Multi-token names must use single spaces between tokens, and their cache mutation policy cannot be overridden. Pass other subcommands and options as ordinary method arguments. Parameters are sent in declaration order. A single `CancellationToken` and a single `RespireCommandFlags` parameter are recognized as execution controls and are not sent to Redis.
+- Public or internal, top-level, non-generic, with no base interfaces. Partial interfaces and overloads are supported.
+- Members are public abstract instance methods marked `[RespireCommand]`.
+- The generated class name must be free in the namespace.
+- Violations produce compile error `RESP003`, which names the rule and links to this guide.
 
-Supported scalar arguments are `RespireKey`, `RespireValue`, strings, byte arrays, `Memory<byte>`, `ReadOnlyMemory<byte>`, `ArraySegment<byte>`, `bool`, `byte`, `sbyte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`, `decimal`, `char`, `Guid`, `DateTimeOffset`, and `TimeSpan`. Each uses the existing `RespireValue` conversion. One-dimensional arrays of supported scalars expand into separate arguments; `byte[]` is always one binary argument. `params` arrays and optional constant/default parameters are supported. Empty expanded arrays contribute no arguments; null expanded arrays throw. Optional arguments are always sent with their chosen value, never silently omitted. Use an explicit `RespireValue[]` for variable option lists.
+Command names:
+
+- Normally one printable ASCII token, such as `JSON.GET`. It is uppercased and encoded once.
+- A multi-token name works only if it has a dedicated `RespireCommands` descriptor field, such as `FT.CURSOR READ`. A catalog entry alone is not enough: `FT.CURSOR GC` has no dedicated field and produces `RESP003`.
+- Multi-token names use single spaces, and their cache mutation policy cannot be overridden.
+- Pass other subcommands and options as method arguments.
+
+Parameters are sent in declaration order. One `CancellationToken` and one `RespireCommandFlags` parameter are execution controls and are not sent.
+
+Supported scalar arguments: `RespireKey`, `RespireValue`, strings, byte arrays, `Memory<byte>`, `ReadOnlyMemory<byte>`, `ArraySegment<byte>`, `bool`, `byte`, `sbyte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`, `decimal`, `char`, `Guid`, `DateTimeOffset`, and `TimeSpan`. Each uses the `RespireValue` conversion.
+
+- One-dimensional arrays of these expand into separate arguments; `byte[]` is always one binary argument.
+- `params` arrays and optional parameters with defaults are supported. Optional arguments are always sent, never omitted.
+- Empty arrays add no arguments; null arrays throw.
+- Use an explicit `RespireValue[]` for variable option lists.
 
 ## Results and ownership
 
-Methods return `Task` or `ValueTask`, optionally with a result type:
+Methods return `Task` or `ValueTask`, optionally with a result:
 
-- `string`, `byte[]`, `bool`, `int`, `long`, or `double`, their nullable forms, and one-dimensional arrays of these scalar types.
-- `RespireResult` for arbitrary module responses, including RESP2/RESP3 shape differences and nested aggregates.
+- `string`, `byte[]`, `bool`, `int`, `long`, or `double`, their nullable forms, and one-dimensional arrays of them.
+- `RespireResult` for arbitrary replies, including RESP2/RESP3 differences and nested aggregates.
 
-Nullable results preserve RESP nulls. A null reply for a non-nullable result throws `InvalidOperationException`. Reference types declared in a nullable-oblivious context (`#nullable disable`) are treated as nullable, so `Task<string>` there returns `null` for a RESP null. `int` results use a checked conversion. Booleans accept RESP booleans or integer flags, and doubles accept RESP doubles or invariant-culture textual numbers. Aggregate scalar conversion follows the server's element order; map keys and values are flattened as exposed by `RespireResult`. It does not infer a module-specific object model.
+Conversion rules:
 
-Typed methods copy strings/bytes as needed and dispose the pooled root reply, including when conversion fails. Methods without a result still await server success and dispose the reply. Methods returning `RespireResult` transfer its lease to the caller: use `using var result = await commands.DebugAsync("MEMORY", "document")`, and do not retain nested views beyond that lease. User-defined DTOs and arbitrary serializers are not inferred; obtain raw bytes/string and explicitly apply source-generated serialization metadata where needed.
+- Nullable results keep RESP nulls. A null reply for a non-nullable result throws `InvalidOperationException`.
+- Under `#nullable disable`, reference types count as nullable, so `Task<string>` returns `null` for a RESP null.
+- `int` uses a checked conversion. Booleans accept RESP booleans or integer flags. Doubles accept RESP doubles or invariant-culture text.
+- Aggregates convert in server element order, with maps flattened as `RespireResult` exposes them. No module-specific object model is inferred.
+
+Typed methods copy what they need and dispose the pooled reply, even when conversion fails. Methods without a result still await server success.
+
+A returned `RespireResult` is a lease you own. Use `using var result = await commands.DebugAsync("MEMORY", "document")`, and do not keep nested views past the lease. DTOs and serializers are not inferred: read raw bytes or strings, then apply source-generated serialization yourself.
 
 ## Execution policies
 
-Generated methods use `IRespireClient.ExecuteAsync` with a static descriptor. This preserves command safety, cancellation, routing, redirection flags, and client-side cache invalidation. An already-canceled token is rejected before argument encoding or sending; cancellation after admission does not guarantee the server did not execute the command. Connection-affine operations such as `AUTH` remain rejected. Single-token generated commands have retry category `Never`, so `RespireOptions.RetryPolicy` does not resend them.
+Generated methods call `IRespireClient.ExecuteAsync` with a static descriptor, so command safety checks, cancellation, routing, redirect flags, and client-side cache invalidation all apply.
 
-Use `Mutation = RespireCacheMutation.ReadOnly` only when a command does not change keyspace values, as in the JSON reads above. This declares its cache mutation effect; it does not make an unknown command cacheable, register its key layout, or grant replica-read eligibility. Without explicit metadata, unknown commands conservatively invalidate the full local cache. For writes, set `Mutation = RespireCacheMutation.SingleKey`, `Mutation = RespireCacheMutation.MultiKey`, or `Mutation = RespireCacheMutation.Mutation` as appropriate for the supported key-layout contract; the generator does not infer affected keys from parameter names or types.
+- An already-canceled token is rejected before encoding or sending. Cancellation after admission does not prove the server skipped the command.
+- Connection-affine commands such as `AUTH` stay rejected.
+- Single-token generated commands have retry category `Never`, so `RespireOptions.RetryPolicy` never resends them.
+- All failures (arguments, cancellation, safety) surface through the returned task, for every return shape including non-async `ValueTask<RespireResult>`. The call never throws before returning.
 
-Argument, cancellation, and safety failures are reported through the returned task for every return shape, including the non-async `ValueTask<RespireResult>` shape; a call does not throw before returning its task.
+### Cache mutation
 
-Unknown module commands are treated as non-blocking and run on the shared multiplexed connections. Do not declare module commands that wait server-side for data (for example, blocking pops); they would stall every command queued behind them on that connection.
+Set `Mutation = RespireCacheMutation.ReadOnly` only when a command does not change keyspace values, as in the JSON reads above. It declares the cache effect only: it does not make the command cacheable, register its key layout, or allow replica reads. Without it, unknown commands invalidate the whole local cache. For writes, choose `SingleKey`, `MultiKey`, or `Mutation` to match the key-layout contract. The generator does not infer affected keys from parameters.
 
-Key-prefixed views reject generated commands whose layouts are not registered as prefixable, because arbitrary module key layouts are unknown. Commands with prefixable layouts, such as `TS.GET` and `BF.ADD`, have their keys prefixed. TimeSeries label-filter commands `TS.MGET`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.QUERYINDEX`, and `TS.QUERYLABELS` have registered layouts but no explicit keys to prefix, so key-prefixed views reject them. A `RespireKey` parameter alone does not declare routing metadata. Known cluster layouts retain slot validation; unknown layouts use existing raw routing heuristics and server validation. Use unprefixed clients and explicitly formed keys for unknown layouts, and verify your module's routing requirements.
+:::warning
+Unknown module commands run on the shared multiplexed connections. Do not declare commands that wait server-side, such as blocking pops: they stall every command queued behind them.
+:::
+
+### Key prefixes and routing
+
+- Prefixed views reject generated commands unless their layout is registered as prefixable. Prefixable commands, such as `TS.GET` and `BF.ADD`, get their keys prefixed.
+- `TS.MGET`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.QUERYINDEX`, and `TS.QUERYLABELS` have no explicit keys, so prefixed views reject them.
+- A `RespireKey` parameter does not declare routing. Known Cluster layouts keep slot validation; unknown layouts use raw routing heuristics and server validation.
+- For unknown layouts, use an unprefixed client with fully formed keys, and check your module's routing needs.
 
 ## Built-in Redis feature packages
 
-The same generator backs the typed Redis feature packages. Use their APIs when you want feature-specific options and reply models:
+The same generator backs the typed feature packages, which add feature-specific options and reply models:
 
-- [Respire.Json](json.md): typed RedisJSON commands and source-generated JSON serialization support.
+- [Respire.Json](json.md): RedisJSON commands and source-generated JSON serialization.
 - [Respire.Search](search.md): query builders, aggregation and cursors, vector queries, and hybrid search.
 - [Respire.TimeSeries](timeseries.md): samples, ranges, aggregation, and retention rules.
-- [Respire.Probabilistic](probabilistic.md): Bloom, Cuckoo, Count-Min, Top-K, and t-digest commands.
+- [Respire.Probabilistic](probabilistic.md): Bloom, Cuckoo, Count-Min, Top-K, and t-digest.
 
-Each package has real Redis integration coverage for RESP2 and RESP3. The server must provide the relevant commands; hybrid search requires Redis 8.4 or a compatible server.
+Each supports RESP2 and RESP3. The server must provide the commands; hybrid search requires Redis 8.4 or a compatible server.
 
-To run a module command without declaring an interface, keep a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor and pass it to `ExecuteAsync`. Its `Sources` is `None`, because it does not come from an official command reference. See the [complete command catalog](raw-commands.md#dynamic-commands).
+To run a module command without an interface, pass a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor to `ExecuteAsync`. Its `Sources` is `None`, since no official reference lists it. See the [complete command catalog](raw-commands.md#dynamic-commands).
 
 ## Native AOT
 
-Generated code calls concrete APIs and does not use reflection, `RespireResult.As<T>()`, or runtime code generation. CI publishes a consumer of the packed packages (`tests/Respire.GeneratedCommands.Smoke`) with Native AOT warnings treated as errors and runs it against Redis 8.10 over RESP2 and RESP3.
+Generated code calls concrete APIs and uses no reflection, `RespireResult.As<T>()`, or runtime code generation, so it is Native AOT compatible. A packed-package consumer is published with AOT warnings as errors and run against Redis 8.10.
 
-NuGet consumers receive the generator automatically. A project that references the Respire source projects directly must also reference `Respire.Analyzers` with `OutputItemType="Analyzer"` and `ReferenceOutputAssembly="false"`.
+NuGet consumers get the generator automatically. A project referencing the Respire source projects directly must also reference `Respire.Analyzers` with `OutputItemType="Analyzer"` and `ReferenceOutputAssembly="false"`.

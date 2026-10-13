@@ -5,7 +5,7 @@ description: Run Redis Cluster slot and topology administration against one expl
 
 # Cluster administration
 
-`redis.Server.OnNode(endpoint)` returns a `RespireServerNode` handle for one physical node. Use it for slot assignment, slot migration state, failover, and other Cluster topology commands that must reach a specific node. For read-only topology inspection through ordinary routing, see [Cluster inspection](cluster-inspection.md). For node lifecycle commands, shutdown, and atomic slot migration on the same handle, see [Node lifecycle and administration](server-node-lifecycle.md).
+`redis.Server.OnNode(endpoint)` returns a `RespireServerNode` handle for one physical node. Use it for slot assignment, slot migration state, failover, and other topology commands that must reach a specific node. For read-only inspection, see [Cluster inspection](cluster-inspection.md). For lifecycle commands, shutdown, and atomic slot migration on the same handle, see [Node lifecycle and administration](server-node-lifecycle.md).
 
 ```csharp
 var node = redis.Server.OnNode(new RespireEndpoint("127.0.0.1", 7000));
@@ -25,9 +25,10 @@ await node.ClusterSetSlotAsync(10, RespireClusterSlotState.Stable, cancellationT
 
 ## How the handle connects
 
-`OnNode` does not connect or discover topology. Each operation opens a short-lived connection to that exact endpoint. It inherits the client's authentication, TLS, protocol, database, and timeouts. Cluster nodes require database zero unless the server supports another database.
-
-The handle never follows `MOVED` or `ASK`, never substitutes another node, and never replays a failed request. Key arguments and returned keys are physical server keys: a client view's key prefix is not applied.
+- `OnNode` does not connect or discover topology. Each operation opens a short-lived connection to that exact endpoint.
+- It inherits the client's authentication, TLS, protocol, database, and timeouts. Cluster nodes need database zero unless the server supports others.
+- It never follows `MOVED` or `ASK`, substitutes another node, or replays a failed request.
+- Keys in arguments and results are physical server keys; the view's key prefix is not applied.
 
 ## Commands
 
@@ -52,27 +53,23 @@ The handle never follows `MOVED` or `ASK`, never substitutes another node, and n
 | `ClusterResetAsync` | CLUSTER RESET | Mutation. |
 | `ClusterSaveConfigAsync` | CLUSTER SAVECONFIG | Mutation. |
 
-Other commands require Redis 3.0 or later. The Cluster inspection methods on `redis.Server` keep their own node selection and fan-out behavior.
-
-The same handle also exposes Redis 8.4 `CLUSTER MIGRATION` and Valkey 9 slot migration and `FLUSHSLOT`. See [Node lifecycle and administration](server-node-lifecycle.md).
+Other commands require Redis 3.0 or later. The same handle also exposes Redis 8.4 `CLUSTER MIGRATION` and Valkey 9 slot migration and `FLUSHSLOT`; see [Node lifecycle and administration](server-node-lifecycle.md).
 
 ## Permissions and validation
 
 - Mutations require `AllowAdmin`. Reads do not. Server ACLs still apply.
-- Mutations fence the shared client-side cache before and after the attempt, including when the attempt fails.
+- Mutations invalidate the client-side cache before and after the attempt, even if it fails.
 - Respire rejects invalid slots, reversed ranges, negative counts or epochs, undefined enum values, and invalid TCP endpoints before connecting.
-- Node IDs must be nonblank and contain no whitespace. Other formats are accepted, so future ID formats work.
+- Node IDs must be nonblank with no whitespace; any other format is accepted.
 - Slot arguments keep their order and duplicates. The server decides whether an assignment is legal.
 - `ClusterSetSlotAsync` with `RespireClusterSlotState.Stable` rejects a node ID. `Importing`, `Migrating`, and `Node` require one.
 - `ClusterGetKeysInSlotAsync` accepts a zero count. It returns owned binary physical keys regardless of the client's key prefix.
 
 ## What a mutation does and does not do
 
-A successful mutation means this node accepted the command. It does not mean the topology converged, a failover completed, key data migrated, or Respire's routing table changed. Coordinate the other nodes and verify convergence yourself. Ordinary Cluster routing discovers changes through its usual refresh.
+Success means this node accepted the command. It does not mean the topology converged, a failover completed, data migrated, or Respire's routing changed (routing picks changes up on its usual refresh). Coordinate other nodes and verify convergence yourself. These methods do not orchestrate safe resharding or failover.
 
-Cancellation or a lost reply does not prove that a mutation did not happen. Inspect the node's state before you decide to send another request.
-
-These methods do not orchestrate a safe resharding or failover.
+Cancellation or a lost reply does not prove a mutation did not happen. Inspect the node before sending another request.
 
 - `RespireClusterFailoverMode.Normal` coordinates with the primary and needs a majority vote. `Force` skips primary coordination but still needs a vote. `Takeover` skips both and can lose data or create conflicting ownership.
 - `RespireClusterResetMode.Hard` replaces the node identity and clears epochs. `Soft`, the default, keeps them.
@@ -83,17 +80,17 @@ These methods do not orchestrate a safe resharding or failover.
 `ClusterSlotsAsync` returns `RespireClusterSlotMapping` values: the slot range, the primary, and its replicas.
 
 - Each `RespireClusterSlotNode` has the endpoint, port, optional node ID, an owned metadata dictionary, and any extra positional values from newer servers.
-- Null, empty, `?`, and advertised endpoints are kept as reported. They are not resolved against the queried endpoint. Port zero stays zero.
+- Null, empty, `?`, and advertised endpoints are kept as reported, not resolved against the queried endpoint. Port zero stays zero.
 - Node IDs appeared in Redis 4.0 and networking metadata in 7.0. Older two-field node replies are accepted.
-- Redis deprecated `CLUSTER SLOTS` in favor of `CLUSTER SHARDS` in 7.0. This method remains for interoperability.
+- Redis 7.0 deprecated `CLUSTER SLOTS` in favor of `CLUSTER SHARDS`; this method stays for interoperability.
 
 `ClusterReplicasAsync` returns `RespireClusterNode` rows, the same model as `CLUSTER NODES`, with unknown flags and annotations kept.
 
 Arrays are owned by the caller and mutable. Unknown metadata owns its bytes and stays valid after the reply or client is disposed.
 
-`RespireClusterNode.ConfigurationEpoch` is a `ulong`, so it covers Redis's full unsigned 64-bit epoch range, including after `BUMPEPOCH` passes `long.MaxValue`. Store it in a `ulong`, not a `long`. `ClusterBumpEpochAsync` returns `RespireClusterEpochResult` with `Bumped` (from `BUMPED` or `STILL`) and the unsigned `Epoch`.
+`RespireClusterNode.ConfigurationEpoch` is a `ulong`, covering the full unsigned 64-bit range, including after `BUMPEPOCH` passes `long.MaxValue`. Store it in a `ulong`, not a `long`. `ClusterBumpEpochAsync` returns `RespireClusterEpochResult` with `Bumped` (from `BUMPED` or `STILL`) and the unsigned `Epoch`.
 
-Integration tests cover Redis 8.4 and Valkey 9 over RESP2 and RESP3.
+Tested on Redis 8.4 and Valkey 9 over RESP2 and RESP3.
 
 ## Redis references
 

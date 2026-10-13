@@ -5,14 +5,14 @@ description: Engineering evidence log for transport write outcomes, their owners
 
 # Transport write evidence
 
-This page is an engineering evidence log, not a usage guide. Most applications need nothing from it.
+This is an engineering evidence log, not a usage guide. **Application developers can stop here.**
 
-- **What it covers.** Transport write evidence records whether a send attempt is definitely unwritten or may have reached Redis. The page states the ownership and retention limits of that evidence, then keeps the dated audits of the pinned `run-transport-benchmarks` comparisons and their diagnostics. The latest aggregate audit comes first.
-- **Who needs it.** Contributors who change the transport write path, streaming uploads, batches or connection selection, and reviewers who audit a transport benchmark run.
-- **What to configure.** There is no write-evidence option. It is internal and always present. [`RespireOptions.RetryPolicy`](./command-retries) is the public feature that consumes it; leave it `null` (the default) for no automatic retries.
-- **Conclusion so far.** Write evidence works as specified, and only a definitely unwritten attempt can authorize a resend that the command's retry category does not otherwise allow. The last recorded aggregate audit (#1481) left transport performance acceptance unmet: the pinned comparisons show mixed latency and allocation rows that no control attributes to a production defect. The merged allocation fixes (streaming state-machine pooling in #1374, the pooled final-frame wait in #1434 and completed fill-task reuse in #1477) changed no defaults, limits or ordering guarantees. The tracking issues #1474, #1214, #862 and #976 have since been closed. Each dated section below records the issue state at the time of its audit, so its "remains open" statements are historical.
+- **What it is.** Respire records whether each send attempt was definitely not written or may have reached Redis. This log states the limits of that record and keeps dated audits of the `run-transport-benchmarks` comparisons, newest first.
+- **Who needs it.** Contributors changing the transport write path, streaming uploads, batches, or connection selection, and reviewers auditing a transport benchmark run.
+- **What to configure.** Nothing. The only public feature that uses it is [`RespireOptions.RetryPolicy`](./command-retries); leave it `null` (the default) for no automatic retries.
+- **Status.** Write evidence works as specified. Only a definitely unwritten attempt can authorize a resend that the command's retry category would not otherwise allow. The latest audit (#1481) left transport performance acceptance unmet: latency and allocation results are mixed, with no production defect identified. Each dated section records issue state at its audit time.
 
-Write evidence does not by itself retry anything. An ambiguous or unknown outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.
+Write evidence never retries anything by itself. An ambiguous outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.
 
 ## Ownership and retention limits
 

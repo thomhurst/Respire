@@ -1,54 +1,41 @@
 # Typed lifecycle logging
 
-Core lifecycle diagnostics use `RespireLog`; the OutputCaching package uses
-`OutputCacheLog`. Their named methods call cached, typed `LoggerMessage.Define`
-delegates. This keeps the existing message templates, structured property names,
-levels, exception objects and logger categories. It also preserves
-unnamed event zero and the named credential-refresh and coordination-cleanup
-event identities. The existing generated Sentinel missing-epoch message retains
-its event identity.
+Log through a named method on `RespireLog` (core) or `OutputCacheLog` (OutputCaching) that calls a
+cached `LoggerMessage.Define` delegate. Do not log with templates and `object[]` arguments. Source
+projects enforce CA1848 and CA1873 as errors through `src/.editorconfig`.
 
-`LoggerMessageAttribute.EventName` defaults to the method name, even when an
-explicit `EventId = 0` is supplied. That differs from the existing unnamed event
-zero, so the converted catalog retains `LoggerMessage.Define` delegates rather
-than changing event names through source generation.
+## Rules
 
-The delegates check `IsEnabled` before creating log state. Value types stay typed
-until an enabled provider chooses to enumerate or format the state. Cache
-initialization occurs once; disabled calls do not create a params array or box
-their arguments. Formatting that can allocate, decode a reply, inspect an
-exception message or count pending tasks belongs behind an enabled-level check
-inside the typed method. Null-conditional calls continue to skip null loggers.
+1. **Use `LoggerMessage.Define`, not `[LoggerMessage]`.** `LoggerMessageAttribute.EventName` defaults to
+   the method name even with `EventId = 0`, which would rename the existing unnamed event zero.
+2. **Keep the contract.** Preserve message templates, structured property names, levels, exception
+   objects, logger categories, unnamed event zero, and the named credential-refresh and
+   coordination-cleanup events. The generated Sentinel missing-epoch message keeps its event identity.
+3. **Guard expensive work.** The delegates check `IsEnabled` before creating state, so disabled calls
+   allocate nothing and box nothing. Put anything that can allocate, decode a reply, read an exception
+   message or count pending tasks behind an enabled-level check inside the typed method.
+   Null-conditional calls still skip null loggers.
+4. **Keep each failure boundary.** Pub/sub `TryLog` keeps its exception filter. Sentinel `SafeLog`
+   keeps its recoverable-exception policy and guarded-failure metric. Topology's generic `TryLog`
+   keeps its catch-all policy. These helpers pass typed state to static callbacks and must not hide
+   operational work in a logging callback.
+5. **Pub/sub recovery logs must not strand resubscription.** Reconnect retry, recovery-attempt failure
+   and replacement-cleanup failure use Pub/sub `TryLog`. `OutOfMemoryException` stays fatal.
+6. **Exceptions.** When a diagnostic gains an exception, update the wrapper signature and pass the
+   original exception through the delegate's exception parameter. If an exception only feeds a message
+   property, format it behind `IsEnabled` and keep whether the event carried an exception object.
 
-Keep each diagnostic within its existing failure boundary. Pub/sub's `TryLog`
-preserves its exception filter, Sentinel's `SafeLog` preserves its recoverable
-exception policy and guarded-failure metric, and topology's generic `TryLog`
-preserves its catch-all policy. These helpers pass typed state to static callbacks
-instead of accepting arbitrary templates and `object[]` arguments. They do not
-hide operational work inside a logging callback.
+## Contract tests
 
-The ordinary reconnect retry, configured recovery-attempt failure, and replacement
-cleanup failure also use Pub/sub's `TryLog` boundary. A nonfatal provider failure
-must not strand resubscription; `OutOfMemoryException` retains the existing fatal
-exception policy.
+`LifecycleLogContract.json` pins all 140 cached core message delegates to the pre-conversion commit
+and source locations.
 
-When a diagnostic gains an exception, update its typed wrapper signature and
-forward the original exception through the delegate's exception parameter. An
-exception used only to produce a structured message property is different: keep
-that formatting behind `IsEnabled` and preserve whether the legacy event carried
-an exception object.
+- Contract tests compare levels, event IDs and names, templates, structured properties, formatted
+  output and exception identity with legacy logging calls, and check disabled delegates skip `Log`.
+- The coverage check rejects missing or new delegates until their contract is recorded.
+- Separate tests cover all seven dynamic Sentinel levels, wrapper argument transformations and the two
+  OutputCaching messages.
+- Logging tests exercise provider failures in `Log` and `IsEnabled`, and use the repository allocation
+  helper with warm-up and a positive control.
 
-Source projects enforce CA1848 and CA1873 as errors through `src/.editorconfig`.
-New logs should follow the same typed pattern and guard expensive argument
-evaluation. Logging tests compare representative events with their previous
-structured output, exercise provider failures in `Log` and `IsEnabled`, and use
-the repository allocation helper with warm-up and a positive control.
-
-`LifecycleLogContract.json` pins all 140 cached core message delegates to the
-pre-conversion commit and source locations. Contract tests compare levels, event
-IDs and names, templates, structured properties, formatted output and exception
-identity against legacy logging calls, and verify disabled delegates skip `Log`.
-The coverage check rejects missing or newly added delegates until their contract
-is recorded. Separate tests cover all seven dynamic Sentinel levels, wrapper
-argument transformations, and the two OutputCaching messages. Update the snapshot
-only for an intentional logging-contract change, not to accept a failing test.
+Update the snapshot only for an intentional logging-contract change, never to make a test pass.

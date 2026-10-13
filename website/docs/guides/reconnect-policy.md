@@ -1,12 +1,13 @@
 # Connection recovery
 
 `RespireOptions.ReconnectPolicy` adds backoff and attempt limits to connection recovery:
-replacement of failed command connections (including Redis Cluster node connections),
-dedicated connection acquisitions, pub/sub recovery, and Cluster and Sentinel discovery
-fallback. It is `null` by default. Without a policy, a failed command connection is replaced
-immediately, and a failed replacement is retried the next time a command needs it. A policy
-keeps that on-demand scheduling and adds delays and limits. It never replays an accepted
-Redis command; to resend commands, see the [command retry policy](command-retries.md).
+command connection replacement (including Cluster node connections), dedicated connection
+acquisitions, pub/sub recovery, and Cluster and Sentinel discovery fallback.
+
+The default is `null`: a failed command connection is replaced immediately, and a failed
+replacement is retried the next time a command needs it. A policy keeps that on-demand
+scheduling and adds delays and limits. It never resends an accepted command; for that, see the
+[command retry policy](command-retries.md).
 
 ```csharp
 var options = new RespireOptions
@@ -31,130 +32,94 @@ var options = new RespireOptions
 | `JitterRatio` | `0.2` | Finite, from 0 through 1. |
 | `MaxAttempts` | `null` (unlimited) | Positive, or `null`. |
 
-The first replacement waits `InitialDelay`. Later attempts multiply that delay by
-`BackoffMultiplier` for each failed attempt, capped at `MaxDelay`. Symmetric jitter
-scales the capped delay by a random factor from `1 - JitterRatio` through
-`1 + JitterRatio`; the actual delay is capped again. Zero initial delay stays zero.
-An invalid policy throws `RespireConfigurationException` before any connection I/O.
-Policies are immutable records and can be shared across clients.
+- The first replacement waits `InitialDelay`. Each failed attempt multiplies the delay by `BackoffMultiplier`, capped at `MaxDelay`.
+- Jitter scales the capped delay by a random factor from `1 - JitterRatio` to `1 + JitterRatio`, then caps it again. Zero initial delay stays zero.
+- An invalid policy throws `RespireConfigurationException` before any connection I/O.
+- Policies are immutable records and can be shared across clients.
+- Leave `MaxAttempts` null for long-lived clients that must keep trying after an outage. [Failover group](failover-groups.md) candidates require it.
 
-Leave `MaxAttempts` null for long-lived clients that must keep trying after an outage.
-[Failover group](failover-groups.md) candidates require it.
+## Command connections
 
-Each endpoint has `RespireOptions.Connections` multiplexed command connections (one by
-default), and attempts count separately for each of these connection slots. Concurrent callers
-share an in-progress replacement; they do not each create another attempt. A successful
-replacement, including its handshake and required connection identity, resets the count.
-The counter tracks consecutive replacement failures, not connections that fail after
-a successful handshake. A peer that repeatedly accepts and then drops connections
-therefore starts a new episode each time, with the initial delay. There is no healthy
-duration window or first-command condition for reset.
-`MaxAttempts = null` permits unlimited attempts. Exhaustion remains in effect for that
-failed slot; repeatedly submitting commands does not reset it. Recreate the client to
-begin a new episode after exhaustion. After a Cluster topology change, the new set of
-node connections has its own slots and counters. Healthy slots remain usable when another
-slot is exhausted.
+Each endpoint has `RespireOptions.Connections` command connections (one by default), and each
+counts attempts separately.
 
-When every slot at an endpoint has exhausted recovery, commands throw
-`RespireReconnectLimitException`, a `RespireConnectionException`. Individual failure
-events keep the original connection error. Operations that need every slot's server
-client ID, to order cleanup after an ambiguous outcome, throw when any slot is exhausted,
-even if another slot can still serve ordinary commands. Internal cleanup connections that Respire
-opens after an ambiguous outcome connect directly with their own `ConnectTimeout` and are
-not limited by this policy, so they can still succeed after command recovery is exhausted.
+- Concurrent callers share an in-progress replacement.
+- A successful replacement, including its handshake, resets the count. The count tracks consecutive replacement failures, so a peer that accepts and then drops connections starts a new episode each time.
+- Exhaustion is permanent for that connection; more commands do not reset it. Recreate the client to start over. Healthy connections at the endpoint stay usable.
+- After a Cluster topology change, the new node connections have their own counters.
 
-A command that notices a failed connection can still fail while the replacement proceeds,
-with or without a policy. Each connection attempt keeps its `ConnectTimeout`. This policy
-does not retry the client's initial connection setup. Command deadlines and caller
-cancellation still bound their own waits. Cancelling one caller does not cancel recovery
-shared by other callers. Disposing the client cancels scheduled delays and waits for
-recovery work to finish.
+When every connection at an endpoint is exhausted, commands throw
+`RespireReconnectLimitException` (a `RespireConnectionException`). Operations that need every
+connection's server client ID throw when any connection is exhausted. Cleanup connections that
+Respire opens after an ambiguous outcome use their own `ConnectTimeout` and ignore this policy.
 
-Commands accepted by a failed connection are never replayed. A missing reply can leave
-the server outcome uncertain. This policy only creates replacement connections; application
-retry decisions still need to account for command idempotency.
+Other behavior, with or without a policy:
+
+- A command that notices a failed connection can still fail while the replacement proceeds.
+- Each connection attempt keeps its `ConnectTimeout`. The policy does not retry the client's initial connection.
+- Command deadlines and caller cancellation bound their own waits. Cancelling one caller does not cancel shared recovery.
+- Disposing the client cancels scheduled delays and waits for recovery to finish.
+
+:::warning
+Commands accepted by a failed connection are never replayed, and a missing reply leaves the
+server outcome uncertain. Application retries must account for idempotency.
+:::
 
 ## Dedicated connection acquisitions
 
-Dedicated pools serve blocking operations, watched transactions, and other operations
-that require an exclusive connection. A healthy idle connection is reused immediately.
-When no healthy idle connection exists, each rent makes one immediate connection attempt.
-With a null policy, its failure is returned immediately, preserving the existing on-demand
-behavior. With a policy, a failed attempt starts a retry episode owned by that rent.
-The first retry waits `InitialDelay`; subsequent retries use the same backoff and jitter
-calculation as command replacements. Only connection establishment and its handshake are
-retried. No accepted application command, transaction, or blocking operation is replayed.
+Dedicated pools serve blocking operations, watched transactions and other exclusive-connection
+operations. A healthy idle connection is reused. Otherwise each rent makes one immediate
+connection attempt.
 
-`MaxAttempts` counts retries after the initial attempt: a limit of two allows at most
-three connection attempts for one rent. Concurrent renters have independent budgets and
-can connect concurrently; the policy is not an endpoint-wide rate limiter. Success ends
-the episode. Exhaustion throws `RespireReconnectLimitException` with the last connection
-failure as its inner exception. It does not disable the pool: a later rent starts fresh.
-An unlimited policy can keep one rent pending until it connects or is cancelled.
-That rent retains its acquisition reservation through backoff and handshake cleanup.
-The pool limits retained idle connections, not concurrent acquisitions; callers should
-bound total waiting work with cancellation and their own concurrency limits.
-Connection failures, connection/handshake timeouts, and server errors classified by
-`RespireServerException.IsTransient` can retry. Permanent server handshake rejections
-(including `WRONGPASS`, `NOAUTH`, `NOPERM`, and ordinary `ERR`), TLS authentication failures,
-and explicit `RespireProtocolException`/`RespireConfigurationException` failures return immediately.
-A permanent failure encountered
-after a retry starts ends that episode without marking its attempt budget exhausted.
+- **Null policy**: the failure returns immediately.
+- **With a policy**: the rent retries, waiting `InitialDelay` first and then the same backoff and jitter. Only connection setup and handshake retry; no application command, transaction or blocking operation is replayed.
+- `MaxAttempts` counts retries after the first attempt: 2 allows three attempts per rent.
+- Concurrent renters have independent budgets; the policy is not an endpoint-wide rate limiter.
+- Exhaustion throws `RespireReconnectLimitException` with the last connection failure as its inner exception. A later rent starts fresh.
+- An unlimited policy can keep a rent pending until it connects or is cancelled. The pool limits idle connections, not concurrent acquisitions, so bound waiting work with cancellation and your own concurrency limits.
 
-Connect timeouts and handshake command deadlines remain per attempt. Use caller
-cancellation to bound the entire rent, including all delays and handshakes. Cancelling
-one rent does not cancel another. Retirement and disposal cancel pending rents and wait
-for their owned connection cleanup. Retirement still lets borrowed operations finish;
-disposal aborts them. Corrective fencing acquisitions retain their own deadline and retry
-rules and bypass this policy, including its attempt cap.
+| Failure | Retries? |
+| --- | --- |
+| Connection failures, connect and handshake timeouts | Yes |
+| Server errors where `RespireServerException.IsTransient` is true | Yes |
+| `WRONGPASS`, `NOAUTH`, `NOPERM`, ordinary `ERR` | No |
+| TLS authentication failures | No |
+| `RespireProtocolException`, `RespireConfigurationException` | No |
+
+A permanent failure ends the rent without marking its budget exhausted. Connect timeouts and
+handshake deadlines are per attempt; use caller cancellation to bound the whole rent. Cancelling
+one rent does not affect another. Pool retirement and disposal cancel pending rents; retirement
+lets borrowed operations finish, disposal aborts them.
 
 ## Pub/sub reconnection and resubscription
 
-In Cluster mode, sharded subscriptions have their own recovery episode, separate from the
-regular channel/pattern connection. An attempt restores all affected sharded routes; healthy
-primaries keep delivering. Sharded exhaustion ends all sharded subscriptions and rejects new
-sharded subscriptions, while regular subscriptions remain usable. Regular pub/sub exhaustion
-likewise leaves sharded subscriptions usable.
+- **Null policy**: an immediate replacement attempt, then on failure 250 ms exponential waits capped at five seconds.
+- **With a policy**: the first replacement waits `InitialDelay`. Each failed connection or resubscription uses one attempt from the same episode.
+- Initial subscription setup is a single attempt bounded by the caller's cancellation.
+- Successful resubscription of every registered route resets the count. A socket that connects but fails while resubscribing does not.
+- In Cluster mode, sharded subscriptions recover separately from channel and pattern subscriptions. Exhausting one leaves the other usable.
 
-With a null policy, pub/sub retains its existing schedule: an immediate replacement
-attempt followed, on failure, by 250 ms exponential waits capped at five seconds.
-With a policy, the first replacement waits `InitialDelay`, and every failed connection
-or resubscription consumes one attempt from the same episode. The shared policy applies
-its multiplier, jitter, and maximum delay to each scheduled attempt. Initial subscription
-connection setup is still a single attempt governed by its caller's cancellation.
+:::warning
+Redis cannot replay messages missed during an interruption. Gap markers stay ordered before
+messages received after each route's acknowledgement.
+:::
 
-One recovery loop owns the replacement until every currently registered route has been
-acknowledged. A socket that connects but fails while resubscribing does not reset the
-budget or start another watcher. A failed resubscription closes its replacement before
-the next attempt. Successful resubscription resets the count; a later interruption
-starts a new episode. Existing gap markers remain ordered before messages received after
-each route's acknowledgement. Redis cannot replay messages missed during an interruption.
+While recovery is active, new subscriptions fail with `RespireConnectionException`. Retry after
+a lifecycle event with `ReconnectSource = PubSub` and `SourceState = Connected`. You can remove
+subscriptions during backoff.
 
-While configured recovery is active, new explicit subscriptions fail with
-`RespireConnectionException`; they do not open a competing connection or skip the delay.
-Retry after a lifecycle event with `ReconnectSource = PubSub` and `SourceState = Connected`.
-Removing existing subscriptions
-is supported during backoff, and recovery snapshots the remaining routes under the control
-gate. A caller cancellation during an explicit subscription does not cancel shared recovery.
+When the limit is exhausted:
 
-When the configured limit is exhausted, the client publishes `Disconnected` with
-`ReconnectExhausted = true` and the final connection/resubscription error. All live
-subscriptions complete with `RespireSubscriptionEndReason.ReconnectExhausted` and become
-disposed. Existing enumerators may drain already buffered items before ending; a new
-enumerator cannot be opened on an ended subscription. New subscriptions throw
-`RespireReconnectLimitException`. There is no cooldown or implicit reset: recreate the
-client to subscribe again. Command connections remain usable subject to their own health.
+1. The client publishes `Disconnected` with `ReconnectExhausted = true` and the final error.
+2. Live subscriptions end with `RespireSubscriptionEndReason.ReconnectExhausted`. Existing enumerators may drain buffered items first.
+3. New subscriptions throw `RespireReconnectLimitException`. Recreate the client to subscribe again. Command connections are unaffected.
 
-Disposal cancels configured delays, connection handshakes, and resubscription waits,
-then drains owned recovery and socket cleanup. Ordered lifecycle delivery happens outside
-the recovery task so a lifecycle handler can synchronously dispose the client. Keep event
-handlers short; attempt observations can lag the work they describe.
-Disposal suppresses queued lifecycle callbacks, but queued measurements still drain because
-they describe already scheduled attempts or completed exhaustion. They may arrive after disposal.
+Lifecycle handlers can dispose the client synchronously. Keep them short; events can lag the
+work they describe.
 
 ## Lifecycle and telemetry
 
-`ConnectionStateChanged` retains its existing endpoint health aggregation and adds:
+`ConnectionStateChanged` adds these properties:
 
 | Property | Meaning |
 | --- | --- |
@@ -166,179 +131,103 @@ they describe already scheduled attempts or completed exhaustion. They may arriv
 | `SourceState` | Source connection state before endpoint health aggregation, when supplied |
 | `ReconnectEpisodeId` | Process-local identifier grouping one dedicated rent or Cluster discovery round; null for other paths |
 
-Policy attempt events are delivered even if aggregate endpoint health has not changed.
-An endpoint can remain disconnected because another slot has failed while the source slot
-starts recovery. Use the metadata for the source attempt, not as an endpoint-wide counter.
-Do not block event handlers. Synchronous disposal remains supported.
+- Attempt events fire even when aggregate endpoint health has not changed. Treat the metadata as describing one source attempt, not an endpoint-wide counter.
+- `State` stays the aggregate endpoint health; `SourceState` describes the source attempt.
+- Episode IDs are scoped by `ReconnectSource`, are event metadata only, and are not metric tags.
+- Events from different sources have no shared ordering and can arrive after the triggering operation completes. They are observations, not a way to gate retries.
+- Caller cancellation and pool retirement or disposal stop a rent without a `Disconnected` failure event.
+- After disposal, pending lifecycle events are suppressed; queued measurements still drain.
 
-Dedicated recovery does not mark a command slot unhealthy. Its event `State` remains the
-aggregate endpoint health, while `SourceState` describes the dedicated attempt. Dedicated
-events and measurements are dispatched asynchronously in pool order so observers can
-dispose the client without blocking the acquisition disposal must drain. Events can lag
-the corresponding attempt; they are observations, not a mechanism for gating retries.
-After client disposal, pending dedicated lifecycle events are suppressed. Episode IDs are
-event metadata only and are not metric tags.
-Caller cancellation and pool retirement/disposal stop a rent without emitting a dedicated
-`Disconnected` failure. Scheduled-attempt measurements may still be delivered after pool
-shutdown. Queued lifecycle callbacks are skipped once the dispatcher observes that the
-pool is stopping; callbacks already in flight are not joined because they can dispose it.
-The ordered observer queue has no capacity limit. Slow or blocked callbacks can accumulate
-pending observations across concurrent renters; keep handlers short and hand off work to
-an application queue with an explicit capacity policy. A finite retry limit bounds each
-rent's retries, not total concurrent rents or the observer queue.
+:::warning
+The observer queue has no capacity limit. Slow or blocked handlers accumulate pending events.
+Keep handlers short and hand work off to a bounded application queue. `MaxAttempts` bounds
+retries, not the queue.
+:::
 
-The `Respire` meter records `respire.connection.reconnect.attempt` (attempt number) and
-`respire.connection.reconnect.delay` (seconds), tagged with `server.address`, `server.port`,
-and `respire.connection.source` (`command`, `dedicated`, or `pubsub`). Pub/sub attempts have a null
-`ConnectionSlot` and use one shared counter for the current connection/resubscription episode.
-They record scheduled replacement attempts, including waits later cancelled by disposal.
-They are histograms of events, not live countdown gauges. The counter
-`respire.connection.reconnect.exhausted` records each episode stopped by its attempt limit, with the same
-endpoint tags, so operators can alert on terminal recovery failures. Successful command execution
-does not record these instruments or inspect policy counters.
+The `Respire` meter records:
+
+| Instrument | Type | Meaning |
+| --- | --- | --- |
+| `respire.connection.reconnect.attempt` | Histogram | Attempt number of each scheduled attempt |
+| `respire.connection.reconnect.delay` | Histogram | Scheduled delay in seconds |
+| `respire.connection.reconnect.exhausted` | Counter | Episodes stopped by the attempt limit; use it to alert on terminal recovery failures |
+
+Tags: `server.address`, `server.port` and `respire.connection.source` (`command`, `dedicated`
+or `pubsub`). Discovery and monitor measurements carry `respire.reconnect.scope` instead of
+`respire.connection.source`. Scheduled
+attempts are recorded even if disposal later cancels the wait. Pub/sub attempts have a null
+`ConnectionSlot`. Successful commands record nothing.
 
 ## Sentinel discovery fallback
 
-Sentinel resolution keeps its first candidate immediate. With a configured policy,
-each later configured or learned Sentinel candidate consumes one fallback attempt and
-waits the policy delay before I/O. `MaxAttempts = 1` therefore permits the first
-candidate plus one fallback. A rejected primary `ROLE` response consumes that same
-candidate attempt; peer expansion and primary connection do not start nested budgets.
+The first Sentinel candidate is tried immediately. With a policy, each later configured or
+learned candidate uses one attempt and waits the policy delay first. A rejected primary `ROLE`
+reply uses that same attempt.
+
 For example, with configured candidates A and B and peers C and D learned from A,
-`MaxAttempts = 1` allows A then B. If both fail, C and D remain untried and the policy
-exhaustion counter increments. With only A and B available, both still run, but their
-failure ends through candidate depletion rather than policy exhaustion.
-The existing finite traversal still stops when candidates run out, even with a null
-`MaxAttempts`. Endpoints are not cycled indefinitely.
+`MaxAttempts = 1` allows A then B. If both fail, C and D stay untried and the policy is
+exhausted.
 
-A successful validated primary ends the resolution. Exhaustion preserves the final
-`RespireConnectionException` and its underlying discovery or primary-validation error.
-A new explicit `ConnectAsync` call or a new reactive resolution starts a fresh budget. Null policy retains
-immediate fallback across all available candidates. Caller cancellation bounds every
-wait, while each candidate retains its existing discovery and connection timeout.
-Policy delays sit outside those per-candidate timeouts. Supply a caller deadline to
-bound the total resolution, including backoff and every candidate.
-No application command is replayed during discovery.
+- Traversal stops when candidates run out, even with null `MaxAttempts`. Endpoints are not cycled.
+- A null policy tries all candidates immediately.
+- A validated primary ends resolution. Failure throws `RespireConnectionException` with the underlying discovery or validation error.
+- Each `ConnectAsync` call or reactive resolution starts a fresh budget.
+- Each candidate keeps its discovery and connection timeout; policy delays sit outside those. Supply a caller deadline to bound the whole resolution.
+- No application command or `WATCH` state is replayed during discovery or primary handoff.
 
-The same attempt/delay/exhaustion instruments carry the candidate's `server.address`
-and `server.port` plus `respire.reconnect.scope = sentinel-discovery`. Exhaustion is
-attributed to the final failed fallback. Scheduling is recorded before delay, including
-waits later cancelled by the caller. Exhaustion is recorded only when the failed fallback
-uses the budget and at least one candidate remains untried. Successful fallback and running
-out of candidates do not record exhaustion, even when the final candidate coincides with
-the attempt limit. Observe the returned connection exception to detect every terminal
-discovery failure.
-Lazy Sentinel clients can observe initial connection events through `ConnectionStateChanged`.
-Disconnects and READONLY replies retire the current generation; the next operation resolves
-Sentinel again with the same fallback policy. Validated endpoint changes also increment
-`respire.sentinel.failover`. Eager `ConnectAsync` performs initial discovery before returning
-the client. No accepted command or WATCH state is replayed during a primary handoff.
+Measurements use `respire.reconnect.scope = sentinel-discovery`. Exhaustion is recorded only when
+untried candidates remain, so check the returned exception to detect every terminal failure.
 
-Sentinel event monitors apply the same policy to their own subscription connections.
-`MaxAttempts` counts replacement attempts, so a failed initial subscription still gets a retry.
-Scheduled retries and exhaustion use the same instruments with
-`respire.reconnect.scope = sentinel-monitor`. An exhausted monitor stops observing that
-Sentinel's events and logs a warning; discovery still runs on demand when commands observe a
-disconnect or `READONLY`. A validated primary publication gives each exhausted monitor a fresh
-budget, so one long Sentinel outage does not remove event monitoring for the life of the client. A
-publication that lands while the monitor is still spending its retries counts too: the monitor then
-resumes as soon as it exhausts, rather than waiting for a second publication.
+Disconnects and `READONLY` replies make the next operation resolve Sentinel again with the same
+policy. Validated endpoint changes increment `respire.sentinel.failover`. Eager `ConnectAsync`
+discovers before returning; lazy clients report initial connection events through
+`ConnectionStateChanged`.
+
+### Sentinel event monitors
+
+Sentinel event monitors apply the policy to their own subscription connections, with
+`respire.reconnect.scope = sentinel-monitor`. `MaxAttempts` counts replacement attempts, so a
+failed initial subscription still gets a retry. An exhausted monitor stops observing that
+Sentinel and logs a warning; discovery still runs on demand. A validated primary change gives
+each exhausted monitor a fresh budget.
 
 ## Cluster discovery fallback
 
-Each logical Cluster discovery round shares one policy budget across cached owners,
-known masters, topology queries, configured seeds, tracked connection selection, and
-dedicated pool selection. Pub/sub endpoint discovery and cluster-wide commands use the
-same contract. The first candidate is immediate. A discovery episode begins only when a fallback is scheduled;
-a failure with no scheduled fallback remains visible through physical connection health.
-After a candidate fails, choosing the
-next candidate consumes one attempt and waits the configured delay. A topology query and
-connection to its advertised owner share the candidate until one fails. Connecting other
-required masters after a successful topology query does not consume fallback attempts.
+Each Cluster discovery round shares one budget across all candidate sources: cached owners,
+known masters, topology queries, configured seeds and connection selection. Pub/sub endpoint
+discovery and cluster-wide commands follow the same rules.
 
-For example, with `MaxAttempts = 1`, a failed cached owner may try one known master.
-If that master also fails, seed fallback cannot start a new budget. Exhaustion throws
-`RespireReconnectLimitException`; candidate depletion can instead end with the existing
-connection error. A later explicit discovery round starts fresh. Concurrent initial
-connection calls retain seed discovery coalescing: waiting callers reuse its successful
-result. Failed rounds do not permanently disable the router.
+- The first candidate is immediate. Each later candidate uses one attempt and waits the policy delay.
+- Connecting other masters after a successful topology query uses no attempts.
+- For example, with `MaxAttempts = 1`, a failed cached owner may try one known master. If that fails too, seed fallback cannot start a new budget.
+- Exhaustion throws `RespireReconnectLimitException`; running out of candidates throws the connection error. A later round starts fresh. Failed rounds do not disable the router.
 
-MOVED, ASK, and READONLY are explicit server rejections. Their first replacement consumes
-attempt one. The first MOVED or ASK in a fresh round follows its target immediately,
-even with a configured policy or an already connected target. This plain redirect does
-not publish a discovery `Reconnecting` event or start a discovery episode. Later redirects
-and candidate failures retain the shared attempt budget and apply policy backoff. READONLY
-still applies policy backoff before its first replacement.
-If the immediate redirect target fails, discovery publishes a terminal `Disconnected`
-event, including for a new ASK target whose physical connection events are not forwarded.
-Sharded subscription activation shares one discovery round across its MOVED/ASK retries,
-so only its first redirect bypasses backoff and later redirects retain the attempt budget.
-If recovery cannot establish a replacement, the original server exception
-is preserved. ASK keeps its temporary target; tracked identity setup and retirement
-reselection share the ongoing round. A command rejected before acceptance by topology
-retirement starts fallback at attempt one. Repeated retirement during that command,
-including an individual rejected batch entry or an unwatched transaction, retains the
-same budget until completion. A batch READONLY replacement and any later retirement use
-that same round. Blocking redirects retain it through the next dedicated connection rent,
-including retirement of the selected pool before the rent completes. Resumable Cluster scans keep that budget across retirement
-restarts of one page; rebuilding from the immutable cursor does not reset it. Accepted batch entries and watched transactions are never
-replayed. Dedicated physical connection retries retain their
-separate per-rent budget; node selection does not reset a discovery budget. Neither path
-replays a command after ambiguous acceptance or a lost reply.
+Redirects and retirement:
 
-Null policy preserves existing immediate fallback and retirement limits. Unsupported or
-ACL-restricted `CLUSTER SLOTS` replies still allow an initial seed connection and learned
-redirect routing. A cluster-wide command still requires a complete topology. Configured
-policy limits fallback during that search; it does not turn unsupported topology into
-successful cluster-wide results.
+- The first `MOVED` or `ASK` in a round follows its target immediately. Later redirects and failures use the budget and back off.
+- `READONLY` backs off before its first replacement.
+- If recovery fails, the original server exception is preserved.
+- Retirement during one command, batch, unwatched transaction, blocking redirect or resumable scan page keeps the same budget until it completes.
+- Accepted batch entries and watched transactions are never replayed.
 
-Caller cancellation and client disposal stop scheduled waits and connection work. Existing
-command deadlines remain shared. READONLY recovery retains its overall `ConnectTimeout`
-and the time reserved for configured seeds; policy waits consume that recovery time.
-Whichever is reached first ends recovery: the policy attempt limit, the existing recovery
-deadline, caller cancellation, or disposal. A delay cannot extend the READONLY deadline.
-Other discovery waits are bounded by caller cancellation, so supply a caller deadline to
-bound a whole round across multiple candidates and delays.
+Other rules:
 
-Attempt/delay/exhaustion instruments use the candidate endpoint and
-`respire.reconnect.scope = cluster-discovery`. Exhaustion is attributed to the final
-failed candidate, only when another fallback would exceed the budget. Successful fallback
-at the limit and candidate depletion do not count as policy exhaustion. Lifecycle events
-use `ReconnectSource.ClusterDiscovery`, a process-local `ReconnectEpisodeId`, and a null
-`ConnectionSlot`. Episode IDs are scoped by `ReconnectSource`; include it when correlating
-events from different recovery paths. Cluster discovery IDs share one counter across clients in
-this process. `SourceState` describes discovery; `State` retains aggregate physical endpoint
-health. Discovery never inserts a synthetic failed command slot. Measurements
-and lifecycle callbacks run on an ordered asynchronous queue; keep observers short. Discovery
-ordering is independent of command-slot and dedicated recovery notification queues; events
-from different sources have no shared ordering guarantee and can arrive after the triggering
-operation completes. Configured-seed fallback skips node connections already rejected
-by owner or known-master discovery in that round. A replacement connection set at the same address
-remains eligible; skipping a duplicate does not consume another policy attempt.
-A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
-with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
-A READONLY phase timeout is retryable while the overall recovery deadline remains active.
-If a later configured seed succeeds, that episode ends with `Connected`, without retaining
-the handled phase cancellation as a terminal error.
-Once replacement selection succeeds, later application errors (such as WRONGTYPE) or
-cancellation of an accepted command do not change that discovery outcome to Disconnected.
-The command still fails normally; physical connection health is reported independently.
-Scheduled measurements survive disposal, while pending lifecycle events are suppressed.
-The queue preserves every scheduled measurement and source transition and has no capacity
-limit, matching dedicated recovery notifications. Slow or blocked observers can accumulate
-notifications from concurrent or repeated rounds. `MaxAttempts` bounds one discovery round,
-not the notification queue; handlers should hand off expensive work and return promptly.
+- A null policy keeps immediate fallback.
+- If `CLUSTER SLOTS` is unsupported or ACL-restricted, the initial seed connection and redirect routing still work, but cluster-wide commands still need a complete topology.
+- Caller cancellation and disposal stop waits. `READONLY` recovery keeps its overall `ConnectTimeout`, and policy waits count against it. Bound other rounds with a caller deadline.
+
+Measurements use `respire.reconnect.scope = cluster-discovery`. Exhaustion counts only when
+another fallback would exceed the budget. Lifecycle events use
+`ReconnectSource.ClusterDiscovery`, a `ReconnectEpisodeId` shared across clients in the process,
+and a null `ConnectionSlot`. A caller-cancelled round emits `Disconnected` with the cancellation
+error; that is not exhaustion.
 
 ## Periodic Cluster refresh
 
-The policy covers command connections, dedicated pools, pub/sub, Cluster discovery,
-Sentinel fallback, and Sentinel event monitors as described above. Background Cluster
-refresh uses the same discovery budget for candidate selection and backoff; it does not
-add a separate nested retry counter.
+Background Cluster refresh uses the same discovery budget; it adds no separate retry counter.
 
-`ClusterTopologyRefreshInterval` controls the periodic timer and defaults to 60 seconds.
-Set it to `null`, `TimeSpan.Zero`, or `Timeout.InfiniteTimeSpan` to disable that timer.
-Redirects, primary disconnects, and failed-refresh retries can still trigger discovery.
-Each refresh pass has a 60-second deadline and retains the last published slot map if
-discovery fails. See [Cluster topology refresh](../fundamentals/connections.md#redis-cluster-endpoint-identity)
-for scheduling, jitter, coalescing, and candidate ordering.
+`ClusterTopologyRefreshInterval` controls the periodic timer (default 60 seconds). Set it to
+`null`, `TimeSpan.Zero` or `Timeout.InfiniteTimeSpan` to disable the timer. Redirects, primary
+disconnects and failed-refresh retries still trigger discovery. Each refresh has a 60-second
+deadline and keeps the last slot map if discovery fails. See
+[Cluster topology refresh](../fundamentals/connections.md#redis-cluster-endpoint-identity).

@@ -5,9 +5,9 @@ description: Share a Respire client across SignalR servers, with Microsoft Redis
 
 # SignalR scale-out
 
-`Respire.SignalR` implements `HubLifetimeManager<THub>` using Respire's pub/sub connections.
-It routes broadcasts, connection and user messages, groups, exclusions, remote group
-acknowledgements, and client results across application servers.
+`Respire.SignalR` is a SignalR backplane (`HubLifetimeManager<THub>`) on Respire pub/sub. It
+routes broadcasts, connection and user messages, groups, and client results across servers, and
+interoperates with Microsoft's Redis backplane.
 
 ```bash
 dotnet add package Respire.SignalR
@@ -29,40 +29,46 @@ builder.Services.AddSignalR().AddRespire(options =>
 });
 ```
 
-Map hubs with ASP.NET Core's usual `MapHub<THub>` API. Register the shared concrete
-`RespireClient` before resolving a hub lifetime manager. `Respire.DependencyInjection`
-registers that client lazily; subscriptions initialize on the first connection or
-backplane send. If connection or subscription initialization fails, that operation
-fails and a later operation can retry initialization.
+Map hubs with the usual `MapHub<THub>`.
 
-The DI container owns a client created by `services.AddRespire`. An externally supplied
-client remains owned by its caller. Each hub manager disposes and joins its subscriptions
-without disposing the shared client. Dispose application hosts before externally owned
-clients. The backplane uses dedicated subscription sockets within that client; it does
-not create another command client.
+- Register the shared `RespireClient` before a hub lifetime manager is resolved.
+- Subscriptions start on the first connection or send. If that fails, the operation fails and a
+  later one retries.
+- The container owns a client created by `services.AddRespire`; you own a client you supply. The
+  backplane never disposes the client, so dispose the host before a client you own.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `ChannelPrefix` | `""` | Literal channel prefix; no separator is added |
+| `SubscriptionBufferSize` | 1024 | Messages buffered per channel; overflow drops the oldest |
+| `GroupAckTimeout` | 30 seconds | How long a remote group change waits for acknowledgement |
+| `RemoteClientResultTimeout` | 30 seconds | How long a receiving server keeps forwarded client-result state (up to 4,294,967,294 ms) |
+| `UseShardedPubSub` | `false` | Use sharded pub/sub (see [Cluster](#cluster-and-sharded-pubsub)) |
 
 ## Migrate from Microsoft's Redis backplane
 
-Regular pub/sub is the default. Its channel names and MessagePack backplane envelopes
-interoperate with `Microsoft.AspNetCore.SignalR.StackExchangeRedis`. JSON and MessagePack
-hub protocols retain their normal SignalR serialization. MessagePack hub clients require
-the usual ASP.NET Core `AddMessagePackProtocol` registration on every participating server.
+Regular pub/sub is the default and interoperates with
+`Microsoft.AspNetCore.SignalR.StackExchangeRedis` (.NET 8 and .NET 10, in both directions,
+including client results). JSON and MessagePack hub protocols work as usual; MessagePack needs
+`AddMessagePackProtocol` on every server.
 
-Keep the hub's fully qualified type name, supported hub protocols, Redis deployment,
-and physical channel prefix identical during a rolling migration. For example, Microsoft's
-`Configuration.ChannelPrefix = RedisChannel.Literal("myapp:")` matches the Respire
-`ChannelPrefix = "myapp:"` above when the client's `PubSubPrefix` is empty. Prefixes are
-literal; the adapter does not add a separator. If the client has a `PubSubPrefix`, its
-bytes precede the adapter prefix and must be included in Microsoft's physical prefix.
-Key prefixes and Redis database numbers do not isolate pub/sub channels.
+During a rolling migration, keep these identical on every server:
 
-Mixed deployments are tested in both directions against Microsoft's .NET 8 and .NET 10
-packages, including remote client results. If a future Microsoft release changes the
-backplane envelope, verify compatibility before upgrading a mixed deployment.
+- The hub's fully qualified type name
+- The supported hub protocols
+- The Redis deployment
+- The physical channel prefix
 
-Follow Microsoft's [Redis backplane deployment guidance](https://learn.microsoft.com/en-us/aspnet/core/signalr/redis-backplane?view=aspnetcore-10.0),
-including its Redis placement recommendations. Configure session affinity where required
-by the chosen transports, as described in [SignalR scale-out guidance](https://learn.microsoft.com/en-us/aspnet/core/signalr/scale?view=aspnetcore-10.0).
+Microsoft's `Configuration.ChannelPrefix = RedisChannel.Literal("myapp:")` matches
+`ChannelPrefix = "myapp:"` when the client's `PubSubPrefix` is empty. A `PubSubPrefix` comes
+before the adapter prefix, so include it in Microsoft's prefix. Key prefixes and database numbers
+do not isolate channels.
+
+If a future Microsoft release changes its message format, verify compatibility before upgrading a
+mixed deployment. Follow Microsoft's
+[Redis backplane guidance](https://learn.microsoft.com/en-us/aspnet/core/signalr/redis-backplane?view=aspnetcore-10.0)
+and configure session affinity where your transports need it
+([scale-out guidance](https://learn.microsoft.com/en-us/aspnet/core/signalr/scale?view=aspnetcore-10.0)).
 
 ## Cluster and sharded pub/sub
 
@@ -81,54 +87,42 @@ builder.Services.AddSignalR().AddRespire(options =>
 });
 ```
 
-Sharded pub/sub uses Redis 7 or later `SSUBSCRIBE` and `SPUBLISH`, with channels routed
-to their slot owners. Every participating application server must enable this mode.
-Microsoft's regular Redis backplane and regular Respire subscriptions cannot participate
-in that sharded deployment. Ordinary Cluster pub/sub remains available for migration.
+Sharded pub/sub uses `SSUBSCRIBE`/`SPUBLISH` (Redis 7+). Every server must enable it; Microsoft's
+backplane and regular Respire subscriptions cannot join a sharded deployment. Regular Cluster
+pub/sub stays available for migration.
 
 ## Delivery gaps and pending operations
 
-Redis pub/sub has no replay. Messages published during disconnection or dropped from
-a full local subscription buffer are lost. Respire reconnects and resubscribes through
-its configured recovery policy; it does not recreate lost SignalR messages or persist them.
-Terminal subscription recovery failure is logged as a backplane subscription ending.
+Redis pub/sub has no replay. Messages published while disconnected, or dropped from a full
+buffer, are lost; Respire resubscribes but does not recreate them. For durable delivery, store
+state separately and let clients reload it after reconnecting.
 
-Each channel buffers at most `SubscriptionBufferSize` messages, default 1024. Overflow
-drops the oldest buffered message. The adapter consumes ordered delivery-gap markers and
-logs warnings containing the channel, reason (`Reconnect`, `BufferOverflow`, or both),
-and the known local drop count. Reconnect loss counts are unknown. Applications needing
-durable delivery should store state separately and let clients reload it after reconnect.
-
-The `Respire.SignalR` meter exposes these counters:
+Each gap is logged as a warning with the channel, reason (`Reconnect`, `BufferOverflow`, or both),
+and the local drop count (unknown for reconnects). A subscription that cannot recover is logged as
+ended. The `Respire.SignalR` meter (register with `AddMeter`) exposes:
 
 | Instrument | Meaning |
 | --- | --- |
-| `respire.signalr.delivery.gaps` | Observed gap markers |
+| `respire.signalr.delivery.gaps` | Observed gaps |
 | `respire.signalr.messages.dropped` | Known local buffer discards |
 
-Both use `signalr.hub` and `reason` tags. Channel, group, user, and connection identifiers
-are absent from metric tags. Register this meter with an OpenTelemetry `AddMeter` call.
+Both have `signalr.hub` and `reason` tags, and no channel, group, user, or connection IDs.
 
-Remote group changes await acknowledgement for `GroupAckTimeout` and honor caller
-cancellation. A timeout or gap means the operation's outcome can be unknown. Client-result
-invocations should always receive a caller cancellation token with a deadline: a remote
-server can disappear or a completion can be lost. The receiving Respire server expires
-forwarded client-result state after `RemoteClientResultTimeout`, default 30 seconds.
-Set a longer positive timeout for longer client methods (up to 4,294,967,294 milliseconds).
-Expiry removes the pending result and disconnect registration, and sends an error completion
-when possible. It does not stop the client handler. This also bounds retained state when
-a caller cancels, disappears, or uses Microsoft's provider, whose compatible envelope has
-no cancellation notification. An originating wait still needs its own deadline if the
-error completion is lost or the receiver uses Microsoft's provider. Caller cancellation
-on a Respire origin cancels the invocation task with the original caller token, including
-after publication. Late completions are ignored. Remote state remains bounded by the
-receiver timeout because the compatible envelope carries no cancellation notification.
-The debug log event `RemoteResultExpired` (18) records the invocation ID and a `timeout`
-or `disconnect` reason when receiver state expires, separately from a client error result.
-[Ordinary Cluster `PUBLISH`](https://redis.io/docs/latest/commands/publish/) reports only
-node-local receiver counts, so zero receivers cannot establish that a remote client is
-missing. Standalone and sharded sends can detect a missing subscriber immediately.
-Manager disposal settles pending local waits and stops subscription consumers.
+Pending operations:
+
+- Remote group changes wait up to `GroupAckTimeout` and honor cancellation. After a timeout or
+  gap, the outcome can be unknown.
+- Always pass client-result invocations a cancellation token with a deadline. A remote server can
+  disappear, a completion can be lost, and Microsoft's provider sends no cancellation.
+- The receiving server drops forwarded client-result state after `RemoteClientResultTimeout` and
+  sends an error completion if it can. This does not stop the client handler. Debug event
+  `RemoteResultExpired` (18) logs the invocation ID and `timeout` or `disconnect`.
+- Cancelling on a Respire origin cancels the invocation task, even after publishing. Late
+  completions are ignored.
+- On Cluster, [regular `PUBLISH`](https://redis.io/docs/latest/commands/publish/) counts only
+  node-local receivers, so zero receivers does not prove a client is missing. Standalone and
+  sharded sends detect a missing subscriber immediately.
+- Disposing the manager settles pending local waits.
 
 ## License and implementation reference
 

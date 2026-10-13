@@ -1,16 +1,16 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic in-memory server with collections, pub/sub, and transactions, without Docker.
+description: Test real Respire client code against a deterministic in-memory server, without Docker.
 ---
 
 # In-memory testing
 
-`Respire.Testing` supplies a small RESP server connected through two in-memory pipes.
-Your application uses a real `RespireClient`: command serialization, coalescing, FIFO
-response dispatch, result leases, serialization settings, prefixing, and batches all run
-through the normal client code. The fake opens no TCP socket and requires no Docker daemon.
-Keep `Respire.Testing` and `Respire` at the same package version: the test transport uses an
-internal core hook, and both packages are published together with one version number.
+`Respire.Testing` provides a small RESP server connected through in-memory pipes. Use it for fast,
+deterministic tests of application code. Your code uses a real `RespireClient`, so serialization,
+dispatch, prefixing, and batches run normally. No TCP socket or Docker daemon is needed.
+
+Keep `Respire.Testing` and `Respire` at the same package version; the test transport uses an
+internal core hook.
 
 ```csharp
 using Respire.Testing;
@@ -25,36 +25,20 @@ if (await client.GetStringAsync("greeting") is not null)
     throw new InvalidOperationException("The key should have expired.");
 ```
 
-Each server has independent data. Multiple clients connected through its options share
-that data and execute each command atomically. `CreateOptions()` returns fresh endpoint
-collections; clone options to select RESP2/RESP3, connection count, serializers, and client
-timeouts. Keep the original endpoint and options object lineage: a connection string cannot
-represent an in-memory server. Changing the endpoint causes `NotSupportedException` on connection.
-Both eager `ConnectAsync` and lazy `Create` clients work.
+## Server and client lifetime
 
-Dispose clients before their server. Disposing one client leaves other clients and server
-data intact. Server disposal closes all owned pipe endpoints and joins server loops;
-concurrent calls join the same cleanup task. It does not dispose your client objects.
-Previously obtained options cannot create connections after server disposal.
-Unexpected command/clock failures and malformed requests close the affected connection and are
-reported by server disposal. Completed connections are removed; their exceptions remain retained
-until disposal so errors cannot be lost after a client disconnects. Keep fixture lifetimes bounded
-and dispose the server
-even when a test fails. Other connections remain independent; a command failure does not
-make future connections throw a historical error.
+- Each server has independent data. All clients created from its options share that data, and each command runs atomically.
+- `CreateOptions()` returns fresh options each call. Use a `with` expression to set protocol (RESP2/RESP3), connection count, serializers, and timeouts.
+- Do not change the endpoint: it throws `NotSupportedException` on connection. A connection string cannot represent the fake server.
+- Both `ConnectAsync` and lazy `Create` clients work.
+- Dispose clients before the server. Server disposal closes all connections but does not dispose your clients. Options cannot connect after server disposal.
+- Malformed requests and unexpected failures close the affected connection only. Server disposal reports them, so always dispose the server, even when a test fails.
 
 ## Supported subset
 
-For `INCREX BYFLOAT`, the fake calculates with .NET `double`, while Redis uses
-platform-dependent `long double`. Rounding near bounds can therefore differ.
-Increments, stored values, and results outside the fake's finite `double` range
-fail before mutation; bounds may be infinite.
-Use a real Redis fixture when testing floating-point precision or extreme values.
-
-This is a test double with explicit limits, not a Redis implementation or a compatibility
-oracle. Unsupported commands return server errors containing the command name.
-Unsupported options also fail explicitly instead of silently changing behavior.
-An error consumes exactly one response slot, so later valid commands still work.
+The fake is a test double, not a Redis implementation or compatibility oracle.
+Unsupported commands and options return a server error that names the command. Each error
+uses one response slot, so later commands still work.
 
 | Area | Supported commands and options |
 | --- | --- |
@@ -73,37 +57,31 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
 | Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
 
-Stream reads support multiple keys, new group entries, pending history, acknowledgements,
-and cumulative Redis 8.10 count/byte budgets. Blocking reads wake after appends, resolve `$`
-once, and release on connection cancellation. Blocking timeouts use wall-clock time rather
-than `RespireFakeClock`. Transactions execute stream reads without blocking, as Redis does.
-The fake does not implement trimming, `XCLAIM`, the `XREADGROUP` `NOACK` and `CLAIM` options, stream metadata, or other
-group-administration commands. Unsupported
-append/read options fail explicitly. Use real Redis tests for those operations.
+### Explicitly unsupported
 
-`GETEX` supports its expiry options and `PERSIST`. Binary keys and values are preserved,
-including empty values and embedded zero bytes. Multi-key mutations are atomic; integer
-parsing and overflow errors leave the original value unchanged. `UNLINK` removes data
-synchronously because this fake does not model background memory reclamation.
+| Area | Unsupported |
+| --- | --- |
+| Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD`, `HSCAN` |
+| Sets | `SPOP`, `SRANDMEMBER`, `SSCAN` |
+| Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH`. Use the nonblocking typed overloads without `waitFor`. |
+| Sorted sets | `ZRANDMEMBER`, `ZSCAN`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE`, `ZRANK`/`ZREVRANK WITHSCORE` |
+| Streams | Trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
+| Pub/sub | `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB`, `QUIT`, `RESET` |
 
-The stream subset supports testing producer configuration and manual deduplication.
-Each producer retains identities up to the configured duration and capacity. Changing
-a setting clears those identities; setting the same value preserves them. Like Redis,
-`XCFGSET` does not invalidate `WATCH`. Stream
-configuration and appends preserve key TTLs. The fake expires identities on access
-using `RespireFakeClock`, including the exact retention boundary. Redis performs
-periodic cleanup, so its expiry may occur later. Configuration preserves existing entries,
-consumer groups, and pending acknowledgements. `IDMPAUTO`, trimming, and range commands
-remain unsupported and fail explicitly.
+### Strings, keys, and counters
 
-Hash fields and values preserve binary bytes. `HSET` counts newly added fields, including
-duplicate fields within one command only once; `HMGET` preserves requested field order and
-nulls. `HGETALL` emits a RESP2 array or RESP3 map. Hash enumeration order is unspecified.
-`HINCRBY` uses checked signed 64-bit arithmetic. Hash mutations retain key-level TTL; removing
-the last field deletes the key and its TTL. String operations reject hashes, lists, sets, and sorted sets with `WRONGTYPE`,
-except `MGET` returns null for non-string keys and ordinary `SET`/`MSET` may replace their type.
-Failed operations preserve existing fields and TTL. Hash-field expiry, `HINCRBYFLOAT`,
-`HRANDFIELD`, and `HSCAN` are explicitly unsupported.
+- Binary keys and values are preserved, including empty values and zero bytes.
+- Multi-key mutations are atomic. Integer parse and overflow errors leave the value unchanged.
+- String commands reject other types with `WRONGTYPE`. Exceptions: `MGET` returns null for non-string keys, and plain `SET`/`MSET` replace the type.
+- `UNLINK` deletes synchronously.
+- `INCREX BYFLOAT` uses .NET `double`; Redis uses platform-dependent `long double`, so rounding near bounds can differ. Values outside the finite `double` range fail before mutation. Use real Redis to test floating-point precision or extreme values.
+
+### Hashes
+
+- Fields and values preserve binary bytes. Enumeration order is unspecified.
+- `HSET` counts duplicate fields in one command once. `HMGET` keeps request order and nulls.
+- `HGETALL` returns a RESP2 array or RESP3 map.
+- Mutations keep the key TTL. Removing the last field deletes the key. Failed operations change nothing.
 
 ```csharp
 using Respire.Testing;
@@ -117,18 +95,14 @@ if (fields["name"] != "Ada" || fields["visits"] != "1")
     throw new InvalidOperationException("Hash fields did not round-trip.");
 ```
 
-Set members preserve binary bytes and uniqueness. `SMEMBERS` and set algebra return a
-RESP2 array or RESP3 set; enumeration order is unspecified. `SMISMEMBER` preserves input
-order and duplicates. `SMOVE` validates both existing types before mutation; moving within
-the same set only tests membership. A missing source returns zero even if the destination
-has another type. `SINTERCARD LIMIT 0` counts the complete intersection; a positive limit
-stops counting at that bound.
+### Sets
 
-Ordinary set mutations retain existing key TTLs. Removing or moving the last member deletes
-the source key. STORE commands calculate from all source sets before replacing the destination,
-so source/destination aliasing is supported. STORE replaces the destination type, clears its TTL,
-and deletes it when the result is empty. Wrong-type failures leave existing members and TTLs
-unchanged. Random sampling (`SPOP`, `SRANDMEMBER`) and `SSCAN` remain unsupported.
+- Members preserve binary bytes. `SMEMBERS` and set algebra return a RESP2 array or RESP3 set, in unspecified order.
+- `SMISMEMBER` keeps input order and duplicates.
+- `SMOVE` checks both types before mutating. A missing source returns zero even if the destination has another type.
+- `SINTERCARD LIMIT 0` counts the whole intersection.
+- Mutations keep the key TTL. Removing the last member deletes the key.
+- `STORE` forms read all sources first, so the destination can also be a source. They replace the destination type, clear its TTL, and delete it when the result is empty.
 
 ```csharp
 using Respire.Testing;
@@ -142,17 +116,15 @@ if (onlineSubscribers.Length != 1 || onlineSubscribers[0] != "Grace")
     throw new InvalidOperationException("Set intersection did not match.");
 ```
 
-Lists retain binary elements, duplicates, insertion order, and key TTL across mutations.
-Negative indexes count from the tail. `LRANGE`/`LTRIM` use inclusive end indexes;
-`LREM` uses positive counts from the head, negative counts from the tail, or zero for all matches.
-`LPOS` supports reverse ranks, unlimited `COUNT 0`, and a `MAXLEN` scan bound. Without
-`COUNT`, a missing match returns null; with it, the reply is an array. Count-pop returns
-null for a missing key and an empty array for count zero on an existing list.
-Ranks must be nonzero and have a magnitude no greater than `long.MaxValue`, matching Redis 7.2+.
-Repeated valid options use their final values, but every occurrence is validated immediately:
-`RANK 0 RANK 1`, `COUNT -1 COUNT 1`, and `MAXLEN -1 MAXLEN 0` still fail.
-Removing the final element deletes the key and its TTL. Wrong types and malformed options
-fail without changing data. Immediate commands and batches use the same handlers.
+### Lists
+
+- Lists keep binary elements, duplicates, order, and key TTL. Removing the last element deletes the key.
+- Negative indexes count from the tail. `LRANGE` and `LTRIM` end indexes are inclusive.
+- `LREM` count: positive from the head, negative from the tail, zero for all matches.
+- `LPOS` supports negative ranks, `COUNT 0` (unlimited), and `MAXLEN`. Without `COUNT`, no match returns null; with it, an array. `RANK` must be nonzero and within `long.MaxValue` (Redis 7.2+).
+- Repeated options use the last value, but each is validated: `RANK 0 RANK 1` fails.
+- Count-pop returns null for a missing key and an empty array for count zero.
+- `LMOVEM` and `BLMOVEM` support `COUNT`/`EXACTLY` and `OBO`/`BULK`. `BLMOVEM` timeouts use wall-clock time; cancellation or server disposal releases the wait. Inside `MULTI` it runs immediately, as in Redis.
 
 ```csharp
 using Respire.Testing;
@@ -168,33 +140,19 @@ if (first.Result != 10 || !rest.Result.SequenceEqual(new[] { 30, 20 }))
     throw new InvalidOperationException("List ordering did not round-trip.");
 ```
 
-Multi-element moves (`LMOVEM`, `BLMOVEM`) support COUNT/EXACTLY and OBO/BULK, including
-same-list ordering, wrong-type validation, TTL preservation, and WATCH invalidation.
-BLMOVEM waits for the required source length without holding the server-state lock. Its
-timeouts use wall-clock time; `RespireFakeClock` still controls only key expiry. Cancellation
-or server disposal releases the wait. Inside MULTI, BLMOVEM runs immediately as Redis does.
+### Sorted sets
 
-Other blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`,
-`BLMOVE`, `RPOPLPUSH`, and `BRPOPLPUSH`) remain explicitly unsupported. Use the nonblocking
-typed overloads without `waitFor`; a populated list does not make a blocking command supported.
-
-Sorted sets preserve binary members and order equal scores by unsigned member bytes. Rank
-ranges have inclusive endpoints and support negative indexes; score and lex ranges support
-exclusive and infinite bounds. Lex ranges require equal scores for meaningful Redis parity.
-`REV` reverses both score order and tie order; score/lex bounds then appear maximum first.
-`LIMIT` applies to score/lex ranges; a negative offset yields no entries, and a negative count
-means all remaining entries. `WITHSCORES` cannot combine with `BYLEX`. Repeated `LIMIT`
-uses its final values. `ZINTERCARD` validates every input type before taking an empty-input
-shortcut, accepts both set and sorted-set inputs, and treats zero `LIMIT` as unlimited.
-
-Scores accept decimal/exponent and hexadecimal floating-point input, including subnormal
-values and explicit infinities. NaN, malformed numbers, and numeric overflow or underflow
-to zero are rejected before mutation. Adding finite scores can produce infinity;
-an increment producing NaN fails without changing the member. `ZADD CH` counts successful
-additions and score changes, including successive changes to a repeated member. Mutations
-retain expiry; removing the final member deletes the key and its expiry. Missing scores/ranks
-are null, and missing ranges/pops are empty arrays. RESP3 scored ranges and counted pops
-contain nested member/score pairs; a pop with no count remains flat on both protocols.
+- Members preserve binary bytes. Equal scores sort by unsigned member bytes.
+- Rank ranges are inclusive and accept negative indexes. Score and lex ranges accept exclusive and infinite bounds. Lex ranges need equal scores to match Redis.
+- `REV` reverses score and tie order; bounds are then given maximum first.
+- `LIMIT` applies to score/lex ranges. A negative offset returns nothing; a negative count returns all remaining. Repeated `LIMIT` uses the last value.
+- `WITHSCORES` cannot combine with `BYLEX`.
+- `ZINTERCARD` accepts sets and sorted sets and treats `LIMIT 0` as unlimited.
+- Scores accept decimal, exponent, hexadecimal, subnormal, and infinite values. NaN, malformed numbers, and overflow or underflow to zero fail before mutation. An increment that produces NaN fails.
+- `ZADD CH` counts additions and score changes.
+- Mutations keep expiry. Removing the last member deletes the key.
+- Missing scores and ranks return null; missing ranges and pops return empty arrays. In RESP3, scored ranges and counted pops return nested member/score pairs; a pop without a count stays flat.
+- Sorting runs on demand. It does not model Redis performance.
 
 ```csharp
 using Respire.Testing;
@@ -210,24 +168,19 @@ if (count.Result != 2 || members.Result[0] != "Grace")
     throw new InvalidOperationException("Sorted-set batch results did not match.");
 ```
 
-Sorted-set random sampling (`ZRANDMEMBER`), scanning (`ZSCAN`), blocking/multi-key pops
-(`BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`), aggregate result/store commands
-(`ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms), `ZRANGESTORE`, and the newer
-`ZRANK`/`ZREVRANK WITHSCORE` option are explicitly unsupported. Sorting is performed
-on demand for bounded test data; it does not model Redis's indexing or performance.
+### Streams
 
-Pub/sub subscriptions belong to their connection. A duplicate `SUBSCRIBE` acknowledges each
-argument but counts each distinct channel once. `UNSUBSCRIBE` acknowledges missing channels;
-without arguments it removes every subscription, or acknowledges a null channel if none exist.
-`PUBLISH` counts subscribed connections, not the number of client-side subscription readers.
-Messages and confirmations use RESP2 arrays or RESP3 pushes. In RESP2 subscribed mode, this
-subset permits only `SUBSCRIBE`, `UNSUBSCRIBE`, and `PING`; RESP3 permits ordinary commands
-while subscribed. A RESP3 connection publishing to its own subscribed channel receives the
-complete command reply before the message, including the complete `EXEC` array for queued
-publications. This follows Redis 7.2+ ordering; older Redis versions can interleave pushes
-inside transaction replies. Deferred messages count toward the same 16 MiB output limit.
-Pattern and sharded commands (`PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`,
-`SUNSUBSCRIBE`, `SPUBLISH`), `PUBSUB` diagnostics, `QUIT`, and `RESET` are unsupported.
+- Reads support multiple keys, new group entries, pending history, acknowledgements, and Redis 8.10 count/byte budgets.
+- Blocking reads wake after appends and resolve `$` once. Their timeouts use wall-clock time, not `RespireFakeClock`. Inside a transaction, reads do not block.
+- Manual deduplication (`IDMP`) keeps identities up to the configured duration and size. Changing a setting clears them; setting the same value keeps them. Identities expire on access using `RespireFakeClock`; Redis cleans up periodically, so it can expire them later.
+- `XCFGSET` does not invalidate `WATCH`. Configuration and appends keep key TTLs, entries, groups, and pending entries.
+
+### Pub/sub
+
+- Subscriptions belong to their connection. `PUBLISH` returns the number of subscribed connections, not client-side readers.
+- Duplicate `SUBSCRIBE` acknowledges each argument but counts each channel once. `UNSUBSCRIBE` with no arguments removes all subscriptions.
+- Messages use RESP2 arrays or RESP3 pushes. In RESP2 subscribed mode only `SUBSCRIBE`, `UNSUBSCRIBE`, and `PING` are allowed; RESP3 allows all commands.
+- A RESP3 connection publishing to its own channel gets the full reply (including a full `EXEC` array) before the message, as in Redis 7.2+.
 
 ```csharp
 using Respire.Testing;
@@ -243,28 +196,19 @@ if (!await messages.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))
     throw new InvalidOperationException("The publication did not round-trip.");
 ```
 
-Each connection has one ordered output writer. Acknowledgements precede later publications,
-including when an after-execution fault holds the acknowledgement. Publications never wait
-for a subscriber to read. The fake disconnects a slow subscriber when its pending encoded
-push bytes would exceed 16 MiB, including a push currently waiting for the pipe to flush.
-The bound applies to complete encoded frames, including framing bytes, even for an empty queue.
-This is a fixed test-fixture bound, not Redis's configurable output-buffer policy. Receiver
-counts do not guarantee delivery: a connection can close after being counted. The publication
-that exceeds the bound still counts the disconnected subscriber; subsequent publications do not.
-Closing a
-connection removes its routes; client/server disposal also cancels and joins pending output.
-The real client can reconnect and resubscribe, emitting its normal gap marker. Publications
-during a gap are lost; the fake does not retain or replay them. Caller cancellation alone
-does not undo an accepted subscription; release held replies or dispose the client to let
-its normal cleanup finish.
+Delivery rules:
+
+- Publishing never waits for a subscriber to read.
+- A subscriber whose pending output exceeds 16 MiB is disconnected. This is a fixed limit, not Redis's output-buffer policy. The publication that exceeds it still counts that subscriber.
+- A receiver count does not guarantee delivery; the connection can close after being counted.
+- The real client reconnects and resubscribes with its normal gap marker. Messages published during the gap are lost.
+- Cancelling the caller does not undo an accepted subscription. Dispose the subscription or client to clean up.
 
 ## Transactions and WATCH
 
-Use `CreateTransaction()` or `CreateTransactionAsync(watchedKeys)` so the real client keeps
-all transaction commands on the same connection. The fake copies queued arguments and does
-not execute them until `EXEC`. The whole sequence runs atomically under the server lock and
-uses one expiry-clock sample. Results retain command order; execution errors occupy their
-own array elements and do not roll back successful commands.
+Use `CreateTransaction()` or `CreateTransactionAsync(watchedKeys)` so all transaction commands use one
+connection. Queued commands run atomically at `EXEC`, in order. A failed command returns its error in its
+own result slot and does not roll back the others.
 
 ```csharp
 using Respire.Testing;
@@ -282,92 +226,41 @@ if (pending.Status != RespirePendingStatus.Aborted || await client.ExistsAsync("
     throw new InvalidOperationException("An aborted transaction must not mutate data.");
 ```
 
-`WATCH` observes supported string, key, hash, list, set, and sorted-set mutations and expiry, including
-expiry detected at `EXEC` without an intervening read. Rejected conditional writes and true
-no-ops do not invalidate a watch. Redis treats some equal-value operations as writes: `SET`,
-`HSET`, `LSET`, and an unchanged `LTRIM` still invalidate watches. Watching an already expired
-key treats it as absent. `UNWATCH`, `DISCARD`, completed or aborted `EXEC`, and connection
-closure release watch state. `UNWATCH` inside `MULTI` is itself queued.
+- `WATCH` detects supported mutations and expiry, including expiry found at `EXEC`. Rejected conditional writes and no-ops do not invalidate it. `SET`, `HSET`, `LSET`, and an unchanged `LTRIM` do, as in Redis.
+- A watched key that has already expired counts as absent.
+- `UNWATCH`, `DISCARD`, `EXEC`, and connection close release watches. `UNWATCH` inside `MULTI` is queued.
+- A changed watch aborts the commit, which returns `false`.
+- Unknown commands, arity errors, `HELLO`, `SUBSCRIBE`, and `UNSUBSCRIBE` inside `MULTI` invalidate the queue; `EXEC` then returns `EXECABORT`. Option and value errors stay queued and fail individually at `EXEC`.
+- Nested `MULTI` and `WATCH` inside `MULTI` fail without invalidating the queue.
+- Each connection can queue at most 16 MiB of arguments; exceeding it invalidates the queue.
+- A disconnect after `EXEC` loses the reply but keeps all mutations. The client never replays an ambiguous transaction, and cancellation does not undo one.
 
-Unknown commands and command-table arity errors invalidate the queue; `EXEC` then returns
-`EXECABORT`. Handler-level option/value errors remain queued and become individual EXEC
-errors. Nested `MULTI` and `WATCH` inside `MULTI` fail without invalidating the existing
-queue. A changed watch aborts with a RESP2 null array or RESP3 null, exposed as a false
-watched commit. Each connection may retain at most 16 MiB of estimated queued argument
-storage; exceeding that bound rejects the command and invalidates the queue.
-
-Protocol changes (`HELLO`) and subscription control (`SUBSCRIBE`, `UNSUBSCRIBE`) inside
-`MULTI` are explicitly unsupported and invalidate the queue. Unsupported command families
-remain errors in transactions too. Fault rules match received wire commands, including
-queue admission and `EXEC`; executing a queued handler does not match a second fault.
-A fault before `EXEC` can prevent all mutations; a disconnect after `EXEC` loses the reply
-after all mutations have run. The client never replays an ambiguously accepted transaction.
-Cancellation abandons the caller's wait, not an accepted transaction or its effects.
-Disposing a watched transaction closes its dedicated connection if it cannot safely return
-it to the pool; server disposal joins connection loops and clears queues and watches.
-
-These semantics follow [Redis transactions](https://redis.io/docs/latest/develop/using-commands/transactions/)
-and the [Redis transaction implementation](https://github.com/redis/redis/blob/7.2/src/multi.c).
-
-## Remaining limits
-
-Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, general scripts and functions (only the built-in stream worker scripts run),
-client-side tracking, persistence, and administrative diagnostics are not simulated. Unsupported handshake features
-fail initialization. Do not enable these modes and infer production behavior from the fake.
-Individual RESP requests are limited to 16 MiB; larger requests close their connection
-and report the size-limit error when the server is disposed.
-Arguments are copied into owned arrays and commands execute under one server lock.
-Incomplete requests can reparse already received arguments; highly fragmented arrays may cost
-more CPU than contiguous requests. This fixture is not a throughput benchmark tool.
-There is no eviction policy or total memory budget: keep test datasets bounded.
+Behavior follows [Redis transactions](https://redis.io/docs/latest/develop/using-commands/transactions/).
 
 ## Expiry and determinism
 
-Without an injected clock, expiry uses `TimeProvider.System`. `RespireFakeClock` starts at
-the Unix epoch by default and advances only when requested. A command samples time once,
-and keys expire on access at or after their deadline. `TTL` uses Redis's nearest-second
-rounding; `PTTL` provides millisecond precision. Missing and persistent keys retain the
-usual `-2` and `-1` sentinel results.
-Advancing the clock takes effect when the next command samples time; it does not alter
-the time already sampled by an executing command.
+- Without an injected clock, expiry uses `TimeProvider.System`.
+- `RespireFakeClock` starts at the Unix epoch and moves only when you call `Advance`. Each command reads the time once; keys expire on access at or after their deadline.
+- `TTL` rounds to the nearest second; `PTTL` is in milliseconds. Missing and persistent keys return `-2` and `-1`.
+- The clock controls server expiry only. It does not advance client timeouts or order concurrent callers; await operations or use batches when order matters.
+- There are no expiry notifications or background expiry.
+- Cancellation only stops waiting. Do not assume a cancelled mutation did not run.
 
-The controllable clock affects server expiry only. It does not advance client timeouts,
-schedule asynchronous work, or guarantee ordering between simultaneous callers. Use awaited
-operations or batches when a test requires a specific order. The fake has no expiry
-notifications or background expiry task.
-Cancellation retains the real client's contract: it abandons waiting and does not undo a
-command accepted for sending. Do not infer from cancellation that a mutation was absent.
+## Remaining limits
 
-Supported option behavior follows [Redis SET](https://redis.io/docs/latest/commands/set/),
-[EXPIRE](https://redis.io/docs/latest/commands/expire/), and the
-[Redis 8.6 expiry implementation](https://github.com/redis/redis/blob/8.6.0/src/expire.c).
-Hash behavior follows [HSET](https://redis.io/docs/latest/commands/hset/),
-[HGETALL](https://redis.io/docs/latest/commands/hgetall/), and
-[HINCRBY](https://redis.io/docs/latest/commands/hincrby/). Set behavior follows
-[SMOVE](https://redis.io/docs/latest/commands/smove/),
-[SINTERSTORE](https://redis.io/docs/latest/commands/sinterstore/), and
-[SINTERCARD](https://redis.io/docs/latest/commands/sintercard/).
-List option and reply behavior follows [Redis LPOS](https://redis.io/docs/latest/commands/lpos/)
-and the [Redis list command implementation](https://github.com/redis/redis/blob/7.2/src/t_list.c).
-Sorted-set behavior follows [ZADD](https://redis.io/docs/latest/commands/zadd/),
-[ZRANGE](https://redis.io/docs/latest/commands/zrange/), and the
-[Redis sorted-set implementation](https://github.com/redis/redis/blob/7.2/src/t_zset.c).
-Pub/sub framing and delivery follow [Redis Pub/Sub](https://redis.io/docs/latest/develop/pubsub/),
-[SUBSCRIBE](https://redis.io/docs/latest/commands/subscribe/), and
-[UNSUBSCRIBE](https://redis.io/docs/latest/commands/unsubscribe/).
-Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. The [shared testing sample](testing-sample.md) runs identical
-binary value, hash/batch, transaction, and pub/sub scenarios against the fake and real fixtures.
+- Only database 0 and standalone mode.
+- Not simulated: authentication, TLS, Cluster, Sentinel, general scripts and functions (only the built-in stream worker scripts), client-side tracking, persistence, and admin diagnostics. Unsupported handshake features fail initialization.
+- Requests are limited to 16 MiB; larger requests close the connection.
+- No eviction or memory limit: keep test data small.
+- Not a throughput benchmark.
+
+Run real-server integration tests for version compatibility, unsupported commands, and operational behavior.
+The [shared testing sample](testing-sample.md) runs the same scenarios against the fake and real servers.
 
 ## Controlled faults
 
-Install faults after connecting when the handshake is not the subject of the test.
-Rules match a case-insensitive command name and, optionally, exact bytes of its first
-argument. That argument is not necessarily a key. The server copies matcher bytes.
-The first available matching rule wins in registration order, atomically across all
-connections. `occurrences` defaults to one; use a positive count or `null` to repeat.
-A fragmented request counts only once, when its complete command has been parsed.
+Inject faults to test how your code handles paused, delayed, disconnected, or rejected commands.
+Install them after connecting unless you are testing the handshake.
 
 ```csharp
 using Respire.Testing;
@@ -392,38 +285,27 @@ if (fault.ExecutionCount != 1)
 | `Disconnect()` | Close without invoking the handler or replying | Execute once, then close without a reply |
 | `Loading()`, `ReadOnly()`, `Moved(slot, destination)` | Return the named RESP error without invoking the handler | Not supported |
 
-`Matched` completes at the selected action's boundary, so an after-execution match
-proves the handler has returned. `MatchedCount` counts reserved complete commands;
-`ExecutionCount` counts handler invocations, including handlers that return an error.
-Neither count claims that every invocation mutated data. A rule removed before its
-first boundary cancels `Matched`; always use a deadline if matching is optional.
+Matching:
 
-Disposing a scope removes future matches and releases its selected delays/pauses.
-`ResetFaults()` does this for all current rules, preserving data and later registrations.
-Removal does not undo an executed command or reverse a selected rejection/disconnect.
-A released gate stays released; create a new gate for the next pause. Delay uses wall-clock
-time, not `RespireFakeClock`; gates provide deterministic scheduling without sleeps.
-Close the client or server to abort held work. Server disposal cancels connections before
-releasing rules, joins server loops, and treats injected EOF as expected cleanup.
+- A rule matches a command name (case-insensitive) and, optionally, the exact bytes of the first argument (not necessarily a key).
+- The first matching rule in registration order wins, across all connections.
+- `occurrences` defaults to 1. Pass a positive count, or `null` to match forever.
 
-Caller cancellation retains the actual client's wait-only contract. It does not cancel a
-server-side pause or undo an accepted mutation. Release the gate or dispose its scope so
-the reply can drain; a later command on the same connection then verifies FIFO alignment.
-A disconnect after execution deliberately leaves acceptance ambiguous to the client.
-Tests must inspect independent server state, not retry the mutation blindly.
-For `PUBLISH`, an after-execution disconnect may deliver to subscribers while losing the
-publisher's reply. Holding a command's reply also holds later pushes on that connection;
-already queued pushes retain their earlier position. Faults match commands, not individual
-outgoing message frames.
+Fault scope members:
 
-These actions exercise the real response parser, error propagation, command cancellation,
-FIFO draining, and connection replacement. With `ReconnectPolicy`, a subsequent standalone
-send can fail fast while scheduling replacement; observe `ConnectionStateChanged` before
-expecting a restored connection. The client does not replay the disconnected mutation.
-`LOADING` and `READONLY` are standalone server rejections here, not automatic application retries.
+| Member | Meaning |
+| --- | --- |
+| `Matched` | Completes when the action is reached. After execution, this proves the handler returned. Cancelled if the rule is removed first, so always use a deadline. |
+| `MatchedCount` | Matched commands. |
+| `ExecutionCount` | Handler invocations, including ones that returned an error. Does not prove data changed. |
+| `Dispose()` | Stops future matches and releases its pauses and delays. |
 
-`MOVED` deliberately demonstrates redirect failure: a standalone client surfaces the exact
-error and the command is not applied. Trying a different destination with these fake options throws
-`NotSupportedException` instead of opening a real socket. No destination mapping, slot map,
-Cluster discovery, ASK handling, topology refresh, Sentinel handoff, or replica election is
-simulated. Use real Cluster/Sentinel integration fixtures to validate those recovery policies.
+- `server.ResetFaults()` removes all current rules and keeps data. Removing a rule does not undo an executed command.
+- A released gate stays released; create a new one for the next pause.
+- `Delay` uses wall-clock time, not `RespireFakeClock`.
+- A held reply also holds later pushes on that connection.
+- Cancelling the caller does not cancel a server-side pause or undo a mutation. Release the gate or dispose the scope.
+- After an after-execution disconnect, the client cannot tell whether the command ran. Check server state; do not retry blindly. For `PUBLISH`, subscribers may receive the message even though the reply is lost.
+- With `ReconnectPolicy`, the next send can fail fast while reconnecting. Wait for `ConnectionStateChanged` before expecting a restored connection. The client does not replay the lost command.
+- `LOADING` and `READONLY` are plain errors here; the client does not retry them.
+- `MOVED` shows redirect failure only: the client surfaces the error and the command is not applied. Following the redirect throws `NotSupportedException`. No slot map, Cluster, `ASK`, or Sentinel behavior is simulated; use real fixtures for those.

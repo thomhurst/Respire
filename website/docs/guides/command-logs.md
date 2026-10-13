@@ -1,20 +1,6 @@
 # Valkey command logs
 
-Valkey 8.1+ exposes three independent node-local command logs. Respire's Server facet
-provides `CommandLogAsync`, `CommandLogLengthAsync`, and `ResetCommandLogAsync`, plus
-explicit `OnAllNodesAsync` counterparts. On Redis, use `SlowLogAsync` instead; Redis servers
-without COMMANDLOG return their command errors, and there is no fallback.
-
-| `RespireCommandLogType` | Measurement | Threshold configuration | Retention configuration |
-| --- | --- | --- | --- |
-| `Slow` | Execution microseconds, excluding client I/O | `commandlog-execution-slower-than` | `commandlog-slow-execution-max-len` |
-| `LargeRequest` | Request bytes | `commandlog-request-larger-than` | `commandlog-large-request-max-len` |
-| `LargeReply` | Reply bytes | `commandlog-reply-larger-than` | `commandlog-large-reply-max-len` |
-
-Threshold `-1` disables the selected log; `0` records every eligible command. Larger
-retention limits consume more server memory. These APIs do not change thresholds or
-retention automatically. See Valkey's [GET](https://valkey.io/commands/commandlog-get/)
-and [LEN](https://valkey.io/commands/commandlog-len/) references.
+Valkey 8.1+ keeps three independent, per-node command logs: slow commands, large requests, and large replies. Read and reset them with `CommandLogAsync`, `CommandLogLengthAsync`, and `ResetCommandLogAsync` on the Server facet, or their `OnAllNodesAsync` counterparts. On Redis, use `SlowLogAsync`; Redis servers without COMMANDLOG return their error, with no fallback.
 
 ```csharp
 var entries = await redis.Server.CommandLogAsync(RespireCommandLogType.LargeReply, count: 20);
@@ -22,32 +8,40 @@ foreach (var entry in entries)
     Console.WriteLine($"{entry.Id}: {entry.ReplyBytes} bytes at {entry.TimestampUnixSeconds}");
 ```
 
-Each owned entry includes its type, ID, Unix timestamp in seconds, raw metric, binary
-arguments, and binary client address/name. `DurationMicroseconds`, `RequestBytes`, and
-`ReplyBytes` expose only the applicable measurement; the others are null. Select
-log-specific measurements by `Type`; the nullable views make units
-explicit at the cost of a null check, while `MetricValue` remains available for generic tooling.
-Unknown trailing fields remain in recursively copied `AdditionalValues`. Those GC-owned
-`RespireResult` values need no disposal; explicitly disposing one invalidates its views.
-Replies remain usable after the client is disposed.
+| `RespireCommandLogType` | Measurement | Threshold configuration | Retention configuration |
+| --- | --- | --- | --- |
+| `Slow` | Execution microseconds, excluding client I/O | `commandlog-execution-slower-than` | `commandlog-slow-execution-max-len` |
+| `LargeRequest` | Request bytes | `commandlog-request-larger-than` | `commandlog-large-request-max-len` |
+| `LargeReply` | Reply bytes | `commandlog-reply-larger-than` | `commandlog-large-reply-max-len` |
 
-Count defaults to 10; `-1` requests all retained entries and `0` returns none. Values
-below `-1` and undefined log types fail before I/O. Results preserve server order.
-Valkey 8.1.3 returns newest first, verified against its
-[implementation](https://github.com/valkey-io/valkey/blob/8.1.3/src/commandlog.c).
-IDs are scoped to a node and log type; resetting a log does not reset its ID sequence.
+Threshold `-1` disables a log; `0` records every eligible command. Larger retention uses more server memory. These APIs never change thresholds or retention. See Valkey's [GET](https://valkey.io/commands/commandlog-get/) and [LEN](https://valkey.io/commands/commandlog-len/) references.
 
-The server bounds recorded argument counts and lengths and can omit or redact sensitive
-commands. Respire preserves the returned bytes; it cannot reconstruct the original command
-or guarantee that logs contain no secrets. Retrieval can transfer large payloads;
-`count: -1` is unbounded by the client. Prefer a count appropriate to the workload.
+## Entries
+
+- Each entry has its type, ID, Unix timestamp in seconds, raw metric, binary arguments, and binary client address and name.
+- `DurationMicroseconds`, `RequestBytes`, and `ReplyBytes` are set only for the matching log type; the others are null. `MetricValue` holds the raw metric for generic tooling.
+- Unknown trailing fields go to `AdditionalValues` as `RespireResult` values. They need no disposal; disposing one invalidates its views.
+- Entries stay usable after the client is disposed.
+
+Count:
+
+| `count` | Result |
+| --- | --- |
+| omitted | 10 entries |
+| `-1` | All retained entries (unbounded; can transfer large payloads) |
+| `0` | None |
+| below `-1` | Throws before I/O (as do undefined log types) |
+
+- Results keep server order; Valkey 8.1.3 returns newest first (see its [implementation](https://github.com/valkey-io/valkey/blob/8.1.3/src/commandlog.c)).
+- IDs are scoped to a node and log type. Resetting a log does not reset its IDs.
+
+:::warning
+The server limits recorded argument counts and lengths and may omit or redact sensitive commands. Respire returns the bytes as given; it cannot rebuild the original command or guarantee the log contains no secrets.
+:::
 
 ## Scope and resets
 
-Ordinary calls use one execution node. With `UseCluster`, all-node discovery includes
-replicas and slotless members; otherwise it queries only the connected endpoint.
-Each result carries its endpoint and either a value or the original error. Discovery
-requires CLUSTER NODES permission. Views can overlap; results are not deduplicated.
+Ordinary calls use one node. With `UseCluster`, all-node calls discover replicas and slotless members (needs CLUSTER NODES permission); otherwise they query only the connected endpoint. Each result has its endpoint and either a value or the original error. Views can overlap; nothing is deduplicated.
 
 ```csharp
 var results = await redis.Server.CommandLogLengthOnAllNodesAsync(RespireCommandLogType.Slow);
@@ -58,15 +52,14 @@ foreach (var result in results)
 }
 ```
 
-Inspection does not require `AllowAdmin` locally; server ACLs still apply.
-RESET requires `AllowAdmin` before I/O and permanently clears the selected log.
-Explicit all-node resets can partially succeed, return `true` for each successful node,
-and offer no rollback or automatic replication. Reset costs grow with retained entries;
-see [COMMANDLOG RESET](https://valkey.io/commands/commandlog-reset/).
+- Reading does not need `AllowAdmin`; server ACLs still apply.
+- RESET needs `AllowAdmin` (checked before I/O) and permanently clears the selected log. Its cost grows with retained entries; see [COMMANDLOG RESET](https://valkey.io/commands/commandlog-reset/).
+- All-node resets return `true` per successful node and can partly succeed, with no rollback or replication.
 
-Pre-cancelled calls send nothing. Discovery cancellation throws; cancellation after
-discovery is reported per affected node. Cancellation after RESET dispatch cannot undo
-the operation. Respire does not retry a RESET.
+Cancellation:
 
-These six methods are `IServerCommands` members. External implementations, decorators, and
-mocks must implement or forward them. No batch/transaction methods are added.
+- Pre-cancelled calls send nothing.
+- Cancellation during discovery throws; after discovery it is reported per node.
+- Cancellation after RESET is sent cannot undo it. Respire never retries a RESET.
+
+These six methods are `IServerCommands` members. External implementations, decorators, and mocks must implement or forward them. They have no batch or transaction versions.

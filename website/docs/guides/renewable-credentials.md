@@ -5,14 +5,13 @@ description: Rotate Redis credentials on live connections with a caller-owned pr
 
 # Renewable credentials
 
-Set `RespireOptions.CredentialProvider` to an `IRespireCredentialProvider`. It takes precedence
-over static `Username` and `Password`. Every new physical connection, including reconnects,
-Cluster nodes, dedicated blocking connections, and subscriptions, obtains current credentials.
-Static credentials retain their existing behavior and create no refresh worker.
+Set `RespireOptions.CredentialProvider` to an `IRespireCredentialProvider` to rotate credentials
+on live connections. It overrides static `Username` and `Password`. Every new connection (reconnects,
+Cluster nodes, dedicated blocking connections, subscriptions) asks it for current credentials.
 
-This example reads a password and its absolute expiry from reloadable configuration. Your
-configuration source must update both values together before expiry. A provider can instead
-call a token service asynchronously; cache and synchronize that acquisition inside the provider.
+This example reads a password and its absolute expiry from reloadable configuration, which must
+update both values together before expiry. A provider can also call a token service; cache and
+synchronize that call inside the provider.
 
 <!-- doc-test-tail-declaration: split-before=public sealed class ConfigurationCredentials -->
 ```csharp
@@ -42,90 +41,84 @@ public sealed class ConfigurationCredentials(
 }
 ```
 
-Use an ISO 8601 timestamp with a UTC offset for `Redis:ExpiresAt`. A null username selects
-Redis's `default` user. A null `ExpiresAt` disables proactive renewal for that connection;
-new connections still query the provider. See the [Azure Managed Redis authentication guide](azure-managed-redis.md)
-for its Microsoft Entra credential adapter and the [AWS IAM credentials guide](aws-iam-credentials.md)
-for the ElastiCache and MemoryDB adapters.
+- Use an ISO 8601 timestamp with a UTC offset for `Redis:ExpiresAt`.
+- A null username selects Redis's `default` user.
+- A null `ExpiresAt` disables proactive renewal for that connection; new connections still query the provider.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `CredentialRefreshBeforeExpiry` | 5 minutes | Renewal starts at `ExpiresAt` minus this. At least 1 ms. |
+| `CredentialRefreshRetryDelay` | 5 seconds | Delay before retrying a failed or unchanged renewal. At least 1 ms. |
+
+For ready-made providers, see [Azure Managed Redis](azure-managed-redis.md) (Microsoft Entra) and
+[AWS IAM credentials](aws-iam-credentials.md) (ElastiCache and MemoryDB).
 
 ## Ownership and identity
 
-The application owns the provider and keeps it alive until every client using it is disposed.
-Respire never disposes the provider. Calls may overlap across physical connections; renewal and its fixed retry delay are per
-connection. Large pools can therefore call a shared provider concurrently or retry together.
-Cache and coalesce token acquisition inside the caller-owned provider when that load matters. Honor
-cancellation, avoid blocking before returning a `ValueTask`, and keep cancellation callbacks
-short. Client disposal cancels outstanding acquisition and joins its refresh workers.
+- The application owns the provider and keeps it alive until every client using it is disposed. Respire never disposes it.
+- Calls can overlap across connections, and renewal and retries are per connection, so large pools can call the provider concurrently. Cache and coalesce token acquisition inside the provider if that load matters.
+- Honor cancellation, avoid blocking before returning the `ValueTask`, and keep cancellation callbacks short.
+- Client disposal cancels outstanding acquisition and stops refresh workers.
+- Return the same ACL user for the client's lifetime. Live renewal rejects a changed username; use a new client to change identity.
 
-Return the same ACL user across all calls for a client's lifetime. Live renewal rejects a
-changed username; use a new client to change identity. A provider is responsible for returning
-a consistent identity across new connections too. `RespireCredentials.ToString()` redacts
-credentials. Do not log its `Password` property, provider exceptions containing tokens, or
-raw configuration.
+:::warning
+`RespireCredentials.ToString()` redacts credentials. Do not log its `Password` property, provider
+exceptions that contain tokens, or raw configuration.
+:::
 
 ## Renewal and failure behavior
 
-Each expiring connection starts renewal at `ExpiresAt - CredentialRefreshBeforeExpiry`.
-The lead time and retry delay must each be at least one millisecond. Acquisition is bounded
-by `ConnectTimeout`; renewal is also bounded by the current credentials' remaining lifetime.
-Null or already expired credentials fail acquisition with `RespireAuthenticationException`.
-Initial AUTH/HELLO rejection and failed live re-authentication also expose this exception type.
-Provider-backed AUTH/HELLO errors are redacted regardless of the server error code. Exceptions
-thrown during provider acquisition are replaced with a generic typed failure without preserving
-provider text or an inner exception, including provider-thrown authentication exceptions.
-Record any safe provider diagnostics inside your own provider; Respire cannot determine which
-parts of an arbitrary exception contain credentials. Caller cancellation retains the caller's token.
+- Acquisition is bounded by `ConnectTimeout`, and renewal also by the current credentials' remaining lifetime.
+- Null or expired credentials fail with `RespireAuthenticationException`. So do initial `AUTH`/`HELLO` rejection and failed re-authentication.
+- Provider-backed `AUTH`/`HELLO` errors are redacted. Exceptions thrown by the provider are replaced with a generic failure with no provider text or inner exception. Log safe diagnostics inside your provider. Caller cancellation keeps the caller's token.
+- If acquisition fails while current credentials are still valid, the connection stays open and retries after `CredentialRefreshRetryDelay`. Returning identical credentials also schedules a retry.
+- At expiry, or if Redis rejects `AUTH`, the connection closes. Its reconnect policy handles replacement, which acquires credentials again.
+- A successful renewal without an expiry ends proactive renewal on that connection.
 
-If acquisition fails while existing credentials remain valid, the connection stays open and
-retries after `CredentialRefreshRetryDelay`. Returning the same username, password, and expiry
-also schedules a retry rather than spinning. At expiry, or if Redis rejects AUTH, the connection
-closes. Its normal reconnect policy determines replacement attempts, which acquire credentials
-again. A provider failure does not silently stop renewal. A successful replacement without an
-expiry ends proactive renewal on that connection.
+During re-authentication, in-flight replies keep their order and `AUTH` never splits a
+`MULTI`/`EXEC` frame. New commands, including transactions and fire-and-forget writes, wait until
+Redis returns OK. If `AUTH` is rejected, credentials expire or the client is disposed, the socket
+closes without sending them. Waiting callers keep their cancellation and command timeouts. The
+client-side cache is flushed before and after re-authentication.
 
-AUTH uses the ordinary connection FIFO and write gate. In-flight replies retain their order,
-and AUTH cannot split an atomic MULTI/EXEC frame. While replacement AUTH is pending, new
-application commands wait outside the wire queue, including transactions and fire-and-forget
-writes. Admission resumes only after Redis returns OK and the replacement remains unexpired;
-rejection, expiry, or disposal aborts the socket without sending those waiting commands.
-Waiting callers retain their cancellation and command-timeout bounds. Client-side cache state is flushed before and
-after re-authentication, preventing replies from an earlier cache epoch from being retained.
-If that internal cache mutation fails, the connection aborts without reopening command admission.
-This differs from an optional metrics callback failure, which remains isolated.
-
-A server-blocking command such as BLPOP prevents Redis from processing a later AUTH until the
-command completes. Keep blocking durations and token acquisition latency within the renewal
-window. AUTH must finish before either the old or replacement credentials expire, and within
-the connection timeout remaining for that attempt. An indefinite block can therefore fail
-when renewal reaches its deadline. The refresh worker does not replay that command.
+:::warning
+A blocking command such as `BLPOP` stops Redis from processing a later `AUTH` until it completes.
+`AUTH` must finish before the old or new credentials expire and within the connection timeout.
+Keep blocking durations and token latency inside the renewal window, or renewal fails. The blocked
+command is not replayed.
+:::
 
 ## Pub/Sub and Sentinel
 
-Use `Protocol = RespProtocol.Resp3` for provider-backed subscriptions. Redis allows AUTH while
-subscribed in RESP3, preserving the existing socket and subscriptions. Respire rejects
-provider-backed subscriptions using `Resp2` or `Auto`: automatic fallback could select RESP2, and Redis [forbids AUTH in that subscribed state](https://redis.io/docs/latest/commands/subscribe/).
-It does not silently change an explicit protocol selection or promise lossless reconnects.
+Use `Protocol = RespProtocol.Resp3` for provider-backed subscriptions. RESP3 allows `AUTH` while
+subscribed, keeping the socket and subscriptions. Respire rejects provider-backed subscriptions on
+`Resp2` or `Auto`, because RESP2 [forbids AUTH while subscribed](https://redis.io/docs/latest/commands/subscribe/).
 
-`SentinelCredentialProvider` supplies independent discovery credentials. When it is null,
-explicit `SentinelUsername` or `SentinelPassword` uses static Sentinel authentication instead
-of inheriting the data provider. With neither override, discovery inherits `CredentialProvider`.
-An empty `SentinelPassword` explicitly disables Sentinel authentication, including providers.
-These rules keep discovery and data identities separate.
+Sentinel discovery credentials:
+
+| Configuration | Discovery uses |
+| --- | --- |
+| `SentinelCredentialProvider` set | That provider |
+| `SentinelUsername` or `SentinelPassword` set | Static Sentinel credentials |
+| Neither | `CredentialProvider` |
+| Empty `SentinelPassword` | No authentication, even with providers |
 
 ## Diagnostics and dependency injection
 
-The `Respire` meter publishes `respire.authentication.refresh`, tagged with `server.address`,
-`server.port`, `respire.authentication.stage` (`provider`, `reauthenticate`, `unchanged`, `no-expiry`, `expired`, or `worker`),
-and `respire.authentication.outcome` (`success`, `failure`, or `retry`). Successful AUTH records success;
-failed acquisition, rejected/unfinished AUTH, expiry, and unexpected worker failure record
-failure. Unchanged credentials record stage `unchanged` and outcome `retry`, without a failure
-warning or an AUTH attempt. A replacement without expiry records `no-expiry` with outcome
-`success` after the successful AUTH event, indicating that proactive renewal has stopped. Warnings use
-`CredentialRefreshFailed` (event ID 4001). Neither telemetry nor these warnings includes
-credential values or provider exception text. Exceptions thrown by listeners or loggers do
-not terminate renewal; callbacks must still return promptly.
+The `Respire` meter publishes `respire.authentication.refresh` with tags `server.address`,
+`server.port`, `respire.authentication.stage` and `respire.authentication.outcome`:
+
+| Event | Stage | Outcome |
+| --- | --- | --- |
+| Successful `AUTH` | `reauthenticate` | `success` |
+| Failed acquisition, rejected or unfinished `AUTH`, expiry, worker failure | `provider`, `reauthenticate`, `expired` or `worker` | `failure` |
+| Unchanged credentials (no `AUTH` sent, no warning) | `unchanged` | `retry` |
+| Renewal without expiry; proactive renewal stops | `no-expiry` | `success` |
+
+Warnings use `CredentialRefreshFailed` (event ID 4001). Telemetry and warnings never include
+credential values or provider exception text. Throwing listeners or loggers do not stop renewal,
+but callbacks must return promptly.
 
 The dependency-injection `RespireOptionsBuilder` exposes `CredentialProvider`,
-`SentinelCredentialProvider`, `CredentialRefreshBeforeExpiry`, and `CredentialRefreshRetryDelay`.
-Assign an application-owned provider when configuring `AddRespire`. Ensure its lifetime covers
-the registered client; Respire does not assume disposal ownership when passed through options.
+`SentinelCredentialProvider`, `CredentialRefreshBeforeExpiry` and `CredentialRefreshRetryDelay`.
+Assign an application-owned provider in `AddRespire`; Respire does not take disposal ownership.

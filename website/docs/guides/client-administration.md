@@ -1,9 +1,8 @@
 # Client administration
 
-`Server.GetClientConnectionAsync()` sends `CLIENT ID` and returns a handle for one
-existing physical connection. The handle exposes its server-local `Id` and `Endpoint`.
-All its commands stay on that socket, including in Cluster mode. It never follows a
-redirect or silently switches to a replacement connection.
+Inspect and control server client connections: get a handle to one physical connection, change its settings, pause or unblock clients, and list or kill clients by filter.
+
+`Server.GetClientConnectionAsync()` sends `CLIENT ID` and returns a handle with the connection's server-local `Id` and `Endpoint`. Every command on the handle stays on that socket, even in Cluster mode; it never follows a redirect or switches to a replacement connection.
 
 ```csharp
 var connection = await redis.Server.GetClientConnectionAsync();
@@ -13,23 +12,13 @@ RespireClientTrackingInfo tracking = await connection.TrackingInfoAsync();
 byte[] echoed = await connection.EchoAsync(new byte[] { 255, 0, 128 });
 ```
 
-The parent client owns the socket. The handle needs no disposal and does not reserve
-exclusive use: application commands may share the same multiplexed connection. With
-multiple connections, a handle addresses only the identified one. Calling the factory
-again selects a connection normally; it does not promise a different connection or an
-enumeration of every connection. Cluster selection uses an available execution node.
-For a specific endpoint, create a standalone client for that endpoint.
-
-`IsConnected` is a point-in-time observation. After socket loss or parent disposal,
-operations fail on the original socket. Acquire a new handle when ready to inspect a
-replacement; settings are not replayed after reconnect and do not become client-wide
-connection defaults. Connection settings remain immediate. CLIENT LIST/KILL also have
-deferred forms with execution-node scope, described below.
+- The parent client owns the socket. The handle needs no disposal and is not exclusive: application commands may share the connection.
+- Calling the factory again selects a connection normally. It does not promise a different one or enumerate them all. In Cluster it uses an available node; for a specific endpoint, create a standalone client for it.
+- `IsConnected` is a point-in-time check. After socket loss or parent disposal, operations fail. Get a new handle for the replacement; settings are not replayed and never become client-wide defaults.
 
 ## Connection settings
 
-Set `RespireOptions.AllowAdmin = true` before using mutation methods; without it they throw
-`NotSupportedException`. Permission and option validation happen before sending the mutation. Server ACL checks still apply.
+Mutation methods need `RespireOptions.AllowAdmin = true`, or they throw `NotSupportedException` before sending. Server ACL checks still apply.
 
 ```csharp
 await using var admin = RespireClient.Create(new RespireOptions
@@ -44,21 +33,19 @@ await connection.SetNoEvictAsync(true);
 await connection.SetNoTouchAsync(true);
 ```
 
-`SetInfoAsync` changes the library metadata shown by CLIENT INFO/LIST. The server validates
-attribute values; invalid spaces or non-printable characters produce normal server errors.
-`SetNoEvictAsync` changes exemption from **client** eviction, not key eviction.
-`SetNoTouchAsync` changes whether commands on this socket affect key LRU/LFU bookkeeping.
-Both boolean settings accept `false` to restore ordinary behavior. These settings also
-apply to other application operations sharing this socket, and leave other sockets alone.
+| Method | Effect |
+| --- | --- |
+| `SetInfoAsync` | Sets library metadata shown by CLIENT INFO/LIST. Invalid values (spaces, non-printable characters) return server errors. |
+| `SetNoEvictAsync` | Exempts the connection from **client** eviction (not key eviction). |
+| `SetNoTouchAsync` | Stops commands on this socket from updating key LRU/LFU data. |
 
-Tracking inspection is read-only. It does not change Respire's internal CLIENT TRACKING
-state or expose unsafe CLIENT REPLY, RESET, or tracking mutations.
+Pass `false` to restore normal behavior. Settings affect all operations sharing the socket, and no other sockets.
+
+`TrackingInfoAsync` is read-only. It does not change Respire's own CLIENT TRACKING state, and CLIENT REPLY, RESET, and tracking mutations are not exposed.
 
 ## Endpoint controls
 
-The same handle exposes `PauseClientsAsync`, `UnpauseClientsAsync`, and
-`UnblockClientAsync`. These commands act on its **server endpoint**, not only its own ID.
-They all require `AllowAdmin`.
+`PauseClientsAsync`, `UnpauseClientsAsync`, and `UnblockClientAsync` act on the handle's **server endpoint**, not just its own connection. All require `AllowAdmin`.
 
 ```csharp
 var connection = await redis.Server.GetClientConnectionAsync();
@@ -67,44 +54,36 @@ await connection.UnpauseClientsAsync();
 bool released = await connection.UnblockClientAsync(123, RespireClientUnblockMode.Timeout);
 ```
 
-Pause duration must be nonnegative whole milliseconds. `Write` is the default; `All`
-also suspends reads and affects other clients of that server. A paused command already
-queued on this multiplexed socket can delay a later UNPAUSE. Use a separate control
-client and acquire its handle before pausing when early unpause must remain available.
-A pause also expires server-side after its duration. Cancellation does not undo a pause
-or any other mutation already accepted by the server.
+Pause:
 
-UNBLOCK takes a positive client ID belonging to the handle's endpoint. `Timeout` makes
-the target's blocking operation complete as if its timeout expired; `Error` makes it
-receive an UNBLOCKED error. The result is `false` when that ID was not blocked.
-An ID from another Cluster node is not interchangeable. No control operation broadcasts,
-retries a mutation on another node, or resolves an ambiguous outcome automatically.
+- Duration must be nonnegative whole milliseconds. The pause expires on the server after it.
+- `Write` is the default. `All` also suspends reads, for every client of that server.
+- A paused command already queued on the same socket can delay a later UNPAUSE. If you must be able to unpause early, get a handle from a separate control client before pausing.
+
+Unblock:
+
+- Takes a positive client ID on the handle's endpoint. IDs from other Cluster nodes are not interchangeable.
+- `Timeout` completes the target's blocking call as if it timed out; `Error` makes it receive an UNBLOCKED error.
+- Returns `false` when the ID was not blocked.
+
+Cancellation does not undo a mutation the server already accepted. No control operation broadcasts, retries on another node, or resolves an ambiguous outcome.
 
 ## Results and Cluster listing
 
-CLIENT INFO reuses `RespireServerClientInfo`. Strings and its `Attributes` dictionary
-are owned, including unknown attributes. An unset connection name returns `null`.
-Tracking results own their flag strings and binary prefixes; unknown flags remain present.
-`Fields` preserves every tracking field as a protocol-shaped `RespireResult` backed by
-GC-owned storage, including future fields. Disposal of those raw field results is optional;
-if explicitly disposed, their nested views become invalid. Typed flags and prefixes remain
-independent. Echo returns owned bytes and borrows its input until the operation completes.
-Client names, prefixes in tracking replies, metadata, and echo payloads are never key-prefixed.
+- CLIENT INFO returns `RespireServerClientInfo`. Strings and `Attributes`, including unknown attributes, are owned. An unset name returns `null`.
+- Tracking results own their flags and binary prefixes; unknown flags are kept. `Fields` holds every tracking field, including future ones, as a `RespireResult`. Disposing them is optional; once disposed, their nested views are invalid. Typed flags and prefixes are unaffected.
+- Echo returns owned bytes and borrows its input until the operation completes.
+- Client names, tracking prefixes, metadata, and echo payloads are never key-prefixed.
 
-`Server.ClientsOnAllNodesAsync()` returns separate client arrays or failures associated
-with each endpoint, including replicas and slotless Cluster members. It uses the
-[server fan-out contract](pub-sub-introspection.md#results-from-every-node), including fresh discovery, bounded
-concurrency, temporary connections, and cancellation behavior. A temporary inspection
-connection may appear in CLIENT LIST. Results are neither aggregated nor atomic across
-nodes. Discovery errors throw; after discovery, inspect every result's `IsSuccess` or
-`Error`, including cancellation failures, before using its `Value`.
+`Server.ClientsOnAllNodesAsync()` returns a client array or a failure for each endpoint, including replicas and slotless Cluster members. It follows the [server fan-out contract](pub-sub-introspection.md#results-from-every-node): fresh discovery, bounded concurrency, temporary connections, and the same cancellation rules. A temporary connection may appear in CLIENT LIST. Results are not merged or atomic across nodes. Discovery errors throw; afterwards, check each result's `IsSuccess` or `Error` (including cancellation) before reading `Value`.
 
 ## Filtering and closing clients
 
-`RespireClientFilterOptions.Include` and `.Exclude` group positive and negative selectors.
-Supplied selectors combine with logical AND. Multiple `Include.Ids`
-match any ID in the list; `Exclude.Ids` excludes every listed ID. ID collections are
-snapshotted when calling or queueing the command. No filter value is key-prefixed.
+`RespireClientFilterOptions.Include` and `.Exclude` hold positive and negative selectors:
+
+- All supplied selectors must match (AND).
+- `Include.Ids` matches any listed ID; `Exclude.Ids` excludes every listed ID.
+- ID collections are snapshotted when you call or queue the command. Filter values are never key-prefixed.
 
 ```csharp
 using Respire;
@@ -129,49 +108,53 @@ long closed = await endpoint.KillClientsAsync(new RespireClientFilterOptions
 }, cancellationToken);
 ```
 
-The older flat properties on `RespireClientFilterOptions`, such as `Ids`, `User`, and
-`ExcludedIds`, remain supported. To migrate, move positive selectors into `RespireClientIncludeFilters` and negative
-selectors into `RespireClientExcludeFilters`, removing the `Excluded` prefix from their names.
-Keep `SkipMe` and `AllowUnfilteredKill` on the outer options. Either group may be omitted.
-When either group is supplied, any non-null flat scalar selector or nonempty flat ID list
-throws synchronously before sending or queueing, even if both values are identical.
-Null flat scalars and empty flat ID lists remain omitted; a null ID list is invalid.
-An empty group supplies no selector and does not permit an unfiltered KILL.
+### Flat properties
 
-IDs belong to one server. The connection handle runs filters on its known endpoint and
-never switches sockets. The immediate `Server` forms use one normally selected execution
-node. `ClientsOnAllNodesAsync(filter, cancellationToken)` evaluates filters independently
-on every discovered node and returns endpoint-tagged results; there is no KILL fan-out.
-The filtered `Server.ClientsAsync` and `ClientsOnAllNodesAsync` overloads require the token
-argument (use `default` if unused), preserving existing calls such as `ClientsAsync(default)`.
+The flat properties on `RespireClientFilterOptions` (`Ids`, `User`, `ExcludedIds`, and so on) still work. To migrate:
 
-`KillClientsAsync` returns the number closed, including zero, and requires `AllowAdmin`.
-The existing `KillClientAsync(id, ...)` overload retains its boolean return and behavior.
-An empty or `SkipMe`-only KILL filter is rejected unless `AllowUnfilteredKill = true`
-explicitly opts into closing all matching connections. With that opt-in and no `SkipMe`
-value, the command uses `SKIPME yes`. `SkipMe` does not protect other sockets
-owned by the same client. A null value preserves the server default: true for KILL and
-false for LIST. Killing the handle's socket invalidates that handle. Cancellation cannot
-undo connections already closed by the server.
+1. Move positive selectors into `RespireClientIncludeFilters`.
+2. Move negative selectors into `RespireClientExcludeFilters`, dropping the `Excluded` prefix.
+3. Keep `SkipMe` and `AllowUnfilteredKill` on the outer options.
 
-**Exclusion-only filters can close almost every connection on a node.** They count as
-selectors: `Exclude = new() { Type = RespireClientType.PubSub }`, for example, permits KILL without
-`AllowUnfilteredKill` and selects every non-pub/sub connection except the executing socket
-when `SkipMe` is true. Prefer a positive selector such as an owned client ID when possible.
-`SkipMe` protects only the executing socket, including when the caller owns other pooled
-or multiplexed connections.
+Either group may be omitted. Once a group is set, any non-null flat scalar or nonempty flat ID list throws synchronously, even if identical. Null flat scalars and empty flat ID lists are ignored; a null ID list is invalid. An empty group adds no selector and does not allow an unfiltered KILL.
 
-Empty excluded addresses, IPs, names, library names, and library versions are rejected
-before sending or queueing because those values can exclude no connections. Empty
-`Exclude.Flags` and `Exclude.Capabilities` instead exclude every connection and select
-none; they remain valid. Null means that the corresponding filter is omitted.
+### Scope
 
-Both batches and transactions expose `Server.Clients(filter)` and `Server.KillClients(filter)`.
-They return owned typed rows and a count respectively. These commands are supported inside
-MULTI/EXEC; their filters run when EXEC executes. A queue targets its execution node, not a
-previously observed client ID's endpoint. In Cluster, keyless batch commands form their own
-routing group; a transaction uses its selected node. For a specific server, use a standalone
-client configured for that endpoint. Queueing never reserves a connection handle's socket.
+IDs belong to one server.
+
+- The connection handle filters on its own endpoint and never switches sockets.
+- `Server.ClientsAsync(filter, ...)` uses one normally selected node.
+- `ClientsOnAllNodesAsync(filter, cancellationToken)` filters on every node and returns per-endpoint results. There is no KILL fan-out.
+- The filtered `ClientsAsync` and `ClientsOnAllNodesAsync` overloads require the token argument (pass `default` if unused), so existing calls like `ClientsAsync(default)` still bind.
+
+### Killing clients
+
+`KillClientsAsync` requires `AllowAdmin` and returns the number closed, which can be zero. `KillClientAsync(id, ...)` keeps its boolean return.
+
+- An empty or `SkipMe`-only filter is rejected unless `AllowUnfilteredKill = true`. With that opt-in and no `SkipMe`, Respire sends `SKIPME yes`.
+- `SkipMe = null` uses the server default: true for KILL, false for LIST.
+- `SkipMe` protects only the executing socket, not other pooled or multiplexed connections of the same client.
+- Killing the handle's own socket invalidates the handle. Cancellation cannot reopen closed connections.
+
+:::warning
+**Exclusion-only filters can close almost every connection on a node.** They count as selectors, so `Exclude = new() { Type = RespireClientType.PubSub }` allows KILL without `AllowUnfilteredKill` and closes every non-pub/sub connection except the executing socket (with `SkipMe` true). Prefer a positive selector such as an owned client ID.
+:::
+
+Empty exclusion values:
+
+- Empty excluded addresses, IPs, names, library names, and library versions are rejected before sending, because they exclude nothing.
+- Empty `Exclude.Flags` and `Exclude.Capabilities` are valid and exclude every connection, so they select none.
+- Null omits the filter.
+
+### Batches and transactions
+
+Batches and transactions expose `Server.Clients(filter)` (owned typed rows) and `Server.KillClients(filter)` (a count). They work inside MULTI/EXEC; filters run at EXEC.
+
+- A queue targets its execution node, not the endpoint of an earlier client ID.
+- In Cluster, keyless batch commands form their own routing group; a transaction uses its selected node.
+- For a specific server, use a standalone client for that endpoint. Queueing never reserves a handle's socket.
+
+### Server support
 
 | Filter | Availability |
 | --- | --- |
@@ -182,21 +165,13 @@ client configured for that endpoint. Queueing never reserves a connection handle
 | KILL multiple `Ids`; LIST `User`, `Address`, `LocalAddress`, `SkipMe`, `MaximumAgeSeconds` | Valkey 8.1+ |
 | `Name`, `IdleSeconds`, `Flags`, `LibraryName`, `LibraryVersion`, `Database`, `Capabilities`, `Ip`, all `Excluded...` filters | Valkey 9+ |
 
-`MaximumAgeSeconds` selects connections at least that old; `IdleSeconds` selects connections
-idle at least that long. Both require positive whole seconds. Database numbers must be
-nonnegative and IDs positive. Unsupported filters remain server errors; Respire does not
-silently remove them or emulate selection with a separate LIST followed by KILL.
-Valkey 9 uses seconds for MAXAGE on both LIST and KILL. Its
-[shared filter implementation](https://github.com/valkey-io/valkey/blob/9.0.0/src/networking.c#L4765)
-compares whole-second connection ages, despite the CLIENT LIST reference's milliseconds wording.
-`RespireClientType.Primary` uses the compatible `MASTER` wire token. For KILL,
-`Replica` uses `SLAVE`, supported before Redis 5 as well as by current Redis/Valkey.
-All typed filter paths, including pinned handles and queues, validate and snapshot options
-synchronously before returning. Invalid options throw immediately, before any command is sent or queued.
-
-Redis through 8.10 accepts LIST `Type` or `Ids` separately, but rejects their combination
-with a syntax error. Valkey 8.1+ supports combined LIST filters. KILL supports combined
-common filters on both servers. Respire preserves these server differences.
+- `MaximumAgeSeconds` selects connections at least that old; `IdleSeconds`, connections idle at least that long. Both need positive whole seconds.
+- Database numbers must be nonnegative; IDs positive.
+- All filter paths, including handles and queues, validate and snapshot options synchronously. Invalid options throw before anything is sent or queued.
+- Unsupported filters return the server error. Respire never drops them or emulates them with LIST then KILL.
+- Redis through 8.10 accepts LIST `Type` or `Ids` alone but rejects both together with a syntax error. Valkey 8.1+ accepts combined LIST filters. KILL accepts combined common filters on both.
+- Valkey 9 uses seconds for MAXAGE on LIST and KILL; its [filter implementation](https://github.com/valkey-io/valkey/blob/9.0.0/src/networking.c#L4765) compares whole seconds despite the CLIENT LIST docs saying milliseconds.
+- `RespireClientType.Primary` sends `MASTER`. For KILL, `Replica` sends `SLAVE`, which works before Redis 5 and on current Redis/Valkey.
 
 Sources: [Redis CLIENT LIST](https://redis.io/docs/latest/commands/client-list/),
 [Redis CLIENT KILL](https://redis.io/docs/latest/commands/client-kill/), and
@@ -213,11 +188,9 @@ Sources: [Redis CLIENT LIST](https://redis.io/docs/latest/commands/client-list/)
 | CLIENT NO-EVICT | 7.0 |
 | CLIENT SETINFO and NO-TOUCH | 7.2 |
 
-Creating a handle requires CLIENT ID (Redis 5.0), even when the command you plan to send
-exists on older Redis. Servers that do not support an operation return their normal error;
-there is no silent fallback. `GetClientConnectionAsync`, both `ClientsOnAllNodesAsync`
-overloads, the filtered `ClientsAsync`, and `KillClientsAsync` are `IServerCommands`
-members, so mocks, decorators, and custom implementations must implement or forward them.
+- Creating a handle needs CLIENT ID (Redis 5.0), even if the command you plan to send exists on older Redis.
+- Unsupported operations return the server error; there is no fallback.
+- `GetClientConnectionAsync`, both `ClientsOnAllNodesAsync` overloads, the filtered `ClientsAsync`, and `KillClientsAsync` are `IServerCommands` members. Mocks, decorators, and custom implementations must implement or forward them.
 
 References: [CLIENT INFO](https://redis.io/docs/latest/commands/client-info/),
 [SETINFO](https://redis.io/docs/latest/commands/client-setinfo/),

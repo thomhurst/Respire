@@ -1,9 +1,6 @@
 # Deferred raw commands
 
-Batches, transactions, and watched transactions expose `Execute(command, args)`,
-also available through `IRespireCommandQueue`. It returns a
-`RespirePending<RespireResult>` immediately. Execution and cancellation belong to
-`batch.ExecuteAsync()` or `transaction.CommitAsync()`.
+Batches, transactions, watched transactions, and `IRespireCommandQueue` expose `Execute(command, args)` for queuing a raw command. It returns a `RespirePending<RespireResult>` at once; `batch.ExecuteAsync()` or `transaction.CommitAsync()` runs it and owns cancellation. Prefer a typed facet when one has the operation.
 
 ```csharp
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
@@ -17,47 +14,28 @@ using var readResult = read.Result;
 Console.WriteLine(readResult.AsString());
 ```
 
-The arguments are snapshotted when queued, including binary keys and values.
-Later edits to the argument array or its binary buffers do not change the command.
-Keys receive the view's prefix; values, fields, script source, and script arguments
-do not. Queueing never opens a connection or sends the command.
-
-Prefer typed facets when they expose the operation you need. Raw enqueueing parses
-the command name, allocates a token array, and snapshots binary arguments; replies
-are also copied into owned storage. This escape hatch does not promise allocation-free
-execution.
+- Arguments, including binary keys and values, are copied when queued. Later edits to the array or its buffers do not change the command.
+- Keys get the view's prefix. Values, fields, script source, and script arguments do not.
+- Queuing never opens a connection or sends anything.
+- Queuing parses the name, allocates a token array, and copies arguments, and replies are copied too. This path is not allocation-free.
 
 ## Results and failures
 
-Deferred raw results copy replies into GC-managed storage. Unread results do not
-retain pooled receive buffers. Disposal is optional, but disposing a root invalidates
-all struct copies and nested views; repeated disposal is safe. Results remain valid
-after the queue is disposed. Immediate `ExecuteAsync` results remain pooled leases
-and must be disposed. Both expose the same `RespireResult` conversions and RESP2/RESP3
-aggregate representation, including nulls and nested errors.
-
-Top-level server errors fault the corresponding pending. A batch finishes all
-pendings before `ExecuteAsync` throws its first error; `TryExecuteAsync` returns the
-failure summary instead. Transactions preserve their existing contract: errors
-inside EXEC fault individual pendings, while transaction-level failures fault commit.
-Successful neighboring results remain readable. Nested aggregate errors are data:
-inspect `IsError` and `ErrorMessage`. Reading a pending before execution throws
-`RespirePendingNotReadyException`. Discarding an unsent queue faults its pendings.
+- Results copy replies into GC-managed storage and stay valid after the queue is disposed. Disposal is optional. Disposing a root invalidates its struct copies and nested views; repeated disposal is safe.
+- Immediate `ExecuteAsync` results are pooled leases and must be disposed.
+- Both kinds have the same `RespireResult` conversions and RESP2/RESP3 aggregate shapes, including nulls and nested errors.
+- A top-level server error faults its pending. A batch completes all pendings before `ExecuteAsync` throws the first error; `TryExecuteAsync` returns the failure summary instead.
+- In transactions, errors inside EXEC fault individual pendings, and transaction-level failures fault the commit.
+- Successful neighboring results stay readable. Nested aggregate errors are data: check `IsError` and `ErrorMessage`.
+- Reading a pending before execution throws `RespirePendingNotReadyException`. Discarding an unsent queue faults its pendings.
 
 ## Names and supported layouts
 
-Use a catalog descriptor or a case-insensitive verb such as `"get"`. A known
-subcommand uses one space, for example `"OBJECT ENCODING"`. All actual arguments
-belong in the argument array. Inline arguments (`"GET key"`), interpolated commands,
-leading/trailing/repeated spaces, control characters, and non-ASCII names are not
-accepted. Null arguments cannot be serialized. The client validates the key layout;
-Redis validates remaining arity, options, types, and version requirements.
+Use a catalog descriptor or a case-insensitive verb such as `"get"`. A known subcommand uses one space, for example `"OBJECT ENCODING"`. Put every argument in the argument array.
 
-Supported forms are deliberately explicit. Unknown, module, and immediate-only layouts throw
-`NotSupportedException` before enqueueing, including on standalone unprefixed clients.
-The client does not infer key positions from arbitrary argument contents. There is no
-metadata override that can bypass these checks. Use a typed facet or immediate raw
-execution for unsupported forms, subject to that API's own prefix/routing restrictions.
+Rejected names: inline arguments (`"GET key"`), interpolated commands, leading, trailing, or repeated spaces, control characters, and non-ASCII. Null arguments cannot be serialized. The client validates the key layout; Redis validates arity, options, types, and versions.
+
+Only the layouts below are supported. Unknown, module, and immediate-only layouts throw `NotSupportedException` before queuing, even on standalone unprefixed clients. The client never infers key positions, and nothing can override this check. For other forms, use a typed facet or immediate raw execution, subject to their own prefix and routing rules.
 
 | Key layout | Commands |
 | --- | --- |
@@ -79,32 +57,22 @@ execution for unsupported forms, subject to that API's own prefix/routing restri
 | Key count, keys, other arguments | LMPOP, ZMPOP, SINTERCARD, SDIFFCARD, SUNIONCARD, ZDIFF, ZINTER, ZUNION, ZINTERCARD |
 | Destination, key count, source keys, other arguments | ZDIFFSTORE, ZINTERSTORE, ZUNIONSTORE |
 
-Script/function key counts may be zero. Other counted layouts require a positive
-count, and all counts must fit the supplied arguments. Script/function execution
-never loads, reloads, or replays after NOSCRIPT or a missing-function error. Scripts
-and functions must access keys through the declared key arguments; source is not rewritten.
+- Script and function key counts may be zero. Other counts must be positive. All counts must fit the supplied arguments.
+- Scripts and functions are never loaded, reloaded, or replayed after NOSCRIPT or a missing-function error.
+- Scripts and functions must access keys through the declared key arguments; their source is not rewritten.
 
 ## Cluster and queue restrictions
 
-Every key within one raw command must share a slot after prefixing. A mismatch throws
-`RespireServerException` with code `CROSSSLOT` locally, before enqueueing, as typed
-multi-key commands do; the exception type does not imply a server round trip. Rejected
-commands do not pin a transaction to a slot. A Cluster transaction also requires all
-its commands to share one slot. Cluster batches group commands by slot; order is
-preserved within a group, while different groups may execute independently. Keyless
-commands use an execution node and never fan out across primaries.
+- All keys in one raw command must share a slot after prefixing. A mismatch throws `RespireServerException` with code `CROSSSLOT` locally, before queuing, as typed multi-key commands do. No server round trip happens.
+- Rejected commands do not pin a transaction to a slot. A Cluster transaction requires all its commands to share one slot.
+- Cluster batches group commands by slot. Order is kept within a group; different groups may run independently.
+- Keyless commands run on one execution node and never fan out across primaries.
 
-Blocking and connection-state commands are rejected: blocking list/sorted-set pops,
-subscriptions, WATCH, transaction control, connection setup, CLIENT commands,
-WAIT/WAITAOF, and similar session operations. Raw XREAD/XREADGROUP are rejected even
-without BLOCK; queue reads through the typed `Streams.Read` and `Streams.ReadGroup`
-methods instead. Administrative, unknown, and module forms are rejected rather than
-trusted to preserve queue state. SORT and the GEORADIUS family are also excluded because
-their optional external keys need their own parsing rules; use the typed sorting/geospatial
-APIs where available.
+These are rejected:
 
-No per-command flags, fire-and-forget mode, or implicit cluster-wide administration
-are available. Deferred execution keeps the queue's cancellation, redirect, and
-conservative client-cache invalidation behavior. A deferred raw command can join a
-batch or transaction retry only with a category declared through `WithRetryCategory`;
-see [command retries](command-retries.md#batches).
+- Blocking and connection-state commands: blocking list and sorted-set pops, subscriptions, WATCH, transaction control, connection setup, CLIENT commands, WAIT/WAITAOF, and similar session operations.
+- Raw XREAD/XREADGROUP, even without BLOCK. Use typed `Streams.Read` and `Streams.ReadGroup` instead.
+- Administrative, unknown, and module forms.
+- SORT and the GEORADIUS family, whose optional external keys need their own parsing. Use the typed sorting and geospatial APIs.
+
+There are no per-command flags, fire-and-forget mode, or implicit cluster-wide administration. Deferred commands keep the queue's cancellation, redirect, and conservative client-cache invalidation behavior. A deferred raw command joins a batch or transaction retry only with a category declared through `WithRetryCategory`; see [command retries](command-retries.md#batches).

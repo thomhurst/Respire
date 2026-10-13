@@ -1,120 +1,96 @@
 # Typed friend-test inspection
 
-Four owners expose `InspectForTests()` through `.TestInspection.cs` partials:
-`RespireConnection`, `PendingResponse`, `ClientSideCacheCoordinator` and
-`RespireTransactionBase`. Each returns a nested internal `readonly ref struct TestInspection`
-view. `RespireTelemetry.ErrorObservation` has a similar view declared in
-`RespireTelemetry.Errors.cs`; the architecture guards below cover only the four owners. They read
-private state directly without allocation, delegates, leases, or ownership transfer.
-Existing `InternalsVisibleTo` declarations remain the boundary; no public hooks
-are added. Production coordination must use ordinary owner methods.
+Tests read private state of four owners only through `InspectForTests()`. Do not add test-only
+accessors, overloads or public hooks to the owners. Put new inspection state in the owner's
+nested view, add its consumers to the table below, and follow each member's boundary.
 
-The compiler prevents boxing, capture, heap storage, and use across `await` for
-the view itself. Returned references and value copies can escape; their borrowing
-and synchronization rules remain test obligations, including after the view expires.
+| Owner | View |
+| --- | --- |
+| `RespireConnection` | `RespireConnection.TestInspection` |
+| `PendingResponse` | `PendingResponse.TestInspection` |
+| `ClientSideCacheCoordinator` | `ClientSideCacheCoordinator.TestInspection` |
+| `RespireTransactionBase` | `RespireTransactionBase.TestInspection` |
 
-| View member | Consumer inventory | Required boundary |
+Each owner declares the factory in a `.TestInspection.cs` partial. It returns a nested internal
+`readonly ref struct TestInspection` that reads private state directly, with no allocation,
+delegates, leases or ownership transfer. `RespireTelemetry.ErrorObservation` has a similar view in
+`RespireTelemetry.Errors.cs`, but the architecture guards cover only the four owners.
+`InternalsVisibleTo` stays the boundary. Production coordination uses ordinary owner methods.
+
+The compiler stops the view itself from being boxed, captured, stored on the heap or held across
+`await`. References and copies it returns can escape; the tests must apply the rules below to
+them, including after the view expires.
+
+## Consumers and boundaries
+
+| View member | Consumers | Required boundary |
 | --- | --- | --- |
-| `RespireTelemetry.ErrorObservation.TestInspection.StorageIdentity` | `ErrorMetricsTests.LeaseGeneration`, `DispatchResponseObservationTests` | Copy identity while the observation is live. Retain it only for identity comparison; never mutate or dispose the referenced storage. Dispatch reuse tests retain every subsequent response rental until the exact source identity reappears, then exercise a stale generation and drain the independently owned native reply. |
-| `RespireConnection.TestInspection.Inflight` | `TransactionDeadlineTests`, `HashImportTests`, `ClusterReadyReplyTests`, `NativeLockCommandTests`, `TimeoutDiagnosticsTests`, `DeadlinePublicationTests`, `CommandWriteOutcomeTests` | Pause admission and reply consumption before reading slots. Deadline publication controls inspect synchronously inside `OnAccepted`, before scheduling the flush; full-ring controls suppress replies and drain the earlier slot before inspecting the next admission. Write-outcome controls park the writer or suppress replies. Their reuse regression retains a weak identity and an epoch copy, then inspects the next incarnation only inside its controlled serializer while that incarnation is rented. `Count` is only an observation, not an admission reservation. Peeking acquires no source reference and grants no enqueue/dequeue ownership. Timeout tests suppress replies and disable the timer before completing the live source through its existing timeout transition; transaction diagnostics wait until prefix replies drain and the write completes. |
-| `RespireConnection.TestInspection.ResumedScalarCount` (Debug only) | `AggregateProgressWireTests` | Wait for the controlled stream's next read request after publishing the incomplete prefix. The receive loop publishes the primitive count before parking on that read. Copy the count synchronously before supplying the next segment; never retain the inspection view across an await. The field, copy and view member are absent from Release. |
-| `PendingResponse.TestInspection.RegisteredCancellationToken` | `TransactionDeadlineTests` | Inspect after registration/admission has finished, while the source is live and registration/disposal cannot race. Never retain a pooled source after completion consumption and reply drainage allow recycling. |
-| `ClientSideCacheCoordinator.TestInspection.SharedReadGate` | `TransactionDeadlineTests` | Hold an `EnterScope` lease to control the shared-read barrier or inspect protected state. Release that lease on the owning thread; do not await while holding it or dispose the borrowed gate. |
-| `ClientSideCacheCoordinator.TestInspection.PendingQueryDependencyCount` | `ClientCacheQueryDependencyTests`, `ClientCacheQueryDependencyWireTests` | The getter takes the query gate and returns a count snapshot. Use controlled completion/cancellation barriers before asserting retirement; a snapshot grants no registration or publication ownership. Never retain the borrowed view across an await. |
-| `ClientSideCacheCoordinator.TestInspection.IdleQueryStorage` | `ClientCacheQueryDependencyTests` | The getter takes the query gate and copies lease/state counts plus retained dependency references. Join controlled completion before checking bounds and clearing. The copy grants no rent/return ownership; never retain the borrowed view across an await. |
-| `ClientSideCacheCoordinator.TestInspection.ActiveMutationCount` | `ClientCacheMutationLifetimeTests`, `ClientSideCacheTests`, `CacheAsideTests` | The getter returns a volatile count snapshot. Park admission or native reply retirement before asserting an active fence; wait for zero only after releasing the controlled reply. Caller completion alone does not prove native retirement. The snapshot grants no fence ownership. |
-| `ClientSideCacheCoordinator.TestInspection.MutationWriterStorage` | `ClientCacheMutationLifetimeTests` | The getter takes the query gate and copies active-key count and map capacity. Complete the controlled mutation before checking the idle bound. The copy grants no mutation ownership. |
-| `RespireTransactionBase.TestInspection.WatchConnection` | `TransactionDeadlineTests`, `TimeoutDiagnosticsTests` | The transaction owns the pinned lease. Do not dispose or return the connection, or race transaction disposal. A transaction without WATCH returns null. |
+| `RespireTelemetry.ErrorObservation.TestInspection.StorageIdentity` | `ErrorMetricsTests.LeaseGeneration`, `DispatchResponseObservationTests` | Copy the identity while the observation is live; use it only for identity comparison. Never mutate or dispose the storage. Dispatch reuse tests hold every later rental until the source identity reappears, then exercise a stale generation and drain the native reply. |
+| `RespireConnection.TestInspection.Inflight` | `TransactionDeadlineTests`, `HashImportTests`, `ClusterReadyReplyTests`, `NativeLockCommandTests`, `TimeoutDiagnosticsTests`, `DeadlinePublicationTests`, `CommandWriteOutcomeTests` | Pause admission and reply consumption before reading slots (park the writer, suppress replies, or inspect synchronously inside `OnAccepted` before the flush). `Count` is an observation, not a reservation. Peeking takes no source reference and no enqueue/dequeue ownership. Inspect a reused incarnation only while it is rented. Timeout tests disable the timer before completing the source through its timeout transition. |
+| `RespireConnection.TestInspection.ResumedScalarCount` (Debug only) | `AggregateProgressWireTests` | Wait for the stream's next read request after the incomplete prefix, then copy the count synchronously before supplying the next segment. Absent from Release. |
+| `PendingResponse.TestInspection.RegisteredCancellationToken` | `TransactionDeadlineTests` | Inspect after registration and admission finish, while the source is live. Never keep a pooled source after it can be recycled. |
+| `ClientSideCacheCoordinator.TestInspection.SharedReadGate` | `TransactionDeadlineTests` | Hold an `EnterScope` lease to control the barrier. Release it on the owning thread; do not await while holding it or dispose the gate. |
+| `ClientSideCacheCoordinator.TestInspection.PendingQueryDependencyCount` | `ClientCacheQueryDependencyTests`, `ClientCacheQueryDependencyWireTests` | Snapshot under the query gate. Use completion/cancellation barriers before asserting retirement. Grants no registration or publication ownership. |
+| `ClientSideCacheCoordinator.TestInspection.IdleQueryStorage` | `ClientCacheQueryDependencyTests` | Copy under the query gate. Join completion before checking bounds and clearing. Grants no rent/return ownership. |
+| `ClientSideCacheCoordinator.TestInspection.ActiveMutationCount` | `ClientCacheMutationLifetimeTests`, `ClientSideCacheTests`, `CacheAsideTests` | Volatile snapshot. Park admission or native reply retirement before asserting an active fence; wait for zero only after releasing the reply. Caller completion does not prove native retirement. |
+| `ClientSideCacheCoordinator.TestInspection.MutationWriterStorage` | `ClientCacheMutationLifetimeTests` | Copy under the query gate. Complete the mutation before checking the idle bound. |
+| `RespireTransactionBase.TestInspection.WatchConnection` | `TransactionDeadlineTests`, `TimeoutDiagnosticsTests` | The transaction owns the pinned lease. Do not dispose or return the connection or race transaction disposal. Null without WATCH. |
 
-The table lists every current state consumer of these views. Update it when adding
-one; put new inspection members in the owner's view and document their boundaries.
-Preserve the tests' barriers, deadlines, cancellation, import, and FIFO assertions.
+Never hold a view across an `await`. Preserve the tests' barriers, deadlines, cancellation, import
+and FIFO assertions.
 
-`TestInspectionArchitectureTests` checks compiled factory/view metadata and rejects
-the four legacy names on both supported frameworks. The single-target analyzer-test
-host separates inventory, factory-use and resource-validation tests, sharing
-`TestInspectionSource` helpers. At build time the harness queries the core production
-project's declared target frameworks and the SDK's evaluated `DefineConstants` for
-each framework. It embeds that configuration alongside the source, so new frameworks
-and conditional compilation symbols enter both production guards automatically.
-The test assembly does not require a checkout at runtime. Each production guard
-builds one compilation per configuration and reuses its semantic models across files.
-Runtime dependency references support binding; designated views must resolve from
-the embedded source compilation itself, so missing views cannot pass vacuously.
-The resource check rejects friend-test source and generated `bin`/`obj` paths:
+## Architecture guards
 
-- `TestInspectionOwnerSurface.txt` explicitly reviews the source-declared member
-  signatures of the four owners, their production subclasses and accessible nested
-  operational types. Signatures are grouped by declaring type with a reviewed count
-  checked for each group, so large surface additions are visible in review.
-  It includes public, internal, protected, and explicit interface members, recursively
-  following accessible nested types. Semantic inheritance discovery also follows
-  indirect, aliased and cross-file subclasses, which can expose protected owner state.
-  A new accessor or overload fails comparison regardless of its name. Instance
-  members of the four designated borrowed views
-  remain permitted; their static members and accessible nested types require review.
-  Existing operational members remain permitted. When adding or changing an
-  operational declaration, review and update its inventory entry deliberately;
-  update the corresponding reviewed type count as well. Do not accept a new test-only
-  accessor into that inventory. Put inspection state in the designated nested view
-  instead. Keys contain the owner, member kind, name,
-  generic arity, parameter types and passing modifiers, and result or value type.
-  Explicit interface names and primary constructor parameter types are included.
-  Properties and indexers include accessibility and accessor kind/accessibility
-  (`get`, `set` or `init`). Expression-bodied getters and block getters share a key;
-  adding a setter or changing its accessibility changes the key.
-  An owner's primary constructor uses the same key as an ordinary constructor
-  overload; nested-type primary constructors remain part of their type key.
-  Nested-type keys preserve `readonly` and `ref`, so weakening a borrowed view's
-  mutability or lifetime restriction requires review. All four qualified owners
-  must be present as classes in each framework configuration; unsupported owner
-  kinds fail explicitly rather than disappearing from the scan.
-  Bodies, accessor style, initializers, parameter names, attributes,
-  generic constraints, and private-only helpers are not inventoried. Known legacy
-  test hooks are marked explicitly; their presence is not precedent for new hooks.
-  Inventory failures list exact unreviewed and removed signatures and point here.
-  For an approved operational change, copy each approved unreviewed line into the
-  inventory and remove its obsolete line, retaining the test-hook comments. Rerun
-  both framework-symbol checks. Do not accept an inspection bypass merely to make
-  the test pass; the guard never overwrites or regenerates the inventory automatically.
-- `InspectForTests` is a reserved factory name throughout production source. Its
-  identifier references, including direct calls, conditional calls, and method
-  groups, are forbidden there. Declarations and deliberate `nameof` metadata
-  references remain permitted. Roslyn's `INameOfOperation` distinguishes metadata
-  from ordinary methods or local functions named `nameof`, including helpers in
-  another partial source file. Escaped `@nameof(...)` calls receive no exemption.
-  Friend-test source is outside the production resource set and may call the
-  factories. The rule uses this exact reserved name, not guesses about names that
-  sound like testing or inspection.
-- Direct construction of the four designated nested views is forbidden outside
-  their own owner's internal, instance, nongeneric, parameterless `InspectForTests()`
-  method returning that exact view. Same-name overloads and nested methods receive
-  no exemption. Semantic type binding covers explicit,
-  fully qualified, aliased and target-typed `new` expressions. Unrelated types with
-  the same simple name are permitted; the factory's own construction remains valid.
+`TestInspectionArchitectureTests` checks compiled factory and view metadata and rejects the four
+legacy names on both frameworks. The analyzer-test host compiles production source once per target
+framework, using the `DefineConstants` the SDK evaluates for each, so new frameworks and symbols
+are covered automatically. It needs no checkout at runtime. Friend-test source and `bin`/`obj`
+paths are excluded from the scanned resources.
 
-Positive controls cover a renamed accessor, a new operational overload, owner
-primary constructors (including abstract owners and default internal visibility),
-explicit interface methods/properties/indexers/events, production calls, a method group,
-and escaped, unescaped, local-function, and cross-file `nameof` helpers. Additional
-controls cover direct view construction, removed `readonly`/`ref` modifiers,
-missing qualified owners, unsupported owner declaration kinds, writable
-properties/indexers, property accessibility, nested helper/static-view bypasses,
-same-name factory overloads, cross-file construction, missing views and privileged
-direct/indirect derived accessors.
-Negative controls cover permitted borrowed instance members, reviewed operations,
-body and accessor style changes, parameter renames, attributes, constraints, private
-implementation changes, another type with the same simple owner name, metadata
-references, comments, and string literals. A non-empty resource-set check verifies
-that friend-test source is excluded; missing resources report their names.
+The guards enforce three rules:
 
-These are architecture checks, not a lifetime or ownership analysis. They cannot
-detect repurposing an existing inventoried member, reflection-based state access,
-or code hidden behind configurations outside the core project's evaluated framework
-and build-configuration symbols. The Roslyn syntax checks use the pinned analyzer
-host's preview language mode; they are not a replacement for production compilation.
-Implementation bodies and compiler-synthesized members are not part of the
-source-declared inventory.
-Returned references and copies still require the boundaries in the consumer table above. Update that table
-when adding consumers or inspection members; passing a guard does not establish
-quiescence, source lifetime, or ownership.
+1. **Owner surface inventory.** `TestInspectionOwnerSurface.txt` lists every source-declared member
+   signature of the four owners, their production subclasses (found semantically, including
+   indirect, aliased and cross-file ones) and accessible nested types, with a reviewed count per
+   type. Any new accessor or overload fails, whatever its name.
+2. **Reserved factory name.** Production source must not reference `InspectForTests`: no calls,
+   conditional calls or method groups. Declarations and real `nameof` references are allowed;
+   escaped `@nameof(...)` and local functions named `nameof` are not exempt.
+3. **View construction.** Only the owner's internal, instance, nongeneric, parameterless
+   `InspectForTests()` returning that exact view may construct it. Explicit, qualified, aliased
+   and target-typed `new` are all caught.
+
+### Inventory keys
+
+| Included | Not included |
+| --- | --- |
+| Owner, member kind, name, generic arity | Bodies, accessor style, initializers |
+| Parameter types and passing modifiers | Parameter names |
+| Result or value type | Attributes, generic constraints |
+| Explicit interface names, primary constructor parameter types | Private-only helpers |
+| Property/indexer accessibility and accessor kinds (`get`, `set`, `init`) | Compiler-synthesized members |
+| `readonly` and `ref` on nested types | |
+
+Instance members of the four views are allowed. Static members and accessible nested types of the
+views need review. An owner's primary constructor shares the ordinary constructor key. All four
+owners must be present as classes in each configuration; other kinds fail explicitly.
+
+### When the inventory check fails
+
+The failure lists the exact unreviewed and removed signatures.
+
+1. Confirm the change is an approved operational change, not a test accessor.
+2. Copy each approved unreviewed line into `TestInspectionOwnerSurface.txt` and remove the obsolete
+   line. Keep the legacy test-hook comments (they are not precedent for new hooks).
+3. Update the type's reviewed count.
+4. Rerun the check for both frameworks.
+
+The guard never regenerates the inventory. Never accept an inspection bypass to make it pass.
+
+## Limits
+
+These are architecture checks, not lifetime or ownership analysis. They cannot detect a repurposed
+inventoried member, reflection-based access, or code behind symbols outside the core project's
+evaluated configurations. The syntax checks use the analyzer host's preview language mode and do
+not replace production compilation. Passing a guard does not prove quiescence, source lifetime or
+ownership.

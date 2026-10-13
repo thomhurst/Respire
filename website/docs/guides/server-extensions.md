@@ -1,8 +1,6 @@
 # Dragonfly and KeyDB extensions
 
-`RespireCommands.Dragonfly` and `RespireCommands.KeyDb` expose pre-encoded descriptors
-for compatible-server extensions. Execute them with the normal catalog API and dispose
-each `RespireResult`. These are protocol-shaped results; no vendor package is required.
+`RespireCommands.Dragonfly` and `RespireCommands.KeyDb` hold descriptors for those servers' extension commands. Run them with the normal catalog API and dispose each `RespireResult`. No vendor package is needed.
 
 ```csharp
 await using var dragonfly = RespireClient.Create("redis://dragonfly:6379");
@@ -20,19 +18,14 @@ using RespireResult expiry = await keydb.ExecuteAsync(
     RespireCommands.KeyDb.EXPIREMEMBER, "online", "alice", 30);
 ```
 
-`CL.THROTTLE` returns five integers: limited flag, total limit, remaining capacity,
-retry delay, and reset delay. A retry delay of `-1` means the request was allowed.
-Per the vendor documentation, `SADDEX` adds members with an expiry in seconds;
-its optional `KEEPTTL` preserves existing members' TTLs. `EXPIREMEMBER` sets a
-member expiry and optionally accepts `ms` instead of its default seconds. The
-smoke scenarios exercise default expiry behavior, not those two options. The server validates options and returns its
-own errors, including unsupported commands, wrong types, and denied ACL permissions.
+- `CL.THROTTLE` returns five integers: limited flag, total limit, remaining capacity, retry delay, and reset delay. A retry delay of `-1` means allowed.
+- `SADDEX` adds members with an expiry in seconds. Its optional `KEEPTTL` keeps existing members' TTLs.
+- `EXPIREMEMBER` sets a member expiry, in seconds by default or milliseconds with `ms`.
+- The server validates options and returns its own errors, including for unsupported commands, wrong types, and denied ACL permissions.
 
 ## Audited descriptors
 
-All names below are exact wire commands. The C# identifiers replace punctuation and
-spaces with underscores, for example `DFLYCLUSTER_SLOT_MIGRATION_STATUS` sends
-`DFLYCLUSTER SLOT-MIGRATION-STATUS` as two command words.
+Names below are exact wire commands. C# identifiers replace punctuation and spaces with underscores: `DFLYCLUSTER_SLOT_MIGRATION_STATUS` sends `DFLYCLUSTER SLOT-MIGRATION-STATUS` as two command words.
 
 | Server | Commands |
 | --- | --- |
@@ -43,43 +36,27 @@ spaces with underscores, for example `DFLYCLUSTER_SLOT_MIGRATION_STATUS` sends
 | KeyDB member expiry | `EXPIREMEMBER`, `EXPIREMEMBERAT`, `PEXPIREMEMBERAT` |
 | Other KeyDB extensions | `KEYDB.CRON`, `KEYDB.HRENAME`, `KEYDB.MEXISTS`, `KEYDB.NHGET`, `KEYDB.NHSET`, `REPLPING` |
 
-The [canonical catalog audit](https://github.com/thomhurst/Respire/blob/main/docs/COMMAND_COVERAGE.md)
-records the exact server versions and source commits used for the descriptor inventory.
-Documentation may cover extensions newer than your installed server. `Sources`
-records audit provenance, not runtime availability or equivalent semantics across servers.
-For example, Dragonfly's `HSETEX` argument form differs from Redis's; use the existing
-`RespireCommands.Hash.HSETEX` descriptor with the arguments documented by your server.
-KeyDB's subkey forms of `TTL`, `PTTL`, and `PERSIST` also use existing descriptors.
+The [catalog audit](https://github.com/thomhurst/Respire/blob/main/docs/COMMAND_COVERAGE.md) records the server versions and source commits behind this list. Your installed server may be older. `Sources` records where a command was documented, not whether your server supports it or behaves the same.
 
-`DFLYCLUSTER` administration requires Dragonfly's admin listener (`--admin_port`),
-which should be targeted explicitly. `CONFIG`, `FLUSHSLOTS`, and `RM` change server
-state or delete data; the catalog does not emulate or broadcast them. Server ACLs apply.
-Private inter-server replication protocols are outside this catalog expansion.
+- Dragonfly's `HSETEX` arguments differ from Redis's. Use `RespireCommands.Hash.HSETEX` with the arguments your server documents.
+- KeyDB's subkey forms of `TTL`, `PTTL`, and `PERSIST` also use the existing descriptors.
+- Private inter-server replication protocols are not included.
 
-These commands follow the raw execution contract: arguments are separate binary-safe
-tokens, caller keys are explicit, and prefixed views reject them (`JSON.DEBUG FIELDS` is the
-exception: its key is prefixed).
-Key-based descriptors route using their first key argument. Administrative commands and
-the `RM` cursor have no routing key and run on one selected node, without Cluster fan-out.
-`KEYDB.MEXISTS key [key ...]` is a multi-key command. With `UseCluster`, raw execution validates
-all its key slots before I/O and routes using the first key; it does not split the request across
-nodes. Supply keys sharing a hash slot (for example, `{user}:a` and `{user}:b`);
-incompatible keys fail locally with `CROSSSLOT`. See [raw Cluster validation](raw-commands.md#cluster-key-validation)
-for the supported layouts and unknown-command contract. Its result contains
-one boolean per supplied key, in input order (integer 0/1 replies under RESP2).
-For node-specific administration, use a standalone client aimed at the intended endpoint.
-These vendor descriptors are not added to the deferred raw API's supported key layouts;
-unsupported layouts continue to fail before enqueueing.
-Typed facets continue to provide their documented Redis/Valkey contracts; selecting a
-descriptor does not negotiate a different typed API.
+:::warning
+`CONFIG`, `FLUSHSLOTS`, and `RM` change server state or delete data. The catalog does not emulate or broadcast them, and server ACLs apply. `DFLYCLUSTER` commands need Dragonfly's admin listener (`--admin_port`); target it explicitly.
+:::
 
-The real-server smoke tests verify `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and
-`FIELDEXPIRE` on Dragonfly 2.0.0, and `EXPIREMEMBER`, `PEXPIREMEMBERAT`,
-`KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, each under RESP2 and RESP3.
-These scenarios do not certify every descriptor against those image versions. They carry
-the `CompatibleServers` test category (class `ServerExtensionIntegrationTests`). The KeyDB
-fixture needs a Docker engine that can run its pinned x86_64 image, natively or through
-emulation.
+## Keys and routing
+
+These commands follow the raw execution rules: each argument is a separate binary-safe token, and you supply keys explicitly.
+
+- Prefixed views reject them, except `JSON.DEBUG FIELDS`, whose key is prefixed.
+- Key-based commands route by their first key. Administrative commands and the `RM` cursor run on one selected node, without Cluster fan-out. For node-specific administration, use a standalone client aimed at that endpoint.
+- `KEYDB.MEXISTS key [key ...]` is multi-key. With `UseCluster`, all keys are slot-checked before I/O and the request is never split, so use same-slot keys such as `{user}:a` and `{user}:b`. Other keys fail locally with `CROSSSLOT`. It returns one boolean per key in input order (0/1 integers under RESP2). See [raw Cluster validation](raw-commands.md#cluster-key-validation).
+- These descriptors have no [deferred raw](deferred-raw-commands.md) layouts, so queuing them fails before enqueueing.
+- Typed facets keep their Redis/Valkey contracts; using a vendor descriptor does not change them.
+
+Real-server tests cover `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and `FIELDEXPIRE` on Dragonfly 2.0.0, and `EXPIREMEMBER`, `PEXPIREMEMBERAT`, `KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, under RESP2 and RESP3. They use default expiry behavior, not `KEEPTTL` or `ms`, and do not certify every descriptor.
 
 References: [Dragonfly command documentation](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
 [Dragonfly Cluster administration](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md),

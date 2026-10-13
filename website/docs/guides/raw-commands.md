@@ -5,21 +5,39 @@ description: Execute every documented command with pre-encoded, discoverable des
 
 # Complete command catalog
 
-Typed facets cover common operations and provide natural .NET return types. `RespireCommands`
-covers every command in the audited Redis 8.10 and Valkey 9.1 command references, Redis's
-integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly
-extensions.
+`RespireCommands` has a descriptor for every command in the audited Redis 8.10 and Valkey 9.1 references, Redis's integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly extensions. Use it when a typed facet lacks the command or option you need.
 
-See [Dragonfly and KeyDB extensions](server-extensions.md) for vendor command lists,
-version provenance, and rate-limiting/member-expiry examples.
+## Using descriptors
+
+```csharp
+using RespireResult result = await redis.ExecuteAsync(
+    RespireCommands.Json.JSON_SET,
+    "document:42",
+    "$",
+    "{\"message\":\"hello world\"}");
+
+Console.WriteLine(RespireCommands.Json.JSON_SET.Name);    // JSON.SET
+Console.WriteLine(RespireCommands.Json.JSON_SET.Sources); // RedisAndValkey
+```
+
+Descriptors expose the canonical command name and the references that list it. Command words are encoded once, at static initialization.
+
+The catalog is grouped by feature for IDE completion: `Array`, `Bitmap`, `Bloom`, `Cluster`, `Connection`, `CountMinSketch`, `Cuckoo`, `Dragonfly`, `Geo`, `Hash`, `HyperLogLog`, `Json`, `Key`, `KeyDb`, `List`, `PubSub`, `Scripting`, `Search`, `Sentinel`, `Server`, `Set`, `SortedSet`, `Stream`, `String`, `TDigest`, `TimeSeries`, `TopK`, `Transaction`, and `VectorSet`. See [Dragonfly and KeyDB extensions](server-extensions.md) for vendor commands.
+
+Blocking descriptors, such as `BLPOP` or an `XREAD` with `BLOCK`, use a dedicated connection automatically. When the server-side timeout can be unbounded, pass a cancellation token to the array overload. Flags and cancellation are optional there, so name the one you need:
+
+```csharp
+using RespireResult popped = await redis.ExecuteAsync(
+    RespireCommands.List.BLPOP,
+    ["jobs", 0],
+    cancellationToken: cancellationToken);
+```
+
+Commands that need or change connection state, such as `MULTI`, `WAIT`, `SELECT`, `SUBSCRIBE`, `AUTH`, and `CLIENT TRACKING`, throw `NotSupportedException`, because multiplexing cannot keep their connection affinity. Use transactions, subscription APIs, or `RespireOptions` instead.
 
 ## Finding typed APIs
 
-The audited Redis 8.10 / Valkey 9.1 command families also have typed APIs for the
-operations below. Prefer these APIs for argument validation and owned .NET results;
-use descriptors when you need an option or extension outside the typed surface.
-Each linked guide describes server versions, routing, and result semantics. Redis-only
-commands do not become available on Valkey merely because the client exposes them.
+Prefer a typed API when one exists: it validates arguments and returns owned .NET results. Each guide lists server versions, routing, and result semantics. Redis-only commands do not work on Valkey just because the client exposes them.
 
 | Operations | Typed API guide |
 | --- | --- |
@@ -36,65 +54,17 @@ commands do not become available on Valkey merely because the client exposes the
 | ACL, replication, modules, backup, script/function cancellation, and lifecycle operations on an explicit node | [Node lifecycle and administration](server-node-lifecycle.md) |
 | `CLIENT LIST`/`CLIENT KILL` filters and `FLUSHDB`/`FLUSHALL` modes | [Client administration](client-administration.md#filtering-and-closing-clients) and [server flushes](batches-and-transactions.md#deferred-server-flushes) |
 
-Single-command data APIs have batch/transaction counterparts where queuing is supported.
-Blocking reads and list moves use dedicated connections; queued list moves are nonblocking.
-Hash import queues belong to their import session. Explicit-node lifecycle operations are
-immediate-only, and mutations require `AllowAdmin`. Valkey's internal `SYNCSLOTS` protocol
-is intentionally outside the typed request/reply surface; see the
-[migration boundary](server-node-lifecycle.md#valkey-slot-migration-and-deletion).
+- Single-command data APIs have batch and transaction forms where queuing is supported.
+- Blocking reads and list moves use dedicated connections; queued list moves do not block.
+- Hash import queues belong to their import session.
+- Explicit-node lifecycle operations are immediate-only, and mutations require `AllowAdmin`.
+- Valkey's internal `SYNCSLOTS` protocol is not exposed; see the [migration boundary](server-node-lifecycle.md#valkey-slot-migration-and-deletion).
 
-The [in-memory testing server](in-memory-testing.md#supported-subset) models the new core
-commands for data types it supports, including sparse arrays. It does not emulate every
-module or administration command; use native server fixtures for those operations and
-for version-specific behavior. Dragonfly and KeyDB extension commands remain descriptors.
-
-## Using descriptors
-
-Descriptors expose the canonical command name and the references in which it was found. Their
-command words are encoded once during static initialization, avoiding string splitting and
-temporary token arrays on each execution.
-
-```csharp
-using RespireResult result = await redis.ExecuteAsync(
-    RespireCommands.Json.JSON_SET,
-    "document:42",
-    "$",
-    "{\"message\":\"hello world\"}");
-
-Console.WriteLine(RespireCommands.Json.JSON_SET.Name);    // JSON.SET
-Console.WriteLine(RespireCommands.Json.JSON_SET.Sources); // RedisAndValkey
-```
-
-The catalog is grouped by feature, so IDE completion can guide discovery: `Array`, `Bitmap`, `Bloom`,
-`Cluster`, `Connection`, `CountMinSketch`, `Cuckoo`, `Dragonfly`, `Geo`, `Hash`, `HyperLogLog`,
-`Json`, `Key`, `KeyDb`, `List`, `PubSub`, `Scripting`, `Search`, `Sentinel`, `Server`, `Set`,
-`SortedSet`, `Stream`, `String`, `TDigest`, `TimeSeries`, `TopK`, `Transaction`, and `VectorSet`.
-
-Blocking descriptors such as `BLPOP` and an `XREAD` containing `BLOCK` automatically use a
-dedicated pooled connection. Supply a cancellation token with the array overload when the
-server-side timeout can be unbounded. Flags and cancellation are optional arguments on that
-overload, so pass the one you need by name:
-
-```csharp
-using RespireResult popped = await redis.ExecuteAsync(
-    RespireCommands.List.BLPOP,
-    ["jobs", 0],
-    cancellationToken: cancellationToken);
-```
-
-Descriptors that require or alter connection state—such as `MULTI`, `WAIT`, `SELECT`,
-`SUBSCRIBE`, `AUTH`, and `CLIENT TRACKING`—make `ExecuteAsync` throw `NotSupportedException`.
-Multiplexing cannot safely preserve their connection affinity. Use transactions, subscription
-APIs, or `RespireOptions` instead.
+The [in-memory testing server](in-memory-testing.md#supported-subset) models the new core commands for the data types it supports, including sparse arrays. It does not emulate every module or administration command, or Dragonfly and KeyDB extensions; use real server fixtures for those and for version-specific behavior.
 
 ## Retry-risk metadata
 
-Descriptors expose `RetryCategory`, an audited command-level risk classification. On its own it
-does not retry anything. When `RespireOptions.RetryPolicy` is set, the policy compares a command's
-category with its `MaxCommandRetryCategory`; see [command retries](command-retries.md). A category
-does not prove whether a socket write reached the server and does not provide exactly-once
-execution. Repeating even a conditional or replacement write can return a different reply and
-interact with another client's changes.
+Each descriptor has a `RetryCategory`. It does not retry anything by itself. When `RespireOptions.RetryPolicy` is set, the policy compares the category with its `MaxCommandRetryCategory`; see [command retries](command-retries.md).
 
 ```csharp
 Console.WriteLine(RespireCommands.String.GET.RetryCategory);   // ReadOnly
@@ -103,61 +73,47 @@ Console.WriteLine(RespireCommands.String.SET.RetryCategory);   // WriteAccumulat
 Console.WriteLine(RespireCommand.Create("GET").RetryCategory); // Never
 ```
 
-The categories are `Always`, `Connection`, `ReadOnly`, `WriteChecked`, `WriteLastWins`,
-`WriteAccumulating`, `ServerAdmin`, and `Never`. The non-`Never` values increase in risk.
-`Never` is zero so default values fail closed; a numeric threshold alone is not retry permission.
-Unknown commands, default descriptors, implicit string conversions, and `RespireCommand.Create`
-descriptors use `Never`, even for known names and explicit cache mutation policies. To declare a
-category for the complete invocation, call `WithRetryCategory` on the descriptor; Respire does
-not validate that declaration against the command or its arguments.
+Categories, in increasing risk: `Always`, `Connection`, `ReadOnly`, `WriteChecked`, `WriteLastWins`, `WriteAccumulating`, `ServerAdmin`. `Never` is zero, so default values fail closed; a numeric threshold alone is not retry permission.
 
-Read-only scripts/functions and consuming Search cursors remain `Never`. Cache effects and
-replica-read eligibility are independent: `EVAL_RO` can retain its existing read routing while
-having no automatic retry permission. Option-sensitive `SET`, `ZADD`, and `BITFIELD` use the
-conservative `WriteAccumulating` category. Search aggregation/profile commands remain `Never`
-because their invocations can involve server-side cursors. Descriptor categories do not inspect
-invocation options. Unlisted writes and extensions remain `Never` until audited.
+These use `Never`:
+
+- Unknown commands, default descriptors, implicit string conversions, and `RespireCommand.Create` descriptors, even for known names and explicit cache mutation policies.
+- Read-only scripts and functions. Their read routing is separate: `EVAL_RO` can still read from replicas.
+- Search cursor, aggregation, and profile commands, which can involve server-side cursors.
+- Unlisted writes and extensions, until audited.
+
+Categories do not inspect options, so option-sensitive `SET`, `ZADD`, and `BITFIELD` use the conservative `WriteAccumulating`. To declare a category for a whole invocation, call `WithRetryCategory` on the descriptor. Respire does not check that declaration.
+
+:::warning
+A category cannot tell whether a socket write reached the server, and it does not give exactly-once execution. Repeating even a conditional or replacement write can return a different reply and interact with other clients' changes.
+:::
 
 ## Cluster key validation
 
-With `UseCluster`, immediate catalog, string, interpolated, and fire-and-forget execution
-validate every declared key in supported layouts before connecting or sending the command.
-Different slots throw `RespireServerException` with code `CROSSSLOT`, including when
-`NoRedirect` is set. The client does not split these raw requests across nodes. Standalone
-execution leaves argument validation to the server.
-Malformed arguments for a known Cluster layout (for example, a missing GET key or an invalid
-EVAL key count) throw `ArgumentException` locally. The same malformed standalone request reaches
-the server and can instead produce `RespireServerException`; argument-error types therefore differ
-between these modes. Null declared keys are rejected with `ArgumentNullException` before Cluster I/O.
+With `UseCluster`, immediate catalog, string, interpolated, and fire-and-forget execution validate every declared key before connecting or sending.
 
-The shared layout table covers the [deferred raw allowlist](deferred-raw-commands.md), including
-all-key commands such as MGET/DEL, key/value pairs in MSET/MSETNX, source/destination pairs,
-BITOP, and declared key counts in scripts/functions and sorted-set combinations. Immediate
-execution additionally understands KEYDB.MEXISTS, blocking list/sorted-set pops and moves,
-MSETEX pairs, XREAD/XREADGROUP keys after STREAMS, MIGRATE's fixed key or KEYS form, and
-JSON.MGET keys before its path. Argument values, script arguments, stream IDs, JSON paths,
-and MIGRATE credentials are not keys. Binary hash tags use their original bytes.
+| Problem | Cluster | Standalone |
+|---|---|---|
+| Keys in different slots | `RespireServerException` with code `CROSSSLOT`, even with `NoRedirect`. Requests are never split across nodes. | Sent; the server validates. |
+| Malformed arguments for a known layout (missing GET key, bad EVAL key count) | `ArgumentException`, locally. | Sent; can produce `RespireServerException`. |
+| Null declared key | `ArgumentNullException` before I/O. | — |
 
-This table is deliberately explicit. Unknown commands and undeclared layouts, including
-dynamic key discovery such as SORT patterns, use the client's built-in routing heuristics and
-server-side validation; a catalog entry alone does not guarantee complete key discovery. Use typed facets
-where available and supply compatible keys for other raw commands. There is no API for
-declaring your own key layout. Administrative commands run on one node, except that Cluster
-clients send `FUNCTION LOAD`/`DELETE`/`FLUSH`/`RESTORE` and `SCRIPT LOAD`/`FLUSH` to every primary.
+Key layouts are known for:
 
-Prefixed views reject immediate catalog execution unless the command's layout is registered as
-prefixable, meaning it names every key position. Prefixable layouts cover the RedisJSON key
-commands (including `JSON.MGET` and `JSON.MSET`), the RedisTimeSeries single-key, compaction-rule,
-and `TS.MADD` commands, the probabilistic (`BF.*`, `CF.*`, `CMS.*`, `TOPK.*`, `TDIGEST.*`)
-commands, `VADD`/`VREM`/`VSETATTR`, and `HSET`, `HDEL`, `HGETALL`, `HMGET`, `HSETEX`, and
-`HPEXPIRE`. Label-filter queries such as `TS.MGET` stay rejected because they could reach keys
-outside the prefix. Otherwise, use typed facets or supported deferred raw execution when the
-client should apply a key prefix.
+- The [deferred raw allowlist](deferred-raw-commands.md): all-key commands such as MGET/DEL, MSET/MSETNX pairs, source/destination pairs, BITOP, and declared key counts in scripts, functions, and sorted-set combinations.
+- Immediate execution only: KEYDB.MEXISTS, blocking list and sorted-set pops and moves, MSETEX pairs, XREAD/XREADGROUP keys after STREAMS, MIGRATE's single key or KEYS form, and JSON.MGET keys before the path.
 
-Plain string commands (`ExecuteAsync("GET", ...)`) are not rejected on a prefixed view, but their
-keys are sent unchanged unless the command is a `JSON.*`, `TS.*`, `BF.*`, `CF.*`, `CMS.*`,
-`TOPK.*`, or `TDIGEST.*` command with a prefixable layout. Interpolated commands always send their
-keys unchanged. Pass physical keys to these commands.
+Argument values, script arguments, stream IDs, JSON paths, and MIGRATE credentials are not keys. Binary hash tags use their original bytes.
+
+Unknown commands and undeclared layouts, including dynamic key discovery such as SORT patterns, fall back to built-in routing heuristics and server-side validation. A catalog entry does not guarantee full key discovery, and you cannot declare your own key layout. Use typed facets where available, and supply same-slot keys otherwise. Administrative commands run on one node, except that Cluster clients send `FUNCTION LOAD`/`DELETE`/`FLUSH`/`RESTORE` and `SCRIPT LOAD`/`FLUSH` to every primary.
+
+### Key prefixes
+
+- **Catalog descriptors:** a prefixed view rejects them unless the layout is prefixable (names every key position). Prefixable layouts cover RedisJSON key commands (including `JSON.MGET` and `JSON.MSET`); RedisTimeSeries single-key, compaction-rule, and `TS.MADD` commands; `BF.*`, `CF.*`, `CMS.*`, `TOPK.*`, and `TDIGEST.*`; `VADD`/`VREM`/`VSETATTR`; and `HSET`, `HDEL`, `HGETALL`, `HMGET`, `HSETEX`, and `HPEXPIRE`. Label-filter queries such as `TS.MGET` stay rejected, because they could reach keys outside the prefix.
+- **Plain strings** (`ExecuteAsync("GET", ...)`): not rejected, but keys are sent unchanged unless the command is a prefixable `JSON.*`, `TS.*`, `BF.*`, `CF.*`, `CMS.*`, `TOPK.*`, or `TDIGEST.*` command.
+- **Interpolated commands:** keys are always sent unchanged.
+
+Pass physical keys to unprefixed commands, or use typed facets or [deferred raw execution](deferred-raw-commands.md) to have the client apply the prefix.
 
 Key-layout references: [KeyDB 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 [MSETEX](https://redis.io/docs/latest/commands/msetex/),
@@ -167,10 +123,7 @@ Key-layout references: [KeyDB 6.3.4 command table](https://github.com/Snapchat/K
 
 ## Dynamic commands
 
-Use a string when targeting an experimental command absent from the audited references.
-A string converts implicitly to a caller-supplied `RespireCommand`. For a command you run
-repeatedly, keep a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor so its name is
-encoded once.
+For a command missing from the audited references, pass a string; it converts implicitly to a `RespireCommand`. For a command you run often, keep a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor so its name is encoded once.
 
 ### Explicit arguments
 
@@ -181,8 +134,7 @@ using RespireResult result = await redis.ExecuteAsync(
     "user:42");
 ```
 
-Arguments are encoded independently. Space-separated command words are split, but argument
-values are never split.
+Space-separated command words are split. Argument values are never split.
 
 ### Interpolated commands
 
@@ -194,15 +146,12 @@ using RespireResult result = await redis.ExecuteAsync(
     $"SET {key} {payload} EX {60}");
 ```
 
-Each interpolation hole becomes exactly one RESP argument, so spaces and arbitrary content inside `payload` cannot change command structure.
+Each interpolation hole becomes exactly one RESP argument, so spaces or other content in `payload` cannot change the command's structure.
 
 ## Result lifetime
 
-`RespireResult` can own pooled protocol data and implements `IDisposable`. Keep its lifetime short and use `using`.
+`RespireResult` can own pooled protocol data. Dispose it promptly with `using`.
 
-Top-level Redis errors throw `RespireServerException`, matching typed commands. Nested error elements remain inspectable through the result for compound replies.
+Top-level Redis errors throw `RespireServerException`, as with typed commands. Nested error elements in compound replies stay inspectable through the result.
 
-## Prefer a typed facet when available
-
-Typed facets parse replies and validate option combinations. The catalog returns `RespireResult`
-because uncommon, administrative, module, and vendor commands have widely varying reply shapes.
+The catalog returns `RespireResult` because uncommon, administrative, module, and vendor commands have varied reply shapes. Typed facets parse replies and validate options, so prefer them when available.

@@ -5,11 +5,13 @@ description: Query active channels, subscriber counts and pattern counts with PU
 
 # Pub/sub introspection
 
-The Server facet exposes PUBSUB CHANNELS, NUMSUB, NUMPAT, SHARDCHANNELS, and
-SHARDNUMSUB through `PubSubChannelsAsync`, `PubSubSubscriberCountsAsync`, and
-`PubSubPatternCountAsync`. Pass `sharded: true` for the SHARD variants. Ordinary introspection requires Redis 2.8+; sharded introspection
-requires Redis 7+. Unsupported versions and denied ACL permissions retain server
-errors. These read-only commands do not require `AllowAdmin`.
+Use the Server facet to see which channels are active and how many subscribers they have. These read-only PUBSUB queries do not need `AllowAdmin`.
+
+| Method | Command | Redis |
+| --- | --- | --- |
+| `PubSubChannelsAsync` | PUBSUB CHANNELS (SHARDCHANNELS with `sharded: true`) | 2.8+ (sharded 7+) |
+| `PubSubSubscriberCountsAsync` | PUBSUB NUMSUB (SHARDNUMSUB with `sharded: true`) | 2.8+ (sharded 7+) |
+| `PubSubPatternCountAsync` | PUBSUB NUMPAT | 2.8+ |
 
 ```csharp
 RespireChannel channel = "events";
@@ -21,28 +23,23 @@ RespireChannelSubscriberCount[] shardSubscribers =
     await redis.Server.PubSubSubscriberCountsAsync([channel], sharded: true);
 ```
 
-Channel names and patterns preserve their exact bytes. `RespireChannel` owns its
-input storage; result channels also own their storage after the reply and client
-are disposed. The span of names is copied before asynchronous work. Empty names,
-empty name lists, and an omitted versus empty pattern remain distinct. The
-`sharded` argument selects the command family; the input channel's subscription
-kind does not change the query. Returned sharded names have `SubscriptionKind.Sharded`.
+- Unsupported versions and denied ACL permissions surface the server error.
+- Channel names and patterns keep their exact bytes. Result channels own their storage after the reply and client are disposed.
+- Empty names, empty name lists, and an omitted versus empty pattern are distinct.
+- `sharded` alone selects the command family; the input channel's kind does not. Returned sharded names have `SubscriptionKind.Sharded`.
+- `WithKeyPrefix` and `WithPubSubPrefix` are not applied. Pass `view.ResolveChannel(logicalChannel)` for a prefixed literal or sharded count, and `view.ResolveChannel(RespireChannel.Pattern(logicalPattern))` for a prefixed CHANNELS pattern.
 
-Server introspection does not apply `WithKeyPrefix` or `WithPubSubPrefix` to channel names or patterns.
-Pass `view.ResolveChannel(logicalChannel)` for a prefixed literal or sharded subscriber count;
-pass `view.ResolveChannel(RespireChannel.Pattern(logicalPattern))` for a prefixed CHANNELS pattern.
-It inspects the server's pub/sub namespace. CHANNELS lists channels with literal
-subscribers, excluding channels with only pattern subscribers. NUMSUB counts
-literal subscribers, excluding pattern subscribers. NUMPAT counts unique patterns,
-not the number of clients or matching channels. Sharded and ordinary counts are
-separate. These are observations at execution time, not a durable delivery guarantee.
+What the counts mean:
+
+- CHANNELS lists channels with literal subscribers; channels with only pattern subscribers are excluded.
+- NUMSUB counts literal subscribers only.
+- NUMPAT counts unique patterns, not clients or matching channels.
+- Sharded and ordinary counts are separate.
+- Results are a snapshot at execution time, not a delivery guarantee.
 
 ## Results from every node
 
-Ordinary methods query one execution node. In Cluster mode they do not imply a
-global count or route sharded introspection by the supplied channel. Use the explicit
-`OnAllNodesAsync` methods to inspect every discovered member, including replicas
-and primaries without slots:
+Ordinary methods query one node. In Cluster mode they give no global count and do not route sharded queries by channel. Use the `OnAllNodesAsync` methods to query every discovered member, including replicas and primaries without slots:
 
 ```csharp
 RespireServerResult<RespireChannelSubscriberCount[]>[] nodes =
@@ -59,47 +56,30 @@ foreach (var node in nodes)
 }
 ```
 
-Each result retains its endpoint and either an owned `Value` or the original
-`Error`. Accessing `Value` on failure throws `InvalidOperationException` with that
-error as its inner exception. Counts are not summed and channel names are not
-deduplicated across nodes. Standalone execution returns one result.
-`TryGetValue(out var value)` provides non-throwing access; on failure it returns
-false and assigns the default value, while `Error` retains the original exception.
+Results:
 
-Cluster discovery uses CLUSTER NODES on a reachable connection, requiring that ACL
-permission. It keeps the reachable address of the reporting node and uses advertised
-client endpoints for other members; deployment networking must make those addresses
-reachable. Unfinished handshake entries are excluded. Missing addresses, malformed
-or conflicting topology, and discovery failures throw before fan-out starts, so a
-partial topology is never silently presented as complete. Membership can change
-after the snapshot; no atomic Cluster-wide observation is promised.
+- Each result has its `Endpoint` and either `Value` or the original `Error`.
+- `Value` on failure throws `InvalidOperationException` with the error as inner exception. `TryGetValue(out var value)` returns false and the default value instead.
+- Counts are not summed and names are not deduplicated across nodes. Standalone returns one result.
 
-For other members, discovery prefers an advertised hostname when present and otherwise
-uses the advertised IP address; it does not substitute the seed hostname. TLS certificate
-validation uses that endpoint host unless `TlsOptions.TargetHost` explicitly overrides it.
-Advertised addresses must therefore be reachable and match the deployment's certificate
-configuration. The reporting node retains the already reachable source address.
+Discovery:
 
-Each call re-runs CLUSTER NODES and opens one temporary dedicated connection per
-discovered endpoint, with at most eight nodes active at once. This limit applies
-per call; avoid overlapping polls when controlling total connection demand. These pools
-are scoped to the call and closed on every outcome, including success. They do not
-retain historical replicas or add transports to the routing pool cache. Client
-disposal tracks and aborts active fan-out pools, including pending handshakes.
-TCP/TLS setup uses `ConnectTimeout`; Redis handshake replies and commands use
-`CommandTimeout` and the configured response watchdog. Caller cancellation also covers
-nodes awaiting capacity. If response deadlines are disabled, supply a caller cancellation
-deadline to bound a stalled node's replies and the overall call.
+- Each call runs CLUSTER NODES (needs that ACL permission) on a reachable connection.
+- The reporting node keeps its known address. Other members use their advertised hostname if present, else their advertised IP; the seed hostname is never substituted.
+- TLS validates against that host unless `TlsOptions.TargetHost` overrides it. Advertised addresses must be reachable and match your certificates.
+- Unfinished handshakes are excluded. Missing addresses, malformed or conflicting topology, and discovery failures throw before any node is queried, so you never get a partial topology presented as complete.
+- Membership can change after the snapshot; there is no atomic Cluster-wide view.
 
-Execution preserves authentication/TLS. A failed node produces an endpoint-associated
-error while other nodes can succeed. Cancellation before or during discovery throws. After discovery,
-cancellation is recorded in the affected node results; already completed successes
-remain available. No command is replayed or redirected
-away from its target endpoint.
+Execution:
 
-Custom `IServerCommands` implementations, decorators, and mocks must implement or forward
-all six methods (the three single-node methods and their `OnAllNodesAsync` counterparts).
-These queries are not available on batches or transactions.
+- One temporary connection per endpoint, at most eight active per call. Avoid overlapping polls if you need to limit total connections.
+- Connections close on every outcome and are not added to the routing pool. Disposing the client aborts in-progress calls.
+- TCP/TLS setup uses `ConnectTimeout`; handshakes and commands use `CommandTimeout` and the response watchdog. If response deadlines are disabled, pass a cancellation deadline to bound a stalled node.
+- Authentication and TLS settings apply. A failed node returns an error for its endpoint; other nodes can still succeed.
+- Cancellation before or during discovery throws. After discovery, it is recorded per node, and completed results stay available.
+- No command is replayed or redirected to another endpoint.
+
+Custom `IServerCommands` implementations, decorators, and mocks must implement or forward all six methods (three single-node methods and their `OnAllNodesAsync` counterparts). These queries are not available in batches or transactions.
 
 Redis contracts: [CHANNELS](https://redis.io/docs/latest/commands/pubsub-channels/),
 [NUMSUB](https://redis.io/docs/latest/commands/pubsub-numsub/),

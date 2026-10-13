@@ -5,7 +5,7 @@ description: Choose Respire packages by feature, with matching assembly and name
 
 # Packages and namespaces
 
-Each library uses the same name for its NuGet package, assembly, project, and root namespace. For example, install `Respire.Search`, reference `Respire.Search.dll`, and import `Respire.Search`. Libraries use the `Respire` product prefix, including APIs for Redis features. The .NET Aspire integrations are the exception: they follow Aspire's `Aspire.<Product>` naming.
+Each library uses one name for its NuGet package, assembly, and root namespace: install `Respire.Search`, import `Respire.Search`. The .NET Aspire integrations are the exception; they follow Aspire's `Aspire.<Product>` naming.
 
 ## Choose a package
 
@@ -38,28 +38,23 @@ Each library uses the same name for its NuGet package, assembly, project, and ro
 | `Respire.Testing` | In-memory RESP test server |
 | `Respire.Testing.Containers` | Redis and Valkey container fixtures |
 
-`Respire.Analyzers` also has matching assembly and namespace names. It ships inside the core `Respire` package rather than as a separate NuGet package. Tests, samples, benchmarks, and pipeline projects are not published libraries.
-
-Core APIs may use subnamespaces such as `Respire.Serialization` and `Respire.Compression`; a subnamespace does not imply a separate package. Import `Respire.Compression.Lz4` or `Respire.Compression.Zstd` for the optional codecs, and `Respire.Compression` for their shared options and abstractions. The Aspire packages put their registration methods in `Microsoft.Extensions.Hosting`, following Aspire convention.
-
-Some packages add extension properties to the client, such as `redis.Json` and `redis.Coordination`. Extension properties need C# 14, the default for `net10.0` projects. On earlier language versions, construct the wrapper instead, for example `new RespireJsonClient(redis)` or `new RespireCoordination(redis)`.
+- `Respire.Analyzers` ships inside the core `Respire` package, not as its own package.
+- Subnamespaces such as `Respire.Serialization` and `Respire.Compression` belong to the core package. `Respire.Compression` holds the shared codec options; import `Respire.Compression.Lz4` or `Respire.Compression.Zstd` for a codec.
+- The Aspire packages put their registration methods in `Microsoft.Extensions.Hosting`.
+- Extension properties such as `redis.Json` and `redis.Coordination` need C# 14 (the `net10.0` default). On earlier language versions, construct the wrapper: `new RespireJsonClient(redis)` or `new RespireCoordination(redis)`.
 
 ## Redis features and custom modules
 
-[Redis Open Source 8 includes JSON, Search, time series, and probabilistic data types](https://redis.io/blog/redis-8-ga/). Their client APIs remain optional packages so applications only take the dependencies they use. Earlier Redis deployments need the corresponding modules or Redis Stack. Other RESP-compatible servers may implement only some of these commands.
+[Redis Open Source 8 includes JSON, Search, time series, and probabilistic data types](https://redis.io/blog/redis-8-ga/); their client APIs are optional packages. Earlier Redis needs the matching modules or Redis Stack, and other RESP servers may support only some commands. Installing a package does not enable a server feature.
 
-Reserve `Respire.Extensions.<ModuleName>` for client support for custom, separately installed Redis modules. None of the current packages belongs to this category. .NET integrations, cloud credentials, and client utilities use their feature names directly. C# extension methods alone do not make a package a Redis extension.
-
-Installing a NuGet package does not install or enable a server feature. Check the target server's command support. Custom commands can use the [raw command API](./guides/raw-commands) or [command generator](./guides/generated-commands).
+The name `Respire.Extensions.<ModuleName>` is reserved for custom, separately installed Redis modules; no current package uses it. For custom commands, use the [raw command API](./guides/raw-commands) or [command generator](./guides/generated-commands).
 
 ## Updating references from earlier versions
 
-Earlier versions used `Respire.Extensions.*` names for some packages. The rename changes public namespaces and assembly identities, so rebuild consuming applications and libraries together.
+Some packages were named `Respire.Extensions.*`. The rename changes namespaces and assembly identities, so rebuild consuming applications and libraries together.
 
-- Replace `Respire.Extensions.` with `Respire.` in package references, project paths, and `using` directives for the existing packages listed above.
-- JSON, Search, TimeSeries, and Probabilistic already use the short NuGet IDs; their package references stay the same.
+- Replace `Respire.Extensions.` with `Respire.` in package references, project paths, and `using` directives.
+- JSON, Search, TimeSeries, and Probabilistic package IDs are unchanged.
 - Replace `using Redis.Search;` with `using Respire.Search;`.
 - Import `Respire.Compression.Lz4` for `Lz4ValueCodec` and `Respire.Compression.Zstd` for `ZstdValueCodec`.
 - Update assembly-qualified type names, reflection configuration, and explicit DLL references. Do not mix old and renamed packages in one dependency graph.
-
-The naming follows [.NET assembly naming guidance](https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines/names-of-assemblies-and-dlls): use the product name and the common namespace prefix for the assembly.

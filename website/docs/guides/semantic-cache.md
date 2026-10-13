@@ -5,17 +5,14 @@ description: Cache Microsoft.Extensions.AI chat responses by cosine similarity, 
 
 # Semantic chat response cache
 
-`Respire.AI` adds `ChatClientBuilder.UseRespireSemanticCache` for
-`Microsoft.Extensions.AI` 10.10.0. It embeds the final user prompt with your
-`IEmbeddingGenerator<string, Embedding<float>>`, searches a Redis Search FLOAT32
-vector index, and returns a stored `ChatResponse` when cosine distance is within
-the configured threshold. On a miss it calls the inner chat client and stores
-eligible text responses with an absolute TTL.
+`Respire.AI` adds `ChatClientBuilder.UseRespireSemanticCache` for `Microsoft.Extensions.AI` 10.10.0. Use it to reuse chat responses for prompts that mean the same thing. It embeds the final user prompt with your `IEmbeddingGenerator<string, Embedding<float>>` and searches a Redis Search FLOAT32 vector index. A hit within the cosine distance threshold returns the stored `ChatResponse`. A miss calls the inner chat client and stores eligible text responses with a TTL.
 
-Install `Respire.AI`. Use an **unprefixed client connected to standalone Redis 8
-with Query Engine**, or Redis Stack with Search. Redis Cluster and servers without
-Search are unsupported. The caller owns the Redis client and embedding generator;
-disposing the built chat pipeline disposes its inner chat client only.
+Requirements:
+
+- An **unprefixed client on standalone Redis 8 with Query Engine**, or Redis Stack with Search. Redis Cluster and servers without Search are unsupported.
+- .NET 8 or .NET 10, RESP2 or RESP3.
+
+You own the Redis client and embedding generator. Disposing the chat pipeline disposes only its inner chat client.
 
 ```bash
 dotnet add package Respire.AI
@@ -50,38 +47,34 @@ public static class SemanticChatSetup
 }
 ```
 
-Create a new cache namespace when changing the embedding model, hidden provider
-defaults, deployment behavior, or middleware that modifies requests downstream.
-Dimension and schema version are part of the index name. Available chat and
-embedding provider metadata also participates in the scope. Providers without
-metadata need distinct `CacheName` values when their behavior differs. Place this
-middleware where it sees the effective messages and generation options; changes
-made inside the inner provider are not visible to the cache.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `CacheName` | `"default"` | Cache namespace |
+| `Dimensions` | Required | Embedding size; must match the generator |
+| `DistanceThreshold` | 0.1 | Maximum cosine distance for a hit (inclusive) |
+| `TimeToLive` | 1 hour | Entry lifetime; at least 1 ms |
+| `ScopeSelector` | Shared scope | Exact user/tenant boundary; null bypasses the cache |
+| `ShouldBypass` | null | Return `true` to skip embedding, reads and writes |
+| `FailOpen` | `true` | Report cache failures as Trace warnings instead of throwing |
 
-Indexes are created lazily and shared by middleware instances with the same
-namespace and dimensions. Do not modify the reserved `respire:semantic:v1:` index
-schemas or hashes. Entries expire; empty indexes remain until you remove them
-through Search administration. Use a separate Redis database or namespace for
-cache lifecycle management. Cache creation needs `FT.CREATE`; lookups need
-`FT.SEARCH` and `HGET`; writes use `EVALSHA`/`EVAL`, `HSET` and `PEXPIRE`.
-Concurrent index creation also uses `FT.INFO` to confirm an existing index.
-If a lookup finds that the index was dropped, the middleware recreates it and
-retries the search once. Other failures follow the configured failure policy.
+**Use a new `CacheName` when you change** the embedding model, hidden provider defaults, deployment behavior, or downstream middleware that modifies requests. Dimensions and schema version are already part of the index name, and available provider metadata is part of the scope. Providers without metadata need distinct `CacheName` values when they behave differently.
+
+Place the middleware where it sees the effective messages and options. Changes made inside the inner provider are invisible to the cache.
+
+Indexes:
+
+- Created lazily and shared by instances with the same namespace and dimensions. A dropped index is recreated and the lookup retried once.
+- Do not modify the reserved `respire:semantic:v1:` index schemas or hashes.
+- Entries expire, but empty indexes remain until you remove them through Search administration. A separate Redis database or namespace makes cleanup easier.
+- Required commands: `FT.CREATE` and `FT.INFO` (creation), `FT.SEARCH` and `HGET` (lookups), `EVALSHA`/`EVAL`, `HSET` and `PEXPIRE` (writes).
 
 ## Scope and opt out
 
-`ScopeSelector` returns an exact user or tenant boundary. The default is a shared
-scope, suitable only for responses that every caller may see. A null scope bypasses
-the cache. The middleware additionally hashes the model/provider identity,
-generation options (including `Instructions`), and **every message preceding the
-final user prompt**. System prompts and conversation history therefore match
-exactly, including case. Only the final user text uses semantic matching.
-Request properties such as `UserId` remain part of the exact options scope.
-The scope hash cannot inject Search query syntax.
+`ScopeSelector` returns an exact user or tenant boundary. **The default shared scope is safe only for responses every caller may see.** A null scope bypasses the cache.
 
-Set `RespireSemanticCacheOptions.DisableCacheKey` to Boolean `true` in
-`ChatOptions.AdditionalProperties` to bypass both reads and writes. The flag is
-excluded from the scope when false; caller options are not modified.
+Besides the scope, these must match exactly (including case): model/provider identity, generation options (including `Instructions` and request properties such as `UserId`), and **every message before the final user prompt**. Only the final user text matches semantically.
+
+Set `RespireSemanticCacheOptions.DisableCacheKey` to `true` in `ChatOptions.AdditionalProperties` to bypass reads and writes for one request:
 
 <!-- doc-test-declaration -->
 ```csharp
@@ -103,64 +96,40 @@ public static class SemanticChatRequest
 }
 ```
 
-Return `true` from `ShouldBypass` to skip embedding, reads and writes for a
-request. Use it for requests that depend on current time, account state,
-authorization, or other changing data. Scope selection is not authorization:
-derive user and tenant identifiers from trusted application context. A semantic
-match can return an answer generated for different wording, so opt out for
-transactional operations and exact identifiers.
+Use `ShouldBypass` or `DisableCacheKey` for requests that depend on current time, account state, authorization or other changing data. A semantic hit can return an answer generated for different wording, so opt out for transactional operations and exact identifiers.
+
+:::warning Scope is not authorization
+Derive user and tenant identifiers from trusted application context, not from request input.
+:::
 
 ## Threshold tuning
 
-Cosine **distance** is lower for more similar prompts: identical directions have
-distance 0, orthogonal vectors 1, and opposite directions 2. The boundary is
-inclusive: `distance <= DistanceThreshold`. The default is 0.1; it is a starting
-point, not a quality guarantee. Embeddings must have the configured dimensions,
-finite values and a nonzero norm.
+Cosine **distance** is lower for more similar prompts: 0 for identical directions, 1 for orthogonal, 2 for opposite. A hit needs `distance <= DistanceThreshold`. The 0.1 default is a starting point, not a quality guarantee. Embeddings must have the configured dimensions, finite values and a nonzero norm.
 
-1. Collect representative paraphrases and difficult negative pairs, especially
-   questions that differ only in negation, names, dates, units or account IDs.
-2. Embed them with the production model. Measure cosine distances and label
-   whether reusing each answer is acceptable within its scope.
-3. Start with a small threshold and increase it only while false hits remain
-   acceptable. A smaller threshold means more misses and provider calls; a larger
-   threshold risks incorrect reuse. Re-evaluate after changing the model.
+1. Collect representative paraphrases and hard negative pairs, especially questions that differ only in negation, names, dates, units or account IDs.
+2. Embed them with the production model. Measure distances and label whether reusing each answer is acceptable within its scope.
+3. Start small and raise the threshold only while false hits stay acceptable. Smaller means more provider calls; larger risks wrong answers. Re-tune after changing the model.
 
-The index uses exact FLAT KNN with one nearest neighbor, filtered by scope before
-ranking. Expired or concurrently deleted neighbors become misses. Concurrent
-misses can call the provider more than once and create separate entries; there is
-no distributed request coalescing. FLAT search cost grows with the scoped cache,
-so bound retention with TTL and measure production latency before scaling it.
+Lookups use exact FLAT KNN with one nearest neighbor, filtered by scope. Search cost grows with the scoped cache, so bound it with TTL and measure latency before scaling. Expired or deleted neighbors are misses. **Concurrent misses can each call the provider** and store separate entries; there is no request coalescing.
 
 ## TTL, response fidelity and bypass behavior
 
-`TimeToLive` defaults to one hour. TTL starts when the response is inserted. A Lua
-script writes the complete hash and applies `PEXPIRE` in one atomic operation. TTL
-has millisecond precision and must be at least one millisecond. Hits do not extend
-it. Each insertion gets a new key, so replacing an entry cannot clear its expiry.
-The cache uses `Respire.Search` hashes directly, not `Respire.VectorData` or
-vector sets.
+TTL starts at insertion, has millisecond precision and is not extended by hits. The entry and its expiry are written atomically. The cache uses `Respire.Search` hashes directly, not `Respire.VectorData` or vector sets.
 
-**Streaming always bypasses embedding, cache reads and cache writes.** Neither a
-streaming miss nor a streaming call after a cached response populates/replays the
-cache. Non-streaming caching accepts text-only conversations ending in a nonblank
-user prompt. Non-text content, tools, provider-specific raw request representations,
-custom request types, final-prompt content metadata, server-side conversation IDs
-and background/continuation requests bypass caching. Responses containing tool or
-non-text content, conversation state or continuation tokens are not stored.
+**Streaming always bypasses the cache**: no embedding, reads or writes.
 
-Responses use the upstream AI JSON metadata and return a new deserialized object
-on each hit. Portable response messages, model ID, response ID, finish reason,
-timestamps and usage are retained. `RawRepresentation` fields are omitted, as in
-upstream JSON serialization. Usage and IDs describe the original generation;
-they do not represent a new provider call on a cache hit. Arbitrary additional
-properties need types supported by upstream AI JSON metadata. By default,
-`FailOpen = true` reports non-cancellation embedding, Redis and serialization
-failures through `System.Diagnostics.Trace` warnings. A failed lookup calls the
-provider without storing the response; a failed insertion returns the successful
-provider response. Configure a Trace listener to capture these warnings. Set
-`FailOpen = false` to propagate cache failures instead. Provider failures and
-cancellation always propagate, including cancellation during insertion. Cancelled
-or failed provider calls never insert responses.
+Requests that bypass caching:
 
-The cache works over RESP2 and RESP3 on .NET 8 and .NET 10.
+- Conversations that are not text-only or do not end in a nonblank user prompt.
+- Tools, provider-specific raw request representations, custom request types and final-prompt content metadata.
+- Server-side conversation IDs and background/continuation requests.
+
+Responses with tool or non-text content, conversation state or continuation tokens are not stored.
+
+Each hit returns a new object deserialized with the upstream AI JSON metadata. Messages, model ID, response ID, finish reason, timestamps and usage are kept; `RawRepresentation` is dropped. Usage and IDs describe the original generation, not a new provider call. Additional properties need types the upstream AI JSON metadata supports.
+
+Failures:
+
+- With `FailOpen = true` (default), embedding, Redis and serialization failures become `System.Diagnostics.Trace` warnings. A failed lookup calls the provider without storing; a failed insert still returns the provider response. Add a Trace listener to see them.
+- With `FailOpen = false`, cache failures propagate.
+- Provider failures and cancellation always propagate, including cancellation during insertion. Failed or cancelled provider calls never store a response.

@@ -5,10 +5,7 @@ description: Import hashes through connection-local fieldsets on Redis 8.10.
 
 # Hash import sessions
 
-Redis 8.10 adds [HIMPORT](https://redis.io/docs/latest/commands/himport/), which prepares an
-ordered list of field names once and reuses it to import hashes. Each fieldset belongs to one
-connection. Use a dedicated `RespireHashImportSession` so preparation and imports stay on that
-connection, even when the parent client uses several multiplexed connections.
+Redis 8.10 [HIMPORT](https://redis.io/docs/latest/commands/himport/) prepares an ordered list of field names once, then reuses it to import hashes. Each fieldset belongs to one connection, so use a `RespireHashImportSession`: it keeps preparation and imports on one dedicated connection.
 
 ```csharp
 await using var imports = await redis.Hashes.CreateImportSessionAsync();
@@ -19,20 +16,18 @@ bool removed = await imports.DiscardAsync("person");
 long remainingRemoved = await imports.DiscardAllAsync();
 ```
 
-`PrepareAsync` and `SetAsync` return `true` for `OK`. Preparation replaces an existing fieldset
-with the same name. Duplicate fields, null arguments, and empty field/value lists are rejected
-locally. Redis rejects unknown fieldsets and value counts that differ from the prepared field
-count. Values pair with fields in their original supplied order.
+- `PrepareAsync` and `SetAsync` return `true` for `OK`. Preparing an existing name replaces that fieldset.
+- Values pair with fields in the order supplied.
+- Duplicate fields, null arguments, and empty field or value lists are rejected locally. Redis rejects unknown fieldsets and value counts that differ from the field count.
+- `DiscardAsync` returns whether the fieldset existed. `DiscardAllAsync` returns how many it removed. Discarding leaves imported hashes intact.
 
-`SetAsync` **replaces the entire hash** and clears its expiration. Fields from the old hash
-disappear. An existing non-hash key causes `WRONGTYPE` and retains its value and expiration.
-`DiscardAsync` returns whether the fieldset existed; `DiscardAllAsync`
-returns how many fieldsets it removed. Discarding fieldsets leaves imported hashes intact.
+:::warning
+`SetAsync` **replaces the entire hash** and clears its expiration. Fields from the old hash disappear. An existing non-hash key causes `WRONGTYPE` and keeps its value and expiration.
+:::
 
 ## Batches and transactions
 
-Create queues through the session. Ordinary client queues reject these connection-local APIs.
-Session queues accept only the four HIMPORT operations.
+Create queues through the session. Ordinary client queues reject these APIs, and session queues accept only the four HIMPORT operations.
 
 ```csharp
 await using var imports = await redis.Hashes.CreateImportSessionAsync();
@@ -55,30 +50,25 @@ await transaction.CommitAsync();
 Console.WriteLine(imported.Result);
 ```
 
-Batches pipeline commands in order. Transactions use `MULTI`/`EXEC` on the same connection;
-the session confirms `MULTI` before sending any imports. A rejected `MULTI` leaves prepared
-fieldsets usable. Queue-time errors, such as a denied HIMPORT subcommand, preserve the session
-and its fieldsets when the drained `EXEC` confirms that Redis discarded the transaction.
-The original queue error still faults the commit and every queued `RespirePending<T>`. A rejected `EXEC`
-closes the session because Redis may still be in transaction mode.
-Transactions require one in-flight slot per queued command plus one for `EXEC`;
-exceeding `MaxInflightCommands` fails before `MULTI` and preserves prepared fieldsets.
-Credential renewal waits outside the complete `MULTI`/`EXEC` sequence. Credential expiry and
-renewal deadlines still apply; a transaction cannot extend the connection's authentication lifetime.
-Execution errors fault the affected `RespirePending<T>` and do not roll back other commands. Session
-transactions do not provide WATCH. `ExecuteAndWaitForReplicationAsync` and
-`ExecuteAndWaitForAofAsync` reject session batches because their execution contract creates a
-fresh connection. Await each operation or queue execution before starting another operation.
+- Batches pipeline commands in order. Transactions use `MULTI`/`EXEC` on the session's connection.
+- Await each operation or queue execution before starting another.
+- Execution errors fault the affected `RespirePending<T>` and do not roll back other commands.
+- Session transactions do not support WATCH.
+- A transaction needs one in-flight slot per command plus one for `EXEC`. Exceeding `MaxInflightCommands` fails before `MULTI` and keeps prepared fieldsets.
+- `ExecuteAndWaitForReplicationAsync` and `ExecuteAndWaitForAofAsync` reject session batches, because they use a fresh connection.
+- A transaction cannot extend the connection's authentication lifetime; credential expiry and renewal deadlines still apply.
+
+| Transaction failure | Session |
+|---|---|
+| `MULTI` rejected | Usable; fieldsets kept. |
+| Queue-time error (for example a denied HIMPORT subcommand) where `EXEC` confirms the discard | Usable; fieldsets kept. The error still faults the commit and every pending. |
+| `EXEC` rejected | Closed, because Redis may still be in transaction mode. |
 
 ## Ownership, routing, and failures
 
-Names, fields, keys, and values support binary arguments. The session snapshots their bytes
-before an asynchronous send or enqueue, so callers can reuse their buffers after the call.
-Key prefixes apply only to imported keys; fieldset names and fields remain unchanged.
-With [client-side caching](../fundamentals/client-side-caching.md) enabled, imports invalidate
-cached results for the affected key, and batch or transaction execution flushes the local cache.
+Names, fields, keys, and values accept binary arguments. The session copies their bytes before sending or queuing, so you can reuse buffers after the call. Key prefixes apply only to imported keys, not to fieldset names or fields. With [client-side caching](../fundamentals/client-side-caching.md), imports invalidate the affected key, and batch or transaction execution flushes the local cache.
 
-For Redis Cluster, supply a routing key when opening the session:
+For Redis Cluster, pass a routing key when opening the session:
 
 ```csharp
 await using var imports = await redis.Hashes.CreateImportSessionAsync("{people}:anchor");
@@ -86,24 +76,15 @@ await imports.PrepareAsync("person", "name");
 await imports.SetAsync("{people}:1", "person", "Ada");
 ```
 
-The routing key is not read or written. All imported keys must share its effective slot after
-prefixing. A session cannot span Cluster slots. A route change, MOVED/ASK redirect, connection
-loss, timeout, or cancellation after sending invalidates the session. Commands are never
-replayed onto another connection. Create a new session and prepare its fieldsets again.
+The routing key is never read or written. All imported keys must share its slot after prefixing; a session cannot span slots.
 
-Always use `await using`. Disposal closes the dedicated connection rather than returning its
-fieldsets to another caller. Connection closure or Redis RESET drops all fieldsets; they have
-no independent expiry timer. Disposing the parent client also invalidates the session.
-Disposal does not wait for an in-flight operation: it closes the connection, causing that
-operation to fail without replay.
+Always use `await using`. Disposal closes the dedicated connection, and closing the connection or Redis `RESET` drops all fieldsets (they have no expiry of their own). Disposing the parent client also invalidates the session. Disposal does not wait for an in-flight operation, which then fails without replay. Disposing a queue before execution leaves the session and its fieldsets intact.
 
-Ordinary command errors leave the session usable. Routing errors, `READONLY`, and errors
-that leave transaction state uncertain invalidate it. Cancellation proven to occur before
-admission leaves its fieldsets intact, including a batch waiting for credential renewal.
-Cancellation of an admitted command invalidates the session. After an uncertain send, some
-imports may have executed; inspect application data before retrying. Disposing a queue before execution does
-not dispose the session or discard fieldsets prepared earlier.
+What happens to the session after an error:
 
-`RespireFakeServer` from `Respire.Testing` (see [in-memory testing](in-memory-testing.md)) supports all four operations with the same per-connection isolation,
-overwrite behavior, validation, and WATCH invalidation. Other server versions must support
-HIMPORT themselves; opening a session does not negotiate this feature.
+- **Stays usable:** ordinary command errors, and cancellation before admission (including a batch waiting for credential renewal).
+- **Invalidated:** route changes, MOVED/ASK, `READONLY`, connection loss, timeouts, cancellation after sending, and errors that leave transaction state uncertain. Commands are never replayed on another connection. Create a new session and prepare its fieldsets again.
+
+After an uncertain send, some imports may have run. Check your data before retrying.
+
+`RespireFakeServer` from `Respire.Testing` ([in-memory testing](in-memory-testing.md)) supports all four operations with the same per-connection isolation, overwrite behavior, validation, and WATCH invalidation. Real servers must support HIMPORT; opening a session does not check for it.

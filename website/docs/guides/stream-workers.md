@@ -5,16 +5,16 @@ description: Process Redis stream entries with scoped handlers, bounded concurre
 
 # Hosted stream consumers
 
-`Respire.Streaming` runs Redis consumer-group readers as hosted services. Each delivery is
-passed to a scoped handler, which returns `Ack`, `Nack` or `DeadLetter`.
+`Respire.Streaming` runs Redis consumer-group readers as hosted services. Each delivery goes to a
+scoped handler, which returns `Ack`, `Nack` or `DeadLetter`.
 
 ```bash
 dotnet add package Respire.Streaming
 ```
 
-Register an `IRespireClient` with dependency injection; `Respire.DependencyInjection` can do
-this for you. The worker uses that client's stream facet, including a key-prefixed view, and
-does not own or dispose it.
+Register an `IRespireClient` with dependency injection (for example with
+`Respire.DependencyInjection`). The worker uses that client's stream facet, including a key-prefixed
+view, and never disposes it.
 
 <!-- doc-test-tail-declaration: split-before=public sealed class OrderHandler -->
 ```csharp
@@ -46,22 +46,30 @@ public sealed class OrderHandler : IRespireStreamHandler<RespireStreamEntry>
 }
 ```
 
-Each registration creates a separate hosted service. By default each registration generates a
-new random consumer name every time the process starts. Set `ConsumerName` to a stable name for a particular host slot
-when its next process should resume its own pending deliveries. Each reader appends `-` and its
-zero-based index to that name (`orders-host-1-0`, `orders-host-1-1`, ...).
-Active hosts and registrations sharing a group must use different names; keep the same
-consumer count across restarts to retain all reader identities. Reducing `ConsumerCount`
-leaves pending entries owned by the removed reader indexes; idle recovery claims those entries
-after the visibility timeout.
+:::warning Handlers must be idempotent
+Redis can deliver an entry more than once: after a lost acknowledgement, a recovery that overlaps a
+slow handler (there is no lease extension), or a restart.
+:::
 
-Handlers are registered as scoped services unless already registered. A new asynchronous
-DI scope is created for each entry and disposed after handling and acknowledgement finish.
-Avoid registering a handler as a singleton when it depends on scoped services.
+- Each registration is a separate hosted service.
+- Handlers are registered as scoped unless already registered. Each entry gets a new async DI scope,
+  disposed after handling and acknowledgement. Avoid singleton handlers that depend on scoped
+  services.
+
+### Consumer names
+
+By default each registration picks a random consumer name at every start. Set `ConsumerName` to a
+stable name per host slot so the next process resumes its own pending deliveries. Each reader
+appends `-` and its zero-based index (`orders-host-1-0`, `orders-host-1-1`, ...).
+
+- Active hosts and registrations sharing a group must use different names.
+- Keep `ConsumerCount` the same across restarts. Entries owned by removed reader indexes are
+  recovered after the visibility timeout.
+- A stable name replays its own pending entries once at startup, before new entries.
+- Random names accumulate consumer metadata across restarts. Remove unused consumers only after
+  their pending entries are recovered.
 
 ## Options
-
-`RespireStreamWorkerOptions` has these settings. Each is explained in the sections below.
 
 | Option | Default | Purpose |
 | --- | --- | --- |
@@ -82,11 +90,14 @@ Avoid registering a handler as a singleton when it depends on scoped services.
 | `TraceParentField` | `"traceparent"` | Stream field holding the W3C parent; `null` disables extraction. |
 | `TraceStateField` | `"tracestate"` | Stream field holding W3C vendor state; `null` ignores it. |
 
+`MinimumIdleTime`, `RecoveryPollInterval`, `MetricsPollInterval` and `MetricsPollTimeout` must be
+positive and at most `Int32.MaxValue` milliseconds.
+
 ## Typed payloads
 
-Use the two-type overload with an explicit deserializer. The deserializer receives the
-entry's owned field bytes and may run concurrently on different consumers. This supports
-custom codecs and source-generated JSON without enabling reflection serialization:
+Use the two-type overload with an explicit deserializer. It receives the entry's owned field bytes
+and can run concurrently on different consumers. This works with custom codecs and
+source-generated JSON, without reflection:
 
 <!-- doc-test-tail-declaration: split-before=public sealed record Order -->
 ```csharp
@@ -114,197 +125,135 @@ public sealed class TypedOrderHandler : IRespireStreamHandler<Order>
 
 ## Reads, completion and shutdown
 
-`ConsumerCount` bounds simultaneous handlers and readers. Each reader fetches at most
-`BatchSize` entries and processes that batch sequentially, so the number of prefetched
-entries is bounded by their product. There is no additional message or task queue.
-Batch size limits entry count rather than payload bytes; enforce producer payload limits
-when memory must be bounded independently of message size.
+**Concurrency.** Prefetched entries are bounded by `ConsumerCount` × `BatchSize`; there is no other
+queue. `BatchSize` counts entries, not bytes, so enforce payload limits in producers if memory must
+be bounded.
 
-By default startup creates the stream and group at the beginning. Only `BUSYGROUP` is
-tolerated; an existing group's position is retained. Set `GroupStart = RespireStreamId.New`
-to start a new group after existing entries, or `CreateGroup = false` to require an existing
-group. `ReadWait` is a positive blocking wait, defaulting to five seconds. Blocking reads
-use Respire's dedicated blocking connection path.
+**Group creation.** Startup creates the stream and group at the beginning, keeping an existing
+group's position. Set `GroupStart = RespireStreamId.New` to skip existing entries, or
+`CreateGroup = false` to require an existing group.
 
-Return `Ack` only after successful processing. By default `Nack`, a serializer or handler exception,
-an unknown result, or handler cancellation leaves the entry pending. The worker continues
-reading new entries and retries pending entries after the visibility timeout. A warning
-reports the exception type for handler/serializer failures without including exception
-messages or payloads. DI activation, scope disposal, read, acknowledgement and dead-letter
-completion failures fault the background service and follow the application's `HostOptions`
-background-service failure policy. Handler activation failures, including transient dependency
-construction failures, stop the worker rather than retry activation. The first consumer's
-infrastructure failure reaches the host even when a sibling handler ignores cancellation;
-that sibling keeps its scope until it completes. Expected shutdown cancellation does not
-produce the handler-failure warning.
+**Results.** Return `Ack` only after successful processing. These leave the entry pending for retry
+after the visibility timeout, while the worker keeps reading:
 
-On graceful shutdown, readers stop immediately and active handlers keep their cancellation
-token while draining. Undispatched entries from a fetched batch remain pending. When the
-host's shutdown token expires, active handlers are canceled and the stop wait ends. A handler
-that ignores cancellation keeps its scope until it actually completes; its result is not
-acknowledged after cancellation. Set the host's shutdown timeout to cover normal handler
-duration and ensure handlers cooperate with cancellation. Process termination can still
-interrupt handling or acknowledgement.
+- `Nack`
+- a handler or deserializer exception (logged as a warning with the exception type only, no message
+  or payload)
+- an unknown result
+- handler cancellation
+
+**Faults.** These stop the background service, which then follows your `HostOptions`
+background-service failure policy:
+
+- DI activation (including transient dependency failures, which are not retried) and scope disposal
+- read, acknowledgement and dead-letter completion failures
+- a lost acknowledgement reply (the result is uncertain, so the worker does not repeat it)
+
+**Shutdown.** Readers stop at once and active handlers drain with their cancellation token.
+Undispatched entries stay pending. When the host shutdown timeout expires, handlers are cancelled; a
+handler that ignores cancellation keeps its scope until it finishes, and its result is not
+acknowledged. Set the shutdown timeout to cover normal handler duration. Process termination can
+still interrupt handling or acknowledgement.
 
 ## Pending messages and reliability
 
-The worker automatically recovers idle pending entries, including abandoned consumers,
-Nacks, handler failures and deliveries interrupted by shutdown. `MinimumIdleTime` is the
-visibility timeout, defaulting to one minute. `RecoveryPollInterval` defaults to five seconds.
-Both settings must be positive and at most `Int32.MaxValue` milliseconds; fractional
-milliseconds round up on the server. Set the visibility timeout above normal processing
-time, including time spent waiting behind earlier entries in a prefetched batch. Budget at least `BatchSize` times the worst-case handler duration, plus acknowledgement and
-dispatch time. There is no lease extension: a long-running handler can overlap a recovery attempt. Handlers must
-be idempotent and consumer identities must be unique among active hosts and registrations.
+The worker recovers idle pending entries automatically: abandoned consumers, Nacks, handler failures
+and deliveries interrupted by shutdown.
 
-Each existing reader runs at most one recovery page per polling interval and fetches
-at most `BatchSize` recovered entries with their fields. Delivery counts increase on each
-claim. On compatible servers, `XAUTOCLAIM` examines at most ten times `BatchSize` pending
-IDs per page. Its cursor
-survives empty batches and deleted pending IDs and resets only at the end of the scan.
-A full scan can therefore take several polling intervals. Recovery does not create another
-queue or increase handler concurrency or the number of prefetched entries. The blocking
-new-entry wait is capped by the next recovery poll; recovery pauses while that reader handles
-its current batch. On Redis 8.4 or later, recovery uses `XREADGROUP CLAIM` and may fill a
-page with new entries after eligible pending entries. Its delivery-count metadata
-describes previous attempts; the worker adds this delivery before applying `DeliveryLimit`.
-Because `CLAIM` can omit deleted bodies, each native recovery poll also inspects at most
-`BatchSize` pending IDs with `XPENDING` and `XRANGE`, acknowledging only IDs whose bodies
-are gone. This cleanup needs `XRANGE` and `XACK` permission. Recovery checks both permissions
-before claiming and uses `XAUTOCLAIM` instead when either is denied. Its independent cursor advances
-past live entries and resets at the end of the PEL, so deleted IDs cannot remain hidden
-behind live entries. The scan and cleanup run atomically with the recovery read.
+Set `MinimumIdleTime` above normal processing time, including time waiting behind earlier entries
+in a batch: at least `BatchSize` × worst-case handler duration, plus acknowledgement time.
 
-On Redis 8.8 or later, unsuccessful processing can release the fenced delivery with `XNACK FAIL`,
-preserving its delivery count. Since Redis makes released entries immediately claimable,
-the worker releases only when that delivery's `MinimumIdleTime` has already elapsed.
-Otherwise it leaves the entry pending for ordinary idle recovery and immediately frees
-the reader to process more work. Ownership and attempt are checked atomically before release,
-so a recovered delivery cannot be released by its stale handler. On older servers, `Nack`
-always leaves the entry pending for ordinary idle recovery.
+Recovery details:
 
-A configured stable
-`ConsumerName` replays that consumer's own pending IDs once at startup, in bounded pages,
-before reading new entries. A Nack during this replay follows the same visibility timeout
-and is not retried in
-a hot loop; normal idle recovery retries it later. Random identities recover previous
-processes' deliveries after the visibility timeout but accumulate consumer metadata across
-restarts. Remove unused consumers only after their pending deliveries have been recovered.
+- Each reader runs at most one recovery page per `RecoveryPollInterval`, of up to `BatchSize`
+  entries. A full scan can take several intervals. Recovery adds no concurrency or prefetch.
+- Each claim increments the Redis delivery count.
+- Redis 8.4+: recovery uses `XREADGROUP CLAIM` and also removes pending IDs whose bodies were
+  deleted. This cleanup needs `XRANGE` and `XACK` permission; without it, recovery uses
+  `XAUTOCLAIM`.
+- Redis 8.8+: a failed delivery whose `MinimumIdleTime` has elapsed is released with `XNACK FAIL`,
+  keeping its delivery count. Otherwise, and on older servers, `Nack` leaves it for idle recovery.
+- A stale handler cannot acknowledge or release a delivery that was recovered by another owner or
+  attempt, even under the same consumer name. Return `Ack` to use this check; worker entries have
+  no unconditional `entry.AckAsync()`.
 
-Inspect pending entries with `client.Streams.PendingSummaryAsync` and `PendingAsync`.
-Without a delivery limit, a persistent failure is retried until the application succeeds or an operator intervenes.
+Inspect pending entries with `client.Streams.PendingSummaryAsync` and `PendingAsync`. Without a
+delivery limit, a persistent failure retries until it succeeds or an operator intervenes.
+
+### Server requirements
+
+| Feature | Requires |
+| --- | --- |
+| Idle recovery | Redis 6.2+ (or compatible) with `XAUTOCLAIM`, `EVAL`, `EVALSHA`, `XPENDING` and the usual consumer-group commands. Redis 7+ also removes deleted pending IDs while scanning. |
+| Startup replay, acknowledgement | Lua, even with no idle entries |
+| Dead-letter completion | Redis 7+ (or compatible) with Lua `redis.acl_check_cmd`, plus `XRANGE`, `TYPE`, `XADD`, `XACK` |
+| `DeleteAcknowledgedEntries` | Redis 8.2+ (older servers use `XACK` and keep the body) |
+
+- Feature detection uses `INFO SERVER` on each operation. If it is denied or the server is not
+  Redis, the worker uses the compatible path; unsupported native commands also fall back.
+- Other ACL failures, including denied `XNACK` or `XACKDEL`, and transport failures fault the worker.
+- External tools must not reset delivery counts (`XCLAIM RETRYCOUNT`), rewind the group
+  (`XGROUP SETID`) or recreate a live group.
+
+`DeleteAcknowledgedEntries = true` uses `XACKDEL ACKED`, which deletes a body only after every group
+has read and acknowledged it. By default, acknowledged entries are kept. Dead-letter completion
+always keeps the source body. See Redis documentation for
+[CLAIM](https://redis.io/docs/latest/commands/xreadgroup/),
+[XNACK](https://redis.io/docs/latest/commands/xnack/) and
+[XACKDEL](https://redis.io/docs/latest/commands/xackdel/).
 
 ## Delivery limits and dead-letter inspection
 
-Set `DeadLetterStream` to a logical stream key and optionally set a positive `DeliveryLimit`.
-The source and destination must be distinct after applying the registered client's key prefix,
-and must share a Redis Cluster slot even on standalone Redis. For example, use source
-`"{orders}:events"` and destination `"{orders}:dead"`, or register a view with prefix
-`"{orders}:tenant:"` and use logical keys `"events"` and `"dead"`. Keys are validated before
-group creation. The prefix is applied once by each command, including atomic completion.
+Set `DeadLetterStream` to a logical stream key, and optionally a positive `DeliveryLimit`.
 
-Enabling `DeadLetterStream` limits each source entry to **1,024 field/value pairs**, excluding
-the five metadata pairs added during completion. Validate this limit in producers before
-appending entries. The worker rejects a larger delivery before invoking its handler or
-serializer, faults with an explicit size-limit error, and leaves the source pending without
-writing a dead-letter record. Lua completion also checks the limit before expanding arguments
-or mutating either stream. Resolve an oversized entry manually before restarting the worker;
-restarting alone does not make it supported. Workers without `DeadLetterStream` have no such limit.
+- Source and destination must differ after the client's key prefix and must share a Cluster slot,
+  even on standalone Redis. For example, use `"{orders}:events"` and `"{orders}:dead"`, or a view
+  prefixed `"{orders}:tenant:"` with logical keys `"events"` and `"dead"`.
+- Return `RespireStreamWorkerResult.DeadLetter` to dead-letter explicitly. It requires
+  `DeadLetterStream` but not a delivery limit. Without a destination, it counts as a handler failure
+  and the entry stays pending.
 
-Return `RespireStreamWorkerResult.DeadLetter` to complete a delivery explicitly. This requires
-`DeadLetterStream` but does not require a delivery limit. Returning `DeadLetter` without configuring a destination is
-treated as a handler failure: the worker logs the exception type, leaves the delivery pending
-for retry, and continues processing other entries.
+:::warning 1,024-field limit
+With `DeadLetterStream` set, each source entry may have at most **1,024 field/value pairs**. Validate
+this in producers. The worker faults on a larger entry before calling the handler and leaves it
+pending; resolve it manually, because restarting alone does not help. Workers without
+`DeadLetterStream` have no limit.
+:::
 
-A limit of three permits processing on attempts one, two and three. A Nack, handler exception,
-serializer exception or unknown result on the third attempt is dead-lettered.
-An Ack still completes normally at that limit.
-Counts come from Redis: the initial delivery counts as one, and startup replay and each
-idle recovery increment the count. Prefetched entries also count as deliveries even if
-shutdown prevents their handlers from starting. If the final permitted attempt is abandoned,
-the next replay or recovery increments the count and dead-letters without invoking another
-handler. Thus the recorded count can exceed the limit, while handler invocations remain bounded.
-Handler cancellation during shutdown leaves the entry pending for this later recovery.
+**Delivery limit.** With a limit of three, the handler runs on attempts one to three. A failure on
+the third attempt (Nack, exception or unknown result) is dead-lettered; an Ack completes normally.
+Counts come from Redis and include startup replay, recovery and prefetched entries that never
+started. If the final attempt is abandoned, the next recovery dead-letters without calling the
+handler again, so the recorded count can exceed the limit.
 
-Inspect the destination with `client.Streams.ReadAsync` or Redis `XRANGE`. Each dead-letter
-entry has its own newly generated stream ID. Its first five field/value pairs contain:
+**Dead-letter entries.** Inspect them with `client.Streams.ReadAsync` or `XRANGE`. Each has a new
+stream ID, and its first five field/value pairs are:
 
-- `_respire.source_id`: the original stream ID.
-- `_respire.group`: the group name, bounded to 256 bytes.
-- `_respire.attempt`: the fenced Redis delivery count.
-- `_respire.reason`: `explicit`, `nack`, `processing-failed` or `delivery-limit` (at most 64 bytes).
-- `_respire.exception_type`: the exception type for a processing failure, otherwise empty (at most 256 bytes).
+| Field | Value |
+| --- | --- |
+| `_respire.source_id` | Original stream ID |
+| `_respire.group` | Group name (at most 256 bytes) |
+| `_respire.attempt` | Redis delivery count |
+| `_respire.reason` | `explicit`, `nack`, `processing-failed` or `delivery-limit` (at most 64 bytes) |
+| `_respire.exception_type` | Exception type for a processing failure, otherwise empty (at most 256 bytes) |
 
-The original field/value pairs follow these metadata pairs in their original order, without
-changing any bytes. Original fields may use the same names as metadata; use positional fields
-or raw `XRANGE` when names collide. Exception messages, stack traces and arbitrary failure
-text are never included by default. The destination is not trimmed automatically; operators
-own retention, inspection and requeue policy. Requeue only after fixing the poison payload or handler.
+- The original fields follow unchanged and in order. If names collide with metadata, read
+  positionally or use raw `XRANGE`.
+- Exception messages, stack traces and failure text are never included.
+- The destination is not trimmed; you own retention and requeueing. Requeue only after fixing the
+  payload or handler.
 
-One Lua operation checks the current pending owner and attempt, reads the original fields,
-appends the dead-letter entry and acknowledges the source delivery. A stale processor cannot
-complete a newer attempt, including another attempt under the same consumer name. Source
-entries are not deleted, so other groups keep their independent deliveries. Scripts isolate
-operations but do not roll back earlier writes after an error. If external deletion or trimming
-has already removed the source body, completion acknowledges only the fenced pending delivery
-without creating a dead-letter record; stale owners and attempts still cannot acknowledge it.
-For entries with a body, the worker verifies destination type and both `XADD` and `XACK`
-ACL permissions before any mutation; all source
-and group checks also precede the append. A rejected write or unexecuted operation leaves
-the source pending. A lost reply or cancellation after execution remains uncertain: either
-both mutations committed or neither did. There is no fallback acknowledgement or blind
-completion retry. Restart the failed worker according to the application's host policy;
-an already acknowledged delivery cannot produce another dead-letter record from the same attempt.
-
-Dead-letter completion requires Redis 7 or a compatible server with Lua `redis.acl_check_cmd`,
-plus `XRANGE`, `TYPE`, `XADD`, `XACK` and the worker's other commands available to its ACL user.
-The fake server recognizes the built-in completion operation; use real Redis controls to
-verify ACL behavior. The fake supports fault injection before and after execution to test
-transport failures, write rejection, cancellation and lost replies.
-
-[Redis consumer groups retain deliveries until acknowledgement](https://redis.io/docs/latest/commands/xreadgroup/).
-An application operation can finish before its acknowledgement is lost, so handlers must
-be idempotent. Replay and recovery capture delivery counts inside the same atomic Lua
-operation that delivers the entries; new-entry deliveries carry their initial attempt of one.
-Acknowledgement atomically checks both the pending owner and that attempt before `XACK`.
-A stale handler cannot acknowledge a different owner's delivery or a later attempt under
-the same consumer name. Return `Ack` from the handler to use this fence. Worker entries do
-not expose an unconditional `entry.AckAsync()` completion path.
-
-Cancellation and transport failures do not trigger fallback acknowledgement. If an
-acknowledgement reply is lost, its result is uncertain: an executed acknowledgement may
-already have removed the pending entry, while an unexecuted one leaves it recoverable.
-The worker faults on that infrastructure failure and does not blindly repeat completion.
-Configure the host failure policy and restart strategy for that case.
-
-Idle recovery requires Redis 6.2 or a compatible server with `XAUTOCLAIM`, `EVAL`, `EVALSHA`,
-`XPENDING` and the usual consumer-group commands available to its ACL user. Redis 7 or later
-also removes deleted pending IDs while scanning. Startup replay and acknowledgement need
-Lua even when no idle entries exist. External tools must not reset delivery counters with
-`XCLAIM RETRYCOUNT`, rewind the group with `XGROUP SETID`, recreate a live group, or otherwise
-reuse an attempt token. Consumer-name uniqueness remains required even with attempt fencing.
-
-Capability discovery runs inside each atomic operation on its serving server. It uses
-`INFO SERVER`, without caching across reconnects, redirects, or mixed-version deployments.
-Denied or unavailable discovery and non-Redis servers retain the compatible path. Unsupported
-native commands also fall back. Denied native cleanup permissions use compatible recovery;
-other ACL failures, including denied `XNACK` or `XACKDEL`, fault the worker. Transport and
-other operational failures also fault the worker instead of repeating a possibly executed write.
-
-Set `DeleteAcknowledgedEntries = true` to use fenced `XACKDEL ACKED` on Redis 8.2 or later.
-`ACKED` deletes a body only after every existing group has read and acknowledged it,
-preserving unread entries and entries pending in other groups. Older servers use `XACK`
-and retain the body. By default, acknowledgements retain entries on every version.
-Atomic dead-letter completion always uses `XACK` and retains the source body.
-See Redis documentation for [CLAIM](https://redis.io/docs/latest/commands/xreadgroup/),
-[XNACK](https://redis.io/docs/latest/commands/xnack/), and
-[XACKDEL](https://redis.io/docs/latest/commands/xackdel/).
+**Atomicity.** Dead-lettering appends the record and acknowledges the source in one operation, after
+checking `XADD` and `XACK` permissions and the destination type. Source entries are not deleted, so
+other groups are unaffected. If the source body was already deleted or trimmed, the delivery is
+acknowledged without a record. A rejected write leaves the source pending; a lost reply means both
+mutations committed or neither did. There is no blind retry; restart the worker per your host
+policy.
 
 ## Metrics and distributed tracing
 
-Subscribe to the `Respire.Streaming` meter and activity source using your application's
-OpenTelemetry provider. Install `OpenTelemetry.Extensions.Hosting` and your chosen
-exporter in the host application:
+Subscribe to the `Respire.Streaming` meter and activity source with your OpenTelemetry provider.
+Install `OpenTelemetry.Extensions.Hosting` and an exporter in the host:
 
 ```csharp
 using OpenTelemetry.Metrics;
@@ -316,16 +265,13 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing.AddSource(RespireStreamWorkerTelemetry.ActivitySourceName));
 ```
 
-The package creates instruments and activities, not a provider or exporter. Worker telemetry
-is independent of the core client's `RespireMetrics` selection. Configure a fixed,
-low-cardinality `TelemetryName` for each application role, such as `"order-processing"`.
-The default is `"default"`; names must match `[A-Za-z0-9._-]{1,128}`. Names are
-case-sensitive and must be unique within the service collection, including the default.
-Duplicate names fail during registration, even before a telemetry listener is attached,
-so each worker's lag and pending gauges have distinct metric dimensions. Separate hosts
-can reuse names. Do not put tenant, message or consumer identifiers in this name.
-No metric includes stream keys, group names, consumer names,
-message IDs, attempt numbers, exception text or payload fields.
+Worker telemetry is independent of the core client's `RespireMetrics` setting.
+
+**`TelemetryName`** should be a fixed, low-cardinality name per application role, such as
+`"order-processing"`. It must match `[A-Za-z0-9._-]{1,128}` (case-sensitive) and be unique within
+the service collection, including the default; duplicates fail at registration. Never put tenant,
+message or consumer IDs in it. No metric includes keys, group or consumer names, message IDs,
+attempts, exception text or payloads.
 
 | Instrument | Kind / unit | Meaning |
 | --- | --- | --- |
@@ -334,36 +280,25 @@ message IDs, attempt numbers, exception text or payload fields.
 | `respire.stream.worker.group.pending` | Observable gauge / `{message}` | Latest group pending count from the same query. |
 | `respire.stream.worker.dead_letters` | Counter / `{message}` | Confirmed atomic dead-letter appends. |
 
-Every measurement has only `respire.worker.name`, plus a bounded
-`respire.worker.outcome` on duration or `respire.worker.reason` on the dead-letter counter.
-Outcomes are `ack`, `nack`, `dead-letter`, `deleted`, `stale`, `canceled` or `error`.
-Reasons are `explicit`, `nack`, `processing-failed` or `delivery-limit`.
-Deleted source bodies are acknowledged without increasing the dead-letter counter.
-Lost replies are uncertain and are not counted, even when Redis committed the append.
-The counter therefore measures confirmed appends rather than a durable audit total.
+| Tag | Values |
+| --- | --- |
+| `respire.worker.name` | `TelemetryName` (all instruments) |
+| `respire.worker.outcome` | Duration only: `ack`, `nack`, `dead-letter`, `deleted`, `stale`, `canceled`, `error` |
+| `respire.worker.reason` | Dead-letter counter only: `explicit`, `nack`, `processing-failed`, `delivery-limit` |
 
-Each registration runs one serial polling loop, independent of handler count. It queries
-only when either gauge has a listener. `MetricsPollInterval` defaults to 30 seconds;
-`MetricsPollTimeout` defaults to five seconds. Both must be at least one millisecond and at most
-`Int32.MaxValue` milliseconds. A new interval starts after the previous query completes,
-so requests never overlap or retry in a hot loop. `XINFO GROUPS` returns all groups on the
-source stream, so response size depends on the number of groups; only the registered
-group's snapshot is retained. Poll failures, missing groups and timeouts clear the sample.
-Older Redis servers, or Redis groups with indeterminate lag, have no lag measurement;
-unknown lag is never reported as zero. Gauges are snapshots, not exact per-message events.
-Stopping cancels polling and clears samples immediately. Disposal removes the worker's
-meter and rejects late query results and new measurements from handlers still draining.
-Listener callbacks already running may finish after disposal. Metric callbacks do not
-hold the group snapshot lock, so shutdown can cancel readers and honor its deadline
-while a callback is still running.
-Telemetry listener exceptions do not change message acknowledgement, recovery, handler
-failure policy or transport exceptions.
+- The dead-letter counter excludes deleted source bodies and lost replies, so it counts confirmed
+  appends, not a durable audit total.
+- Gauges poll `XINFO GROUPS` only while a listener exists, one query at a time, never overlapping.
+  The response includes all groups on the stream. Failures, timeouts and missing groups clear the
+  sample. Unknown lag (older servers) is never reported as zero.
+- Stopping clears samples; disposal removes the meter. Listener exceptions do not affect message
+  handling.
 
-By default the worker extracts `traceparent` and optional `tracestate` stream fields before
-deserialization and handler invocation. Configure `TraceParentField` and `TraceStateField`
-to use other names; set `TraceParentField = null` to disable extraction or
-`TraceStateField = null` to ignore vendor state. Names must be distinct when both are set.
-The producer must supply each field at most once. The supported parent format is the
+### Trace context
+
+The worker reads the `traceparent` and optional `tracestate` fields before deserialization.
+Rename them with `TraceParentField` and `TraceStateField` (they must differ), or set either to `null`
+to disable it. Producers must write each field at most once. The parent must be
 [W3C version-00 trace context](https://www.w3.org/TR/trace-context/):
 
 ```text
@@ -371,16 +306,14 @@ traceparent = 00-<32 lowercase hex trace ID>-<16 lowercase hex span ID>-<2 lower
 tracestate  = vendor=value,other=value
 ```
 
-Trace and span IDs must be nonzero. Parent bytes must be exactly 55 printable ASCII bytes.
-Vendor state is optional, at most 512 ASCII bytes and 32 W3C list members with distinct keys.
-Spaces and horizontal tabs around members, including whitespace-only members, are accepted;
-tabs inside keys or values and other control characters are rejected.
-Invalid, oversized or duplicate parent fields start a new root; invalid vendor state is
-discarded without discarding a valid parent or rejecting the message. No baggage or
-arbitrary payload fields are copied into activities. Treat propagated trace state as
-untrusted input and apply application privacy policy when choosing vendor state.
+- `traceparent`: exactly 55 printable ASCII bytes; nonzero trace and span IDs. Invalid, oversized or
+  duplicate parents start a new root.
+- `tracestate`: at most 512 ASCII bytes and 32 members with distinct keys. Spaces and tabs around
+  members are allowed; control characters inside keys or values are not. Invalid state is
+  discarded, keeping a valid parent.
+- No baggage or payload fields are copied. Treat trace state as untrusted input.
 
-For example, a producer can write the currently sampled W3C context with the payload:
+A producer can write the current W3C context with the payload:
 
 ```csharp
 using System.Diagnostics;
@@ -400,35 +333,28 @@ if (parent is { IdFormat: ActivityIdFormat.W3C, Id: { } traceparent })
 await client.Streams.AddAsync("{orders}:events", fields.ToArray());
 ```
 
-Subscribe your tracing provider to `"Orders"` as well to create the producer activity.
-Without a producer activity or ambient context the fields are omitted. The worker creates
-a `Consumer` activity named `"stream process"` for every attempt when sampled, including
-startup replay, idle retries and delivery-limit completion. Retries are sibling activities
-with the original producer parent and distinct span IDs. Handler child activities inherit
-that attempt. Missing or invalid context creates a root rather than inheriting a host
-startup activity. Host context stays suppressed during unsampled attempts too, so handler
-activities start a new root when there is no worker activity. Each attempt disposes its
-activity and restores the prior ambient activity, including when a listener throws.
-An uncooperative handler retains its activity
-until that attempt actually completes, just as it retains its handler scope.
+Subscribe your tracing provider to `"Orders"` too. The worker creates a sampled `Consumer` activity
+named `"stream process"` for every attempt, including replay, retries and delivery-limit completion.
+Retries are siblings under the producer parent. Missing or invalid context starts a new root rather
+than inheriting a host activity.
 
 ## Producer retries
 
-For producers, [idempotent stream appends](command-retries.md#idempotent-stream-appends)
-automatically attach stable per-call identities to eligible retry-enabled typed `XADD`
-calls on Redis 8.6 or later. Deduplication lasts only within the stream's configured
-retention limits; older servers retain ordinary `XADD` retry safety. Producer deduplication
-does not prevent consumer redelivery, so handlers must still be idempotent.
+[Idempotent stream appends](command-retries.md#idempotent-stream-appends) attach stable identities
+to eligible retry-enabled typed `XADD` calls on Redis 8.6+. Deduplication lasts only within the
+stream's retention limits. It does not prevent consumer redelivery, so handlers must still be
+idempotent.
 
 ## Test without Redis
 
-Use `RespireFakeServer` from `Respire.Testing`, and connect a client with its `CreateOptions()`,
-to test handlers without Docker. It supports this worker's group creation, blocking reads, `XAUTOCLAIM`,
-`XDEL`, the exact built-in atomic worker scripts, pending inspection and group metadata.
-It does not interpret arbitrary Lua. Default fake consumer registration matches Redis 7.0.
-Use `new RespireFakeServer(clock: null, createConsumersOnEmptyReads: true)` to model Redis 7.2
-or later registering consumers on empty new-entry reads. Pass `autoClaimDeletesPendingEntries: false`
-to the three-argument constructor to model Redis 6.2 returning null claimed entries for deleted
-pending IDs. The worker skips those entries and retains the scan cursor. Compatibility tests against real
-Redis remain necessary. The four-argument constructor's `streamWorkerVersion` models
-these built-in worker scripts for a selected Redis version; other command support is unchanged.
+Use `RespireFakeServer` from `Respire.Testing` and connect with its `CreateOptions()` to test
+handlers without Docker. It supports group creation, blocking reads, `XAUTOCLAIM`, `XDEL`, the
+worker's built-in scripts, pending inspection and group metadata, plus fault injection before and
+after execution. It does not run arbitrary Lua or enforce ACLs; test those against real Redis.
+
+| Constructor argument | Models |
+| --- | --- |
+| (default) | Redis 7.0 consumer registration |
+| `createConsumersOnEmptyReads: true` (with `clock: null`) | Redis 7.2+ registering consumers on empty reads |
+| `autoClaimDeletesPendingEntries: false` | Redis 6.2 returning null for deleted pending IDs |
+| `streamWorkerVersion` | Worker scripts for a chosen Redis version |

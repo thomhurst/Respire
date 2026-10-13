@@ -1,6 +1,6 @@
 # Respire
 
-**A fast, modern Redis client for .NET, with distributed locks, rate limiters, and even server assisted client cache.**
+**A fast, modern Redis client for .NET, with distributed locks, rate limiters, and server-assisted client caching.**
 
 Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 
@@ -20,14 +20,14 @@ await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** Respire is pre-release, so its API may still change. See the
+> **Status:** pre-release; the API may change. See the
 > [roadmap](https://thomhurst.github.io/Respire/docs/roadmap).
 
 ## Why Respire?
 
 - **Plain .NET types.** Get `string?`, `long`, `bool`, or your own `T?`, not protocol wrappers.
-- **Fast by default.** Concurrent calls are pipelined automatically. Blocking commands get their
-  own connection, so they never stall other calls.
+- **Fast by default.** Concurrent calls are pipelined. Blocking commands get their own
+  connection, so they never stall other calls.
 - **Hot reads from memory.** Turn on client-side caching and Redis tells Respire when to evict.
 - **Every command.** Typed APIs for each data type, and a generated catalog of every Redis 8.10
   and Valkey 9.1 command.
@@ -52,7 +52,7 @@ User? user = await redis.GetAsync<User>("user:1");
 
 ### Distributed locks
 
-Run a job on one instance only. Disposing the attempt releases the lock:
+Run a job on one instance only. Disposing the attempt releases the lock.
 
 ```csharp
 await using var attempt = await redis.Locks.AcquireAsync("locks:nightly-report", TimeSpan.FromSeconds(30));
@@ -62,13 +62,13 @@ if (attempt.Acquired)
 }
 ```
 
-Waiting and keep-alive renewal are one call each. See the
+Waiting and keep-alive renewal are one call each: see the
 [locks guide](https://thomhurst.github.io/Respire/docs/guides/distributed-locks).
 
 ### Rate limiting
 
 `Respire.Coordination` returns standard .NET `RateLimiter` instances, shared by every process
-that uses the same key. They also work with the ASP.NET Core rate-limiting middleware.
+that uses the same key. They work with the ASP.NET Core rate-limiting middleware.
 
 ```csharp
 using System.Threading.RateLimiting;
@@ -86,7 +86,7 @@ if (!lease.IsAcquired && lease.TryGetMetadata(MetadataName.RetryAfter, out TimeS
 
 ### Semaphores and more
 
-Allow at most four exports at once, across all your servers:
+Allow at most four exports at once across all servers.
 
 ```csharp
 using Respire.Coordination;
@@ -99,13 +99,13 @@ if (attempt.Acquired)
 }
 ```
 
-The same package has read-write locks, countdown latches, leases, and Redlock. See the
+The package also has read-write locks, countdown latches, leases, and Redlock: see the
 [coordination guide](https://thomhurst.github.io/Respire/docs/guides/coordination).
 
 ### Client-side caching
 
-Set one option. Repeated reads then come from local memory, and Redis sends an invalidation
-when the key changes:
+Set one option. Repeated reads come from local memory; Redis invalidates them when the key
+changes. A hit takes hundreds of nanoseconds instead of a round trip.
 
 ```csharp
 await using var cachedRedis = await RespireClient.ConnectAsync(new RespireOptions
@@ -116,12 +116,9 @@ await using var cachedRedis = await RespireClient.ConnectAsync(new RespireOption
 
 string? name = await cachedRedis.GetStringAsync("user:42:name"); // Cached after the first read.
 ```
-
-A cache hit takes hundreds of nanoseconds instead of a network round trip.
-
 ### Tests without Docker
 
-`Respire.Testing` runs your real client code against an in-memory server with a fake clock:
+`Respire.Testing` runs your real client code against an in-memory server with a fake clock.
 
 ```csharp
 using Respire.Testing;
@@ -137,7 +134,7 @@ string? expired = await client.GetStringAsync("session"); // null
 
 ### Batches and Cluster
 
-Queue commands, send them in one flush, and read typed results:
+Queue commands, send them in one flush, and read typed results.
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -148,11 +145,10 @@ await batch.ExecuteAsync();
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
-For Redis Cluster, add `?cluster=true` to the connection string. Respire handles slot routing
-and redirects. See [transactions](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
-and [connections](https://thomhurst.github.io/Respire/docs/fundamentals/connections).
-
-For explicit-node slot and topology operations, see [Cluster administration](https://thomhurst.github.io/Respire/docs/guides/cluster-administration).
+For Redis Cluster, add `?cluster=true` to the connection string; Respire handles slot routing
+and redirects. See [transactions](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions),
+[connections](https://thomhurst.github.io/Respire/docs/fundamentals/connections), and
+[Cluster administration](https://thomhurst.github.io/Respire/docs/guides/cluster-administration).
 
 ### ASP.NET Core
 
@@ -161,9 +157,10 @@ builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!)
 builder.Services.AddRespireHybridCache(cache => cache.InstanceName = "myapp:");
 ```
 
-The client connects lazily, so startup never waits for Redis. Without its own connection string,
-the cache reuses the registered client. Its Redis entries use the same layout as
-`Microsoft.Extensions.Caching.StackExchangeRedis`, so existing entries keep working.
+- The client connects lazily, so startup never waits for Redis.
+- Without its own connection string, the cache reuses the registered client.
+- Cache entries use the `Microsoft.Extensions.Caching.StackExchangeRedis` layout, so existing
+  entries keep working.
 
 ## Packages
 

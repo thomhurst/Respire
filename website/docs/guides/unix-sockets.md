@@ -5,7 +5,7 @@ description: Connect to a local Redis server through its unixsocket listener ins
 
 # Unix domain sockets
 
-Respire can connect to a Redis `unixsocket` listener on the same host instead of going through TCP. Use it when Redis runs locally, or in a container that shares its socket directory with your application.
+Connect to a Redis `unixsocket` listener instead of TCP when Redis runs on the same host, or in a container that shares its socket directory with your application.
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("unix:///run/redis/redis.sock?db=2");
@@ -24,13 +24,13 @@ var options = new RespireOptions
 
 `unix:///path` and `redis+unix:///path` are both accepted.
 
-- The URI path is the socket path, not a database number. Use the `db` query parameter to select a database. Other [URI query options](../fundamentals/connections.md#uri-query-options) work as for `redis://`.
-- Paths are percent-decoded. Escape `#`, `?`, and spaces when they are part of a file name.
-- The URI must have no host, port, user information, or fragment. Supply credentials through `RespireOptions.Username` and `RespireOptions.Password`, a credential provider, or the StackExchange.Redis form below.
+- The URI path is the socket path. Select a database with the `db` query parameter. Other [URI query options](../fundamentals/connections.md#uri-query-options) work as for `redis://`.
+- Paths are percent-decoded. Escape `#`, `?` and spaces in file names.
+- The URI must have no host, port, user information or fragment. Supply credentials through `RespireOptions.Username` and `RespireOptions.Password`, a credential provider, or the StackExchange.Redis form below.
 
 ### StackExchange.Redis form
 
-Prefix the path with `!`, then add ordinary comma-separated options:
+Prefix the path with `!`, then add comma-separated options:
 
 ```text
 !/run/redis/redis.sock,user=app,password=secret,defaultDatabase=2
@@ -38,29 +38,29 @@ Prefix the path with `!`, then add ordinary comma-separated options:
 
 ### Endpoint factory
 
-`RespireEndpoint.UnixSocket(path)` accepts absolute paths. It also accepts relative paths and resolves them against the current directory when called. It rejects the root path and paths that contain a NUL byte, so Linux abstract socket names are not supported.
+`RespireEndpoint.UnixSocket(path)` accepts absolute paths, and relative paths resolved against the current directory at call time. It rejects the root path and paths containing a NUL byte, so Linux abstract socket names are not supported.
 
 ## Endpoint representation
 
 - `RespireEndpoint.Host` holds the socket path and `Port` is `0`.
-- `IsUnixSocket` identifies a socket endpoint, including endpoints reported in connection events.
+- `IsUnixSocket` identifies a socket endpoint, including in connection events.
 - `ToString()` returns the `!path` form.
-- When Respire matches endpoints, socket paths compare case-sensitively. DNS host names compare case-insensitively.
+- Socket paths compare case-sensitively; DNS host names compare case-insensitively.
 - Credential providers receive only a cancellation token, not the endpoint.
 
 ## Behavior
 
-- Command, blocking-pool, pub/sub, cache-tracking, and reconnect connections all use the socket.
-- RESP2 and RESP3 negotiation and authentication work as they do over TCP.
+- Command, blocking-pool, pub/sub, cache-tracking and reconnect connections all use the socket.
+- RESP2 and RESP3 negotiation and authentication work as over TCP.
 - TCP no-delay and keepalive options are not applied.
-- Redis Unix sockets do not use TLS. Setting `UseTls = true` with a socket endpoint throws `RespireConfigurationException`. Protect the socket with filesystem permissions, and configure Redis ACLs as needed.
+- Redis Unix sockets do not use TLS: `UseTls = true` with a socket endpoint throws `RespireConfigurationException`. Protect the socket with filesystem permissions and Redis ACLs.
 
 ## Supported topologies
 
-Standalone primary endpoints and explicitly configured replica endpoints can use sockets. Cluster and Sentinel discovery advertise TCP addresses, not file paths. Combining socket endpoints with either discovery mode throws `RespireConfigurationException` before any I/O.
-
-Automatic maintenance notifications are turned off on socket connections. Setting `MaintenanceNotifications` to `Enabled` with a socket endpoint throws `RespireConfigurationException`, because handoffs target advertised TCP endpoints.
+- Standalone primaries and explicitly configured replica endpoints can use sockets.
+- Cluster and Sentinel discovery advertise TCP addresses, so combining either with socket endpoints throws `RespireConfigurationException` before any I/O.
+- Maintenance notifications are off on socket connections. `MaintenanceNotifications = Enabled` with a socket endpoint throws `RespireConfigurationException`, because handoffs target TCP endpoints.
 
 ## Platform support
 
-The operating system must support `UnixDomainSocketEndPoint`. Docker Desktop's cross-OS bind mounts do not carry Unix sockets from a Linux container to a Windows host, so a socket shared that way works only on Linux hosts.
+The operating system must support `UnixDomainSocketEndPoint`. Docker Desktop's cross-OS bind mounts do not carry Unix sockets from a Linux container to a Windows host, so sharing a socket that way works only on Linux hosts.

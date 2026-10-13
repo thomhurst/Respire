@@ -7,11 +7,11 @@ import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
 
 # Performance
 
-Respire is designed to make the default path fast under real concurrency, without requiring performance-specific application APIs.
+Respire's default path is fast under concurrency without special APIs. This page covers what it does for you and the few settings worth tuning.
 
 ## Automatic pipelining
 
-Concurrent callers write commands into shared buffers. A persistent flush loop coalesces available work into fewer socket writes, while a FIFO inflight ring matches responses to awaiting callers.
+Concurrent calls share socket writes automatically. No batching mode is needed:
 
 ```csharp
 await Task.WhenAll(
@@ -20,22 +20,18 @@ await Task.WhenAll(
     redis.IncrementAsync("hits").AsTask());
 ```
 
-No batching mode is needed for this concurrent case.
-
 ## Make hot reads local
 
-Redis server-assisted [client-side caching](./fundamentals/client-side-caching) changes the cost
-model for read-heavy workloads. After a miss, eligible repeated reads return from bounded
-in-process memory. Redis sends an invalidation when another client changes a tracked key, Respire
-evicts it, and the next read refreshes lazily.
+With [client-side caching](./fundamentals/client-side-caching), repeated reads return from
+bounded local memory after the first miss. When a tracked key changes, Redis invalidates it and
+the next read refreshes.
 
-In the net10 comparison [run 31923908249](https://github.com/thomhurst/Respire/actions/runs/31923908249),
-a cached Respire `GET` measured 216.5 ns, versus 144.6 μs for an uncached Respire server read and
-148.6 μs for a StackExchange.Redis 3.1.13 server read. Both Respire paths allocated 64 B, versus
-527 B for StackExchange.Redis. Missing `GET` and `EXISTS` cache hits allocated nothing.
-StackExchange.Redis has no equivalent built-in server-assisted local cache, so its result is
-necessarily an ordinary server read. The [benchmarks](./benchmarks) page has the latest weekly
-results for the same
+In a net10 [comparison run](https://github.com/thomhurst/Respire/actions/runs/31923908249),
+a Respire cache hit took 216.5 ns, versus 144.6 μs for a Respire server read and 148.6 μs for a
+StackExchange.Redis 3.1.13 server read. Both Respire paths allocated 64 B; StackExchange.Redis
+allocated 527 B. Missing-key `GET` and `EXISTS` cache hits allocate nothing. StackExchange.Redis
+has no built-in server-assisted cache, so its figure is a server read. See
+[benchmarks](./benchmarks) for the latest weekly results and the
 [benchmark source](https://github.com/thomhurst/Respire/blob/main/benchmarks/Respire.ComparisonBenchmarks/ClientSideCachingBenchmarks.cs).
 
 <ComparisonBarChart
@@ -62,9 +58,8 @@ results for the same
 
 ## Connection count tuning
 
-One multiplexed connection is the default because it gives the write loop the deepest batches
-and usually the best throughput. If profiling shows that large concurrent responses saturate
-one socket or receive loop, benchmark two connections against your workload:
+The default is one multiplexed connection, which usually gives the best throughput. If
+profiling shows large concurrent responses saturating one socket, benchmark two:
 
 ```csharp
 var redis = await RespireClient.ConnectAsync(new RespireOptions
@@ -74,36 +69,35 @@ var redis = await RespireClient.ConnectAsync(new RespireOptions
 });
 ```
 
-More connections are not automatically faster: they divide commands into smaller batches and
-add scheduling overhead. Increase this setting only when measurements show one connection is
-the bottleneck.
+More connections split commands into smaller batches and add overhead. Raise this only when
+measurements show one connection is the bottleneck.
 
 ## When explicit batches help
 
-Use `CreateBatch` when the application discovers commands sequentially but wants one explicit flush. See [batches and transactions](./guides/batches-and-transactions).
+Use `CreateBatch` to queue commands one by one and send them in one flush. See [batches and transactions](./guides/batches-and-transactions).
 
 ## Buffer ownership
 
-The network and parser layers use pooled buffers. Friendly APIs copy into managed strings or arrays before returning. For large payloads on measured hot paths, [leased reads](./fundamentals/values-and-serialization#zero-copy-leased-reads) expose pooled memory with explicit disposal.
+Normal APIs return managed strings or arrays. For large payloads on measured hot paths, [leased reads](./fundamentals/values-and-serialization#zero-copy-leased-reads) return pooled memory that you must dispose.
 
 ## Dedicated blocking pool
 
-Long-running `BLPOP`, `BLMOVE`, and stream reads do not occupy multiplexed connections. They rent from a dedicated pool so regular request latency remains independent of blocking waits.
+`BLPOP`, `BLMOVE`, and blocking stream reads use a dedicated connection pool, so they do not delay other commands.
 
 ## Measure your workload
 
-The `benchmarks/Respire.Benchmarks` project covers protocol, pipeline, throughput, allocation and
-container-backed scenarios, several of them against StackExchange.Redis. Run it on net8.0 and net10.0:
+`benchmarks/Respire.Benchmarks` covers protocol, pipeline, throughput, allocation, and
+container scenarios, some against StackExchange.Redis. Run it on net8.0 and net10.0:
 
 ```bash
 bash ./run-benchmarks.sh -t All
 ```
 
-The published comparison comes from `benchmarks/Respire.ComparisonBenchmarks`. It uses Redis at
-`REDIS_HOST`/`REDIS_PORT` when set and otherwise starts a throwaway Testcontainer:
+The published comparison comes from `benchmarks/Respire.ComparisonBenchmarks`. It uses
+`REDIS_HOST`/`REDIS_PORT` when set, otherwise a throwaway Testcontainer:
 
 ```bash
 dotnet run -c Release -f net10.0 --project benchmarks/Respire.ComparisonBenchmarks -- --filter '*'
 ```
 
-CI runs the comparison and the stress tests weekly and publishes the latest complete [comparison benchmarks](./benchmarks) and [sustained stress tests](./stress-tests) to this site. Use those results as evidence about this implementation, then profile your payload sizes, concurrency, server, network, and serialization choices. Benchmark sources live in the repository's [`benchmarks`](https://github.com/thomhurst/Respire/tree/main/benchmarks) directory. For per-attempt write ownership and pinned transport comparisons, see [transport write evidence](./guides/transport-write-evidence).
+CI publishes [comparison benchmarks](./benchmarks) and [stress tests](./stress-tests) weekly. Treat them as a starting point, then profile your own payloads, concurrency, server, network, and serializer. Sources are in [`benchmarks`](https://github.com/thomhurst/Respire/tree/main/benchmarks); transport details are in [transport write evidence](./guides/transport-write-evidence).

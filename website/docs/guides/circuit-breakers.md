@@ -6,8 +6,7 @@ description: Opt-in endpoint admission, bounded recovery probes, and command hea
 # Endpoint circuit breakers
 
 Set `RespireOptions.CircuitBreaker` to stop new standalone, Sentinel or Redis Cluster commands from
-reaching an unhealthy endpoint. The default is `null`, which adds no circuit state or per-command
-work.
+reaching an unhealthy endpoint. The default is `null`, which adds no per-command work.
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
@@ -36,186 +35,137 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 
 ## How a circuit opens and recovers
 
-Each endpoint keeps its own history of completed outcomes, limited by both `SamplingWindow` and
-`MaximumSampleCount`. When the history holds at least `MinimumFailureCount` failures and the
-failure fraction reaches `FailureRateThreshold`, the circuit opens. After `OpenDuration`, it admits
-at most `HalfOpenProbeCount` concurrent probe commands. That many successful probes close the
-circuit; one failed probe opens it again for another `OpenDuration`. A probe that ends without a
-health outcome, such as a cancelled command, frees its slot for another command. Timing uses a
-monotonic clock.
+1. Each endpoint keeps its own outcome history, limited by `SamplingWindow` and `MaximumSampleCount`.
+2. The circuit opens when the history holds at least `MinimumFailureCount` failures and the failure fraction reaches `FailureRateThreshold`.
+3. After `OpenDuration`, it admits up to `HalfOpenProbeCount` concurrent probe commands.
+4. That many successful probes close the circuit. One failed probe reopens it for another `OpenDuration`.
+
+A probe that ends without a health outcome, such as a cancelled command, frees its slot.
 
 ## Rejections
 
-Respire checks the circuit immediately before it sends a command. An open circuit throws
-`RespireCircuitOpenException` without sending anything. The exception's `Endpoint` is the
-rejected data endpoint, and `RetryAfter` is the remaining open delay. `RetryAfter` is null when all
-recovery probe slots are taken; the next admission then depends on those probes completing.
-`RetryAfter` is a snapshot, not permission to resend: every later command is checked again.
+Respire checks the circuit right before sending. An open circuit throws
+`RespireCircuitOpenException` without sending anything.
 
-Circuit state is per endpoint, shared by every command connection to it and by key-prefixed and
-cache-bypass views of the client. Client-side cache hits are not checked. Socket setup, reconnect
-handshakes and explicit health checks are not checked either.
+- `Endpoint` is the rejected data endpoint.
+- `RetryAfter` is the remaining open delay, or null when all probe slots are taken. It is a snapshot, not permission to resend.
 
-Circuit breaking never removes commands that were already sent, cancels an accepted write,
-retries a rejected command or replays an ambiguous write. A command already queued on the
-connection keeps its place when another command opens the circuit.
+Circuit state is per endpoint, shared by every connection to it and by key-prefixed and
+cache-bypass views of the client. Not checked: client-side cache hits, socket setup, reconnect
+handshakes and explicit health checks.
 
-Cancelling a command never counts as an endpoint failure, even after it was queued; an accepted
-write may still execute on Redis. A timeout while waiting for connection capacity, a rejected
-connection generation and a command writer that fails before sending also leave no health
-outcome. All of these free a half-open probe slot.
+The circuit breaker never removes sent commands, cancels an accepted write, retries a rejected
+command or replays an ambiguous write. A command already queued keeps its place when the circuit
+opens.
 
-For a streamed GET, the command stays admitted until its reply frame finishes. Reading to the end
-records success. Cancelling or disposing the stream before the end leaves no health outcome and
-frees the slot immediately. Blocking commands keep their exemption from the response timeout, so
-pass a cancellation token to bound the wait. Streamed uploads keep their usual command deadline.
+No health outcome is recorded (and a half-open probe slot is freed) for:
 
-During a maintenance handoff, a command that the old connection has not accepted moves to the
-replacement endpoint and must be admitted there under its original deadline. An open replacement
-circuit rejects it without writing. The client keeps at most 16 idle endpoint histories beyond
-those used by current routing or outstanding commands. Returning to an evicted endpoint starts a
+- Cancellation, even after queuing. An accepted write may still execute on Redis.
+- A timeout waiting for connection capacity.
+- A command writer that fails before sending.
+- A streamed GET cancelled or disposed before its reply ends. Reading to the end records success.
+
+Blocking commands are exempt from the response timeout, so pass a cancellation token to bound
+them. Streamed uploads keep their usual command deadline.
+
+During a maintenance handoff, a command not yet accepted by the old connection moves to the
+replacement endpoint and must be admitted there under its original deadline. The client keeps at
+most 16 idle endpoint histories beyond those in use; returning to an evicted endpoint starts a
 fresh history. DNS changes reuse the configured hostname's history.
 
 ## Health classification
 
-These count as endpoint failures:
+| Outcome | Counts as |
+| --- | --- |
+| `RespireConnectionException` (except authentication), `RespireProtocolException`, `RespireTimeoutException` from a sent command, including socket and TLS errors | Failure |
+| No healthy connection to select, even though nothing was sent | Failure |
+| Ordinary Redis error replies (`WRONGTYPE`, ACL denials, missing scripting engine) | Success: a reply arrived. Your exception is unchanged. |
+| Authentication, configuration and validation errors, serializer and source exceptions, cancellation | Not recorded |
 
-- `RespireConnectionException` (except authentication failures), `RespireProtocolException` and
-  `RespireTimeoutException` from a sent command, including socket and TLS errors.
-- A connection-selection failure because no healthy connection exists, even though no command was
-  sent. While the circuit is open, later selection failures are rejected; a selection failure on
-  a half-open probe starts a new open interval.
+While the circuit is open, later selection failures are rejected; a selection failure on a
+half-open probe starts a new open interval.
 
-These do not count as failures:
-
-- Authentication, configuration and command validation errors, serializer and source exceptions,
-  and application cancellation.
-- Ordinary Redis error replies, such as `WRONGTYPE`, ACL denials and missing scripting-engine
-  replies. A reply arrived, so they count as healthy outcomes. The exception you receive is
-  unchanged.
-
-Standalone fire-and-forget sends are checked against the circuit, but a successful send records
-no outcome because its reply is discarded. Fire-and-forget sends alone therefore cannot close a
-half-open circuit. A fire-and-forget send that observes a transport failure still records it.
-Fire-and-forget commands that wait for a reply because of client-side caching record that reply.
+Standalone fire-and-forget sends are checked, but a successful send records nothing because its
+reply is discarded, so fire-and-forget alone cannot close a half-open circuit. Transport failures
+are still recorded, and fire-and-forget commands that wait for a reply (for client-side caching)
+record it.
 
 ## Batches and transactions
 
-Queuing commands needs no admission, and an empty batch or transaction sends nothing. Each batch
-command is checked when execution reaches it on the selected connection. `TryExecuteAsync` returns
-failures in queue order; `ExecuteAsync` throws the first failure after every pending completes.
+Queuing needs no admission, and an empty batch or transaction sends nothing.
 
-A batch can be partly sent: admitted commands can execute while later entries are rejected,
-including when all half-open slots are taken. Rejected entries are not retried. Accepted replies
-keep their order. Circuit admission does not make a pipeline atomic. A standalone batch stays on
-its selected connection during a maintenance handoff. Cluster batches keep their usual recovery
-for commands rejected before they were accepted; each new target needs admission. After a
-Sentinel primary change, an ordinary batch entry that was never accepted can move to the current
-primary and be admitted there.
+**Batches**: each command is checked when execution reaches it.
 
-A nonempty transaction is checked once, for the whole `MULTI`/`EXEC` sequence, immediately before
-it is sent. A rejection sends neither `MULTI` nor its commands nor `EXEC`, and faults every pending
-result with `RespireCircuitOpenException`. A transaction can move to a maintenance replacement only
-before it is accepted, and needs fresh admission there. Watched transactions and hash import
-transactions stay on their original connection. `WATCH` is checked as its own command; a rejected
-commit releases the connection held for `WATCH`. A `WATCH` abort or an ordinary Redis error still
-counts as a healthy reply.
+- `TryExecuteAsync` returns failures in queue order; `ExecuteAsync` throws the first failure after every pending completes.
+- A batch can be partly sent: admitted commands can execute while later ones are rejected. Rejected entries are not retried. The circuit does not make a pipeline atomic.
+- A standalone batch stays on its connection during a maintenance handoff. Cluster and Sentinel entries not yet accepted can move to a new target and need admission there.
 
-Hash import batches check their entries in connection order. A rejection before sending keeps the
-import session and its prepared fieldsets. [Durability batches](durability-acknowledgements.md)
-check each write and the following `WAIT` or `WAITAOF` separately. A failed write prevents the
-acknowledgement; a rejected acknowledgement cannot undo writes that already completed.
+**Transactions**: a nonempty transaction is checked once, right before sending `MULTI`/`EXEC`.
+
+- A rejection sends nothing and faults every pending result with `RespireCircuitOpenException`.
+- A transaction can move to a maintenance replacement only before acceptance, with fresh admission.
+- Watched and hash import transactions stay on their connection. `WATCH` is checked as its own command; a rejected commit releases the `WATCH` connection. A `WATCH` abort or Redis error counts as a healthy reply.
+
+**Hash imports** check entries in connection order; a rejection before sending keeps the session
+and its prepared fieldsets.
+
+**[Durability batches](durability-acknowledgements.md)** check each write and its `WAIT` or
+`WAITAOF` separately. A failed write prevents the acknowledgement; a rejected acknowledgement
+cannot undo completed writes.
 
 ## Redis Cluster
 
-Set `UseCluster = true` alongside `CircuitBreaker` to check Cluster data nodes. Each node, primary
-or replica, has its own history. An open node does not reject commands routed to healthy nodes,
-and a rejection does not select another replica or bypass the configured `ReadFrom` policy.
+Set `UseCluster = true` alongside `CircuitBreaker`. Each node, primary or replica, has its own
+history.
 
-Every kind of send is checked on its selected node: typed, converted, raw, fire-and-forget, batch
-and transaction. `MOVED` and `ASK` recovery checks the target node before sending the command or
-`ASKING`. A redirect reply counts as a healthy response from the source node; a target rejection
-reports the target's `Endpoint` and `RetryAfter`. Accepted commands are never replayed because
-another node opens. Pinned node-local reads, such as `SCAN` and `CLUSTERSCAN`, are checked without
-changing their destination. Blocking commands and streamed uploads are checked on every attempt,
-including redirects.
-
-A disconnected node is checked before the client reconnects to it. Socket, TLS and connection
-setup failures count toward that node's history, while caller cancellation does not. Background
-topology refresh is not checked. Cluster fire-and-forget calls that wait for replies to handle
-routing record those reply outcomes.
-
-Live primary, replica, seed and redirect endpoints keep their histories, even in clusters with
-more than 16 nodes. New sockets to the same configured endpoint share its history. A result
-converter that throws, even with a Redis-shaped exception, cannot change endpoint health or cause
-a replay.
+- An open node does not affect commands routed to healthy nodes. A rejection does not pick another replica or bypass `ReadFrom`.
+- Every send kind is checked on its node: typed, converted, raw, fire-and-forget, batch and transaction.
+- `MOVED` and `ASK` check the target before sending the command or `ASKING`. The redirect counts as healthy for the source; a target rejection reports the target's `Endpoint`.
+- Pinned node-local reads (`SCAN`, `CLUSTERSCAN`) are checked without changing destination.
+- Blocking commands and streamed uploads are checked on every attempt, including redirects.
+- A disconnected node is checked before reconnecting. Socket, TLS and setup failures count; caller cancellation does not. Background topology refresh is not checked.
+- Live endpoints keep their histories regardless of cluster size.
+- A throwing result converter cannot change endpoint health or cause a replay.
 
 ## Sentinel
 
-In Sentinel mode, circuit state belongs to the actual data endpoint, including discovered replicas
-when read routing selects them. Sentinel monitor connections, discovery and primary `ROLE`
-validation are not checked, so they can discover a healthy replacement while the old primary's
-circuit is open. The replacement has its own state. A removed replica keeps its history until
-reads in flight finish; after that, its idle history can be evicted.
+Circuit state belongs to the data endpoint, including discovered replicas used for reads.
+Sentinel monitors, discovery and `ROLE` validation are not checked, so they can find a healthy
+replacement while the old primary's circuit is open. The replacement has its own state.
 
-When a primary generation is retired before a command is accepted, ordinary immediate sends,
-batch entries and unwatched transactions can move to the current primary and be admitted there.
-Accepted commands are never replayed. Scan cursor pages, `WATCH` state, import sessions and
-durability acknowledgements stay on their connection; they cannot move to another primary to
-bypass a rejection.
+Before acceptance, immediate sends, batch entries and unwatched transactions can move to a new
+primary and be admitted there. Scan cursor pages, `WATCH` state, import sessions and durability
+acknowledgements stay on their connection.
 
 ## Circuit metrics
 
-The `Respire` meter reports data-endpoint circuit activity when
-`RespireMetricGroups.Resiliency` is selected and a listener enables the instrument:
+The `Respire` meter reports circuit activity when `RespireMetricGroups.Resiliency` is selected and
+a listener enables the instrument:
 
 | Counter | Unit | Counting |
 | --- | --- | --- |
 | `respire.circuit.transitions` | `{transition}` | One measurement per state change, with `respire.circuit.state.from` and `respire.circuit.state.to` set to `closed`, `open`, or `half_open` |
 | `respire.circuit.rejections` | `{operation}` | One measurement per rejected admission attempt, while open or while all half-open probe slots are taken |
 
-Both counters identify the data endpoint with `server.address` and `server.port`
-(omitted for the default port, 6379), plus `db.system.name=redis` and
-`redis.client.library=Respire:<version>`. They contain no command keys, payloads,
-exception messages, or credentials. Creating a circuit in the closed state is not a
-transition, and evicting an idle history emits nothing.
+- Tags: `server.address`, `server.port` (omitted for 6379), `db.system.name=redis`, `redis.client.library=Respire:<version>`. No keys, payloads, exception messages or credentials.
+- Creating a closed circuit is not a transition; evicting an idle history emits nothing.
+- A batch counts each rejected entry; a transaction counts once. `WATCH` can add its own rejection.
+- `redis.client.errors` can also report the exception the caller receives.
 
-A batch counts each rejected entry. A rejected transaction counts once, regardless of its
-command count. `WATCH` is checked separately and can add its own rejection. Cancellation and
-validation before the check are not rejections. A successful admission can still report a
-transition, such as `open` to `half_open` when recovery starts. The generic `redis.client.errors`
-counter can also report the exception the caller receives.
-
-The [failover group](failover-groups.md) health-probe circuit reports only its
-`respire.failover.*` metrics. A failover member's application commands emit these counters when
-that member's own `CircuitBreaker` is set. See
-[observability](../integrations/observability.md#endpoint-circuit-metrics) for subscription details.
+The [failover group](failover-groups.md) health-probe circuit reports only `respire.failover.*`
+metrics. A member's commands emit these counters when that member sets its own `CircuitBreaker`.
+See [observability](../integrations/observability.md#endpoint-circuit-metrics).
 
 ## Retries
 
-`RetryPolicy` and `CircuitBreaker` work together. A circuit rejection is never retried, even
-though the rejected command was not sent: the endpoint is unhealthy. Every retry attempt is
-checked again immediately before it is sent.
+A circuit rejection is never retried, even though nothing was sent. Every retry attempt is
+checked again right before sending.
 
-- **Same endpoint.** When an attempt's failure opens its endpoint's circuit, the retry is rejected
-  before it waits for a replacement connection or sends anything. The same applies when every
-  half-open probe slot is taken, including by the failed attempt's own probe; that rejection has a
-  null `RetryAfter`. Immediate commands, batches and transactions all stop there. A batch faults
-  every pending with the rejection, and a transaction sends neither `MULTI` nor `EXEC`.
-- **Another endpoint.** A retry that reaches a different endpoint must be admitted there.
-  A Sentinel retry after a connection loss discovers the replacement primary, whose circuit is
-  independent of the failed one. A failover-group retry runs on the newly active member and is
-  checked by that member's circuit. A Cluster `MOVED` or `ASK` target, including one reached
-  during a retry, is checked before the command or `ASKING` is sent; an open target rejects with
-  its own `Endpoint`.
-- **Cluster slot owners.** When a disconnected slot owner's circuit is open and other primaries
-  are known, the retry asks them for the slot's current owner instead of contacting the open
-  node. If the slot moved, the new owner admits the retry. If the refresh still names the open
-  owner, or finds no owner, the retry is rejected without connecting to it. A lone owner is
-  rejected immediately.
+- **Same endpoint.** If a failure opens the circuit, or every half-open slot is taken (`RetryAfter` null), the retry is rejected before sending. A batch faults every pending; a transaction sends neither `MULTI` nor `EXEC`.
+- **Another endpoint.** The retry must be admitted there: a Sentinel replacement primary, a failover group's new active member, or a Cluster `MOVED`/`ASK` target.
+- **Cluster slot owners.** If a disconnected owner's circuit is open and other primaries are known, the retry asks them for the current owner. A moved slot's new owner admits the retry. If the owner is unchanged or unknown, or it is the only owner, the retry is rejected without connecting.
 
-A circuit rejection always ends the operation. How the rejection affects the
-`respire.command.retries` counter is described under
+For how rejections affect `respire.command.retries`, see
 [failures and dispatch scope](command-retries.md#failures-and-dispatch-scope).
 
 ## Limits

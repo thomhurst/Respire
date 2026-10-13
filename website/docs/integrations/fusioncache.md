@@ -5,9 +5,9 @@ description: Share a Respire client between FusionCache's distributed cache, bac
 
 # FusionCache
 
-`Respire.FusionCache` provides an `IFusionCacheBackplane` and `IFusionCacheDistributedLocker`
-for FusionCache 2.9.0 or later compatible releases. `Respire.Caching` supplies its
-`IDistributedCache` L2. All three adapters can share the same caller-owned `IRespireClient`.
+`Respire.FusionCache` provides a FusionCache 2.9.0+ backplane (`IFusionCacheBackplane`) and
+distributed locker (`IFusionCacheDistributedLocker`). `Respire.Caching` supplies the
+`IDistributedCache` L2. All three can share one `IRespireClient` that you own.
 
 ```bash
 dotnet add package Respire.FusionCache
@@ -44,165 +44,135 @@ var cache = provider.GetRequiredService<IFusionCache>();
 await cache.GetOrSetAsync("product:42", _ => Task.FromResult(42));
 ```
 
-The service provider disposes the cache, its backplane, and its locker before the caller
-disposes `client`. None of the adapters disposes that externally supplied client. The backplane uses
-Respire's shared subscription infrastructure; it does not create another command client.
-The serializer above is supplied by FusionCache. Configure its serialization separately
-from Respire's serializer, including any application-specific AOT requirements.
-
-For direct construction, pass a `RespireFusionCacheBackplane` to FusionCache's
-`SetupBackplane`. For registered-service discovery, call `AddFusionCacheRespireBackplane`
-and FusionCache's `WithRegisteredBackplane`. The registration is transient: each cache
-needs a separate backplane instance, even when the client is shared. `WithRespireBackplane`
-also creates a separate instance for each cache.
+- Dispose the service provider before the client. No adapter disposes a client you supply.
+- The serializer comes from FusionCache. Configure it, including any AOT needs, separately from
+  Respire's serializer.
+- Each cache needs its own backplane instance, even with a shared client.
+  `WithRespireBackplane` creates one per cache. For direct construction, pass a
+  `RespireFusionCacheBackplane` to `SetupBackplane`. For registered discovery, call
+  `AddFusionCacheRespireBackplane` (transient) and FusionCache's `WithRegisteredBackplane`.
 
 ## Channels and compatibility
 
-The adapter uses regular `SUBSCRIBE`/`PUBLISH` with the literal channel name selected by
-FusionCache. It uses FusionCache's public `BackplaneMessage` serialization and interoperates
-with `ZiggyCreatures.FusionCache.Backplane.StackExchangeRedis` 2.9.0. It does not opt into
-sharded pub/sub. RESP2 and RESP3 are supported through the client's existing subscription
-infrastructure.
+- The backplane uses regular `SUBSCRIBE`/`PUBLISH` (not sharded) on the channel FusionCache
+  chooses, over RESP2 or RESP3.
+- It interoperates with `ZiggyCreatures.FusionCache.Backplane.StackExchangeRedis` 2.9.0.
+- Communicating nodes need the same cache name, channel prefix, L2 key prefix, and serializer.
+  Give unrelated applications distinct names and prefixes.
 
-Give communicating nodes the same cache name, channel prefix, L2 key prefix, and serializer.
-Use distinct names/prefixes for unrelated applications. Redis pub/sub is not scoped to a
-database, and Respire's `WithKeyPrefix` does not prefix these channels. A database number or
-L2 key prefix alone therefore does not isolate backplane traffic.
+Pub/sub ignores the database number, and `WithKeyPrefix` does not prefix channels. A database
+or L2 key prefix alone does not isolate backplane traffic.
 
 ## Delivery gaps and lifecycle
 
-Respire reconnects and resubscribes automatically. The adapter consumes its ordered gap
-markers outside the receive path, logs reconnect or buffer-overflow gaps, and invokes
-FusionCache's connection handler with `IsReconnection = true`. Initial subscription reports
-`false`. FusionCache applies its own recovery policy; Redis pub/sub cannot replay messages
-lost during an outage or local overflow. The backplane does not promise durable delivery
-or a database snapshot. The core pub/sub metrics continue to record these gaps.
+Respire reconnects and resubscribes automatically. After a reconnect or buffer overflow, the
+backplane logs the gap and calls FusionCache's connection handler with `IsReconnection = true`
+(the initial subscription reports `false`). Redis pub/sub cannot replay lost messages, so delivery
+is not durable; FusionCache applies its own recovery.
 
-Optional `RespireSubscriptionOptions` on the constructor and registration methods control
-buffer size and overflow policy. Unspecified values inherit the client settings. Callbacks
-run in order on a background consumer. Slow callbacks can fill the bounded buffer; malformed
-messages and callback exceptions are logged without preventing later valid messages.
-Synchronous and asynchronous subscription entry points use their corresponding FusionCache
-callbacks, with the other callback form as a fallback when only that form is supplied.
+Pass `RespireSubscriptionOptions` to the constructor or registration methods to set buffer size
+and overflow policy; unset values inherit the client settings. Callbacks run in order on a
+background consumer, so slow callbacks can fill the buffer. Malformed messages and callback
+exceptions are logged and do not block later messages.
 
-Await successful unsubscribe before reusing an instance. Subscribing an active or still
-retiring instance fails. A callback that unsubscribes itself must return before that instance
-can be subscribed again.
-Unsubscribe and disposal stop its transport subscription and join in-progress callbacks;
-a callback that unsubscribes itself does not wait for itself. Disposal cannot interrupt
-arbitrary application callback code, so callbacks must finish for external teardown to
-complete. Concurrent teardown callers join the same work. Disposing the shared client or
-exhausting its reconnect policy ends the subscription; publishing on that ended subscription
-fails explicitly. Publishing before subscription or after disposal also fails.
+Lifecycle rules:
 
-A terminal subscription end is logged, rather than reported as a reconnect notification.
-It does not clear the instance's subscription state automatically. To reuse the backplane,
-await `UnsubscribeAsync` (or call `Unsubscribe`), then call `SubscribeAsync` (or `Subscribe`)
-again once the shared client can connect. If the caller has disposed that client or its
-pub/sub reconnect policy has been exhausted, create a replacement client and a new
-backplane instance instead. Exhaustion permanently rejects new subscriptions on that
-client, even if Redis becomes available again.
-
-Cancellation passed to publishing reaches Respire. As with other network writes, cancellation
-after submission does not prove that Redis did not accept the notification. In-flight
-publishes may complete while teardown starts.
+- Await unsubscribe before subscribing the same instance again. Subscribing an active or
+  still-retiring instance fails.
+- Unsubscribe and disposal wait for running callbacks to finish, so callbacks must return.
+- Publishing before subscribe, after disposal, or after the subscription ends fails.
+- Disposing the client or exhausting its reconnect policy ends the subscription. To reuse the
+  backplane after an end, unsubscribe, then subscribe again once the client can connect. If the
+  client was disposed or its pub/sub reconnect policy is exhausted, create a new client and a
+  new backplane: exhaustion permanently rejects new subscriptions on that client.
+- Cancelling a publish after it was sent does not prove Redis rejected the message.
 
 ## Distributed locking
 
-`RespireFusionCacheDistributedLocker` implements the sync and async acquisition/release
-contract verified against [FusionCache 2.9.0](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Locking/Distributed/IFusionCacheDistributedLocker.cs).
-It uses `Respire.Coordination` fenced leases on the supplied client. Contended acquisitions
-poll with a bounded delay; both RESP2 and RESP3 work without client-side tracking. Zero
-timeout makes one immediate attempt, a positive timeout bounds the wait including Redis
-attempts, and `Timeout.InfiniteTimeSpan` waits until acquisition, cancellation, or disposal.
-Contention/timeout returns `null`; caller cancellation throws `OperationCanceledException`.
-Network failures retain Respire's normal error behavior. Cleanup can outlast the acquisition
-budget because an acquired lease must stop renewal and release safely.
-Synchronous acquisition, release, and disposal block the calling thread until their asynchronous
-operations, including cleanup, finish.
-An infinite acquisition timeout therefore occupies that thread until acquisition, cancellation,
-or locker disposal ends the wait.
-Many synchronous contenders can contribute to thread-pool starvation. Prefer asynchronous
-FusionCache entry points such as `GetOrSetAsync`, and await `DisposeAsync` for direct locker teardown.
+`RespireFusionCacheDistributedLocker` implements the sync and async contract of
+[FusionCache 2.9.0](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Locking/Distributed/IFusionCacheDistributedLocker.cs)
+with `Respire.Coordination` fenced leases. It works on RESP2 and RESP3 without client-side tracking.
 
-The default lease is 30 seconds and is renewed halfway through each duration. Set
-`RespireFusionCacheDistributedLockerOptions.LeaseDuration` between one second and five minutes;
-`PollInterval` defaults to 50 milliseconds and accepts one millisecond to one second. Each
-contended wait varies randomly by up to ±10% to spread retries across nodes, with a
-one-millisecond minimum. A finite wait is capped by its remaining budget, which may be
-shorter than one millisecond. The first attempt is always immediate. These
-options apply to the constructor, `WithRespireDistributedLocker`, and
-`AddFusionCacheRespireDistributedLocker`. The wait timeout does not set the server lease duration.
-Managed renewal fences uncertain commands with `CLIENT ID` and `CLIENT KILL`; Redis ACLs
-must permit them as well as the underlying script, counter, and owner-checked lock commands.
+| Acquisition timeout | Behavior |
+| --- | --- |
+| Zero | One immediate attempt |
+| Positive | Waits up to the timeout, including Redis calls |
+| `Timeout.InfiniteTimeSpan` | Waits until acquired, cancelled, or the locker is disposed |
 
-Lease identity combines the cache name and FusionCache's lock name, which already includes
-its cache key prefix and lock suffix. Cache instance IDs and operation IDs are diagnostics,
-so different nodes contend for the same lease. Length-framed UTF-16 code units are hashed
-with SHA-256, producing `respire:fusioncache:lock:{HASH}:lease` and
-`respire:fusioncache:lock:{HASH}:counter` before the client's key prefix. Both keys share a
-Cluster slot. Use the same cache name, lock-name settings, client prefix, and database on
-communicating nodes. Different cache names isolate leases; L2 data and backplane traffic
-still need their own prefixes as described above.
+Contention or timeout returns `null`. Caller cancellation throws `OperationCanceledException`.
+Network failures throw as usual. Cleanup can take longer than the acquisition timeout.
 
-Each acquisition increments a persistent counter. Release and renewal compare the generated
-owner token, so a stale handle cannot delete or extend a replacement lease. Never delete,
-expire, evict, or reset the counter: configure retention and memory capacity accordingly.
-Counters grow with the number of distinct lock identities. Redis asynchronous failover,
-restoration, or history loss can roll back counters, and a lost acquisition reply can consume
-a token and leave a lease until its bounded expiry. This is not a consensus-backed service.
+:::warning Synchronous calls block threads
+Synchronous acquire, release, and dispose block until the async work and cleanup finish; with an
+infinite timeout, the thread stays blocked until the wait ends. Many synchronous contenders can
+starve the thread pool. Use async entry points such as `GetOrSetAsync`, and await `DisposeAsync`.
+:::
 
-Release, renewal loss, and locker disposal stop renewal and join cleanup. With the default
-`ReleaseOnCallerCancellation = true` policy, caller cancellation also stops renewal and joins
-cleanup. With `false`, caller cancellation does not end an acquired lease after successful handoff;
-see the independent lease policy below.
-Release ignores its supplied cancellation token, including an already-cancelled token, so a
-successful release does not replace the factory's result or exception with cancellation.
-Cleanup uses its own token even when the factory's token is already cancelled; a transport
-failure leaves server expiry as the fallback. Concurrent teardown callers join the same work.
-Explicit release propagates server or protocol rejection to FusionCache, including when
-`ReThrowDistributedLockerExceptions` is enabled. Locker disposal propagates cleanup failures
-from handles still tracked when disposal starts. Automatic cancellation cleanup observes
-failures in the background and logs them when a logger is configured; completed handles are
-removed from the locker, so later locker disposal does not report their earlier failures.
-Explicit release of that handle still observes its recorded failure. Configure a logger to
-observe automatic cleanup failures when there is no later explicit release.
-Locker disposal also joins acquisitions still returning or releasing a lease. Await disposal
-before closing the shared client.
-The provider owns the locker created by `WithRespireDistributedLocker`, including renewal
-handles left active by an interrupted operation. `AddFusionCacheRespireDistributedLocker`
-registers transient provider-owned lockers for `WithRegisteredDistributedLocker` discovery.
-Neither registration creates or disposes a command client. For direct construction, retain
-and dispose your `RespireFusionCacheDistributedLocker` after using `SetupDistributedLocker`:
-FusionCache's own disposal only detaches its locker.
+### Options
 
-This reduces cross-node cache stampedes while ownership remains valid. FusionCache's
-object-based locker interface does **not** pass the fencing token to a factory, atomically
-enforce that token on arbitrary cache or database writes, or cancel a factory after ownership
-loss. By default, the token passed to acquisition also controls the acquired lease's lifetime:
-cancelling a request-scoped token after acquisition releases the lease even if its factory keeps running.
-Set `RespireFusionCacheDistributedLockerOptions.ReleaseOnCallerCancellation = false` to
-use that token only while waiting and handing off acquisition. After a successful handoff,
-renewal continues until explicit release, locker disposal, or ownership loss. This option works
-with direct construction, `WithRespireDistributedLocker`, and `AddFusionCacheRespireDistributedLocker`.
+`RespireFusionCacheDistributedLockerOptions` applies to the constructor,
+`WithRespireDistributedLocker`, and `AddFusionCacheRespireDistributedLocker`.
 
-FusionCache 2.9 passes the caller token to foreground acquisition and factory execution.
-When `AllowTimedOutFactoryBackgroundCompletion` is enabled, its timeout path transfers the
-factory and lock handle to background completion, which releases with `CancellationToken.None`.
-Later request cancellation still cancels the token supplied to that factory. A factory that
-ignores cancellation can continue. The independent lease policy keeps that background handle
-renewing after request cancellation, reducing premature release while completion owns the handle.
-Foreground cancellation still makes FusionCache explicitly release its handle; this option does
-not delay that explicit release. See the pinned [factory timeout helper](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Internals/RunUtils.cs)
-and [background handoff and cleanup](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/FusionCache.cs).
-If background completion never finishes, an independent lease can keep renewing until
-locker disposal or ownership loss. The default remains unlimited: the server `LeaseDuration`
-bounds each renewal, not the total time a live handle can remain active. Always release handles
-and dispose the locker.
+| Option | Default | Range and meaning |
+| --- | --- | --- |
+| `LeaseDuration` | 30 seconds | 1 second to 5 minutes. Server lease, renewed halfway through. Independent of the wait timeout. |
+| `PollInterval` | 50 ms | 1 ms to 1 second. Delay between contended attempts, randomized by ±10% (minimum 1 ms, capped by the remaining wait). The first attempt is immediate. |
+| `ReleaseOnCallerCancellation` | `true` | Whether cancelling the acquisition token after acquisition releases the lease. See [lease lifetime](#lease-lifetime). |
+| `MaximumIndependentLeaseLifetime` | `null` (no limit) | Total lifetime cap for a lease that outlives caller cancellation. See [lease lifetime](#lease-lifetime). |
 
-Applications that prefer eventual availability over keeping a stuck background factory's lock
-can opt into `MaximumIndependentLeaseLifetime`. With a shared `IRespireClient` already
-registered, pass the options to the host's FusionCache builder:
+Redis ACLs must permit `CLIENT ID` and `CLIENT KILL`, which renewal uses to fence uncertain
+commands, plus the script, counter, and lock commands.
+
+### Keys and isolation
+
+The lease identity is the cache name plus FusionCache's lock name (which includes its key prefix
+and lock suffix). Instance and operation IDs are not part of it, so all nodes contend for the same
+lease. The identity is hashed with SHA-256 into two keys in one Cluster slot, before the client's
+key prefix:
+
+- `respire:fusioncache:lock:{HASH}:lease`
+- `respire:fusioncache:lock:{HASH}:counter`
+
+Communicating nodes need the same cache name, lock-name settings, client prefix, and database.
+Different cache names isolate leases; L2 data and backplane traffic need their own prefixes.
+
+:::warning Never delete the counter
+Each acquisition increments a persistent counter, and release and renewal check the owner token,
+so a stale handle cannot delete or extend a newer lease. Never delete, expire, evict, or reset the
+counter, and size memory and retention for one counter per distinct lock. Asynchronous failover,
+restore, or data loss can roll counters back. A lost acquisition reply can leave a lease until it
+expires. This is not a consensus-backed lock service.
+:::
+
+### Release and disposal
+
+- Release, renewal loss, and locker disposal stop renewal and wait for cleanup.
+- Release ignores its cancellation token, so cancellation never replaces the factory's result or
+  exception. If cleanup cannot reach Redis, the lease expires on the server.
+- Explicit release reports server or protocol rejection to FusionCache. Locker disposal reports
+  cleanup failures of handles still held.
+- Cleanup after automatic cancellation runs in the background. Configure a logger to see its
+  failures; a later explicit release of that handle also reports them.
+- Await locker disposal before closing the shared client.
+- `WithRespireDistributedLocker` and `AddFusionCacheRespireDistributedLocker` (transient, for
+  `WithRegisteredDistributedLocker`) create provider-owned lockers. With `SetupDistributedLocker`,
+  dispose the locker yourself: FusionCache only detaches it.
+
+### Lease lifetime
+
+By default the acquisition token also controls the lease: cancelling a request-scoped token after
+acquisition releases the lease, even if the factory keeps running.
+
+With `ReleaseOnCallerCancellation = false`, the token only bounds the wait. The lease renews until
+explicit release, locker disposal, or ownership loss. This suits FusionCache's
+`AllowTimedOutFactoryBackgroundCompletion`: a timed-out factory moves to the background with its
+lock handle, and the lease keeps renewing after the request is cancelled. Foreground cancellation
+still releases immediately. See FusionCache's
+[factory timeout helper](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/Internals/RunUtils.cs)
+and [background handoff](https://github.com/ZiggyCreatures/FusionCache/blob/v2.9.0/src/ZiggyCreatures.FusionCache/FusionCache.cs).
+
+If background completion never finishes, an independent lease renews indefinitely. To cap it, set
+`MaximumIndependentLeaseLifetime`. With a shared `IRespireClient` registered:
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
@@ -217,35 +187,22 @@ var lockerOptions = new RespireFusionCacheDistributedLockerOptions
 builder.Services.AddFusionCache().WithRespireDistributedLocker(lockerOptions);
 ```
 
-The option defaults to `null` (no total limit). A configured value must be at least one
-millisecond and requires `ReleaseOnCallerCancellation = false`; invalid combinations fail
-in direct construction and both registration methods. All positive values up to
-`TimeSpan.MaxValue` are supported by chunking long timer waits. The monotonic client-side
-clock starts immediately before the successful acquisition returns its handle, after
-cancellation and shutdown checks. Time spent waiting for acquisition does not consume this
-budget. The budget covers foreground work and any subsequent background completion together;
-moving work into the background does not restart it. It is separate from FusionCache's lock
-acquisition timeout and each server lease duration.
+- The value must be at least 1 ms (up to `TimeSpan.MaxValue`) and requires
+  `ReleaseOnCallerCancellation = false`. Invalid combinations throw at construction or registration.
+- The clock starts when acquisition succeeds and covers foreground and background work together.
+  It is separate from FusionCache's lock timeout and from `LeaseDuration`.
+- On expiry, `RespireFusionCacheLock.LifetimeLimitExpired` becomes `true`, its
+  `OwnershipCancellationToken` is cancelled, and the lease is released. `OwnershipLost` and
+  `RenewalFailure` are not set. Release is not real-time and never removes a newer owner's lease.
+- After expiry another node can acquire the lock while the original factory still runs, and
+  FusionCache can still publish that factory's result.
 
-When the budget expires, `RespireFusionCacheLock.LifetimeLimitExpired` becomes `true`, its
-`OwnershipCancellationToken` signals cancellation, renewal stops, and automatic owner-checked
-release begins. Expiry alone does not set `OwnershipLost` or `RenewalFailure`. Release and
-locker disposal join the same cleanup; early explicit release, shutdown, or ownership loss
-stops the lifetime timer. Scheduling or an in-flight command can delay cleanup, so this is
-not a hard real-time server expiry guarantee. The existing cleanup-failure warning and server
-expiry fallback still apply. Cleanup never releases a replacement owner's lease.
-
-Choose a total budget that allows the background completion your application expects. A
-finite limit prevents an abandoned live handle from monopolizing its key indefinitely, but
-permits another node to acquire it while the original factory still runs. FusionCache can
-still publish that original factory's result after the limit, and its later explicit release
-joins the already-completed handle cleanup. Neither lifetime policy cancels factories or
-enforces fencing on their writes.
-
-A slow factory or background factory completion can continue after expiry, cancellation,
-or a connection failure and overlap a new owner. The diagnostic `RespireFusionCacheLock`
-handle exposes its token and ownership cancellation token, but FusionCache cannot enforce
-them automatically. There is no exactly-once execution guarantee. For writes that require
-fencing, use `Respire.Coordination` directly and make the protected resource atomically reject
-stale fencing tokens. Configure FusionCache's fail-safe, lock timeout, exception, and background
-completion policies for your application's tolerance for duplicate factory execution.
+:::danger No exactly-once execution
+A slow or background factory can keep running after expiry, cancellation, or a connection failure,
+and overlap a new owner. FusionCache does not pass the fencing token to the factory, enforce it on
+writes, or cancel the factory when ownership is lost. The `RespireFusionCacheLock` handle exposes
+its token and `OwnershipCancellationToken`, but nothing enforces them. For writes that need
+fencing, use `Respire.Coordination` directly and make the resource reject stale tokens. Set
+FusionCache's fail-safe, lock timeout, exception, and background completion policies for how much
+duplicate factory execution you can tolerate.
+:::

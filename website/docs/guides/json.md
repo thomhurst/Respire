@@ -3,19 +3,13 @@ title: Redis JSON
 description: Typed RedisJSON commands with System.Text.Json metadata, JSONPath, and projections.
 ---
 
-`Respire.Json` provides typed Redis JSON commands. JSON is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisJSON module. The package, assembly, and root namespace are all `Respire.Json`.
+`Respire.Json` provides typed Redis JSON commands using caller-supplied `System.Text.Json` metadata,
+so it needs no reflection and supports Native AOT. JSON is built into Redis Open Source 8 and later;
+older deployments need Redis Stack or the RedisJSON module.
 
 ```bash
 dotnet add package Respire.Json
 ```
-
-With C# 14 or later, import `Respire.Json` and use the `client.Json` extension property on
-`RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
-performs no network I/O, and leaves ownership of the underlying client with you.
-Key-prefixed views get their own wrapper that keeps the view's key prefix. On earlier C#
-versions, create the wrapper with `new RespireJsonClient(client)`.
-
-`RespireJsonClient` uses `System.Text.Json` metadata supplied by the caller. This avoids reflection and supports Native AOT:
 
 <!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
 ```csharp
@@ -39,52 +33,86 @@ internal partial class CustomerJsonContext : JsonSerializerContext;
 internal sealed record Customer(string Name, string Email);
 ```
 
+- The package, assembly, and root namespace are all `Respire.Json`.
+- With C# 14 or later, `client.Json` is an extension property on `RespireClient` and
+  `IRespireClient`. It reuses one wrapper per client, does no I/O, and leaves client ownership with
+  you. Key-prefixed views get their own wrapper with the view's prefix.
+- On earlier C# versions, use `new RespireJsonClient(client)`.
+
 ## Paths and response shapes
 
-The default `RespireJsonPath` is the legacy root path `.` (also `RespireJsonPath.Root`); legacy paths return one value. Use `RespireJsonPath.JsonPathRoot` or another `$` path for JSONPath, which returns every match. `GetAsync` requires at most one match and throws `InvalidOperationException` otherwise, so use `GetManyAsync` for wildcard paths. `GetAsync` reads one path; read several paths at once as text with `GetJsonAsync`.
+| Path | Example | Returns |
+| --- | --- | --- |
+| Legacy (default) | `.`, `RespireJsonPath.Root` | One value |
+| JSONPath | `$`, `RespireJsonPath.JsonPathRoot` | Every match |
 
-`RespireJsonValue<T>.Found` is false when the key is missing or a JSONPath matches nothing. A stored JSON `null` returns `Found = true` with a default `Value`, even when `T` is a non-nullable reference type. With a legacy path, a missing path inside an existing document is a server error; use a `$` path to get `Found = false` instead.
+- `GetAsync` reads one path and throws `InvalidOperationException` on more than one match. Use
+  `GetManyAsync` for wildcards, or `GetJsonAsync` to read several paths as text.
+- `RespireJsonValue<T>.Found` is false when the key is missing or a JSONPath matches nothing.
+- A stored JSON `null` returns `Found = true` with a default `Value`, even for a non-nullable
+  reference type.
+- With a legacy path, a missing path inside an existing document is a server error. Use a `$` path
+  to get `Found = false` instead.
 
 ## Reading and writing
 
-`GetJsonAsync` returns formatted JSON text. `RespireJsonGetOptions` maps `Indent`, `NewLine`, `Space`, and `NoEscape` to the `INDENT`, `NEWLINE`, `SPACE`, and `NOESCAPE` arguments and accepts one or more `Paths`; do not mix legacy and `$` paths. `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` accepts pre-serialized JSON as a string or as UTF-8 bytes. All three return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the write.
-
-`MultiGetAsync` returns one entry per key: `null` when the key does not exist, otherwise the values matched by the path. `MultiSetAsync` writes every entry atomically with `JSON.MSET`; it serializes all entries before sending, so a serialization failure writes nothing. `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
+- `GetJsonAsync` returns JSON text. `RespireJsonGetOptions` maps `Indent`, `NewLine`, `Space`, and
+  `NoEscape` to `INDENT`, `NEWLINE`, `SPACE`, and `NOESCAPE`, and takes one or more `Paths`. Do not
+  mix legacy and `$` paths.
+- `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` takes pre-serialized JSON as
+  a string or UTF-8 bytes. Both return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the
+  write.
+- `MultiGetAsync` returns one entry per key: `null` for a missing key, otherwise the matched values.
+- `MultiSetAsync` writes every entry atomically with `JSON.MSET`. It serializes everything first, so
+  a serialization failure writes nothing.
+- `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
 
 ## Low-level commands
 
-`MergeAsync<T>(key, patch, jsonTypeInfo, path)` applies an RFC 7396 merge patch using the
-supplied `System.Text.Json` metadata. Object members serialized as JSON `null` are deleted;
-arrays and scalar values replace the selected value. Configure null handling deliberately:
-omitting a null member from the serialized patch leaves that member unchanged.
-A null patch itself replaces the target with JSON `null`; it does not delete the document key.
+`MergeAsync<T>(key, patch, jsonTypeInfo, path)` applies an RFC 7396 merge patch:
 
-The generated `Commands.MergeAsync`, `Commands.ArrayLengthAsync`, and
-`Commands.NumberPowerByAsync` expose `JSON.MERGE`, `JSON.ARRLEN`, and `JSON.NUMPOWBY`.
-`ArrayLengthAsync` preserves null entries for JSONPath matches that are not arrays.
+- Members serialized as JSON `null` are deleted. Omitting a null member leaves it unchanged, so set
+  null handling deliberately.
+- Arrays and scalars replace the selected value.
+- A null patch replaces the target with JSON `null`; it does not delete the key.
 
-Redis 8.10 scalar projection expressions, including `$.items.sum()`, `sum($.items)`, and
-`($.price + 1)`, return arrays of computed values. Typed reads unwrap that outer array using the
-supplied result metadata, just like ordinary JSONPath matches. A projection can yield no
-value; `GetManyAsync` then returns an empty array. See the
+`RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`,
+`JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string,
+type, response, and toggle commands, including `Commands.MergeAsync` (`JSON.MERGE`),
+`Commands.ArrayLengthAsync` (`JSON.ARRLEN`), and `Commands.NumberPowerByAsync` (`JSON.NUMPOWBY`).
+
+- They return Redis replies as `RespireResult`; dispose each result.
+- `ArrayLengthAsync` keeps null entries for JSONPath matches that are not arrays.
+- Conditional `JSON.SET` and `JSON.DEBUG MEMORY` are available only through the typed `SetAsync`,
+  `SetJsonAsync`, and `GetMemoryUsageAsync`.
+
+### Projections
+
+Redis 8.10 scalar projections such as `$.items.sum()`, `sum($.items)`, and `($.price + 1)` return
+arrays of computed values. Typed reads unwrap that array like ordinary JSONPath matches. A
+projection can yield nothing, and `GetManyAsync` then returns an empty array. See the
 [Redis JSONPath reference](https://redis.io/docs/latest/develop/data-types/json/path/).
-The string constructor (and implicit string conversion) treats only paths starting with `$` as
-returning an array of matches. For other expressions, use `RespireJsonPath.Projection("sum($.items)")`
-or `RespireJsonPath.Projection("($.price + 1)")`. `Legacy(path)` explicitly selects one JSON
-value; `JsonPath(path)` and `Projection(path)` explicitly select matched values. None rewrites
-the text sent to Redis or validates that its syntax agrees with the selected response shape.
-Choose the shape Redis actually returns. A mismatched override can fail deserialization
-or change how results are grouped; the direct-array example below uses a matching override.
-`ResponseShape` exposes the stored choice without parsing the expression.
-Group numeric-leading arithmetic, for example `(2 * $.n)`: Redis interprets the ungrouped
-`2 * $.n` as a legacy expression rooted at the field `2`, which may produce no match.
-Respire does not parse the complete Redis expression grammar. A projection path compares
-equal to another path only when both its text and response shape match.
-Inspecting the JSON reply alone cannot infer the choice: a legacy value may itself be an array.
 
-Collection-valued projections such as `$.obj.keys()` and `$.items.append(9)` return a direct
-JSON array, without an extra array-of-matches wrapper. Pass `RespireJsonPath.DirectArray(expression)`
-and array metadata to preserve it as one typed value, even though these expressions start with `$`:
+A string path (or implicit conversion) is treated as JSONPath only when it starts with `$`. For
+other cases, choose the response shape explicitly:
+
+| Factory | Decodes as | Use for |
+| --- | --- | --- |
+| `RespireJsonPath.Legacy(path)` | One value | Legacy paths |
+| `RespireJsonPath.JsonPath(path)` | Array of matches | JSONPath |
+| `RespireJsonPath.Projection(path)` | Array of matches | Projections not starting with `$`, such as `sum($.items)` or `($.price + 1)` |
+| `RespireJsonPath.DirectArray(path)` | One array value | Collection projections such as `$.obj.keys()` or `$.items.append(9)` |
+
+- None of these rewrites or validates the expression. Pick the shape Redis actually returns; a
+  mismatch can fail deserialization or regroup results. The JSON reply alone cannot tell you, since
+  a legacy value can itself be an array.
+- `ResponseShape` exposes the stored choice. Two paths are equal only when text and shape match.
+- Parenthesize numeric-leading arithmetic, for example `(2 * $.n)`. Redis reads `2 * $.n` as a
+  legacy path rooted at field `2`, which may match nothing.
+
+Collection projections return a direct JSON array with no array-of-matches wrapper. Use
+`DirectArray` with array metadata to read it as one value, even though the expression starts with
+`$`:
 
 <!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
 ```csharp
@@ -100,15 +128,14 @@ var keys = await client.Json.GetAsync("doc", ProjectionJsonContext.Default.Strin
 internal partial class ProjectionJsonContext : JsonSerializerContext;
 ```
 
-`GetManyAsync` with the same metadata and path returns one value containing that array.
-`DirectArray` names this intent explicitly; it selects the same single-value decoding as
-`Legacy` and preserves the expression unchanged. The caller supplies matching array metadata.
-Using `Projection(...)` or an implicit string path would instead interpret its elements as separate matches.
-
-`RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`, `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string, type, response, and toggle commands. Low-level methods expose Redis reply types as `RespireResult`; dispose each result after use. Conditional `JSON.SET` and `JSON.DEBUG MEMORY` take fixed modifier tokens, so they are available only through the typed `SetAsync`, `SetJsonAsync`, and `GetMemoryUsageAsync` methods.
+`GetManyAsync` with the same metadata and path returns one value holding that array. `Projection(...)`
+or a plain string path would treat its elements as separate matches.
 
 ## Key prefixes, Cluster, and client-side caching
 
-Known RedisJSON key arguments receive the prefix configured by `WithKeyPrefix`. All keys in `JSON.MGET` and `JSON.MSET` must share a Redis Cluster hash slot; Respire validates these layouts before dispatch and fails with a `CROSSSLOT` error without sending the command. RESP2 and RESP3 use Respire's shared command transport.
-
-With client-side caching enabled, JSON reads such as `JSON.GET` and `JSON.MGET` can be served from the local cache. Single-key JSON writes invalidate only their document key. `JSON.MSET` invalidates each document key it writes, as core `MSET` does, and leaves other cached entries in place.
+- Known RedisJSON key arguments get the `WithKeyPrefix` prefix.
+- All keys in `JSON.MGET` and `JSON.MSET` must share a Cluster hash slot. Respire checks this before
+  sending and fails with a `CROSSSLOT` error.
+- RESP2 and RESP3 are both supported.
+- With client-side caching, `JSON.GET`, `JSON.MGET`, and other JSON reads can be served locally.
+  Single-key writes invalidate only their key; `JSON.MSET` invalidates each key it writes.

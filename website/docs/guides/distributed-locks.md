@@ -5,55 +5,17 @@ description: Coordinate work with expiring, owner-checked Redis leases.
 
 # Distributed locks
 
-Respire's lock helpers use Redis leases: each lock has an owner token and an expiry. Acquisition is
-`SET ... NX PX`; extension and release use atomic owner comparisons, so an expired
-handle cannot extend or delete a later owner's lock.
+Respire locks are Redis leases: each lock has an owner token and an expiry. Acquisition uses
+`SET ... NX PX`; extension and release compare the owner atomically, so an expired handle cannot
+extend or delete a later owner's lock.
 
-For leases carrying an ordered token that a protected resource can check, use the optional
-[fencing-token locks](coordination.md) in `Respire.Coordination`. Its persistent
-counter has explicit failover and rollback limitations; ordinary lock ownership alone does
-not enforce fencing at an external resource.
-
-## Native commands and compatibility
-
-Respire chooses the operation supported by each physical server connection:
-
-| Server | Extension | Release |
-| --- | --- | --- |
-| Redis 8.4+ | `SET key token IFEQ token PX milliseconds` | `DELEX key IFEQ token` |
-| Valkey 8.1–8.x | `SET key token IFEQ token PX milliseconds` | Lua compare-and-delete |
-| Valkey 9.0+ | `SET key token IFEQ token PX milliseconds` | `DELIFEQ key token` |
-| Older Redis/Valkey | Lua compare-and-`PEXPIRE` | Lua compare-and-delete |
-
-The first operation tries the native command. Release tries `DELEX`, then `DELIFEQ`, then Lua
-only when the preceding command returns its standard unknown-command error. Extension falls
-back only when the validated `SET ... IFEQ ... PX` command returns `ERR syntax error`. These
-replies confirm that the attempted operation did not execute. Missing scripts use the usual
-`EVALSHA` followed by `EVAL` after `NOSCRIPT`.
-
-Unsupported capabilities are remembered per physical connection. Each new connection discovers
-capabilities independently, including reconnects, failover destinations, and Cluster redirects.
-A mixed-version Cluster can therefore use native commands on some nodes and Lua on others.
-No `INFO` or `COMMAND` permission is needed for discovery. Managed renewal still needs
-`CLIENT ID` / `CLIENT KILL` permissions for its cancellation fence on the connection that executed it.
-
-ACLs must permit the commands selected for the server: `SET` for acquisition and native renewal,
-`DELEX` for native release on Redis 8.4+, or `DELIFEQ` for native release on Valkey 9.0+.
-Lua fallback needs `EVALSHA`/`EVAL` and the script's `GET`, `DEL`, and `PEXPIRE` permissions.
-When upgrading Respire or the server, update any command allowlist that previously permitted
-only the Lua release/renewal path. `NOPERM` is returned to the caller; permission denial does
-not select a different implementation. There is no native-command opt-out setting.
-
-An ownership mismatch returns `false` without fallback. Timeouts, cancellation, connection loss,
-ACL denial, and other server errors do not trigger a Lua retry. A write with an uncertain outcome
-is never replayed for capability discovery. Token equality uses the original bytes; renewing a
-missing, expired, or replaced lock cannot recreate it or change another owner's TTL. Use a
-fresh token for each acquisition, and treat expiry estimates as local estimates.
+Lock ownership alone does not protect an external resource. For an ordered token that the resource
+can check, use [fencing-token locks](coordination.md) in `Respire.Coordination`.
 
 ## Acquire a lock
 
-`AcquireAsync` generates the owner token. Check `Acquired` before accessing `Lock`; disposing the
-attempt releases the lock when acquisition succeeded and does nothing otherwise.
+`AcquireAsync` generates the owner token. Check `Acquired` before accessing `Lock`. Disposing the
+attempt releases the lock if it was acquired.
 
 ```csharp
 await using var attempt = await redis.Locks.AcquireAsync(
@@ -70,8 +32,8 @@ RespireLock mutex = attempt.Lock;
 await RunReportAsync(cancellationToken);
 ```
 
-When contention is exceptional, use `AcquireOrThrowAsync`. It returns the handle directly and
-throws `RespireLockNotAcquiredException` when the lock is unavailable.
+When contention is exceptional, `AcquireOrThrowAsync` returns the handle directly and throws
+`RespireLockNotAcquiredException` when the lock is unavailable.
 
 ```csharp
 await using var mutex = await redis.Locks.AcquireOrThrowAsync(
@@ -80,9 +42,8 @@ await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     cancellationToken);
 ```
 
-For long-running work, acquisition can start a keep-alive owned by the returned lock. Disposing
-the attempt stops renewal before releasing the lock; its acquisition cancellation token does not
-control the keep-alive after acquisition succeeds.
+For long-running work, pass `keepAlive: true`. Disposing the attempt stops renewal, then releases.
+The acquisition cancellation token does not control the keep-alive.
 
 ```csharp
 await using var attempt = await redis.Locks.AcquireAsync(
@@ -101,8 +62,7 @@ await RunReportAsync(attempt.Lock.KeepAliveCancellationToken);
 
 ## Wait for contention
 
-Both acquisition styles have overloads that poll until a wait budget expires. `retryEvery`
-is optional and defaults to 50 ms:
+Both methods have overloads that poll until a `wait` budget expires. `retryEvery` defaults to 50 ms.
 
 ```csharp
 await using var mutex = await redis.Locks.AcquireOrThrowAsync(
@@ -113,18 +73,16 @@ await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     cancellationToken);
 ```
 
-`AcquireAsync` returns an unsuccessful attempt after the budget. `AcquireOrThrowAsync` throws.
-Cancellation interrupts the response wait, polling delay, or contention wait. It cannot recall a
-command already written to Redis. If cancellation races with acquisition, Redis may acquire the
-lock without returning its handle or generated owner token; the lock then remains until its expiry.
+After the budget, `AcquireAsync` returns an unsuccessful attempt and `AcquireOrThrowAsync` throws.
+Cancellation cannot recall a command already sent: Redis may acquire the lock without returning the
+handle, and the lock then stays until it expires.
 
 ## Treat the lock as a lease
 
-The lock disappears when `Duration` elapses, even if protected work is still running.
-`RemainingEstimate` and `ExpiresAtEstimate` are approximate timing values, not ownership checks.
-Use `VerifyStillHeldAsync` when current ownership must be checked against Redis.
+The lock disappears when `Duration` elapses, even if work is still running. `RemainingEstimate` and
+`ExpiresAtEstimate` are estimates, not ownership checks; use `VerifyStillHeldAsync` to check Redis.
 
-Keep work shorter than the lease or extend it before expiry:
+Keep work shorter than the lease, or extend it before expiry:
 
 ```csharp
 if (!await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(30), cancellationToken))
@@ -133,42 +91,44 @@ if (!await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(30), cancellationToken))
 }
 ```
 
-`ResetExpiryAsync` applies the supplied duration from now; it does not add time to the current
-expiry. It returns `false` after expiry, release, or ownership loss. Do not retry protected
-writes after that result: another process may now own the lock.
+`ResetExpiryAsync` sets the duration from now; it does not add to the current expiry. It returns
+`false` after expiry, release or ownership loss. Then stop protected writes: another process may own
+the lock.
 
-For longer work, use a keep-alive and pass its cancellation token to the protected operation:
+For longer work, use a keep-alive and pass its token to the protected operation:
 
 ```csharp
 await using var keepAlive = await mutex.KeepAliveAsync(cancellationToken);
 await RunReportAsync(keepAlive.CancellationToken);
 ```
 
-The keep-alive token is cancelled when renewal fails or ownership is lost. Protected operations
-must honor it and stop protected writes after cancellation. Disposing `keepAlive` stops renewal;
-it does not release `mutex`, which remains held until `ReleaseAsync`, mutex disposal, or expiry.
+- The keep-alive token is cancelled when renewal fails or ownership is lost. Stop protected writes
+  when it fires.
+- Disposing `keepAlive` stops renewal but does not release `mutex`.
+- Managed `ResetExpiryAsync` and `KeepAliveAsync` need Redis ACL permission for `CLIENT ID` and
+  `CLIENT KILL`, used to fence cancelled or timed-out renewals. Restricted users can use the
+  [raw-token APIs](#manage-owner-tokens-directly), which lack this fencing.
 
-Managed `RespireLock.ResetExpiryAsync` and `KeepAliveAsync` fence cancelled or timed-out renewals with
-Redis `CLIENT ID` and `CLIENT KILL`. The authenticated Redis user must permit both commands. The
-raw-token APIs remain available for restricted users, but do not provide this managed fencing.
+### Release
 
-Disposing `mutex` is the normal release path. Call `ReleaseAsync` explicitly when release success
-must be observed; it returns `LockReleaseOutcome.Released`, `AlreadyReleased`, or `NotOwned`.
-Disposal suppresses connection, timeout, cancellation, and disposed-client cleanup failures because
-expiry remains the final safety net.
+Disposing `mutex` is the normal release path; it suppresses connection, timeout, cancellation and
+disposed-client failures because expiry is the safety net. Call `ReleaseAsync` to observe the
+result: `LockReleaseOutcome.Released`, `AlreadyReleased` or `NotOwned`.
 
-If `ReleaseAsync` is cancelled or times out before the delete is sent, the handle still owns the
-lock and you can call `ReleaseAsync` again. If the delete may already have reached Redis, the
-handle treats ownership as lost: it cancels the keep-alive token and fences the connection with
-`CLIENT KILL`. Fencing is used only when a release can be cancelled or time out. If the user may not
-run `CLIENT ID` or `CLIENT KILL`, Respire falls back to a plain compare-and-delete. Concurrent
-`ReleaseAsync` calls share one release. A caller that joined another caller's release stops waiting
-when its own token is cancelled, and the shared release keeps running.
+If `ReleaseAsync` is cancelled or times out:
+
+- Before the delete is sent: the handle still owns the lock; call `ReleaseAsync` again.
+- After the delete may have reached Redis: the handle treats ownership as lost, cancels the
+  keep-alive token and fences the connection with `CLIENT KILL`. Without `CLIENT ID`/`CLIENT KILL`
+  permission, Respire uses a plain compare-and-delete.
+
+Concurrent `ReleaseAsync` calls share one release; a caller that cancels stops waiting while the
+release continues.
 
 ## Manage owner tokens directly
 
-Use `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` when the token must be
-shared with another process or outlive the acquiring process:
+Use `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync` and `GetOwnerTokenAsync` when the token must
+be shared with another process or outlive the acquiring one:
 
 ```csharp
 RespireLockToken token = Guid.NewGuid().ToString("N");
@@ -186,22 +146,22 @@ if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(3
 }
 ```
 
-Keep tokens unique and secret to the owners. Release and extension succeed only when the stored
-token matches. Client key prefixes apply to lock keys exactly as they do to other Respire commands.
+Use a fresh, secret token for each acquisition. Release and extension succeed only when the stored
+token matches; renewal cannot recreate a missing lock or change another owner's TTL. Client key
+prefixes apply to lock keys.
 
-`TryTakeAsync`, `ResetExpiryAsync`, and `ReleaseAsync` accept `RespireLockToken`.
-`GetOwnerTokenAsync` returns `RespireLockToken?` (`null` means the key is missing), and
-`RespireLock.Token` uses the same type. Strings convert implicitly as UTF-8; unpaired UTF-16 surrogates throw
-`EncoderFallbackException` instead of silently changing the token. For binary tokens,
-construct `new RespireLockToken(bytes)` or use an explicit cast from a byte array or memory slice.
-These operations copy the bytes without text decoding, so later changes to the original buffer
-cannot change ownership checks. Reuse the constructed token to avoid repeated copying.
+### `RespireLockToken`
 
-Compare tokens with `==` or `Equals`; equality and hash codes use the exact bytes. Use `Bytes` for
-binary transport. `ToString()` and the debugger show lossless uppercase hexadecimal. Use
-`ToUtf8String()` for text tokens; it throws `DecoderFallbackException` for invalid UTF-8 rather
-than replacing bytes. Compare tokens directly for ownership checks.
-Default and empty tokens are rejected by take, release, and renewal commands.
+- `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync` and `RespireLock.Token` use
+  `RespireLockToken`. `GetOwnerTokenAsync` returns `RespireLockToken?` (`null` means the key is
+  missing).
+- Strings convert implicitly as UTF-8; unpaired surrogates throw `EncoderFallbackException`.
+- For binary tokens, use `new RespireLockToken(bytes)` or an explicit cast from a byte array or
+  memory slice. The bytes are copied, so later buffer changes do not affect ownership. Reuse the
+  token to avoid repeated copying.
+- `==`, `Equals` and hash codes use the exact bytes. `Bytes` exposes them; `ToString()` shows
+  uppercase hex; `ToUtf8String()` throws `DecoderFallbackException` on invalid UTF-8.
+- Default and empty tokens are rejected.
 
 ```csharp
 RespireLockToken token = "owner-42";
@@ -211,8 +171,39 @@ bool sameOwner = owner == token;
 
 ### Upgrading from `RespireValue` tokens
 
-Earlier previews typed lock tokens as `RespireValue` and returned owners as `byte[]?`. Replace
-explicitly typed token variables and custom interface parameters with `RespireLockToken`. Read
-owner bytes with `owner.Value.Bytes` after checking for `null`, and handle bytes with
-`mutex.Token.Bytes`. String arguments still convert implicitly; wrap byte-array or memory
-arguments in `new RespireLockToken(...)`.
+Earlier previews typed tokens as `RespireValue` and returned owners as `byte[]?`. Replace typed
+token variables and custom interface parameters with `RespireLockToken`. Read owner bytes with
+`owner.Value.Bytes` after a `null` check, and handle bytes with `mutex.Token.Bytes`. Wrap byte-array
+or memory arguments in `new RespireLockToken(...)`; strings still convert implicitly.
+
+## Native commands and compatibility
+
+Respire picks the operation each server connection supports:
+
+| Server | Extension | Release |
+| --- | --- | --- |
+| Redis 8.4+ | `SET key token IFEQ token PX milliseconds` | `DELEX key IFEQ token` |
+| Valkey 8.1–8.x | `SET key token IFEQ token PX milliseconds` | Lua compare-and-delete |
+| Valkey 9.0+ | `SET key token IFEQ token PX milliseconds` | `DELIFEQ key token` |
+| Older Redis/Valkey | Lua compare-and-`PEXPIRE` | Lua compare-and-delete |
+
+- Release tries `DELEX`, then `DELIFEQ`, then Lua, moving on only after an unknown-command error.
+  Extension falls back only after `ERR syntax error`. Both replies confirm nothing ran.
+- Support is remembered per physical connection and rediscovered after reconnects, failover and
+  Cluster redirects. A mixed-version Cluster can use native commands on some nodes and Lua on
+  others. Discovery needs no `INFO` or `COMMAND` permission.
+- Ownership mismatch returns `false`. Timeouts, cancellation, connection loss, ACL denial and other
+  errors never trigger a Lua retry, and an uncertain write is never replayed.
+- There is no setting to opt out of native commands.
+
+ACLs must permit the commands for your server:
+
+| Operation | Commands |
+| --- | --- |
+| Acquire, native renewal | `SET` |
+| Native release | `DELEX` (Redis 8.4+) or `DELIFEQ` (Valkey 9.0+) |
+| Lua fallback | `EVALSHA`, `EVAL`, plus `GET`, `DEL`, `PEXPIRE` |
+| Managed renewal fencing | `CLIENT ID`, `CLIENT KILL` |
+
+When upgrading Respire or the server, update allowlists that only permitted the Lua path. `NOPERM`
+is returned to the caller; it does not select a different implementation.

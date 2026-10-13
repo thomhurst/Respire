@@ -7,7 +7,7 @@ description: A fast, modern RESP client for .NET.
 
 # Redis code that feels like .NET
 
-Respire is a fast, modern RESP client for .NET. It works with Redis, Valkey, KeyDB, and other RESP-compatible servers while keeping protocol details out of application code.
+Respire is a fast, modern client for Redis, Valkey, KeyDB, and other RESP servers. It keeps protocol details out of application code.
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
@@ -18,24 +18,20 @@ string? greeting = await redis.GetStringAsync("greeting");
 
 :::warning Pre-release
 
-Respire's public API may change before 1.0. See the [roadmap](./roadmap) for feature status.
+The public API may change before 1.0. See the [roadmap](./roadmap).
 
 :::
 
-## Why Respire exists
+## Why Respire
 
-Serious Redis clients need multiplexed connections, pipelining, pooled buffers, reconnection, and careful cancellation. Application code should not need to think in protocol union types to benefit from that machinery.
-
-Respire combines a performance-focused wire layer with an API designed for current .NET:
-
-- **Server-assisted client caching.** Eligible hot reads complete from bounded process memory;
-  Redis invalidation pushes keep entries coherent without application-owned refresh plumbing.
+- **Server-assisted client caching.** Hot reads come from bounded local memory; Redis
+  invalidates entries when keys change.
 - **Real return types.** Commands return `string?`, `long`, `bool`, `TimeSpan`, or `T?`.
 - **Async-first.** Pub/sub, stream consumers, and key scanning use `IAsyncEnumerable`.
 - **Discoverable commands.** Data types live behind facets such as `redis.Hashes` and `redis.Streams`.
-- **Automatic pipelining.** Concurrent callers coalesce into fewer socket writes without a batching switch.
-- **First-class blocking commands.** `BLPOP` and blocking stream reads use dedicated pooled connections.
-- **Production integrations.** OpenTelemetry and typed serialization are built in. Dependency injection, Microsoft caching abstractions, and other integrations ship as [separate packages](./packages).
+- **Automatic pipelining.** Concurrent calls share socket writes with no batching switch.
+- **Blocking commands.** `BLPOP` and blocking stream reads use dedicated connections.
+- **Integrations.** OpenTelemetry and typed serialization are built in. Dependency injection, Microsoft caching abstractions, and more ship as [separate packages](./packages).
 
 ## Design bets
 
@@ -52,7 +48,7 @@ Respire combines a performance-focused wire layer with an API designed for curre
 
 ## A small, typed surface
 
-Common string and key operations sit on the client. Other commands are grouped by data type:
+String and key operations sit on the client. Other commands are grouped by data type:
 
 ```csharp
 await redis.Hashes.SetAsync("user:1", "name", "Ada");

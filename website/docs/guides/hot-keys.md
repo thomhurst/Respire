@@ -1,23 +1,10 @@
 # Hot-key diagnostics
 
-Redis 8.6+ HOTKEYS tracks expensive keys by command execution time and network bytes.
-One server has one shared tracking session. Starting another active session fails;
-other administrators can inspect, stop, or replace the same session. Respire does not
-claim exclusive ownership or silently substitute another diagnostic on older servers.
+Redis 8.6+ HOTKEYS finds the keys that cost the most execution time and network bytes. Use it to diagnose load hotspots. Each server has one shared tracking session: starting a second active session fails, and other administrators can inspect, stop, or replace it. Respire claims no exclusive ownership and offers no substitute on older servers.
 
 ## Keep the lifecycle on one server
 
-Acquire a pinned handle before starting. Every operation uses that original physical
-connection, even when the client has multiple connections or Cluster routing changes.
-`Endpoint` identifies its server; `IsConnected` is a point-in-time observation. The
-handle uses a client-owned socket and requires no disposal. The socket remains shared
-with ordinary commands; holding a tracker does not reserve pool capacity, even with
-one configured connection. It does not reconnect,
-follow redirects, retry writes, or automatically stop tracking. After disconnection,
-reacquire explicitly and inspect the server's state before starting another session.
-Operations on a disconnected handle fail with `RespireConnectionException`; operations
-after parent-client disposal fail with `ObjectDisposedException`. HOTKEYS controls
-change diagnostic state only and preserve cached keyspace values.
+Get a pinned tracker before starting. Every operation uses that original physical connection, even with multiple connections or changing Cluster routing.
 
 ```csharp
 // Construct redis with AllowAdmin = true to enable state-changing operations.
@@ -36,14 +23,24 @@ bool stopped = await tracker.StopAsync();
 await tracker.ResetAsync();
 ```
 
-START, STOP, and RESET require `AllowAdmin`; without it they throw
-`NotSupportedException` before command I/O. GET does not require
-that local opt-in; server ACLs apply to every operation. STOP returns false when no
-active session exists, and retains completed data. GET returns null before any session
-or after RESET; otherwise it returns the server's array of snapshot maps (normally one).
-RESET fails while tracking is active. Starting after STOP replaces the previous data.
-See [STOP](https://redis.io/docs/latest/commands/hotkeys-stop/) and
-[RESET](https://redis.io/docs/latest/commands/hotkeys-reset/).
+The tracker:
+
+- `Endpoint` identifies the server. `IsConnected` is a point-in-time check.
+- Needs no disposal. The socket stays shared with ordinary commands, and holding a tracker reserves no pool capacity, even with one connection.
+- Never reconnects, follows redirects, retries writes, or stops tracking for you. After a disconnect, get a new tracker and check server state before starting another session.
+- Throws `RespireConnectionException` once disconnected and `ObjectDisposedException` after the parent client is disposed.
+- HOTKEYS changes diagnostic state only; cached values are unaffected.
+
+Operations:
+
+| Operation | Behavior |
+| --- | --- |
+| START | Needs `AllowAdmin`. Starting after STOP replaces the previous data. |
+| GET | No `AllowAdmin` needed. Returns null before any session or after RESET; otherwise the server's array of snapshots (normally one). |
+| STOP | Needs `AllowAdmin`. Returns false if no session is active. Keeps completed data. |
+| RESET | Needs `AllowAdmin`. Fails while tracking is active. |
+
+Without `AllowAdmin`, START, STOP, and RESET throw `NotSupportedException` before any I/O. Server ACLs apply to all operations. See [STOP](https://redis.io/docs/latest/commands/hotkeys-stop/) and [RESET](https://redis.io/docs/latest/commands/hotkeys-reset/).
 
 ## Options and measurements
 
@@ -55,40 +52,31 @@ See [STOP](https://redis.io/docs/latest/commands/hotkeys-stop/) and
 | `SampleRatio` | 1–`int.MaxValue`; one in this many commands | Server default: 1 |
 | `Slots` | Distinct integers 0–16383; empty omits the filter | All local slots |
 
-Slot filters require Cluster and ownership by the target node; these remain server
-checks. Slot numbers are literal and never key-prefixed. Values are copied before
-asynchronous work; do not mutate supplied slot memory concurrently with the call.
-Redis 8.6 rejects an explicit zero duration, despite
-the help text describing zero as unlimited; omit `DurationSeconds` for that behavior.
-See [START](https://redis.io/docs/latest/commands/hotkeys-start/) and the Redis 8.6
-[source](https://github.com/redis/redis/blob/3b450c3dcb075e59f50dbc0377151e25c8f375d4/src/hotkeys.c).
+- Slot filters need Cluster and slots owned by the target node; the server checks this. Slot numbers are literal and never key-prefixed.
+- Values are copied before async work. Do not change the slot memory while the call runs.
+- Redis 8.6 rejects an explicit zero duration, although its help text calls zero unlimited. Omit `DurationSeconds` for no limit.
 
-`ByCpuTime` reports estimated execution microseconds per binary key; `ByNetworkBytes`
-reports estimated request/response bytes. Collection timestamps and duration use
-milliseconds, as do total process user/system CPU measurements. Property names retain
-these units. Optional measurements and ranking arrays are null when omitted by the
-server. Selected slots preserve inclusive ranges, including individual slots.
+See [START](https://redis.io/docs/latest/commands/hotkeys-start/) and the Redis 8.6 [source](https://github.com/redis/redis/blob/3b450c3dcb075e59f50dbc0377151e25c8f375d4/src/hotkeys.c).
 
-Each snapshot owns its key bytes and unknown `AdditionalFields`, including nested
-future values. It remains usable after client disposal. Additional field results use
-GC-owned storage and need no disposal; explicit disposal invalidates their views.
-Arrays are caller-owned and mutable, and record equality does not compare array contents.
-Reported keys retain their full server bytes, including any application prefix.
+Snapshots:
 
-Tracking consumes server CPU and memory. Sampling reduces the observed commands;
-top-key estimates are not an exact access count or latency distribution. Multi-key
-commands apportion their cost across keys. Fetching results has a cost proportional
-to the retained ranking size. No client-side performance guarantee or global ranking
-is implied. See [GET](https://redis.io/docs/latest/commands/hotkeys-get/).
+- `ByCpuTime` gives estimated execution microseconds per binary key; `ByNetworkBytes` gives estimated request and response bytes.
+- Collection timestamps, duration, and process user/system CPU are in milliseconds. Property names include the units.
+- Optional measurements and rankings are null when the server omits them. Selected slots are inclusive ranges.
+- Reported keys keep their full server bytes, including any application prefix.
+- Snapshots own their data, including unknown `AdditionalFields`, and stay usable after client disposal. `AdditionalFields` values need no disposal; disposing one invalidates its views.
+- Arrays are caller-owned and mutable. Record equality does not compare array contents.
+
+Cost and accuracy:
+
+- Tracking uses server CPU and memory. Fetching costs more as the ranking grows.
+- Sampling reduces the commands observed. Results are estimates, not exact counts or latency distributions.
+- Multi-key commands split their cost across keys.
+- No global ranking across servers is implied. See [GET](https://redis.io/docs/latest/commands/hotkeys-get/).
 
 ## Explicit all-node operations
 
-`StartHotKeysOnAllNodesAsync`, `GetHotKeysOnAllNodesAsync`, `StopHotKeysOnAllNodesAsync`,
-and `ResetHotKeysOnAllNodesAsync` target every currently discovered Cluster member,
-including replicas and slotless members. Standalone returns one endpoint result.
-Discovery needs CLUSTER NODES permission. Each result carries its endpoint and value
-or original error. Starts and resets return true for OK; stops can successfully return
-false, and inspection can successfully return null.
+`StartHotKeysOnAllNodesAsync`, `GetHotKeysOnAllNodesAsync`, `StopHotKeysOnAllNodesAsync`, and `ResetHotKeysOnAllNodesAsync` target every discovered Cluster member, including replicas and slotless members (needs CLUSTER NODES permission). Standalone returns one result. Each result has its endpoint and a value or the original error. Starts and resets return true for OK; a stop can succeed with false and a get can succeed with null.
 
 ```csharp
 var results = await redis.Server.GetHotKeysOnAllNodesAsync();
@@ -99,24 +87,24 @@ foreach (var result in results)
 }
 ```
 
-Each all-node call discovers membership afresh. Compare endpoints between calls;
-new members can appear and removed members can retain an earlier session. Use a pinned
-handle for a lifecycle tied to one server. A single slot filter sent to all members
-can fail on nodes that do not own those slots. Operations are neither atomic nor
-automatically replicated; partial successes remain and no rollback is attempted.
+- Each call rediscovers membership. Compare endpoints between calls: new members can appear, and removed members can keep an earlier session. Use a pinned tracker to tie a lifecycle to one server.
+- One slot filter sent to every member can fail on nodes that do not own those slots.
+- Calls are not atomic or replicated. Partial successes remain; nothing is rolled back.
 
-For a bounded diagnostic run, set `DurationSeconds` before starting. Retain the
-per-node start results, then inspect the original endpoints after a partial failure,
-including endpoints whose replies were lost. Connect directly to each endpoint and
-acquire a pinned handle if membership has since changed. Coordinate with other
-administrators before stopping an active session or resetting retained data: HOTKEYS
-has no session-owner token, so even a node that accepted your START may now contain
-another administrator's session. Automatic rollback cannot establish that ownership.
+For a bounded run:
 
-Pre-cancelled operations send no command. Discovery cancellation throws; later fan-out
-cancellation is reported per affected node. Cancelling a dispatched mutation cannot
-undo it. A lost reply can leave the outcome uncertain; inspect before retrying.
+1. Set `DurationSeconds` before starting.
+2. Keep the per-node start results.
+3. After a partial failure, inspect the original endpoints, including those whose replies were lost. If membership changed, connect to each endpoint directly and get a pinned tracker.
 
-`GetHotKeysTrackerAsync` and the four `...HotKeysOnAllNodesAsync` methods are
-`IServerCommands` members. External implementations and mocks must implement or forward
-them. There are no batch or transaction HOTKEYS commands.
+:::warning
+HOTKEYS has no session-owner token. A node that accepted your START may now hold another administrator's session. Coordinate before stopping a session or resetting data.
+:::
+
+Cancellation:
+
+- Pre-cancelled operations send nothing.
+- Cancellation during discovery throws; later cancellation is reported per node.
+- Cancelling a sent mutation cannot undo it. A lost reply leaves the outcome unknown; inspect before retrying.
+
+`GetHotKeysTrackerAsync` and the four `...HotKeysOnAllNodesAsync` methods are `IServerCommands` members. External implementations and mocks must implement or forward them. There are no batch or transaction HOTKEYS commands.

@@ -5,14 +5,7 @@ description: Flush commands together and execute atomic Redis transactions.
 
 # Batches and transactions
 
-Respire pipelines concurrent commands automatically. Explicit batches help sequential code queue several commands before one flush; transactions add Redis atomicity.
-
-For WAIT or WAITAOF acknowledgements of a batch's writes, use
-[`ExecuteAndWaitForReplicationAsync` or `ExecuteAndWaitForAofAsync`](durability-acknowledgements.md).
-These methods keep the writes and acknowledgement on one dedicated connection.
-
-For Redis 8.10 HIMPORT, create batches or transactions through a
-[hash import session](hash-import.md) to preserve connection-local fieldsets.
+Respire pipelines concurrent commands automatically. Use a batch when sequential code should queue several commands and send them in one flush. Use a transaction when they must run atomically.
 
 ## Batch one flush
 
@@ -27,25 +20,18 @@ await batch.ExecuteAsync();
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
-Always declare batches with `using var`. Disposal faults queued pendings when a batch is never
-executed, including after an early return or exception. After execution, disposal preserves all
-pending results and errors. Repeated disposal is safe.
+Always declare batches with `using var`. Disposing a batch that never executed faults its pendings, for example after an early return or exception. After execution, disposal keeps all results and errors. Repeated disposal is safe.
 
-`RespirePending<T>` is awaitable and exposes `.Result`. Inspect `Status`, `HasResult`, `Error`, or
-use `TryGetResult` when exception-free state handling is preferable. Access before `ExecuteAsync`
-throws `RespirePendingNotReadyException` instead of waiting forever for a batch that was never
-flushed; command failures set `Status` to `Faulted` and expose the exception through `Error`.
-`RespireBatchResult` summarizes the whole flush with `Count`, `FailureCount`, and `FirstError`.
-Its `Failures` list identifies every faulted command by original queue index, operation name, and
-exception; the list is empty without per-result allocation when all commands succeed.
-`ExecuteAsync` completes every pending, then throws the first failure in original queue order.
-It does not stop sending at the first error or roll back successful commands. Command errors,
-conversion failures, timeouts, cancellation, and connection-acquisition failures follow this rule.
-Successful results remain readable even when another command fails.
+`RespirePending<T>` is awaitable and has `.Result`. For exception-free handling, inspect `Status`, `HasResult`, or `Error`, or call `TryGetResult`.
 
-Use `TryExecuteAsync` when the application needs to inspect all failures instead of catching the
-first one. It returns the same summary without rethrowing execution failures; invalid lifecycle
-use (disposed or already-sent batches) still throws:
+- Reading a pending before `ExecuteAsync` throws `RespirePendingNotReadyException`.
+- A failed command sets `Status` to `Faulted` and puts its exception in `Error`.
+
+### Failures
+
+`ExecuteAsync` completes every pending, then throws the first failure in queue order. It does not stop sending at the first error or roll back successful commands, whose results stay readable. This applies to command errors, conversion failures, timeouts, cancellation, and connection-acquisition failures.
+
+`RespireBatchResult` summarizes the flush with `Count`, `FailureCount`, `FirstError`, and `Failures`. Each failure has the command's queue index, operation name, and exception. Use `TryExecuteAsync` to get the summary without rethrowing. Disposed or already-sent batches still throw.
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -58,19 +44,23 @@ foreach (var failure in result.Failures)
 }
 ```
 
-`result.ThrowIfAnyFailed()` remains available when inspection code later chooses to rethrow.
+Call `result.ThrowIfAnyFailed()` to rethrow later.
 
-On an idle standalone connection with the circuit breaker disabled, a batch that fits
-`MaxInflightCommands` is admitted together and sent in one flush. Socket backpressure can require
-multiple writes to finish that flush. Circuit-enabled batches use ordered per-command admission
-so each command owns its circuit permit until its reply completes.
-When capacity is already occupied, the batch exceeds the ring capacity, or connection maintenance
-holds admission, commands wait for admission in queue order and may use multiple flushes.
-Batch completion reuses pooled response awaitables instead of allocating a task for every command.
+A batch is sent in one flush when the standalone connection is idle, the circuit breaker is disabled, and the batch fits `MaxInflightCommands`. Otherwise, commands are admitted in queue order and can span several flushes.
+
+### Related
+
+- To wait for WAIT or WAITAOF acknowledgements of a batch's writes, use [`ExecuteAndWaitForReplicationAsync` or `ExecuteAndWaitForAofAsync`](durability-acknowledgements.md). They keep the writes and acknowledgement on one dedicated connection.
+- For Redis 8.10 HIMPORT, create batches or transactions through a [hash import session](hash-import.md) to keep connection-local fieldsets.
 
 ## The same facets as the client
 
-Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Arrays`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `VectorSets`, `Scripts`, `Functions`, the non-blocking `Streams` subset, and a small `Server` subset. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
+Batches and transactions expose `Strings`, `Keys`, `Hashes`, `Lists`, `Arrays`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `VectorSets`, `Scripts`, `Functions`, the nonblocking `Streams` subset, and a small `Server` subset.
+
+- Methods match the client's names and parameters, minus the `Async` suffix. The missing suffix signals that a call only queues work.
+- They return `RespirePending<T>` instead of `ValueTask<T>`.
+- They take no `CancellationToken`; `ExecuteAsync` and `CommitAsync` own cancellation.
+- Exception: deferred scripts use `Evaluate`, not the client's `ExecuteAsync` variants.
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -83,33 +73,29 @@ RespirePending<long> ranked = batch.SortedSets.Add(
 await batch.ExecuteAsync();
 ```
 
-`Keys.RenameAsync`, `Lists.TrimAsync`, `HyperLogLog.MergeAsync`, and `Strings.SetManyAsync`
-return `ValueTask<bool>`, matching the `RespirePending<bool>` result of their batch and transaction
-counterparts. Each returns `true` only after an `OK` confirmation; an unexpected reply or Redis
-error faults the operation rather than returning `false`.
+`Keys.RenameAsync`, `Lists.TrimAsync`, `HyperLogLog.MergeAsync`, and `Strings.SetManyAsync` return `ValueTask<bool>`, matching their queued `RespirePending<bool>`. They return `true` only on `OK`. An unexpected reply or Redis error faults the operation instead of returning `false`.
 
-Typed overloads follow the immediate facets too: hash `Set<T>` and `TryGet<T>`, set
-`Contains<T>`, sorted-set `Add<T>`, and list `LeftPop<T>` / `RightPop<T>`. Typed values are
-serialized when queued, but byte-backed arguments borrow their storage, including typed
-`byte[]` and `ReadOnlyMemory<byte>` inputs. Keep their bytes unchanged until batch execution or
-transaction commit completes, or copy them before queuing. Results are deserialized after
-execution. Hash `TryGet<T>` preserves the
-`Found` flag, distinguishing a missing field from a stored default value. Typed list pops return
-the default value when the list is empty. Typed set membership and sorted-set additions preserve
-Redis's `1`/`0` representation for boolean members, matching the immediate methods.
+### Typed values
 
-When the type argument is omitted, deferred hash writes, set membership checks, and
-sorted-set additions use the raw `RespireValue` conversion (C# 13 or later, as with the
-library's `params` span APIs). This includes GUIDs, timestamps, durations, and byte buffers.
-Specify the type argument, such as `batch.Hashes.Set<Guid>(key, field, id)`, to use typed
-serialization instead. This differs from the immediate facet: when moving
-`client.Hashes.SetAsync(key, field, id)` into a queue, write `Set<Guid>` to keep the same
-typed encoding, because the inferred `batch.Hashes.Set(key, field, id)` sends raw GUID text.
-Older C# compilers ignore overload priority and may select a different encoding; use C# 13 or
-later, or specify the type argument or `RespireValue` conversion explicitly.
+Typed overloads match the client: hash `Set<T>` and `TryGet<T>`, set `Contains<T>`, sorted-set `Add<T>`, and list `LeftPop<T>` / `RightPop<T>`.
 
-Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
-shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
+- Values are serialized when queued. Results are deserialized after execution.
+- Byte-backed arguments, including typed `byte[]` and `ReadOnlyMemory<byte>`, borrow their storage. Keep the bytes unchanged until execution or commit completes, or copy them before queuing.
+- Hash `TryGet<T>` keeps the `Found` flag, so a missing field differs from a stored default.
+- Typed list pops return the default value for an empty list.
+- Booleans in set membership and sorted-set adds use Redis `1`/`0`, as in the client.
+
+:::warning Omitting the type argument changes the encoding
+Without a type argument, deferred hash writes, set membership checks, and sorted-set adds use the raw `RespireValue` conversion. This covers GUIDs, timestamps, durations, and byte buffers. The immediate facet uses typed serialization instead.
+
+When you move `client.Hashes.SetAsync(key, field, id)` into a queue, write `batch.Hashes.Set<Guid>(key, field, id)` to keep the same encoding. The inferred `batch.Hashes.Set(key, field, id)` sends raw GUID text.
+
+This relies on C# 13 or later, as do the library's `params` span APIs. Older compilers ignore overload priority and may pick a different encoding; specify the type argument or `RespireValue` conversion explicitly.
+:::
+
+### Shared helpers
+
+Both queue types implement `IRespireCommandQueue`, which covers every deferred facet and the root shortcuts. A helper can queue work without choosing a batch or transaction:
 
 <!-- doc-test-declaration: split-before=using var batch -->
 ```csharp
@@ -128,42 +114,33 @@ QueueUserUpdate(transaction, "43");
 await transaction.CommitAsync();
 ```
 
-Execution remains specific to the concrete type: batches call `ExecuteAsync`; transactions call
-`CommitAsync`.
+Batches execute with `ExecuteAsync`; transactions with `CommitAsync`.
 
-Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Locks` and server administration other than flushes and filtered CLIENT LIST/KILL remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, claims, and group administration remain immediate operations.
+### Client-only operations
+
+These have no deferred form:
+
+- Blocking variants (a `waitFor` argument, such as `BLPOP` / `BLMOVE`). A queue cannot block.
+- Streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`). A lease borrows reply memory that is released when the batch completes.
+- `Locks`, and server administration other than flushes and filtered CLIENT LIST/KILL.
+- Blocking stream reads, consumer loops, claims, and group administration.
 
 ## Deferred server flushes
 
-Both queues expose `Server.FlushDatabase(mode)` and `Server.FlushAll(mode)`, returning
-`RespirePending<bool>` (`true` for an OK reply). `ServerFlushMode.Default` uses the server's
-configured behavior; `Sync` and `Async` explicitly select memory reclamation. All modes remove
-keys logically before replying. `RespireOptions.AllowAdmin` must be enabled before enqueueing.
-A client key prefix does not restrict either command's database-wide or server-wide scope.
+Both queues expose `Server.FlushDatabase(mode)` and `Server.FlushAll(mode)`, which return `RespirePending<bool>` (`true` for `OK`). Enable `RespireOptions.AllowAdmin` before queuing them.
 
-Queued flushes affect only their execution node. In Cluster batches, keyless flushes form
-a separate routing group with no ordering guarantee relative to keyed groups. Transactions
-flush their selected node, including when keys queued later select that node. Use immediate
-`redis.Server.FlushDatabaseAsync(mode, cancellationToken)` or `FlushAllAsync(mode, cancellationToken)` to visit all discovered
-primaries; that fan-out is not atomic across the Cluster.
+- `ServerFlushMode.Default` uses the server's configured behavior. `Sync` and `Async` choose how memory is reclaimed. All modes remove keys logically before replying.
+- A client key prefix does not narrow the database-wide or server-wide scope.
+- A queued flush affects only its execution node. In Cluster batches, keyless flushes form a separate routing group, with no ordering relative to keyed groups. Transactions flush their selected node, including a node selected by keys queued later.
+- To flush every discovered primary, use immediate `redis.Server.FlushDatabaseAsync(mode, cancellationToken)` or `FlushAllAsync(mode, cancellationToken)`. That fan-out is not atomic across the Cluster.
 
-The raw `Execute` queue method supports known nonblocking command forms; see
-[deferred raw commands](./deferred-raw-commands.md).
+`Server.Clients(filter)` and `Server.KillClients(filter)` queue typed CLIENT LIST/KILL on the execution node. Filters and client IDs are server-local; a key prefix does not restrict them. KILL requires `AllowAdmin` and returns the number closed. See [client filters](./client-administration.md#filtering-and-closing-clients) for scope, snapshots, and Redis/Valkey versions.
 
-`Server.Clients(filter)` and `Server.KillClients(filter)` queue typed CLIENT LIST/KILL
-operations on the execution node. Filters and client IDs are server-local; a key prefix
-does not restrict them. KILL requires `AllowAdmin` and returns the number closed. See
-[client filters](./client-administration.md#filtering-and-closing-clients) for connection
-scope, snapshots, and Redis/Valkey version requirements.
+The raw `Execute` queue method supports known nonblocking command forms; see [deferred raw commands](./deferred-raw-commands.md).
 
 ## Deferred Streams
 
-Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or multiple
-same-slot streams, with owned results. Both accept `StreamReadOptions` for count and reply
-limits; a `WaitFor` value is rejected when queued. Blocking waits and continuous enumeration
-remain immediate-client operations. See [stream reads](../commands/collections.md#reading-without-consumer-groups).
-
-The queued stream methods and their commands are:
+Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or more same-slot streams, with owned results. Both accept `StreamReadOptions`, but reject `WaitFor` when queued. See [stream reads](../commands/collections.md#reading-without-consumer-groups).
 
 | Method | Command |
 | --- | --- |
@@ -178,11 +155,10 @@ The queued stream methods and their commands are:
 | `Configure` | XCFGSET |
 | `Read`, `ReadGroup` | XREAD, XREADGROUP (nonblocking) |
 
-Parameters mirror the immediate methods without cancellation tokens. `Add`
-accepts `StreamAddOptions`; that overload returns a nullable id when NOMKSTREAM skips
-an absent stream. `Range` supports inclusive bounds, count, and descending order.
-`Trim` accepts `StreamTrimOptions` for MAXLEN/MINID and approximate LIMIT; see
-[stream trimming](../commands/collections.md#trimming) for validation and defaults.
+- Parameters match the immediate methods, without cancellation tokens.
+- `Add` with `StreamAddOptions` returns a nullable ID, null when NOMKSTREAM skips an absent stream.
+- `Range` supports inclusive bounds, count, and descending order.
+- `Trim` accepts `StreamTrimOptions`; see [stream trimming](../commands/collections.md#trimming).
 
 ```csharp
 await using var transaction = redis.CreateTransaction();
@@ -193,28 +169,21 @@ await transaction.CommitAsync();
 Console.WriteLine(appended.Result);
 ```
 
-MULTI/EXEC applies the state write and event append atomically. Redis execution-time
-errors do not roll back other transaction commands. Pending results cannot supply
-arguments to later queued operations: use explicit entry ids when subsequent work
-needs the id before execution. Inputs are copied or serialized at enqueue time; later changes
-to supplied binary keys, values, or arrays do not change queued commands. Range
-results own their field bytes and remain readable after queue disposal.
-
-Stream keys receive the client prefix exactly once. Cluster batches route each
-command by its stream key; Cluster transactions require every queued key to share
-one hash slot, including commands on other facets. Group setup remains an immediate
-operation; `Acknowledge` only acknowledges existing pending entries.
+- MULTI/EXEC applies the state write and event append atomically. Redis execution-time errors do not roll back other commands.
+- A pending result cannot supply arguments to later queued commands. Use explicit entry IDs when later work needs the ID.
+- Inputs are copied or serialized when queued; later changes to your keys, values, or arrays do not affect queued commands.
+- `Range` results own their bytes and stay readable after queue disposal.
+- Cluster batches route each command by its stream key. Cluster transactions require every queued key, on any facet, to share one hash slot.
+- Group setup is immediate only. `Acknowledge` only acknowledges existing pending entries.
 
 ## Deferred script result ownership
 
-`batch.Scripts.Evaluate(...)` and `transaction.Scripts.Evaluate(...)` copy replies, including
-nested arrays and payloads, into GC-owned storage. Their `RespireResult` does not retain pooled
-reply buffers, even if you never read the pending result or another queued command fails.
-Disposal is optional for these deferred results. If you dispose a root result, its nested views
-become invalid too. Disposing the batch or transaction does not invalidate a successful result.
+Queued `Scripts.Evaluate(...)` copies replies, including nested arrays and payloads, into GC-owned storage. These results hold no pooled buffers, even if you never read them or another command fails, so disposing them is optional.
 
-Immediate `redis.Scripts.ExecuteAsync(...)` and raw `redis.ExecuteAsync(...)` results remain
-pooled leases and must be disposed with `using`.
+- Disposing a root result also invalidates its nested views.
+- Disposing the batch or transaction does not invalidate a successful result.
+
+Immediate `redis.Scripts.ExecuteAsync(...)` and raw `redis.ExecuteAsync(...)` return pooled leases that you must dispose with `using`.
 
 ## Atomic transactions
 
@@ -228,40 +197,24 @@ await transaction.CommitAsync();
 Console.WriteLine(balance.Result);
 ```
 
-The transaction stays on one connection and maps to `MULTI` / `EXEC`. Its commit has no result:
-without `WATCH`, `EXEC` cannot abort.
-
-Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
-are released. `await using` also covers early returns and exceptions while commands are queued;
-disposal is a no-op after commit. Committing an empty transaction succeeds as a no-op and sends
-nothing to Redis.
+- A transaction runs on one connection as `MULTI` / `EXEC`. Its commit returns no result: without `WATCH`, `EXEC` cannot abort.
+- Always commit or dispose it, so its buffer and any WATCH connection are released. `await using` covers early returns and exceptions. Disposal after commit does nothing.
+- Committing an empty transaction sends nothing.
 
 ## Transient retries for batches and transactions
 
-With `RespireOptions.RetryPolicy` set, batches and unwatched transactions retry as complete units.
-The client never resends only the failed members.
+With `RespireOptions.RetryPolicy` set, batches and unwatched transactions retry as whole units. The client never resends only the failed commands.
 
-- A standalone or Sentinel batch resends its whole pipeline. A Cluster batch retries each slot
-  group on its own. Pendings stay incomplete until the final retry decision, and only the final
-  attempt's results are published.
-- An unwatched transaction resends its retained `MULTI`, queued commands and `EXEC` together, on
-  standalone, Sentinel and Cluster clients. A lost `EXEC` reply counts as a possible execution,
-  not an abort.
-- A resend needs a selected transient failure, and the policy must permit every member's retry
-  category for the unit's write outcome. A single `INCR`, or a raw member without a declared
-  category, keeps the unit at one send unless you accept that risk explicitly.
-- Watched transactions retry only through the helpers in
-  [automatic watched transaction retries](#automatic-watched-transaction-retries). Hash import sessions
-  and units that continue a server-local cursor never retry.
+- A standalone or Sentinel batch resends its whole pipeline. A Cluster batch retries each slot group separately. Pendings stay incomplete until the final decision, and only the final attempt's results are published.
+- An unwatched transaction resends `MULTI`, its commands, and `EXEC` together, on standalone, Sentinel, and Cluster. A lost `EXEC` reply counts as a possible execution, not an abort.
+- A resend needs a selected transient failure, and the policy must allow every command's retry category for the unit's write outcome. A single `INCR`, or a raw command without a declared category, keeps the unit to one send unless you accept that risk explicitly.
+- Watched transactions retry only through the [automatic watched transaction retry](#automatic-watched-transaction-retries) helpers. Hash import sessions and units that continue a server-local cursor never retry.
 
-The [command retries guide](./command-retries.md#batches) describes the full rules and the
-telemetry.
+See the [command retries guide](./command-retries.md#batches) for full rules and telemetry.
 
 ## Optimistic concurrency
 
-Create the watched transaction first, read current values through the client, and queue only the
-resulting writes on the transaction. Transaction reads return `RespirePending<T>` values, which
-cannot be inspected until after commit and therefore cannot drive the decision:
+Create the watched transaction first, read current values through the client, and queue only the writes on the transaction. Transaction reads return `RespirePending<T>` values that you cannot inspect until after commit, so they cannot drive the decision.
 
 ```csharp
 const int maxAttempts = 5;
@@ -283,22 +236,13 @@ if (!committed)
 }
 ```
 
-`false` means a watched key changed before `EXEC`. Each pending then has `Status ==
-RespirePendingStatus.Aborted`; reading its result throws `RespireTransactionAbortedException`.
-Dispose that attempt, create a new watched transaction, re-read state, and retry with a bounded
-policy. For complex compare-and-set behavior, a Lua script often reduces round trips and makes
-atomic intent clearer.
+`false` means a watched key changed before `EXEC`. Each pending then has `Status == RespirePendingStatus.Aborted`, and reading its result throws `RespireTransactionAbortedException`. Dispose that attempt, create a new watched transaction, re-read state, and retry a bounded number of times. For complex compare-and-set logic, a Lua script often saves round trips.
 
-When client-side caching is enabled, a successful WATCH invalidates the watched keys locally
-and prevents earlier reads from restoring cached values. Reads started after transaction creation
-therefore fetch fresh state even if tracking invalidations from earlier writes are still in transit.
+With client-side caching, a successful WATCH invalidates the watched keys locally. Reads started after the transaction is created fetch fresh state.
 
 ## Automatic watched transaction retries
 
-`RunTransactionWithReadsAsync` creates a fresh watched transaction for every attempt and retries
-when `EXEC` reports a WATCH conflict. The callback reads inputs and queues writes; the helper
-commits and disposes the transaction. `MaxAttempts` includes the first attempt and defaults
-to five. Exhaustion throws `RespireTransactionConflictException` with its `Attempts` count.
+`RunTransactionWithReadsAsync` creates a fresh watched transaction for each attempt and retries when `EXEC` reports a WATCH conflict. Your callback reads inputs and queues writes; the helper commits and disposes the transaction.
 
 ```csharp
 long updated = await redis.RunTransactionWithReadsAsync(
@@ -318,80 +262,58 @@ long updated = await redis.RunTransactionWithReadsAsync(
     cancellationToken);
 ```
 
-Each attempt passes the callback a read view (`reads` above) that routes to the primary,
-bypasses the local cache, and keeps the client's key prefix, database, and serializer. Read
-every input through it inside the callback. The view shares the caller's connections; the
-helper does not dispose the client. Custom clients must support `WithReadFrom` and
-`WithoutClientCache`; unsupported views fail without retrying.
+| `RespireTransactionRetryOptions` | Default | Meaning |
+|---|---|---|
+| `MaxAttempts` | 5 | WATCH-conflict attempts, including the first. Exhaustion throws `RespireTransactionConflictException` with an `Attempts` count. |
+| `Backoff` | null (no delay) | Receives the one-based failed attempt number and returns a delay from zero to 2,147,483,647 ms. Invalid delays and backoff exceptions propagate. |
 
-Do not commit or dispose the supplied transaction. A callback may run multiple times, so keep
-external side effects outside it. The generic overload returns only the successful attempt's
-result; queued pending values cannot be inspected until after commit. The non-generic overload
-accepts a callback without a result. WATCH key arrays and binary key storage are copied before
-the first await, so later caller changes cannot change the keys being watched on a retry.
-Callbacks that queue no commands still validate WATCH through an empty MULTI/EXEC before
-returning a decision.
+`ExponentialBackoff(baseDelay, maxDelay)` doubles the delay ceiling per conflict up to `maxDelay`, then picks a random delay between zero and that ceiling. The failed transaction is disposed before the delay. Cancellation interrupts delays and later attempts.
 
-Use `RunTransactionAsync` instead when the callback manages its own reads; its callback receives
-only the transaction and token. Neither helper can enforce routing or caching settings on
-clients captured by the callback, or prevent writes through a read view. Read every optimistic
-input through the supplied view, include those keys in WATCH, and queue writes on the transaction.
+Callback rules:
 
-Backoff receives the one-based failed attempt number and returns a nonnegative delay of at
-most 2,147,483,647 milliseconds. The failed transaction is disposed before the delay; caller
-cancellation interrupts delays and subsequent attempts. Invalid delays and backoff exceptions
-propagate. `ExponentialBackoff` doubles the delay ceiling per conflict up to `maxDelay`,
-then picks a random delay from zero to that ceiling to spread concurrent retries.
+- Read every input through the supplied read view (`reads` above), and include those keys in WATCH. The view routes to the primary, bypasses the local cache, and keeps the client's key prefix, database, and serializer.
+- The helpers cannot enforce routing or caching on other clients your callback captures, and cannot stop writes through the read view. Queue writes on the transaction.
+- The view shares the caller's connections; the helper does not dispose the client. Custom clients must support `WithReadFrom` and `WithoutClientCache`, or the helper fails without retrying.
+- Do not commit or dispose the supplied transaction.
+- The callback can run several times. Keep external side effects outside it.
+- The generic overload returns the successful attempt's result. The non-generic overload takes a callback with no result.
+- WATCH keys, including binary key storage, are copied before the first await, so later changes cannot alter the keys watched on a retry.
+- A callback that queues nothing still validates WATCH with an empty MULTI/EXEC.
 
-Both helpers also use the built-in client's `RespireOptions.RetryPolicy` for selected transient
-failures during WATCH setup, callback execution, or commit. With no retry policy, those failures
-propagate. Each retry replays WATCH, the whole callback (including fresh reads), and EXEC on a
-new attempt. The failed attempt is disposed before either kind of backoff. Custom `IRespireClient`
-implementations retain their own timeout behavior and do not expose this transient retry policy.
+Use `RunTransactionAsync` when the callback does its own reads; its callback receives only the transaction and token.
 
-The two budgets are independent: `RespireTransactionRetryOptions.MaxAttempts` bounds WATCH-conflict
-attempts, while `RespireOptions.RetryPolicy.MaxAttempts` bounds transient attempts, including the
-initial attempt. A conflict does not reset the transient budget, and a transient failure does not
-consume the conflict budget. Transient delays use the retry policy's backoff and jitter. One
-`CommandTimeout` deadline and the caller's cancellation cover setup, callbacks, commits, and both
-kinds of backoff. Callbacks must honor the supplied token; caller cancellation retains the original
-caller token when it surfaces.
+### Transient failures in the helpers
 
-Every queued member must permit replay for the commit's transport write outcome. A definitely
-unwritten commit can retry known categories under any enabled policy. Unknown commands and scripts
-remain `Never` unless explicitly declared with `WithRetryCategory`. A lost EXEC reply is **not a
-WATCH abort**: the transaction may have executed, so replay requires permission for every member's
-possible repeated effects. For example, replaying a transaction containing INCR requires
-`MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating`. That explicit permission
-accepts duplicate increments and lost original results; WATCH does not provide exactly-once execution.
+With the built-in client's `RespireOptions.RetryPolicy`, both helpers retry selected transient failures during WATCH setup, the callback, or commit. Each retry replays WATCH, the whole callback with fresh reads, and EXEC. Without a policy, these failures propagate. Custom `IRespireClient` implementations keep their own timeout behavior and do not use this policy.
 
-Direct `RespireWatchedTransaction.CommitAsync` is never replayed, even with a retry policy. Its WATCH
-state and caller reads belong to the original attempt. Use a helper callback for supported transient
-retries. Timeouts, cancellation, unselected callback/server errors, and Cluster routing rejections
-propagate. Errors in an executed result array remain on its pendings and do not replay the transaction.
+- The budgets are independent. `RespireTransactionRetryOptions.MaxAttempts` bounds conflict attempts; `RespireOptions.RetryPolicy.MaxAttempts` bounds transient attempts, including the first. Neither resets or consumes the other.
+- Transient delays use the retry policy's backoff and jitter.
+- One `CommandTimeout` deadline and your cancellation token cover setup, callbacks, commits, and both kinds of backoff. Callbacks must honor the supplied token. Caller cancellation surfaces with your original token.
+- Every queued command must allow replay for the commit's write outcome. A commit that was definitely not written can retry known categories under any enabled policy. Unknown commands and scripts stay `Never` unless declared with `WithRetryCategory`.
 
-The `Respire` meter emits `respire.transaction.watch.conflicts` for each discarded attempt
-and `respire.transaction.watch.retries` for additional attempts started after conflicts.
-Transient helper retries emit `respire.command.retries` with `attempted`, `succeeded`, or `exhausted`
-outcomes and the attempt's highest queued retry category (read-only for an empty attempt).
+:::warning A lost EXEC reply is not a WATCH abort
+The transaction may have run, so replay needs permission for every command's repeated effects. For example, replaying a transaction that contains INCR requires `MaxCommandRetryCategory = RespireCommandRetryCategory.WriteAccumulating`. That accepts duplicate increments and lost original results. WATCH does not provide exactly-once execution.
+:::
+
+- Direct `RespireWatchedTransaction.CommitAsync` is never replayed, even with a retry policy. Use a helper for transient retries.
+- Timeouts, cancellation, unselected callback or server errors, and Cluster routing rejections propagate.
+- Errors in an executed result array stay on their pendings and do not replay the transaction.
+
+| `Respire` meter instrument | Emitted for |
+|---|---|
+| `respire.transaction.watch.conflicts` | Each discarded attempt. |
+| `respire.transaction.watch.retries` | Each extra attempt after a conflict. |
+| `respire.command.retries` | Each transient helper retry, with an `attempted`, `succeeded`, or `exhausted` outcome and the attempt's highest queued retry category (read-only for an empty attempt). |
+
 Diagnostics listener failures do not interrupt the operation.
 
 ## Cluster WATCH transactions
 
-Use matching hash tags for every watched and queued key, such as `{account:42}:balance`
-and `{account:42}:history`. Respire validates watched keys before discovery or network I/O,
-and rejects a cross-slot queued command before adding it to the transaction. Validation uses
-keys after the client prefix is applied, including hash tags inside that prefix.
+Use matching hash tags for every watched and queued key, such as `{account:42}:balance` and `{account:42}:history`. Respire validates watched keys before any network I/O and rejects a cross-slot command when you queue it. Validation uses prefixed keys, including hash tags inside the prefix.
 
-The slot owner's dedicated connection holds WATCH state through MULTI/EXEC. Successful commits
-and watched aborts return the connection to its original node pool. Cancellation, connection
-failure, or disposal before EXEC discards the connection so another caller cannot inherit WATCH.
+The slot owner's dedicated connection holds WATCH state. Cancellation, connection failure, or disposal before EXEC discards that connection, so no other caller inherits WATCH.
 
-MOVED, ASK, or READONLY rejections during WATCH or transaction queueing throw
-`RespireTransactionRetryException`. Its `ServerError` preserves the original rejection. Start a
-new watched transaction and re-read every input; never replay queued writes using old reads.
-MOVED updates the learned route for that next attempt. ASK leaves the permanent route unchanged,
-so an attempt may keep failing until migration finishes. Use a bounded retry policy and delay.
+MOVED, ASK, or READONLY rejections during WATCH or queuing throw `RespireTransactionRetryException`; its `ServerError` holds the original rejection. Start a new watched transaction and re-read every input. Never replay queued writes built from old reads. ASK does not update the learned route, so attempts can keep failing until migration finishes: bound retries and add a delay.
 
 ```csharp
 bool committed = false;
@@ -414,21 +336,10 @@ for (var attempt = 0; attempt < 5 && !committed; attempt++)
 if (!committed) throw new InvalidOperationException("Watched keys kept changing.");
 ```
 
-A socket failure or timeout after sending remains ambiguous and does not become this retry
-exception. Errors inside an executed result array stay on their individual pending results;
-other commands may have succeeded, so Respire never replays that array. These restrictions
-preserve Redis's [WATCH semantics](https://redis.io/docs/latest/commands/watch/) and
-[same-slot transaction requirement](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/).
+A socket failure or timeout after sending is ambiguous and does not throw this exception. Errors inside an executed result array stay on their pendings; other commands may have succeeded, so Respire never replays the array. See Redis's [WATCH semantics](https://redis.io/docs/latest/commands/watch/) and [same-slot transaction requirement](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/).
 
 ## Redis Functions
 
-`Functions.Execute` and its typed, string, integer, and span variants queue Redis 7+
-`FCALL` or `FCALL_RO`. Deferred results own managed storage, like deferred script results.
-Keep binary argument memory unchanged until execution completes.
-
-Load reusable `RespireFunctionLibrary` instances before queue execution. Deferred calls
-never automatically reload a missing function or replay a transaction. Successful commands
-remain applied when another command reports an error. `Functions.Load`, `List`, `Delete`,
-`Flush`, `Dump`, `Restore`, and `Stats` operate only on their execution node. A Cluster batch's
-keyless administration group can differ from a keyed function's group; immediate
-`redis.Functions.LoadAsync(library)` loads every discovered primary before queueing calls.
+- `Functions.Execute` and its typed, string, integer, and span variants queue Redis 7+ `FCALL` or `FCALL_RO`. Results own managed storage, like deferred script results. Keep binary arguments unchanged until execution completes.
+- Load `RespireFunctionLibrary` instances before execution. Deferred calls never reload a missing function or replay a transaction. Successful commands stay applied when another command fails.
+- `Functions.Load`, `List`, `Delete`, `Flush`, `Dump`, `Restore`, and `Stats` run only on their execution node. In a Cluster batch, the keyless administration group can differ from a keyed call's group. Use immediate `redis.Functions.LoadAsync(library)` to load every discovered primary before queuing calls.
