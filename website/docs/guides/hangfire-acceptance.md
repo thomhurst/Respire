@@ -1,21 +1,23 @@
 ---
 title: Hangfire compatibility acceptance
-description: Pinned upstream tests, worker lifecycle, supported contracts, and exclusions for the StackExchange.Redis shim.
+description: Run Hangfire.Redis.StackExchange on Respire through the StackExchange.Redis adapter, and what is tested.
 ---
 
 # Hangfire compatibility acceptance
 
-The [StackExchange.Redis migration boundary](./stackexchange-interop) is verified with
-`Hangfire.Redis.StackExchange` **1.12.0**. Its NuGet repository commit is
-[`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55).
-The acceptance project executes that published package against real Redis through
-`RespireConnectionMultiplexer`, on .NET 8 and .NET 10 with RESP2 and RESP3.
+Run `Hangfire.Redis.StackExchange` **1.12.0** on Respire by injecting the
+[StackExchange.Redis adapter](stackexchange-interop.md) into `RedisStorage`. Tested against real Redis
+on .NET 8 and .NET 10 with RESP2 and RESP3 (package commit
+[`da8e39a`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55)).
 
-Inject the adapter into `RedisStorage`; construct and configure it using native Respire options:
+```bash
+dotnet add package Respire.StackExchangeCompat
+```
 
 ```csharp
 using Respire.StackExchangeCompat;
 
+// options is your RespireOptions, for example RespireOptions.Parse("localhost:6379").
 await using var multiplexer = RespireConnectionMultiplexer.Create(options);
 var storage = new Hangfire.Redis.StackExchange.RedisStorage(multiplexer,
     new Hangfire.Redis.StackExchange.RedisStorageOptions
@@ -25,21 +27,12 @@ var storage = new Hangfire.Redis.StackExchange.RedisStorage(multiplexer,
     });
 ```
 
-Keep the multiplexer alive until Hangfire workers and storage operations have finished.
-The adapter owns its native clients. Hangfire borrows the injected multiplexer.
-Passing a connection string directly to `RedisStorage` creates StackExchange.Redis instead.
+- Keep the multiplexer alive until Hangfire workers and storage operations finish. Hangfire borrows it; the adapter owns its native clients.
+- Pass the multiplexer, not a connection string. A connection string makes `RedisStorage` create StackExchange.Redis instead.
 
-## Upstream tests exercised
+## What is tested
 
-`tests/Respire.Hangfire.Acceptance.Tests` ports **93 of 96 active upstream facts**,
-preserving their method names and behavioral assertions. The subscription timeout keeps
-its minimum wait assertion without a scheduling ceiling. Lock-thread failures are reported
-on the test thread after joining, with waiters released even when a callback fails.
-An independent StackExchange.Redis connection
-arranges and checks Redis state. Production storage, connections, fetched jobs, write
-transactions, locks, and subscriptions receive the shim. Test-only control calls do not
-extend the supported adapter interface. The package's existing friend assembly grant
-allows the port to exercise its internal types without modifying production code.
+`tests/Respire.Hangfire.Acceptance.Tests` ports 93 of the 96 active upstream tests, plus two worker lifecycle tests.
 
 | Upstream class | Facts exercised |
 | --- | ---: |
@@ -58,50 +51,18 @@ allows the port to exercise its internal types without modifying production code
 | `ProcessingStateHandlerFacts` | 3 |
 | `SucceededStateHandlerFacts` | 3 |
 
-The [source notice and exact method inventory](https://github.com/thomhurst/Respire/blob/main/tests/Respire.Hangfire.Acceptance.Tests/Upstream/NOTICE.md)
-record adaptations, provenance, and the upstream LGPLv3 notices. Argument validation
-and state-handler callback tests retain upstream mocks; their results do not independently
-prove Redis behavior. Transaction, fetched-job, watcher, and lock scenarios operate on Redis.
+- Transaction, fetched-job, watcher, and lock tests run on Redis. Argument-validation and state-handler tests use upstream mocks, so they do not prove Redis behavior.
+- The worker lifecycle tests run a real `BackgroundJobServer` with `UseTransactions` both `true` and `false`: enqueue, execute, check the succeeded state, and shut down.
+- The [source notice](https://github.com/thomhurst/Respire/blob/main/tests/Respire.Hangfire.Acceptance.Tests/Upstream/NOTICE.md) lists each method, adaptation, and the upstream LGPLv3 notices.
 
-The three excluded `RedisStorageFacts` tests are `DbFromConnectionStringIsUsed`,
-`PasswordFromToStringIsNotShown`, and `PasswordFromWriteOptionsToLogIsNotShown`.
-They exercise string constructors that create StackExchange.Redis internally, so they
-cannot validate the injected adapter. The upstream `AcquireFromNestedTask` lock test is
-already disabled and remains disabled because the package uses thread-local lock ownership.
-It is not included in the 96 active facts.
-The upstream expired-job deletion test writes the misspelled key `succeded`;
-its unchanged assertion does not prove cleanup of the `succeeded` list.
+Excluded:
 
-## Additional production acceptance
+- `DbFromConnectionStringIsUsed`, `PasswordFromToStringIsNotShown`, and `PasswordFromWriteOptionsToLogIsNotShown` use string constructors that create StackExchange.Redis, so they cannot test the adapter.
+- `AcquireFromNestedTask` is disabled upstream (the package uses thread-local lock ownership).
+- The upstream expired-job deletion test writes the misspelled key `succeded`, so it does not prove cleanup of the `succeeded` list.
 
-Two additional cases start a real `BackgroundJobServer`, enqueue and execute a stored job,
-then shut down the worker. They verify the succeeded state through the package and an
-independent Redis read, removal from the dequeued list, server removal, the succeeded
-monitoring entry, and continued use of the borrowed multiplexer. Both
-`UseTransactions = true` and `false` are exercised. Each protocol/framework run therefore
-executes **95 cases**, with no skipped cases. CI runs all four combinations and saves TRX reports.
+## Limitations
 
-`Respire.StackExchangeCompat.Tests.TransactionTests` additionally verifies real MULTI/EXEC
-atomic visibility, mismatched conditions and WATCH races that cancel every queued task,
-runtime WRONGTYPE errors that fault only their command while surrounding writes commit,
-and ACL errors during queueing that discard every write and leave repeat execution usable.
-Its cancellation and shutdown controls verify that queued and executing tasks settle.
-`ServerLockTests` verifies RedisStorage discovery, INFO/TIME/ROLE, competing token locks,
-extension/release ownership, server script errors, and borrowed-client disposal.
-
-## Supported scope and limitations
-
-The supported command, transaction, condition, server, lock, and subscription contracts
-are listed in the [migration guide](./stackexchange-interop). This acceptance verifies
-the pinned package's upstream scenarios and basic worker lifecycle on standalone Redis;
-it does not establish arbitrary StackExchange.Redis interface parity, other Hangfire package
-versions, Redis Cluster/Sentinel deployments, every dashboard query, or every Hangfire feature.
-Unsupported members and flags still throw `NotSupportedException`; they never return a
-successful default to bypass an integration call. `ListRightPop`, `HashExists`, `SortedSetRank`,
-`SetContains`, and newer `StringSet` overloads used only by upstream test setup/assertions
-remain outside this contract unless separately documented in the migration guide.
-
-This Hangfire-specific evidence does not close
-[#889](https://github.com/thomhurst/Respire/issues/889), which requires independent combined
-Microsoft/Hangfire acceptance. The parent
-[#1269](https://github.com/thomhurst/Respire/issues/1269) retains its complete acceptance gate.
+- Supported members are listed in the [migration guide](stackexchange-interop.md). Unsupported members and flags throw `NotSupportedException`.
+- Not covered: other Hangfire package versions, Redis Cluster or Sentinel, every dashboard query, every Hangfire feature, and general StackExchange.Redis parity.
+- `ListRightPop`, `HashExists`, `SortedSetRank`, `SetContains`, and newer `StringSet` overloads appear only in upstream test setup and are not part of the supported surface unless the migration guide lists them.

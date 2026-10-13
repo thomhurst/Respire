@@ -1,20 +1,16 @@
 # Redis Sentinel sample
 
-This console application discovers the primary from three Sentinel seeds and
-round-trips an expiring value. An optional iteration count keeps the same client
-alive while you trigger a controlled promotion. It builds on .NET 8 and .NET 10
-in CI and uses only public Respire APIs.
+A console app that finds the primary through three Sentinel seeds and
+round-trips an expiring value. Pass an iteration count to keep the same client
+running while you trigger a promotion.
 
-The local Compose topology runs one primary, one replica and three Sentinels
-inside one container. This lets both the server processes and a host-side .NET
-client reach advertised loopback addresses at matching ports. It demonstrates
-discovery and promotion, not independent failure domains or production high
-availability. Persistence and authentication are disabled. Data is held in tmpfs;
-the short Sentinel timeouts are demonstration settings, not production guidance.
+The Compose topology is for local development only: one primary, one replica,
+and three Sentinels in one container, with tmpfs data and no persistence or
+authentication. The short Sentinel timeouts are for the demo, not production.
 
 ## Start and run
 
-Use the SDK selected by `global.json`, the desired .NET runtime, and Docker
+You need the SDK from `global.json`, a .NET 8 or .NET 10 runtime, and Docker
 Compose v2 with Linux containers. Ports 7100–7101 and 27100–27102 must be free.
 From the repository root:
 
@@ -23,48 +19,53 @@ docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/co
 dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net10.0
 ```
 
-Use `-f net8.0` for .NET 8. Expected output includes `PASS 1: primary 127.0.0.1:7100`
-and one successful round trip. A later run after promotion may report port 7101.
-The key `respire:sentinel-sample:value` expires after two minutes. The default
-single-iteration run fails on any command error or mismatched value.
+Use `-f net8.0` for .NET 8. Expected output:
+
+```text
+PASS 1: primary 127.0.0.1:7100
+Sentinel sample completed: 1 successful round trips.
+```
+
+After a promotion, the port may be 7101. The key `respire:sentinel-sample:value`
+expires after two minutes. A single run fails on any error or mismatch.
 
 ## Observe a promotion with the same client
 
-Start 60 iterations in one terminal (one-second pauses between operations):
+1. Start 60 iterations, one second apart:
 
-```sh
-dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net10.0 -- 60
-```
+   ```sh
+   dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net10.0 -- 60
+   ```
 
-After its first successful row, use a second terminal:
+2. After the first successful row, request a promotion in a second terminal:
 
-```sh
-docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/compose.yaml exec -T sentinel redis-cli -p 27100 SENTINEL FAILOVER sample-primary
-docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/compose.yaml exec -T sentinel redis-cli -p 27100 SENTINEL GET-MASTER-ADDR-BY-NAME sample-primary
-```
+   ```sh
+   docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/compose.yaml exec -T sentinel redis-cli -p 27100 SENTINEL FAILOVER sample-primary
+   docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/compose.yaml exec -T sentinel redis-cli -p 27100 SENTINEL GET-MASTER-ADDR-BY-NAME sample-primary
+   ```
 
-Poll the address command until its port changes, allowing up to 30 seconds.
-Successful sample rows should then report that new port without recreating the
-client. Sentinel reconfigures the old primary as a replica. A requested promotion
-is asynchronous; `OK` does not mean it has completed. If a prior promotion is
-still running or no eligible replica exists, Redis returns an error instead.
+3. Repeat the address command until the port changes (up to 30 seconds). Later
+   rows report the new port without a new client.
 
-The multi-iteration demo prints failures and continues with a **new** write/read
-iteration. It never replays the failed write. The final success count alone does
-not prove failover: verify successful rows from both old and new endpoints.
-Transient connection, timeout, READONLY or value-mismatch errors are possible.
-Replication is asynchronous, so an acknowledged write can be lost during
-promotion; this example does not promise lossless delivery or exactly-once retry.
-Ctrl+C cancels the loop and disposes the client. Accepted iteration counts are
-1–120. Run only one copy per key namespace when comparing write/read values.
+Notes:
 
-Set `RESPIRE_CONNECTION` through your shell or secret provider for an external
-deployment, using Sentinel endpoints plus `serviceName=...`. The sample does not
-print the connection string. Data and Sentinel authentication have separate
-settings; see [connection documentation](../../website/docs/fundamentals/connections.md#redis-sentinel).
-Every discovered endpoint must be reachable. This Compose topology advertises
-`127.0.0.1`, so run the .NET sample on the Docker host, not inside another
-container or on a remote machine. Do not remap only the host ports.
+- `OK` from `SENTINEL FAILOVER` means requested, not finished. Redis returns an
+  error if a promotion is running or no replica is eligible.
+- A failed iteration is printed and the loop moves on to a new write and read;
+  it never replays the failed write. Check for successful rows from both ports,
+  not just the final count.
+- Connection, timeout, `READONLY`, or mismatch errors can occur. Replication is
+  asynchronous, so an acknowledged write can be lost during promotion.
+- Iteration counts are 1–120. Run one copy per key namespace. Ctrl+C stops the
+  loop and disposes the client.
+
+For an external deployment, set `RESPIRE_CONNECTION` (Sentinel endpoints plus
+`serviceName=...`) in your shell or secret provider; the sample never prints it.
+Data and Sentinel authentication are separate settings; see the
+[connection documentation](../../website/docs/fundamentals/connections.md#redis-sentinel).
+The client must reach every discovered endpoint. This topology advertises
+`127.0.0.1`, so run the sample on the Docker host, and do not remap only the
+host ports.
 
 ## Stop or diagnose
 
@@ -74,16 +75,12 @@ docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/co
 docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/compose.yaml down --volumes
 ```
 
-Cleanup targets only this Compose project. Stopping the container discards its
-tmpfs data and rewritten Sentinel configuration; startup begins again with port
-7100 as primary. No shared Redis service or volume is touched. Host bindings are
-loopback-only; the container's unauthenticated network is for local development.
-Ordinary CI builds both framework targets. The separate [topology smoke workflow](../TopologySmoke.md), triggered on demand and on PRs touching the sample,
-runs the sample on both frameworks, requests promotion, and requires successful rows
-from both primary endpoints in the same process. The same controller runs locally.
-
-Readiness checks quorum on all three Sentinels, the discovered primary's role,
-and a connected replica that Sentinel considers eligible for promotion. Health
-can briefly become unhealthy while a promotion reconfigures replication. If any
-Redis or Sentinel child process exits, the container exits and stops the other
-processes; restart the owned Compose topology before continuing the demo.
+- Cleanup affects only this Compose project. Stopping discards data and Sentinel
+  configuration; the next start has port 7100 as primary again.
+- Ports bind to loopback only; the container network is unauthenticated.
+- Readiness requires Sentinel quorum, the primary's role, and an eligible
+  replica. Health can briefly fail during a promotion.
+- If any process exits, the container stops. Restart the topology before
+  continuing.
+- The [topology smoke workflow](../TopologySmoke.md) runs this sample, including
+  a promotion, on both frameworks, in CI or locally.

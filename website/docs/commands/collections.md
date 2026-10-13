@@ -5,9 +5,7 @@ description: Work with hashes, lists, sets, sorted sets, and streams.
 
 # Collections and streams
 
-Collection commands are grouped by Redis data type. Method names omit the Redis prefix because the facet supplies the context. Bitmap, HyperLogLog, and geo operations also have typed facets.
-
-Membership checks use `ExistsAsync` for a key or named hash field and `ContainsAsync` for a member value. Batch and transaction facets follow the same rule without the `Async` suffix.
+Each Redis data type has a facet: `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Bitmaps`, `HyperLogLog`, and `Geo`. Method names omit the Redis prefix. Use `ExistsAsync` for a key or hash field, and `ContainsAsync` for a member value.
 
 ```csharp
 bool keyExists = await redis.Keys.ExistsAsync("user:42");
@@ -15,12 +13,18 @@ bool fieldExists = await redis.Hashes.ExistsAsync("user:42", "name");
 bool containsMember = await redis.Sets.ContainsAsync("team:red", "ada");
 ```
 
+Rules that apply across this page unless a section says otherwise:
+
+- Batch and transaction facets have the same methods without the `Async` suffix.
+- Queued commands copy key spans when queued. Caller-owned byte buffers must stay unchanged until execution completes.
+- Results, including deferred ones, are owned and stay valid after response disposal.
+- Key prefixes apply to keys only, not to fields, members, scan match patterns, or group and consumer names.
+- In Cluster, all keys in one command must share a hash slot after prefixing.
+- Unsupported servers return their normal Redis errors; Respire does not emulate missing commands.
+
 ## Binary key serialization
 
-`Keys.DumpAsync(key)` returns an owned `byte[]`, or `null` when the key is missing.
-The bytes are Redis's serialized representation, not a Respire serializer payload, and
-remain valid after reply or batch disposal. [DUMP](https://redis.io/docs/latest/commands/dump/)
-does not include expiry; read `Keys.ExpiryAsync` separately when needed.
+`Keys.DumpAsync(key)` returns Redis's serialized bytes as an owned `byte[]`, or `null` for a missing key. These are not Respire serializer payloads. [DUMP](https://redis.io/docs/latest/commands/dump/) omits expiry; read `Keys.ExpiryAsync` separately.
 
 ```csharp
 byte[]? payload = await redis.Keys.DumpAsync("source");
@@ -32,57 +36,24 @@ if (payload is not null)
 }
 ```
 
-`RestoreAsync` returns true on `OK`. The default expiry and `RespireExpiry.Persist`
-create a persistent key, including when replacing an expiring key. A relative expiry must
-remain positive after millisecond truncation; an absolute `DateTimeOffset` must be after
-the Unix epoch and uses `ABSTTL`. Past positive timestamps expire immediately.
-`RespireExpiry.Keep`, nonpositive relative milliseconds, and nonpositive absolute Unix
-milliseconds are rejected before sending or enqueueing. This avoids Redis's special zero
-TTL silently making an intended expiry persistent.
+`RestoreAsync` returns true on `OK`. Expiry rules:
 
-`RespireRestoreOptions` supports `Replace`, nonnegative `IdleTimeSeconds`, and byte-valued
-`Frequency` (0–255). Idle time and frequency are mutually exclusive and apply to LRU and
-LFU eviction respectively. [RESTORE](https://redis.io/docs/latest/commands/restore/) requires
-Redis 2.6+, `REPLACE` requires 3.0+, and `ABSTTL`/`IDLETIME`/`FREQ` require 5.0+.
-Payload checksum/version/format errors and existing-key errors remain Redis server errors.
+- The default and `RespireExpiry.Persist` create a persistent key, even when replacing an expiring key.
+- A relative expiry must stay positive after millisecond truncation.
+- An absolute `DateTimeOffset` must be after the Unix epoch and sends `ABSTTL`. Past timestamps expire immediately.
+- `RespireExpiry.Keep` and nonpositive values are rejected before sending, so Redis's zero TTL cannot silently make the key persistent.
 
-Batch and transaction facets expose `Keys.Dump` and `Keys.Restore` with the same options.
-RESTORE borrows its input memory: keep its bytes unchanged until execution completes.
-Typed commands apply the view's key prefix. DUMP does not invalidate cached data;
-RESTORE invalidates its target key through the existing mutation handling.
+| `RespireRestoreOptions` | Meaning | Redis |
+|---|---|---|
+| `Replace` | Overwrite an existing key. | 3.0+ |
+| `IdleTimeSeconds` | Nonnegative LRU idle time. | 5.0+ |
+| `Frequency` | LFU frequency, 0–255. | 5.0+ |
+
+`IdleTimeSeconds` and `Frequency` are mutually exclusive. [RESTORE](https://redis.io/docs/latest/commands/restore/) requires Redis 2.6+; `ABSTTL` requires 5.0+. Bad payloads and existing-key conflicts return Redis server errors.
+
+Queued forms are `Keys.Dump` and `Keys.Restore`. RESTORE borrows its input bytes until execution completes. DUMP does not invalidate cached data; RESTORE invalidates its target key.
 
 ## Hashes
-
-`Hashes.ScanFieldsAsync` enumerates field names without transferring values, using
-[`HSCAN NOVALUES`](https://redis.io/docs/latest/commands/hscan/) (Redis 7.4 or later).
-The existing `ScanAsync` continues to return field/value pairs.
-
-```csharp
-await foreach (var field in redis.Hashes.ScanFieldsAsync("user:42", match: "profile:*", countHint: 100))
-{
-    Console.WriteLine(field);
-}
-```
-
-For manual pagination, `ScanFieldsPageAsync(key, cursor, match, countHint)` returns an
-owned `RespireHashScanPage` with `Fields`, unsigned 64-bit `Cursor`, and `IsComplete`.
-Start with cursor zero, then pass each returned cursor until `IsComplete` is true.
-An empty page with a nonzero cursor does not finish the scan. A null page count omits
-`COUNT`; enumeration defaults to 250. Positive counts are hints, not page-size limits.
-
-Both `batch.Hashes.ScanFieldsPage(...)` and `transaction.Hashes.ScanFieldsPage(...)`
-return the same page through a pending result. Execute the queue and read its result
-before constructing the next page request. Key prefixes apply to the hash key, not the
-field pattern. Reads retain cursor/read metadata; queued pages retain the queue's cache policy.
-
-Scans are not snapshots: duplicates are possible, and concurrent additions/removals have
-undefined inclusion. Keep the same key, match, execution form, and read policy across pages.
-Enumeration keeps its own cursor affinity. Immediate manual pages and read-only Cluster
-batches share cursor affinity per read policy and slot; lost replica affinity fails a
-continuation rather than moving it to another server. A replica continuation cannot share
-a batch group with writes, which would route that group to the primary. Standalone batches
-and transactions execute on their primary connection. Restart from zero after topology
-changes; use a primary read view if moving pages between execution forms.
 
 ```csharp
 await redis.Hashes.SetAsync("user:42", "name", "Ada");
@@ -95,19 +66,12 @@ string? name = await redis.Hashes.GetStringAsync("user:42", "name");
 Dictionary<string, string> profile = await redis.Hashes.GetAllAsync("user:42");
 ```
 
-Pre-release migration: replace `Hashes.DeleteAsync` and `Streams.DeleteAsync` with
-`RemoveAsync`, and `Hashes.GetAndDeleteAsync` with `GetAndRemoveAsync`. Deferred hash commands
-use `Remove` and `GetAndRemove`. Whole-key deletion and stream group/consumer lifecycle methods
-keep their `Delete` names.
-
-`LengthAsync(key, field)` returns the value's byte length (`HSTRLEN`), including zero for
-an empty or missing field. `RandomFieldAsync` returns one field or null for a missing hash.
-`RandomFieldsAsync` and `RandomFieldsWithValuesAsync` accept a count: positive counts return
-up to that many distinct fields, negative counts allow repeats, and zero returns an empty
-array. The field/value result is an array of pairs so repeated fields are preserved.
-Bound the magnitude of `count` to control reply size and allocation: a negative count can
-return more entries than the hash contains because fields may repeat.
-These random selection methods require Redis 6.2 or later.
+- Methods that remove fields or stream entries are `RemoveAsync` and `Hashes.GetAndRemoveAsync`. `Delete` names mean whole-key deletion or stream group/consumer lifecycle.
+- `LengthAsync(key, field)` returns the value's byte length (`HSTRLEN`), or zero for an empty or missing field.
+- `RandomFieldAsync` returns one field, or null for a missing hash.
+- `RandomFieldsAsync` and `RandomFieldsWithValuesAsync` take a count. Positive returns up to that many distinct fields, negative allows repeats, zero returns an empty array. Field/value results are an array of pairs, so repeats are kept.
+- Bound `count`: a negative count can return more entries than the hash holds.
+- The random methods require Redis 6.2+.
 
 ```csharp
 long nameBytes = await redis.Hashes.LengthAsync("user:42", "name");
@@ -121,18 +85,42 @@ RespireExpiryTime[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
     "user:42", ExpiryTimePrecision.Seconds, "name", "role");
 ```
 
-`ExpiryTimeAsync` requires Redis 7.4 or later. It uses `HPEXPIRETIME` by default; request
-`ExpiryTimePrecision.Seconds` to use `HEXPIRETIME`, which rounds fractional seconds up.
-Results follow input order, including
-repeated fields. `Exists` distinguishes missing fields from persistent fields; `HasExpiry`
-indicates an expiration is set. `UnixTimeMilliseconds` always uses milliseconds, including
-when requesting whole-second resolution, and is null when missing or persistent. The numeric
-timestamp preserves Redis values beyond the range of `DateTimeOffset`. Use `GetExpiresAt()` for a
-nullable UTC `DateTimeOffset`; that conversion throws if a timestamp exceeds its supported range.
-Use `TryGetExpiresAt(out DateTimeOffset expiresAt)` for a nonthrowing conversion; it returns
-false for missing/persistent fields and timestamps outside the supported range.
+`ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `ExpiryTimePrecision.Seconds` for `HEXPIRETIME`, which rounds fractional seconds up. Results follow input order, including repeated fields.
 
-All these methods also exist on batch and transaction hash facets without the `Async` suffix.
+| `RespireExpiryTime` member | Meaning |
+|---|---|
+| `Exists` | False for a missing field. |
+| `HasExpiry` | True when an expiration is set. |
+| `UnixTimeMilliseconds` | Always milliseconds, even with `Seconds` precision. Null when missing or persistent. Holds values beyond `DateTimeOffset` range. |
+| `GetExpiresAt()` | Nullable UTC `DateTimeOffset`. Throws when the timestamp is out of range. |
+| `TryGetExpiresAt(out DateTimeOffset expiresAt)` | Returns false for missing or persistent fields and out-of-range timestamps. |
+
+### Scanning fields
+
+`ScanFieldsAsync` enumerates field names without values, using [`HSCAN NOVALUES`](https://redis.io/docs/latest/commands/hscan/) (Redis 7.4+). `ScanAsync` returns field/value pairs.
+
+```csharp
+await foreach (var field in redis.Hashes.ScanFieldsAsync("user:42", match: "profile:*", countHint: 100))
+{
+    Console.WriteLine(field);
+}
+```
+
+For manual pages, `ScanFieldsPageAsync(key, cursor, match, countHint)` returns a `RespireHashScanPage` with `Fields`, an unsigned 64-bit `Cursor`, and `IsComplete`:
+
+1. Start with cursor zero.
+2. Pass each returned cursor to the next call.
+3. Stop when `IsComplete` is true. An empty page with a nonzero cursor is not the end.
+
+A null count omits `COUNT`; enumeration defaults to 250. Counts are hints, not page-size limits. Queued `Hashes.ScanFieldsPage(...)` returns the page as a pending result: execute and read it before queuing the next page. Queued pages use the queue's cache policy.
+
+Scans are not snapshots. Duplicates are possible, and concurrent changes may or may not appear. Across pages:
+
+- Keep the same key, match, execution form, and read policy.
+- Restart from zero after topology changes.
+- Use a primary read view if you move pages between execution forms.
+- A continuation fails, rather than moving servers, if its replica is lost.
+- A replica continuation cannot share a Cluster batch group with writes, which would route the group to the primary. Standalone batches and transactions run on the primary.
 
 ## Lists
 
@@ -143,11 +131,10 @@ string[] nextBatch = await redis.Lists.LeftPopManyAsync("jobs", count: 128);
 string[] pending = await redis.Lists.RangeAsync("jobs", 0, 99);
 ```
 
-Search with `PositionAsync` for one index or `PositionsAsync` for multiple indexes (Redis 6.0.6+).
-A missing match returns `null` or an empty array respectively. Indexes always count from the head;
-negative `rank` searches from the tail and returns matches in that search order. `rank` cannot be
-zero or `long.MinValue`. `count: 0` returns all matches, and `maxLength: 0` removes the scan limit;
-negative counts and scan limits are rejected.
+`PositionAsync` returns one index or `null`. `PositionsAsync` returns an array, empty when nothing matches (Redis 6.0.6+). Indexes always count from the head.
+
+- Negative `rank` searches from the tail and returns matches in that order. `rank` cannot be zero or `long.MinValue`.
+- `count: 0` returns all matches; `maxLength: 0` removes the scan limit. Negative values are rejected.
 
 ```csharp
 long? position = await redis.Lists.PositionAsync("jobs", "invoice:42", rank: -1);
@@ -158,20 +145,18 @@ await redis.Lists.SetAsync("jobs", -1, "invoice:44");
 long existingLength = await redis.Lists.RightPushIfExistsAsync("jobs", "invoice:45", "invoice:46");
 ```
 
-`InsertBeforeAsync` and `InsertAfterAsync` return the new length, `0` for a missing key, or `-1`
-for a missing pivot. They target the first matching pivot. `SetAsync` accepts negative indexes
-and preserves Redis errors for missing keys or out-of-range indexes. `LeftPushIfExistsAsync`
-and `RightPushIfExistsAsync` require at least one value and return `0` without creating a missing
-list. Values and pivots accept binary `RespireValue` inputs. Every method also exists on batch
-and transaction `Lists` facets without the `Async` suffix; queued push methods snapshot the
-argument span, while supplied byte buffers must remain unchanged until execution finishes.
+- `InsertBeforeAsync` and `InsertAfterAsync` target the first matching pivot. They return the new length, `0` for a missing key, or `-1` for a missing pivot.
+- `SetAsync` accepts negative indexes. Missing keys and out-of-range indexes return Redis errors.
+- `LeftPushIfExistsAsync` and `RightPushIfExistsAsync` need at least one value. They return `0` without creating a missing list.
+- Values and pivots accept binary `RespireValue` inputs.
 
-Multi-key pops return the selected list along with its values. `PopManyAsync` uses LMPOP
-(Redis 7.0+) and selects the first nonempty list in input order. `side` controls which end of
-that list is popped; `count` must be positive. Supplying `waitFor` selects BLMPOP instead.
-`PopAsync` always waits using BLPOP or BRPOP and returns one value. All return `null` when no
-list is available before the timeout. Pass `Timeout.InfiniteTimeSpan` to wait indefinitely;
-zero waits use the same minimum one-millisecond Redis timeout as single-key list pops.
+### Multi-key pops
+
+Multi-key pops return the selected key with its values, or `null` when no list has data before the timeout.
+
+- `PopManyAsync` uses LMPOP (Redis 7.0+). It pops up to `count` (positive) from the `side` of the first nonempty list, in input order. Supplying `waitFor` uses BLMPOP.
+- `PopAsync` always waits, using BLPOP or BRPOP, and returns one value.
+- `Timeout.InfiniteTimeSpan` waits indefinitely. A zero wait uses Redis's minimum one-millisecond timeout.
 
 ```csharp
 RespireListPopManyResult? jobs = await redis.Lists.PopManyAsync(
@@ -184,23 +169,18 @@ if (job is { } popped)
 }
 ```
 
-Returned keys preserve binary bytes and own their storage. A prefixed view removes its literal
-prefix from the returned key so it can be passed back through that view. Values are decoded as
-UTF-8, matching the existing list pop methods. Cluster calls require every input key to share a
-slot after prefixing; empty Redis keys remain valid. Blocking calls use dedicated pooled
-connections, and cancellation discards a blocked connection without stalling multiplexed traffic.
+Returned keys keep their binary bytes. A prefixed view strips its prefix, so you can pass the key back through that view. Values decode as UTF-8. Empty Redis keys are valid. Blocking calls use dedicated connections; cancellation discards the blocked connection without stalling other traffic.
 
-Batch and transaction `Lists.PopMany(keys, count, side)` queue the nonblocking LMPOP command.
-The key span is copied into command arguments; caller-owned byte buffers must remain unchanged
-until execution finishes. Returned key bytes and value strings survive deferred response disposal.
-Blocking pops have no batch or transaction form.
+Queued `Lists.PopMany(keys, count, side)` sends nonblocking LMPOP. Blocking pops have no queued form.
 
 ### Moving several elements (Redis 8.10+)
 
-`MoveManyAsync` uses LMOVEM, or BLMOVEM when `waitFor` is supplied. `UpTo` moves as many
-elements as available, up to the positive count; `Exactly` moves nothing unless the entire
-count is available. Blocking `Exactly` waits for that many elements, while blocking `UpTo`
-waits for at least one. Missing sources, unsatisfied exact counts, and timeouts return `null`.
+`MoveManyAsync` uses LMOVEM, or BLMOVEM when `waitFor` is set. It returns `null` for a missing source, an unmet exact count, or a timeout.
+
+| `countMode` | Without `waitFor` | With `waitFor` |
+|---|---|---|
+| `UpTo` | Moves up to `count` available elements. | Waits for at least one. |
+| `Exactly` | Moves nothing unless `count` are available. | Waits for `count`. |
 
 ```csharp
 string[]? moved = await redis.Lists.MoveManyAsync(
@@ -210,22 +190,13 @@ string[]? moved = await redis.Lists.MoveManyAsync(
     waitFor: TimeSpan.FromSeconds(5));
 ```
 
-The owned result contains UTF-8 strings in destination order. `Bulk` preserves the selected
-elements' source order; `OneByOne` uses pop order and reverses it when inserting at the head.
-When both keys are the same, Redis removes the selected block before reinserting it, so a
-same-end `OneByOne` move reverses that block and an opposite-end move can rotate the list.
-Both keys are prefixed and must share a Cluster slot. Blocking moves use the dedicated pool;
-cancellation discards the blocked lease. An infinite wait uses `Timeout.InfiniteTimeSpan`,
-and `TimeSpan.Zero` uses a minimum one-millisecond timeout.
+- The result holds UTF-8 strings in destination order.
+- `Bulk` keeps source order. `OneByOne` uses pop order, reversed when inserting at the head.
+- When source and destination are the same key, Redis removes the block before reinserting it. A same-end `OneByOne` move reverses the block; an opposite-end move can rotate the list.
+- Waits behave as for multi-key pops.
+- Queued `Lists.MoveMany` sends only LMOVEM and never waits.
 
-Batch and transaction `Lists.MoveMany` queue only LMOVEM and never wait. Redis itself treats
-BLMOVEM inside MULTI as immediate, but Respire does not expose a queued blocking overload.
-The existing single-element `MoveAsync` and `Move` behavior is unchanged.
-
-See the [LMOVEM reference](https://redis.io/docs/latest/commands/lmovem/) and
-[BLMOVEM reference](https://redis.io/docs/latest/commands/blmovem/) for server requirements.
-
-Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues).
+See the [LMOVEM](https://redis.io/docs/latest/commands/lmovem/) and [BLMOVEM](https://redis.io/docs/latest/commands/blmovem/) references. For `waitFor` and dedicated connections, see [blocking queues](../guides/blocking-queues.md).
 
 ## Sets
 
@@ -243,34 +214,13 @@ string? random = await redis.Sets.PopAsync("available");
 string[] randomBatch = await redis.Sets.PopManyAsync("available", count: 2);
 ```
 
-`ContainsManyAsync` preserves input order and duplicates; missing members produce `false`.
-It maps to [SMISMEMBER](https://redis.io/docs/latest/commands/smismember/) (Redis 6.2+).
-`MoveAsync` atomically transfers one member and returns `false` if it was absent from the
-source, including when the source key is missing. An existing destination member still
-counts as a successful move from the source.
+- `ContainsManyAsync` ([SMISMEMBER](https://redis.io/docs/latest/commands/smismember/), Redis 6.2+) keeps input order and duplicates. Missing members are `false`. It needs at least one member.
+- `MoveAsync` moves one member atomically. It returns `false` if the member was not in the source, including a missing source. A member already in the destination still counts as moved.
+- `IntersectCountAsync` ([SINTERCARD](https://redis.io/docs/latest/commands/sintercard/), Redis 7+) counts without fetching members. The limit overload puts `limit` before the keys; zero means unlimited, and negative is rejected. It needs at least one key.
+- For cancellation, pass a key span and a trailing token: `IntersectCountAsync(1, ["team:red", "on-call"], cancellationToken)`.
+- `PopManyAsync` returns an empty array for a missing key; `PopAsync` returns null. Queued forms are `PopMany` and `Pop`.
 
-`IntersectCountAsync` uses [SINTERCARD](https://redis.io/docs/latest/commands/sintercard/)
-(Redis 7+) without fetching members. The optional limit overload puts `limit` before the
-variadic keys; zero means unlimited, and negative limits are rejected. Membership checks
-require at least one member; intersection counts require at least one key. For cancellation,
-pass a key/member span and a required trailing token, for example
-`IntersectCountAsync(1, ["team:red", "on-call"], cancellationToken)`.
-
-Batch and transaction facets expose `ContainsMany`, `Move`, and `IntersectCount` with the
-same results through `RespirePending<T>`. Redis Cluster requires all keys in a move or
-intersection to share a hash slot. Key prefixes apply to every source and destination key.
-
-Count-based pops use `PopManyAsync` and return an empty array when the key is missing.
-Single-member `PopAsync` returns null when missing. Batch and transaction facets use
-`PopMany` for arrays and `Pop` for scalars. Pre-release count-based `PopAsync`/`Pop` overloads
-are removed; rename those calls without changing their arguments.
-
-`DifferenceCountAsync` and `UnionCountAsync` use Redis 8.10+
-[SDIFFCARD](https://redis.io/docs/latest/commands/sdiffcard/) and
-[SUNIONCARD](https://redis.io/docs/latest/commands/sunioncard/) to count without returning members.
-Missing keys are empty sets. Difference counts preserve the order of input keys: the first
-set is reduced by every later set. At least one key is required. Limits must be nonnegative;
-zero means unlimited, and a positive limit caps the returned count.
+`DifferenceCountAsync` ([SDIFFCARD](https://redis.io/docs/latest/commands/sdiffcard/)) and `UnionCountAsync` ([SUNIONCARD](https://redis.io/docs/latest/commands/sunioncard/)) count without returning members (Redis 8.10+). Missing keys are empty sets. A difference reduces the first set by every later set. At least one key is required. Limits must be nonnegative; zero means unlimited.
 
 ```csharp
 long exclusive = await redis.Sets.DifferenceCountAsync("team:red", "on-call");
@@ -280,20 +230,13 @@ long estimate = await redis.Sets.UnionCountAsync(
     new RespireSetUnionCountOptions(Limit: 100, Approximate: true), "team:red", "on-call");
 ```
 
-`Approximate` selects Redis's union cardinality estimate; leave it false when an exact
-count is required. The deterministic fake server computes exact counts even with this flag.
-Batch and transaction facets expose `DifferenceCount` and `UnionCount` with the same options.
-Immediate overloads accept a key span and cancellation token. Every key receives the view's
-prefix; Cluster keys must share a slot. Deferred methods snapshot the key sequence while
-borrowing byte-backed key storage until execution completes. Reads use the existing cache
-invalidation metadata for every input key. External set-facet implementations must add these
-new interface members. Older servers preserve their unknown-command errors.
+`Approximate` returns Redis's union cardinality estimate; leave it false for an exact count. The fake server always counts exactly. Immediate overloads also accept a key span and cancellation token.
 
 ## Sorted sets
 
 ### Conditional adds and increments
 
-Pass `RespireSortedSetAddOptions` immediately after the key to use ZADD conditions:
+Pass `RespireSortedSetAddOptions` right after the key to use ZADD conditions:
 
 ```csharp
 bool added = await redis.SortedSets.AddAsync("scores", RespireSortedSetAddOptions.Nx, "ada", 98.5);
@@ -306,48 +249,33 @@ double? increased = await redis.SortedSets.IncrementAsync("scores",
     RespireSortedSetAddOptions.Xx | RespireSortedSetAddOptions.Gt, "ada", 2);
 ```
 
-`Nx` only inserts missing members; `Xx` only updates existing ones. `Gt` and `Lt` compare
-the proposed score with the existing score, but still permit new members unless combined
-with `Xx`. They require Redis 6.2 or later. Without `Ch`, add results count only new members;
-with `Ch`, changed scores count too. Setting an unchanged score never counts as a change.
+| Flag | Effect |
+|---|---|
+| `Nx` | Only insert missing members. |
+| `Xx` | Only update existing members. |
+| `Gt` / `Lt` | Only update when the new score is greater / less. New members are still added unless combined with `Xx`. Redis 6.2+. |
+| `Ch` | Count changed scores as well as new members. An unchanged score never counts. |
 
-The options-taking `IncrementAsync` uses `ZADD INCR` and returns null when a condition rejects
-the update. Its comparison uses the resulting score; `Ch` does not change its score result.
-INCR accepts exactly one member by API construction, so it cannot be combined with a bulk add.
-The existing options-free `IncrementAsync` continues to use `ZINCRBY` and returns `double`.
-Invalid flag combinations (`Nx` with `Xx`, `Gt`, or `Lt`, or `Gt` with `Lt`) are rejected
-before sending or queueing. Bulk options-taking adds require at least one entry.
-
-Batch and transaction facets expose the same overloads as `SortedSets.Add` and
-`SortedSets.Increment`, returning `RespirePending<bool>`, `RespirePending<long>`, or
-`RespirePending<double?>`. Generic single-member adds preserve the existing typed serialization
-rules, including Redis `1`/`0` encoding for booleans.
+- Invalid combinations (`Nx` with `Xx`, `Gt`, or `Lt`; `Gt` with `Lt`) are rejected before sending.
+- Bulk adds need at least one entry.
+- The options overload of `IncrementAsync` uses `ZADD INCR` for one member. It returns the new score, or null when a condition rejects the update. `Gt`/`Lt` compare the resulting score; `Ch` does not affect the result.
+- The options-free `IncrementAsync` uses `ZINCRBY` and returns `double`.
+- Queued `SortedSets.Add` and `SortedSets.Increment` return `RespirePending<bool>`, `RespirePending<long>`, or `RespirePending<double?>`.
+- Generic single-member adds use typed serialization, including `1`/`0` for booleans.
 
 ### Reads and other operations
 
-`RandomMemberAsync(key)` returns one member or `null`; `RandomMembersAsync(key, count)`
-and `RandomMembersWithScoresAsync(key, count)` return owned arrays (Redis 6.2+). Positive
-counts select distinct members up to the set size; negative counts allow duplicates and
-return exactly the absolute count for nonempty sets. Zero returns empty. `long.MinValue`
-is rejected because its absolute value cannot fit in a signed 64-bit integer. Sampling
-never removes members. Generic variants deserialize members, including binary-safe `byte[]`.
-A missing scalar generic result is `default(T)`; counted missing results are empty arrays.
-
-`RankWithScoreAsync(key, member, descending: false)` returns a nullable `SortedSetRank`
-containing the zero-based `Rank` and `Score`. Use `descending: true` for reverse rank.
-A missing key or member returns `null`. This uses Redis 7.2+ `ZRANK`/`ZREVRANK WITHSCORE`;
-the existing `RankAsync` still returns only the rank. Batches and transactions expose
-the matching `RankWithScore` method.
+- `RandomMemberAsync(key)` returns one member or `null`.
+- `RandomMembersAsync(key, count)` and `RandomMembersWithScoresAsync(key, count)` return arrays (Redis 6.2+). Positive counts give distinct members up to the set size. Negative counts allow duplicates and return exactly the absolute count for a nonempty set. Zero returns empty. `long.MinValue` is rejected.
+- Sampling never removes members. Generic variants deserialize members, including `byte[]`. A missing scalar result is `default(T)`; a missing counted result is an empty array.
+- `RankWithScoreAsync(key, member, descending: false)` (Redis 7.2+, `ZRANK`/`ZREVRANK WITHSCORE`) returns a nullable `SortedSetRank` with zero-based `Rank` and `Score`. It returns `null` for a missing key or member. `RankAsync` returns only the rank.
 
 ```csharp
 SortedSetRank? position = await redis.SortedSets.RankWithScoreAsync("scores", "ada", descending: true);
 ```
 
-`CountByLexAsync` and `RemoveRangeByLexAsync` accept `RespireLexRange`, with inclusive,
-exclusive, or infinite bounds. Lexicographical operations require all members to have the
-same score. `IntersectCountAsync` (Redis 7+) returns only intersection cardinality; a
-nonnegative `limit` caps work and the returned count, while zero means unlimited. At least
-one key is required, and Cluster keys must share a slot after the client prefix is applied.
+- `CountByLexAsync` and `RemoveRangeByLexAsync` take a `RespireLexRange` with inclusive, exclusive, or infinite bounds. Lex operations need all members to share one score.
+- `IntersectCountAsync` (Redis 7+) returns only the cardinality. A nonnegative `limit` caps the count; zero means unlimited. It needs at least one key.
 
 ```csharp
 SortedSetEntry[] sample = await redis.SortedSets.RandomMembersWithScoresAsync("scores", 3);
@@ -357,9 +285,7 @@ long matches = await redis.SortedSets.CountByLexAsync("names", range);
 long removed = await redis.SortedSets.RemoveRangeByLexAsync("names", range);
 ```
 
-Every method also has a batch/transaction mirror without `Async`. Deferred result arrays
-remain valid after response disposal. Key spans are snapshotted; referenced byte buffers
-must remain unchanged until execution completes, as with other deferred commands.
+### Ranges, pops, and stores
 
 ```csharp
 await redis.SortedSets.AddAsync("scores", "ada", 98.5);
@@ -404,21 +330,16 @@ SortedSetEntry<int>[] players =
     await redis.SortedSets.RangeWithScoresAsync<int>("player:scores", descending: true);
 ```
 
-Score and lex boundaries are inclusive by default. Use `Exclusive(...)` for an open boundary,
-or `Min` / `Max` for negative and positive infinity. Supplying `offset` requires `count` because
-Redis emits them together as `LIMIT offset count`. The same range APIs are available on batches
-and transactions without the `Async` suffix. Sorted-set intersection, union, and difference each
-have read and `Store` forms. Typed rank ranges, score ranges, and pops deserialize members while
-preserving their scores in `SortedSetEntry<T>`.
+- Score and lex bounds are inclusive by default. Use `Exclusive(...)` for an open bound, and `Min` / `Max` for infinity.
+- `offset` requires `count`, because Redis sends them together as `LIMIT offset count`.
+- Intersection, union, and difference each have read and `Store` forms.
+- Typed rank ranges, score ranges, and pops return `SortedSetEntry<T>`, keeping scores.
 
-Bulk adds accept `(RespireValue Member, double Score)` tuples. Members can be text, numbers,
-or raw bytes, just like single-member adds. `SortedSetEntry` is a read result; replace
-`new SortedSetEntry(member, score)` write inputs with `(member, score)`. Batches and transactions
-accept the same tuples through `SortedSets.Add`.
+### Binary members
 
-Byte-backed members borrow the caller's memory. For batches and transactions, keep those bytes
-unchanged until `ExecuteAsync` or `CommitAsync` completes. If you must reuse a buffer earlier,
-copy it before queuing, for example `(buffer.ToArray(), score)`.
+Bulk adds take `(RespireValue Member, double Score)` tuples. Members can be text, numbers, or bytes. `SortedSetEntry` is a read result, not an input.
+
+Byte members borrow your memory. In batches and transactions, keep them unchanged until `ExecuteAsync` or `CommitAsync` completes, or copy first, for example `(buffer.ToArray(), score)`.
 
 ```csharp
 byte[] member = [0xff, 0x00, 0x80];
@@ -433,11 +354,12 @@ await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
 
 ### Idempotent production (Redis 8.6+)
 
-Set `StreamAddOptions.Idempotency` to `StreamIdempotency.Manual(producerId, messageId)`
-for IDMP, or `StreamIdempotency.Automatic(producerId)` for IDMPAUTO. One options value
-selects exactly one mode; null keeps ordinary XADD behavior. Both require an automatic
-entry ID (`Id = null` or `"*"`). Identifiers must be nonempty; factories copy binary
-identifiers, which are never key-prefixed. Equality includes the mode and identifier bytes.
+Set `StreamAddOptions.Idempotency` to deduplicate appends:
+
+- `StreamIdempotency.Manual(producerId, messageId)` sends IDMP.
+- `StreamIdempotency.Automatic(producerId)` sends IDMPAUTO and derives the identity from the field/value payload.
+
+Null keeps ordinary XADD. Both modes need an automatic entry ID (`Id = null` or `"*"`) and nonempty identifiers. Factories copy binary identifiers, which are never key-prefixed. Equality compares the mode and identifier bytes.
 
 ```csharp
 var options = new StreamAddOptions
@@ -448,32 +370,27 @@ RespireStreamId? first = await redis.Streams.AddAsync("orders", options, ("statu
 RespireStreamId? duplicate = await redis.Streams.AddAsync("orders", options, ("status", "paid"));
 ```
 
-Within Redis's retained deduplication history, the same producer/message identity returns
-the original entry ID even when a manual-mode payload differs. Automatic mode derives
-the identity from the field/value payload. Different producers have separate histories.
-Duration and size limits can expire or evict identities; deleting the stream also removes
-its history. This is not an unlimited exactly-once guarantee. See
-[XADD](https://redis.io/docs/latest/commands/xadd/) and
-[Redis's implementation](https://github.com/redis/redis/blob/8.8/src/t_stream.c).
+Within Redis's retained history, a repeated producer/message identity returns the original entry ID, even when a manual-mode payload differs. Each producer has its own history.
 
-Existing `Streams.Add` batch/transaction methods accept the same options. Trimming,
-reference policies, and NOMKSTREAM remain composable. Older servers return their normal
-errors for explicit idempotency. An XADD with explicit idempotency is audited as
-`WriteChecked`, because a resend returns the original entry instead of appending again.
-Cancellation after dispatch cannot prove that a write did not execute.
+:::warning
+This is not unlimited exactly-once delivery. Duration and size limits can evict identities, and deleting the stream removes its history. See [XADD](https://redis.io/docs/latest/commands/xadd/) and [Redis's implementation](https://github.com/redis/redis/blob/8.8/src/t_stream.c).
+:::
 
-When a [retry policy](../guides/command-retries#idempotent-stream-appends) can resend a
-possibly executed checked write, typed `Streams.AddAsync` attaches a producer and message
-identity automatically. Set `RespireOptions.StreamProducerId` to choose the producer.
+- Queued `Streams.Add` accepts the same options. Trimming, reference policies, and NOMKSTREAM still combine with it.
+- An idempotent XADD is audited as `WriteChecked`, because a resend returns the original entry instead of appending again.
+- Cancellation after dispatch cannot prove that the write did not run.
+- When a [retry policy](../guides/command-retries.md#idempotent-stream-appends) can resend a possibly executed checked write, typed `Streams.AddAsync` attaches an identity automatically. Set `RespireOptions.StreamProducerId` to choose the producer.
 
 ### Stream configuration (Redis 8.6+)
 
-`Streams.ConfigureAsync` changes an existing stream's idempotency settings with
-[XCFGSET](https://redis.io/docs/latest/commands/xcfgset/). Supply at least one setting;
-null preserves the current value. `IdempotencyDurationSeconds` accepts whole seconds
-from 1 through 86400, and `IdempotencyMaxSize` accepts 1 through 10000 identities per
-producer. Redis defaults both values to 100. Capacity eviction can remove identities
-before their retention duration ends.
+`Streams.ConfigureAsync` changes an existing stream's idempotency settings with [XCFGSET](https://redis.io/docs/latest/commands/xcfgset/). Supply at least one setting; null keeps the current value.
+
+| Option | Range | Redis default |
+|---|---|---|
+| `IdempotencyDurationSeconds` | 1–86400 whole seconds | 100 |
+| `IdempotencyMaxSize` | 1–10000 identities per producer | 100 |
+
+Capacity eviction can remove identities before their duration ends.
 
 ```csharp
 await redis.Streams.AddAsync("orders", ("status", "created"));
@@ -484,53 +401,40 @@ bool configured = await redis.Streams.ConfigureAsync("orders", new StreamConfigu
 });
 ```
 
-Changing either value clears all producer deduplication records for that stream;
-reapplying unchanged values preserves them. Existing stream entries remain intact.
-Redis does not invalidate `WATCH` for these configuration changes.
-Batches and transactions expose `Streams.Configure` with the same options and a
-`RespirePending<bool>` confirmation. Invalid options fail locally before enqueueing.
-Missing keys, wrong types, and older servers return their normal server errors.
-Only the stream key receives a client key prefix. Cancellation cannot undo a
-configuration change already sent to Redis.
+- Changing either value clears all producer deduplication records for the stream. Reapplying unchanged values keeps them. Entries are untouched.
+- Redis does not invalidate `WATCH` for these changes.
+- Queued `Streams.Configure` returns `RespirePending<bool>`. Invalid options fail locally before queuing.
+- Cancellation cannot undo a change already sent.
 
 ### Negative acknowledgements (Redis 8.8+)
 
-`NegativeAcknowledgeAsync` runs XNACK, releasing pending entries from their consumers
-without acknowledging or deleting them. `Silent` decreases delivery counts, stopping
-at zero; `Fail` preserves them; `Fatal` sets them to `long.MaxValue`. Released entries
-are immediately claimable. `PendingAsync` retains Redis's empty consumer and `-1 ms`
-idle sentinel. See [XNACK](https://redis.io/docs/latest/commands/xnack/).
+`NegativeAcknowledgeAsync` runs [XNACK](https://redis.io/docs/latest/commands/xnack/). It releases pending entries from their consumers without acknowledging or deleting them, so they are claimable at once.
+
+| `StreamNackMode` | Delivery count |
+|---|---|
+| `Silent` | Decremented, stopping at zero. |
+| `Fail` | Unchanged. |
+| `Fatal` | Set to `long.MaxValue`. |
 
 ```csharp
 long released = await redis.Streams.NegativeAcknowledgeAsync(
     "orders", "workers", StreamNackMode.Fail, "1710000000000-0");
 ```
 
-The result is Redis's aggregate count, not per-ID outcomes. Duplicate existing IDs
-count repeatedly. Absent PEL entries are skipped unless `StreamNackOptions.Force`
-creates unowned references for existing stream entries. Missing stream entries are
-still skipped. New forced entries start with zero deliveries, except Fatal mode.
-`RetryCount` overrides any mode with a nonnegative count; these advanced controls
-are usually unnecessary for ordinary consumers.
-
-Both ordinary and options forms have `Streams.NegativeAcknowledge` batch/transaction counterparts.
-Immediate methods offer variadic IDs and separate cancellation overloads taking an
-ID span (for example, `["1-0"]`) followed by the token. Use an explicit
-`new StreamNackOptions { ... }` in variadic calls to avoid target-typed `new()` ambiguity.
-IDs must be numeric. Group names accept raw binary arguments and are copied; only
-the stream key is prefixed and routed. Deferred calls snapshot inputs when enqueued.
-Pre-cancelled calls send nothing; later cancellation cannot undo a write. Unsupported
-servers and missing groups surface server errors without fallback or write replay.
-External `IStreamCommands` implementations must add four overloads;
-`IBatchStreamCommands` implementations must add two.
+- The result is Redis's total count, not per-ID outcomes. Duplicate IDs count repeatedly.
+- `PendingAsync` shows released entries with an empty consumer and a `-1 ms` idle time.
+- Absent pending entries are skipped unless `StreamNackOptions.Force` creates unowned references for existing stream entries. New forced entries start with zero deliveries, except in `Fatal` mode.
+- `RetryCount` overrides any mode with a nonnegative count. Ordinary consumers rarely need `Force` or `RetryCount`.
+- Cancellation overloads take an ID span (for example `["1-0"]`) followed by the token. In variadic calls, write `new StreamNackOptions { ... }`, not target-typed `new()`.
+- IDs must be numeric. Group names accept raw binary and are copied.
+- Queued form: `Streams.NegativeAcknowledge`. A pre-cancelled call sends nothing; later cancellation cannot undo the write. Missing groups return server errors.
 
 ### Trimming
 
-Use `StreamAddOptions.MinId` or `MaxLength` to trim while appending. Use `Streams.TrimAsync`
-with `StreamTrimOptions` to trim an existing stream and receive the number of entries removed.
-`MinId` removes entries with lower numeric IDs; `MaxLength` retains the newest entries up to
-the requested length. The thresholds are mutually exclusive. `TrimAsync` requires one;
-`AddAsync` leaves the stream untrimmed when neither is supplied.
+`StreamAddOptions.MinId` or `MaxLength` trims while appending. `Streams.TrimAsync` with `StreamTrimOptions` trims an existing stream and returns the number of entries removed.
+
+- `MinId` removes entries with lower IDs. `MaxLength` keeps the newest entries up to that length.
+- The two thresholds are mutually exclusive. `TrimAsync` requires one; `AddAsync` does not trim without one.
 
 ```csharp
 await redis.Streams.AddAsync("events", new StreamAddOptions
@@ -544,32 +448,21 @@ long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
 });
 ```
 
-`StreamAddOptions.ApproximateTrim` defaults to `true`; `StreamTrimOptions.Approximate` and
-the existing `TrimByMaxLengthAsync` shortcut default to `false`. Approximate trimming removes
-whole internal stream nodes and can retain entries beyond the threshold. `Limit` is allowed
-only with approximate trimming and a threshold; it bounds trimming work rather than promising
-an exact removed count. Zero disables the work limit, while null leaves the server default.
-Lengths and limits must be non-negative, and `MinId` accepts numeric IDs (including a
-milliseconds-only ID), not range or consumer-read sentinels. Invalid combinations fail before I/O.
+| Option | Default | Meaning |
+|---|---|---|
+| `StreamAddOptions.ApproximateTrim` | `true` | Approximate trimming removes whole internal nodes and can keep entries past the threshold. |
+| `StreamTrimOptions.Approximate` | `false` | Same, for `TrimAsync`. `TrimByMaxLengthAsync` also defaults to exact. |
+| `Limit` | null (server default) | Caps trimming work, not the removed count. Only valid with approximate trimming and a threshold. `0` disables the cap. |
 
-MINID and LIMIT require Redis 6.2+; MAXLEN is available from Redis 5.0. Unsupported servers
-return their normal command errors. See the [XADD](https://redis.io/docs/latest/commands/xadd/)
-and [XTRIM](https://redis.io/docs/latest/commands/xtrim/) references. Existing MAXLEN overloads
-retain their signatures and defaults.
-
-Batches and transactions expose the same options through `Streams.Add` and `Streams.Trim`.
-They validate at enqueue time and copy or serialize supplied keys and values then. Immediate
-calls borrow binary keys and field values until their returned operation completes. Stream IDs
-are immutable strings. Prefixing and Cluster slot routing apply to the stream key only.
-Custom `IStreamCommands` and `IBatchStreamCommands` implementations must add `TrimAsync` and
-`Trim`, respectively; `StreamAddOptions` equality includes `MinId`, `Limit`, and `ReferencePolicy`.
+- Lengths and limits must be nonnegative.
+- `MinId` takes numeric IDs, including milliseconds-only IDs, not range or consumer-read sentinels.
+- Invalid combinations fail before I/O.
+- MINID and LIMIT require Redis 6.2+; MAXLEN requires Redis 5.0+. See [XADD](https://redis.io/docs/latest/commands/xadd/) and [XTRIM](https://redis.io/docs/latest/commands/xtrim/).
+- Queued `Streams.Add` and `Streams.Trim` validate and copy keys and values when queued. Immediate calls borrow binary keys and values until the call completes.
 
 ### Reference-aware removal (Redis 8.2+)
 
-`StreamReferencePolicy` controls pending-entry references for `XDELEX`, `XACKDEL`, and
-trimming through `StreamAddOptions.ReferencePolicy` or `StreamTrimOptions.ReferencePolicy`.
-Leaving either option null omits the token, preserving compatibility with older servers.
-Explicitly setting any policy, including `KeepReferences`, requires Redis 8.2+.
+`StreamReferencePolicy` controls pending-entry references for XDELEX, XACKDEL, and trimming (`StreamAddOptions.ReferencePolicy`, `StreamTrimOptions.ReferencePolicy`). Null omits the token, which works on older servers. Any explicit policy, including `KeepReferences`, requires Redis 8.2+.
 
 | Policy | Wire token | Effect |
 |---|---|---|
@@ -577,9 +470,8 @@ Explicitly setting any policy, including `KeepReferences`, requires Redis 8.2+.
 | `DeleteReferences` | `DELREF` | Deletes entries and removes their pending references from all groups. |
 | `Acknowledged` | `ACKED` | Deletes only when every group has read and acknowledged the entry. |
 
-Use the policy overload of `Streams.RemoveAsync` for `XDELEX`.
-`AcknowledgeAndRemoveAsync` runs `XACKDEL`, acknowledging entries in the named group and
-applying the policy atomically. The existing `RemoveAsync(key, ids)` still uses `XDEL`.
+- `Streams.RemoveAsync(key, policy, ids)` runs XDELEX. `RemoveAsync(key, ids)` runs XDEL.
+- `AcknowledgeAndRemoveAsync` runs XACKDEL: it acknowledges entries in the named group and applies the policy atomically.
 
 ```csharp
 RespireStreamDeletionResult[] outcomes = await redis.Streams.AcknowledgeAndRemoveAsync(
@@ -594,28 +486,19 @@ await redis.Streams.TrimAsync("events", new StreamTrimOptions
 });
 ```
 
-Each returned array preserves the requested ID order, including duplicates. `Deleted` (1),
-`NotFound` (-1), and `Retained` (2) preserve the server's distinct outcomes. For XACKDEL,
-`NotFound` also means the ID was not pending in the specified group, or that group was absent;
-it does not prove the stream entry is absent. A pending reference to an already-deleted entry
-can still return `Deleted` when XACKDEL clears it. `Retained` means the ACKED condition was
-not met, including unread entries; XACKDEL has still acknowledged that group's pending entry.
+Results keep the requested ID order, including duplicates:
 
-KEEPREF can leave pending references to deleted data. DELREF cleans dangling references too:
-XDELEX can return `NotFound` while removing those references. XACKDEL first requires a pending
-entry in the named group. ACKED is not a hard retention bound: unread or unacknowledged entries
-can keep a stream above its trimming threshold. With no consumer groups, the tested Redis 8.2
-server permits ACKED deletion and trimming. See the [XDELEX](https://redis.io/docs/latest/commands/xdelex/),
-[XACKDEL](https://redis.io/docs/latest/commands/xackdel/), and
-[XTRIM](https://redis.io/docs/latest/commands/xtrim/) contracts.
+| Result | Meaning |
+|---|---|
+| `Deleted` (1) | Removed. XACKDEL can also return it when clearing a pending reference to an already-deleted entry. |
+| `NotFound` (-1) | Not found. For XACKDEL, it also means the ID was not pending in the group or the group is absent, so the entry may still exist. DELREF XDELEX can return it while removing dangling references. |
+| `Retained` (2) | The ACKED condition was not met, including for unread entries. XACKDEL still acknowledged the group's pending entry. |
 
-Both new operations require at least one numeric ID. Invalid policies, sentinel IDs, and
-malformed numeric IDs fail before I/O or enqueue. Only the stream key is prefixed and routed;
-group names remain unchanged. Batches and transactions expose `Remove(key, policy, ids)` and
-`AcknowledgeAndRemove` with the same owned outcomes and argument snapshots. Unsupported
-commands/options surface server errors without emulation or replay through older write commands.
-External `IStreamCommands` and `IBatchStreamCommands` implementations, decorators, and mocks
-must implement the new overloads and `AcknowledgeAndRemoveAsync`/`AcknowledgeAndRemove` members.
+:::warning
+KEEPREF can leave pending references to deleted data. ACKED is not a hard retention bound: unread or unacknowledged entries can keep a stream above its trim threshold. With no consumer groups, Redis 8.2 allows ACKED deletion and trimming.
+:::
+
+Both commands need at least one numeric ID. Invalid policies and sentinel or malformed IDs fail before I/O. Queued forms are `Remove(key, policy, ids)` and `AcknowledgeAndRemove`. Respire never falls back to older write commands. See [XDELEX](https://redis.io/docs/latest/commands/xdelex/), [XACKDEL](https://redis.io/docs/latest/commands/xackdel/), and [XTRIM](https://redis.io/docs/latest/commands/xtrim/).
 
 ### Reading without consumer groups
 
@@ -633,10 +516,18 @@ await foreach (var item in redis.Streams.ReadAllAsync(
 }
 ```
 
-`ReadAsync` implements [XREAD](https://redis.io/docs/latest/commands/xread/) (Redis 5.0+).
+`ReadAsync` runs [XREAD](https://redis.io/docs/latest/commands/xread/) (Redis 5.0+).
 
-Redis 8.10 adds cumulative reply limits to `XREAD` and `XREADGROUP`. Pass
-`StreamReadOptions` to the options-first `ReadAsync` overload or queued `Read` overload:
+- The default start ID is `0`. Only entries newer than each ID are returned. `count` limits entries **per stream**.
+- Missing or empty streams are left out of multi-stream results. An empty or timed-out read returns an empty array.
+- Returned keys have the client prefix removed.
+- Omit `waitFor` for a nonblocking read. A finite wait rounds up to milliseconds (zero becomes one millisecond). `Timeout.InfiniteTimeSpan` sends `BLOCK 0`.
+- Blocking reads use dedicated connections, so other commands stay responsive. Pass cancellation to interrupt a wait.
+- Queued `Streams.Read` is nonblocking only.
+
+#### Reply limits (Redis 8.10+)
+
+Pass `StreamReadOptions` to the options-first `ReadAsync` overload or queued `Read` overload:
 
 ```csharp
 var page = await redis.Streams.ReadAsync(
@@ -644,61 +535,30 @@ var page = await redis.Streams.ReadAsync(
     [("{events}:one", "0"), ("{events}:two", "0")]);
 ```
 
-`Count` limits entries per stream. `MaxCount` limits the total across streams and must
-be positive and at least `Count` when both are set. `MaxSize` is a positive byte budget
-for the total reply; Redis still returns the first available entry even if it exceeds
-that budget. When both cumulative limits are set, the first reached limit wins. Streams
-are visited in request order for nonblocking reads, so earlier streams can consume the
-whole budget. These are server-side limits, not client-side truncation.
+| Option | Meaning |
+|---|---|
+| `Count` | Entries per stream. |
+| `MaxCount` | Total entries across streams. Positive, and at least `Count` when both are set. |
+| `MaxSize` | Positive byte budget for the whole reply. Redis still returns the first entry even if it is larger. |
 
-`WaitFor` uses the dedicated blocking pool, including when cumulative limits are set.
-Queued reads in batches and transactions are nonblocking and reject `WaitFor` locally.
-Omitting `MaxCount` and `MaxSize` keeps the existing server requirements.
+- The first limit reached wins. These are server-side limits, not client-side truncation.
+- Nonblocking reads visit streams in request order, so earlier streams can use the whole budget.
+- Queued reads reject `WaitFor` locally.
+- Without `MaxCount` and `MaxSize`, the server requirements are unchanged.
+- `XREADGROUP` accepts the same limits; see [Consumer groups](#consumer-groups).
 
-For consumer groups, `ReadGroupOnceAsync(key, group, consumer, options)` reads one page.
-The multi-stream `ReadGroupAsync(streams, group, consumer, options)` also reads one page;
-use `>` cursors for new entries or numeric cursors for that consumer's pending entries.
-Both forms return entries with `AckAsync` support. `queue.Streams.ReadGroup` provides the
-same nonblocking operations in batches and transactions. All multi-stream keys must share
-a Cluster hash slot, including after prefixing. Limits also apply to pending history and
-after blocking reads wake; entries excluded by the byte budget are not added to the PEL.
+#### Following streams with `ReadAllAsync`
 
-The existing single-stream consumer loops remain available. Their options-first overload
-accepts the same reply limits; new-entry loops default to a five-second blocking interval
-when `WaitFor` is omitted, while explicit pending cursors replay without blocking until empty.
-See [XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/) for server semantics.
-The default start id is `0`; only entries newer than each supplied id are returned. `count`
-limits entries **per stream**. Missing/empty streams are omitted from multi-stream results;
-an empty or timed-out response returns an empty array. Keys, ids, field names, and binary
-values are owned after the call or deferred execution completes. Returned keys have the
-client prefix removed. Cluster calls require all effective, prefixed keys in one hash slot.
+- Tracks a last-delivered ID per stream, in memory. It advances when an entry is delivered, not when your handler succeeds. Persist checkpoints yourself to survive restarts.
+- Drains each batch, then polls with one-second blocking reads. Polls are exempt from `CommandTimeout`; your cancellation token bounds a wait.
+- Retries transient connection and server failures indefinitely, with delays from 100 ms to 3.2 seconds, until cancellation or disposal. Configure the client logger to see retries.
+- Stops on authentication, ACL, configuration, and other non-transient errors, and when Cluster MOVED/ASK redirects exceed their limit.
+- Disposing the enumerator between entries releases its buffered batch.
+- `RespireStreamId.New` (`$`) in a one-shot read means the current tail. In enumeration, each `$` is resolved once with `XREVRANGE ... COUNT 1` (requires `XREVRANGE` permission); an empty stream starts at `0`. A failed initial lookup throws without retry, so a reconnect cannot silently skip ahead. Multi-stream lookups are not atomic. Numeric IDs avoid the lookup.
 
-Omit `waitFor` for a nonblocking read. A finite wait rounds up to milliseconds (zero becomes
-one millisecond); `Timeout.InfiniteTimeSpan` sends `BLOCK 0`. Blocking reads use dedicated
-connections, leaving ordinary commands responsive. Pass cancellation to interrupt a wait.
-Batches and transactions expose only the nonblocking `Streams.Read` forms.
-
-`ReadAllAsync` keeps an independent last-delivered id for each stream. It drains each owned
-batch before reading again, using one-second blocking polls. Transient connection/server
-failures retry indefinitely until cancellation/disposal, with delays from 100 ms to 3.2 seconds.
-Configure the client logger to observe retry failures and their delay. Normal Cluster routing
-follows MOVED/ASK within its bounded redirect limit; exhausting that limit terminates the
-enumeration. Authentication, ACL, configuration, and other non-transient errors also terminate
-enumeration. Cancellation interrupts reads and retry
-delays; disposing an enumerator between entries releases its buffered batch. Blocking polls
-are exempt from `CommandTimeout`; the caller's cancellation token bounds an active wait.
-
-For a one-shot read, `RespireStreamId.New` (`$`) uses Redis's current tail. For enumeration,
-each `$` is resolved once using `XREVRANGE ... COUNT 1` before the first `XREAD` (requiring
-`XREVRANGE` permission). An empty stream starts at `0`. An initial lookup failure is surfaced
-without retry, so reconnecting cannot silently move the starting point forward. Multi-stream
-tail lookups happen independently, not atomically. Numeric ids avoid this extra lookup.
-
-Enumeration checkpoints are in memory and advance when an entry is delivered, not when your
-handler succeeds. Persist checkpoints yourself for process restarts. Trimming, deleting, or
-recreating a stream during an outage can remove unread entries; reconnect does not guarantee
-lossless delivery or detect every gap. These reads do not create pending entries or support
-consumer-group acknowledgement.
+:::warning
+`ReadAllAsync` is not lossless. Trimming, deleting, or recreating a stream during an outage can remove unread entries, and reconnecting does not detect every gap. These reads create no pending entries and support no acknowledgement.
+:::
 
 ### Consumer groups
 
@@ -730,20 +590,23 @@ foreach (var entry in recovered.Entries)
 }
 ```
 
-Blocking stream reads use the same dedicated-connection mechanism as blocking list operations.
-Use `ClaimAsync` when the pending ids are already known. `ClaimPendingAsync` exposes the
-`XAUTOCLAIM` next position and deleted ids for iterative recovery. To replay the current
-consumer's own pending-entry list, call `ReadGroupAsync` with an explicit `startAt`; that replay
-is non-blocking and completes after the pending entries are exhausted.
+- The single-stream `ReadGroupAsync` loop blocks for five seconds per poll when `WaitFor` is omitted. Its options-first overload accepts the [reply limits](#reply-limits-redis-810).
+- Pass an explicit `startAt` to replay this consumer's pending entries. Replay does not block and ends when the pending entries run out.
+- `ReadGroupOnceAsync(key, group, consumer, options)` reads one page. The multi-stream `ReadGroupAsync(streams, group, consumer, options)` also reads one page: use `>` for new entries or numeric cursors for this consumer's pending entries.
+- Entries support `AckAsync`. Queued `Streams.ReadGroup` provides the nonblocking forms.
+- Reply limits also apply to pending history and after a blocking read wakes. Entries excluded by the byte budget are not added to the pending list.
+- Use `ClaimAsync` when you know the pending IDs. `ClaimPendingAsync` returns the `XAUTOCLAIM` next position and deleted IDs for iterative recovery.
+
+See [XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/).
 
 ### Consumer recovery options
 
-`StreamReadOptions.NoAck` delivers new group entries without adding them to the pending
-entry list. It does not acknowledge existing pending entries. `ClaimMinIdle` adds Redis
-8.4's `XREADGROUP CLAIM`: eligible pending entries arrive before new entries, with the
-longest-idle entries first. Both options work with single-stream pages, multi-stream
-pages, the options-first consumer loop, and nonblocking batch/transaction reads.
-Ordinary `XREAD` methods reject these group-only options before sending a command.
+| `StreamReadOptions` | Effect |
+|---|---|
+| `NoAck` | New group entries skip the pending list. Existing pending entries are not acknowledged. |
+| `ClaimMinIdle` | Uses Redis 8.4 `XREADGROUP CLAIM`. Eligible pending entries arrive before new entries, longest idle first. |
+
+Both work with single- and multi-stream pages, the options-first consumer loop, and queued reads. Plain `XREAD` methods reject them before sending.
 
 ```csharp
 var page = await redis.Streams.ReadGroupAsync(
@@ -756,15 +619,11 @@ var page = await redis.Streams.ReadGroupAsync(
     }, stoppingToken);
 ```
 
-`PreviousIdleTime` and `PreviousDeliveryCount` on each reclaimed entry describe its
-state before this delivery. They are null when the server omits this metadata. Redis 8.4
-also supplies both values as zero for new entries delivered with `CLAIM`. Respire preserves
-the server's values. Reclaimed entries retain `AckAsync` support. Redis ignores `CLAIM`, `NOACK`, and `BLOCK` for numeric
-pending-history cursors. With `CLAIM` and `NOACK` together, only new entries bypass
-the pending list; reclaimed entries still need acknowledgement. Blocking reads use the
-dedicated pool, including when pending entries become eligible while the call waits.
+- `PreviousIdleTime` and `PreviousDeliveryCount` on a reclaimed entry describe it before this delivery. They are null when the server omits them. Redis 8.4 sends zero for both on new entries delivered with `CLAIM`.
+- Reclaimed entries support `AckAsync`. With `CLAIM` and `NOACK` together, only new entries skip the pending list; reclaimed entries still need acknowledgement.
+- Redis ignores `CLAIM`, `NOACK`, and `BLOCK` for numeric pending-history cursors.
 
-Use options-first `PendingAsync` to filter by idle time (Redis 6.2+), consumer, and ID bounds:
+Use options-first `PendingAsync` to filter by idle time (Redis 6.2+), consumer, and ID bounds. The options-based `PendingAsync`, `ClaimAsync`, and `ClaimIdsAsync` overloads take the options before the key.
 
 ```csharp
 var pending = await redis.Streams.PendingAsync(
@@ -784,60 +643,40 @@ var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
     count: 100, cancellationToken: stoppingToken);
 ```
 
-The options-based `PendingAsync`, `ClaimAsync`, and `ClaimIdsAsync` overloads put
-options before the key deliberately, preserving existing key-first call shapes
-and avoiding ambiguity with their optional parameters.
+`StreamClaimOptions` works with `ClaimAsync` and `ClaimIdsAsync`:
 
-`StreamClaimOptions` works with both `ClaimAsync` and `ClaimIdsAsync`. `IdleTime` sends
-`IDLE`; `DeliveryTime` sends an absolute Unix-millisecond `TIME`. Choose only one.
-`RetryCount` sets the delivery counter, `Force` creates a pending record only if the stream
-entry exists, and `LastId` advances the group's last-delivered ID when greater.
-Durations and counters must be nonnegative; durations use whole milliseconds.
-The `minIdle` threshold on `ClaimAsync`, `ClaimIdsAsync`, `ClaimPendingAsync`, and
-`ClaimPendingIdsAsync` rounds fractional milliseconds upward, including at `TimeSpan.MaxValue`.
-The assigned `IdleTime` value retains whole-millisecond truncation.
-For cancellable `ClaimIdsAsync` calls, pass the IDs as a span or array followed by
-`cancellationToken: stoppingToken`, as above. The `params` overload omits cancellation.
+| Option | Meaning |
+|---|---|
+| `IdleTime` | Sends `IDLE`. Truncated to whole milliseconds. |
+| `DeliveryTime` | Sends an absolute Unix-millisecond `TIME`. Use either this or `IdleTime`. |
+| `RetryCount` | Sets the delivery counter. |
+| `Force` | Creates a pending record, only if the stream entry exists. |
+| `LastId` | Advances the group's last-delivered ID when greater. |
 
-The IDs-only methods send `JUSTID`, avoiding field payloads and automatic delivery-counter
-increments. An explicit `RetryCount` still sets the counter. `ClaimPendingIdsAsync` requires
-Redis 6.2 and returns `NextStart`, `Ids`, and `DeletedIds`; continue scanning until `NextStart`
-is `0-0`, even when a page has no IDs. `DeletedIds` is populated on Redis 7+ and empty on
-older servers. Recovery commands remain immediate-only. The in-memory fake does not
-implement these recovery options; use Redis containers for their integration tests.
+- Durations and counters must be nonnegative.
+- The `minIdle` threshold on `ClaimAsync`, `ClaimIdsAsync`, `ClaimPendingAsync`, and `ClaimPendingIdsAsync` rounds fractional milliseconds up, including at `TimeSpan.MaxValue`.
+- For cancellable `ClaimIdsAsync`, pass the IDs as a span or array followed by `cancellationToken:`, as above. The `params` overload has no cancellation.
+- The IDs-only methods send `JUSTID`: no field payloads and no automatic delivery-counter increment. An explicit `RetryCount` still sets the counter.
+- `ClaimPendingIdsAsync` (Redis 6.2+) returns `NextStart`, `Ids`, and `DeletedIds`. Continue until `NextStart` is `0-0`, even when a page has no IDs. `DeletedIds` is filled on Redis 7+ and empty on older servers.
+- Recovery commands have no queued form. The in-memory fake does not implement these options; test them against Redis containers.
 
-See [XCLAIM](https://redis.io/docs/latest/commands/xclaim/),
-[XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/), and
-[XPENDING](https://redis.io/docs/latest/commands/xpending/) for server semantics.
+See [XCLAIM](https://redis.io/docs/latest/commands/xclaim/), [XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/), and [XPENDING](https://redis.io/docs/latest/commands/xpending/).
 
 ### Stream metadata
 
-`Streams.CreateConsumerAsync(key, group, consumer)` explicitly creates a consumer in
-an existing stream group (Redis 6.2+, `XGROUP CREATECONSUMER`). It returns `true` for
-a new consumer and `false` for an existing consumer. It does not read entries or
-create a missing stream or group; missing groups and wrong key types are server errors.
+`Streams.CreateConsumerAsync(key, group, consumer)` creates a consumer in an existing group (Redis 6.2+, `XGROUP CREATECONSUMER`). It returns `true` for a new consumer and `false` for an existing one. It does not read entries or create a missing stream or group; those cases and wrong key types are server errors.
 
-`Streams.SetLastIdAsync(key, lastId, entriesAdded: ..., maxDeletedId: ...)` exposes
-`XSETID` (Redis 5.0+). Both optional metadata arguments require Redis 7.0+ and can be
-supplied independently. Omitted metadata remains unchanged. This is an advanced
-restoration operation: Redis documents XSETID as an internal replication command.
-It changes the existing stream's last-generated ID without adding entries, trimming
-entries, or changing a consumer group's position. Use `SetGroupPositionAsync` for
-the group's last-delivered ID instead.
+`Streams.SetLastIdAsync(key, lastId, entriesAdded: ..., maxDeletedId: ...)` runs `XSETID` (Redis 5.0+). Each optional argument requires Redis 7.0+ and can be set alone; omitted values stay unchanged.
 
-Negative `entriesAdded` values fail locally. Redis validates IDs, rejects a last ID
-below the stream's highest existing entry, an entries-added count below its length,
-or a supplied maximum-deleted ID above the last ID. Redis 7.0 treats a supplied
-maximum-deleted ID of `0-0` as leaving that metadata unchanged.
-Server/version/permission errors propagate without emulation.
+:::caution
+`XSETID` is an advanced restoration command that Redis documents as internal to replication. It changes only the stream's last-generated ID. It does not add or trim entries or move consumer groups; use `SetGroupPositionAsync` for a group's last-delivered ID.
+:::
 
-Both methods accept cancellation, apply the client view's key prefix once, and route
-to that key's Cluster owner. Group and consumer names are not prefixed. Existing
-stream entries and binary field values are unchanged. These immediate metadata
-methods follow the existing group-management APIs; they are not batch operations.
+- Negative `entriesAdded` fails locally.
+- Redis rejects invalid IDs, a last ID below the highest entry, an `entriesAdded` below the stream length, and a `maxDeletedId` above the last ID.
+- Redis 7.0 treats a `maxDeletedId` of `0-0` as unchanged.
 
-See Redis's [CREATECONSUMER](https://redis.io/docs/latest/commands/xgroup-createconsumer/)
-and [XSETID](https://redis.io/docs/latest/commands/xsetid/) references.
+Both methods accept cancellation and have no queued form. See [CREATECONSUMER](https://redis.io/docs/latest/commands/xgroup-createconsumer/) and [XSETID](https://redis.io/docs/latest/commands/xsetid/).
 
 ## Bitmaps, HyperLogLogs, and geo indexes
 
@@ -863,7 +702,10 @@ GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     GeoSearchShape.Circle(10, GeoUnit.Kilometers));
 ```
 
-BITFIELD operations use `BitFieldEncoding.Signed(width)` (1–64 bits) or `Unsigned(width)` (1–63 bits). `BitFieldOffset.Bits(n)` is an absolute bit offset; `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both offset factories reject negative values. The default offset is bit zero. `Get`, `Set`, and `Increment` all accept these types; `FieldReadOnlyAsync` accepts only `Get` operations.
+BITFIELD types:
 
-For Redis vector similarity, use the typed [VectorSets facet](../guides/vector-sets).
-For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands).
+- `BitFieldEncoding.Signed(width)` takes 1–64 bits; `Unsigned(width)` takes 1–63.
+- `BitFieldOffset.Bits(n)` is an absolute bit offset. `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both reject negative values. The default offset is bit zero.
+- `Get`, `Set`, and `Increment` accept these types. `FieldReadOnlyAsync` accepts only `Get`.
+
+For vector similarity, use the [VectorSets facet](../guides/vector-sets.md). For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands.md).

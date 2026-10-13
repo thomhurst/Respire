@@ -5,13 +5,11 @@ description: Consume Redis channels as async streams.
 
 # Pub/sub
 
-Respire models subscriptions as `IAsyncEnumerable<RespireMessage>`. Leaving the loop and disposing the subscription performs cleanup—no delegate bookkeeping required.
-
-For typed keyspace, keyevent, and Redis 8.8 subkey events, see [Keyspace notifications](keyspace-notifications.md).
+Respire exposes subscriptions as `IAsyncEnumerable<RespireMessage>`. Leave the loop and dispose the subscription to clean up. For typed keyspace, keyevent, and Redis 8.8 subkey events, see [Keyspace notifications](keyspace-notifications.md).
 
 ## Subscribe
 
-`SubscribeAsync` returns once the server has acknowledged the SUBSCRIBE, so the subscription is live before the first message is published—no polling on `PublishAsync`'s receiver count.
+`SubscribeAsync` returns after the server acknowledges SUBSCRIBE, so the subscription is live before the first publish.
 
 ```csharp
 await using var subscription =
@@ -29,20 +27,17 @@ await foreach (RespireMessage message in
 }
 ```
 
-Pattern and Redis 7 sharded subscriptions use dedicated entry points:
+Pattern and Redis 7 sharded subscriptions have their own entry points:
 
 ```csharp
 await using var patterns = await redis.SubscribePatternAsync("events:*");
 await using var shard = await redis.SubscribeShardedAsync("events:eu-west");
 ```
 
-Messages are buffered from the moment the subscription is acknowledged. The configured capacity and overflow policy apply even before enumeration starts.
-
-A subscription is a single-consumer stream: only one enumerator may be active at a time. Dispose
-it before starting another. `Kind` and immutable `Targets` describe what the subscription covers,
-while `IsDisposed` reports whether it has ended. Await `Completion` to distinguish explicit
-disposal, disposal of the owning client, and `ReconnectExhausted` when a configured
-reconnect attempt limit ends the subscription.
+- Buffering starts at acknowledgement. Capacity and overflow policy apply before enumeration starts.
+- A subscription allows one active enumerator. Dispose it before starting another.
+- `Kind` and immutable `Targets` describe what it covers. `IsDisposed` reports whether it has ended.
+- Await `Completion` to tell apart explicit disposal, disposal of the owning client, and `ReconnectExhausted` (a configured reconnect attempt limit ended it).
 
 ## Publish
 
@@ -53,10 +48,7 @@ long shardReceivers = await redis.PublishShardedAsync("events:eu-west", payload)
 
 ## Binary channels and explicit subscription kinds
 
-`RespireChannel` owns the exact channel bytes. Strings convert implicitly after UTF-16 validation;
-byte arrays and `ReadOnlyMemory<byte>` convert implicitly by copying their contents. Mutating the
-original buffer after construction, subscription, or publication cannot change a channel's identity.
-Reuse a constructed channel to avoid copying it for each publication.
+`RespireChannel` holds the exact channel bytes. Strings convert implicitly after UTF-16 validation. Byte arrays and `ReadOnlyMemory<byte>` convert implicitly by copying, so later changes to the source buffer do not affect the channel. Reuse a constructed channel to avoid a copy per publish.
 
 ```csharp
 RespireChannel binary = new byte[] { 0xff, 0x00, 0x3a, 0x41 };
@@ -73,26 +65,21 @@ RespireChannel[] targets = ["orders", binary];
 await using var multiple = await redis.SubscribeAsync(targets, stoppingToken);
 ```
 
-The metadata-aware `SubscribeAsync` uses `Kind` to select SUBSCRIBE, PSUBSCRIBE, or SSUBSCRIBE.
-Multi-target subscriptions require one kind; use separate subscriptions for mixed kinds. Named
-`SubscribePatternAsync` and `SubscribeShardedAsync` also accept binary targets and explicitly select
-their command family. Patterns cannot be published. Existing string subscription and publication
-overloads remain available, including sharded subscriptions across Redis Cluster primaries.
+- `SubscribeAsync(RespireChannel)` uses `Kind` to choose SUBSCRIBE, PSUBSCRIBE, or SSUBSCRIBE.
+- A multi-target subscription needs one kind. Use separate subscriptions for mixed kinds.
+- `SubscribePatternAsync` and `SubscribeShardedAsync` also accept binary targets.
+- Patterns cannot be published.
+- Equality and hashing compare bytes only, ignoring kind. Equivalent text and UTF-8 targets deduplicate within a subscription.
+- `ClusterSlot` uses raw bytes and Redis hash-tag rules.
+- Empty channels, including `default(RespireChannel)`, are valid. Arbitrary binary is accepted.
+- Unpaired UTF-16 surrogates throw `ArgumentException` before any subscription work.
+- Names such as `__keyspace@0__:key` are ordinary channels; no notification routing is inferred.
 
-Equality and hashing compare only bytes, independently of kind. Equivalent text and UTF-8 byte
-targets deduplicate within a subscription. `ClusterSlot` uses raw bytes and Redis hash-tag rules.
-Empty channels, including `default(RespireChannel)`, are valid. Unpaired UTF-16 surrogates throw
-`ArgumentException` before subscription work begins; arbitrary binary values are accepted.
-Names such as `__keyspace@0__:key` remain ordinary channels, with no inferred notification routing.
-
-**Pre-release API change:** `RespireMessage.Channel`, nullable `Pattern`, and subscription `Targets`
-now contain `RespireChannel` values. Use `.Bytes` for lossless identity and `.ToString()` for UTF-8
-display. Display replaces invalid UTF-8 and can make distinct channels look identical. For exact
-diagnostics use `Convert.ToHexString(channel.Bytes.Span)`; channel bytes are not telemetry tags.
+`RespireMessage.Channel`, nullable `Pattern`, and `Targets` are `RespireChannel` values. Use `.Bytes` for exact identity and `.ToString()` for UTF-8 display. Display replaces invalid UTF-8, so distinct channels can look identical; use `Convert.ToHexString(channel.Bytes.Span)` for exact diagnostics. Do not use channel bytes as telemetry tags.
 
 ## Explicit pub/sub prefixes
 
-Key prefixes leave channels unchanged. Opt in separately when application channels need a namespace:
+Key prefixes do not change channels. Add a channel namespace separately:
 
 ```csharp
 IRespireClient tenant = redis.WithKeyPrefix("keys:42:").WithPubSubPrefix("events:42:");
@@ -101,113 +88,92 @@ await tenant.PublishAsync("orders", orderJson, stoppingToken); // events:42:orde
 RespireChannel physical = tenant.ResolveChannel("orders");
 ```
 
-`WithPubSubPrefix(string)` validates UTF-16 and encodes UTF-8. The `RespireKey` overload
-accepts arbitrary bytes, including NUL and invalid UTF-8, and snapshots binary storage:
+`WithPubSubPrefix(string)` validates UTF-16 and encodes UTF-8. The `RespireKey` overload accepts any bytes, including NUL and invalid UTF-8, and snapshots them:
 
 ```csharp
 RespireKey prefix = new byte[] { 0xff, 0x00, (byte)':' };
 IRespireClient binaryTenant = redis.WithPubSubPrefix(prefix);
 ```
 
-Both overloads reject empty prefixes. Nested views append prefixes in order. Key-prefix,
-read-routing, and cache-bypass views preserve the pub/sub prefix. Views share the root's
-connections and subscription hub; disposing a view leaves the root and other subscriptions
-usable. Byte-equivalent physical routes share one server subscription until the last consumer
-disposes. Reconnect restores those physical routes and emits the usual gap markers.
+Views:
 
-Literal and sharded channels receive the exact prefix bytes. Pattern subscriptions escape
-`*`, `?`, `[`, `]`, and `\` in the prefix before appending the caller's glob pattern. For example,
-prefix `tenant*:` and pattern `order*` subscribe to `tenant\*:order*`; the prefix stays literal.
-`RespireMessage.Channel`, nullable `Pattern`, and subscription `Targets` retain physical wire
-identities, including the prefix and escaped pattern. Gap markers still have an empty channel
-and null pattern. No automatic stripping occurs.
+- Both overloads reject empty prefixes. Nested views append prefixes in order.
+- Key-prefix, read-routing, and cache-bypass views keep the pub/sub prefix.
+- Views share the root's connections and subscriptions. Disposing a view leaves the root and other subscriptions usable.
+- Byte-identical physical routes share one server subscription until the last consumer disposes. Reconnect restores them and emits the usual gap markers.
 
-Set `RespireOptions.PubSubPrefix` for a default root channel namespace. It is independent of
-`KeyPrefix` and defaults to empty. URI and comma-delimited connection strings accept
-`pubSubPrefix=events%3A`; text is percent-decoded once, the last entry wins, and empty clears it.
-Use structured options for binary prefixes. Dependency-injection builders expose `PubSubPrefix`;
-Aspire configuration accepts `Aspire:Respire:Options:PubSubPrefix` and the named
-`Aspire:Respire:<connectionName>:Options:PubSubPrefix` override. Configuration callbacks can
-replace or clear the option, including with binary bytes.
+Prefixing rules:
 
-Only typed subscription and publication methods apply this prefix. Raw, catalog, and
-interpolated commands and the [Server PUBSUB queries](pub-sub-introspection.md) use explicit
-physical names. `ResolveChannel` returns the physical literal, pattern, or sharded target;
-pass that result to an unprefixed client or a Server query. Passing it back to a prefixed
-publication or subscription prefixes it again. Prefixes do not alter key arguments or
-automatically change a backplane's configured channel names: backplanes use a prefix only
-when their supplied client explicitly opts in.
+- Literal and sharded channels get the exact prefix bytes.
+- For patterns, `*`, `?`, `[`, `]`, and `\` in the prefix are escaped so the prefix stays literal. Prefix `tenant*:` with pattern `order*` subscribes to `tenant\*:order*`.
+- `Channel`, `Pattern`, and `Targets` keep the physical names, including prefix and escaping. Nothing is stripped. Gap markers still have an empty channel and null pattern.
+- Only typed subscribe and publish methods apply the prefix. Raw, catalog, and interpolated commands and the [Server PUBSUB queries](pub-sub-introspection.md) use physical names.
+- `ResolveChannel` returns the physical literal, pattern, or sharded target. Pass it to an unprefixed client or a Server query. Passing it to a prefixed client prefixes it twice.
+- Prefixes do not change key arguments. Backplanes use a prefix only when the client you give them opts in.
+- [Notification descriptors](keyspace-notifications.md) keep their server-owned channel names. Build them from physical keys with `ResolveKey`, and filter and strip the key namespace yourself when parsing. An ordinary channel that looks like a notification name still gets the prefix.
 
-[Notification descriptors](keyspace-notifications.md) keep their server-owned channel names
-and routing metadata unchanged. Build descriptors from physical keys with `ResolveKey`, then
-explicitly filter and strip the complete key namespace during notification parsing. An ordinary
-channel whose bytes happen to resemble a reserved notification name still receives the prefix.
+Set a default root namespace with `RespireOptions.PubSubPrefix` (default empty, independent of `KeyPrefix`):
 
-Redis pub/sub is shared across logical databases. A channel prefix is a naming convention,
-not an authorization boundary; use Redis ACLs for access control.
+| Source | Form |
+| --- | --- |
+| Connection string (URI or comma-delimited) | `pubSubPrefix=events%3A`. Percent-decoded once; last entry wins; empty clears it. |
+| Dependency injection | `PubSubPrefix` on the builder. |
+| Aspire | `Aspire:Respire:Options:PubSubPrefix`, or per connection `Aspire:Respire:<connectionName>:Options:PubSubPrefix`. |
+| Structured options / configuration callbacks | Any value, including binary bytes; callbacks can replace or clear it. |
+
+Redis pub/sub is shared across logical databases. A channel prefix is a naming convention, not a security boundary; use Redis ACLs for access control.
 
 ## Sharded subscriptions in Redis Cluster
 
-With `UseCluster = true`, `SubscribeShardedAsync` groups channels by their hash-slot owner and
-uses one dedicated subscription connection per primary. Channels on different slots can share
-one subscription; channels on the same primary share its connection. Duplicate consumers share
-one server-side subscription until the last consumer disposes. `SPUBLISH` uses the command
-connection for the channel's slot. Channel names are never affected by a client's key prefix.
-An explicit pub/sub prefix applies before slot selection, so hash tags in the complete physical
-channel determine both SSUBSCRIBE and SPUBLISH routing, including after resharding.
+With `UseCluster = true`, `SubscribeShardedAsync` groups channels by the primary that owns their slot:
 
-`MOVED` and `ASK` replies, unsolicited `SUNSUBSCRIBE` frames during resharding, and refreshed topology
-all trigger routing to the current owner. Socket failures restore the affected channels without
-resubscribing healthy primaries. The existing subscription and its buffer survive these changes.
-A reconnect gap marker precedes messages from the replacement subscription; Redis pub/sub
-cannot replay messages lost while a channel changes owners.
+- One dedicated subscription connection per primary. Channels on different slots can share one subscription.
+- Duplicate consumers share one server-side subscription until the last disposes.
+- `SPUBLISH` uses the command connection for the channel's slot.
+- Key prefixes never affect channels. A pub/sub prefix applies before slot selection, so hash tags in the full physical channel decide SSUBSCRIBE and SPUBLISH routing, including after resharding.
 
-Sharded Cluster subscriptions share one recovery episode and configured attempt budget,
-with health retained for every affected primary until the episode completes. An attempt on
-another primary cannot clear an earlier primary's failure. Successful recovery clears all
-affected endpoints; exhaustion marks them disconnected. Topology-driven recovery reports
-subscription owners rather than an unrelated configured seed. New sharded subscriptions
-fail while an episode is active, with or without a configured `ReconnectPolicy`, even for
-channels whose primary is healthy, because the episode owns every sharded route; subscribe
-again after recovery completes. Existing subscriptions keep their buffers and routes.
-With a null policy, recovery retries indefinitely: the first attempt is immediate, then
-exponential waits begin at 250 ms and stop growing at five seconds. New subscriptions do
-not wait for that episode; during a prolonged outage they continue to fail promptly.
-Configure `ReconnectPolicy.MaxAttempts` to bound recovery.
+On `MOVED`/`ASK`, unsolicited `SUNSUBSCRIBE` during resharding, or a topology refresh, Respire routes to the current owner. Socket failures restore only the affected channels. The subscription and its buffer survive. A reconnect gap marker comes before messages from the new owner; messages lost during the move cannot be replayed.
 
-The sharded recovery budget is
-separate from regular channel and pattern subscriptions. Exhausting that budget completes all
-sharded subscriptions with `ReconnectExhausted`; regular subscriptions remain usable. Recreate
-the client to create sharded subscriptions after exhaustion. Notifications across Cluster
-primaries are a separate feature and remain unsupported.
+Recovery:
+
+- Sharded subscriptions share one recovery episode and attempt budget, separate from regular and pattern subscriptions.
+- Every affected primary stays unhealthy until the episode ends. Success clears them all; exhaustion marks them disconnected.
+- New sharded subscriptions fail while an episode is active, even for healthy primaries, with or without a `ReconnectPolicy`. Subscribe again after recovery. Existing subscriptions keep their buffers and routes.
+- With a null policy, recovery retries forever: an immediate attempt, then exponential waits from 250 ms, capped at five seconds. New subscriptions keep failing promptly during a long outage. Set `ReconnectPolicy.MaxAttempts` to bound recovery.
+- Exhaustion completes all sharded subscriptions with `ReconnectExhausted`. Regular subscriptions keep working. Recreate the client to create sharded subscriptions again.
+
+Keyspace notifications in Cluster use their own connections and recovery; see [Keyspace notifications](keyspace-notifications.md#redis-cluster).
 
 ## Read message data
 
-`RespireMessage` exposes text, bytes, channel and pattern metadata. Deserialize application messages with the client's configured serializer:
+`RespireMessage` exposes text, bytes, channel, and pattern. Deserialize with the client's configured serializer:
 
 ```csharp
 OrderCreated order = message.As<OrderCreated>();
 ```
 
-Channel, pattern, and payload bytes remain valid after enumeration advances. Exact-channel
-messages share immutable registered channel storage; pattern messages own a copy of the concrete
-channel name from the incoming frame. Accessing `.Bytes` does not allocate. Text conversion is
-explicit and can allocate; do not mutate the exposed read-only storage through unsafe APIs.
+Channel, pattern, and payload bytes stay valid after enumeration advances. `.Bytes` does not allocate; text conversion can. Do not mutate the read-only storage through unsafe APIs.
 
 ## Reconnection and pressure
 
-`RespireOptions.ReconnectPolicy` can bound and delay automatic reconnection and
-resubscription. Its budget resets only after all live routes are acknowledged. Exhaustion
-ends live subscriptions; recreate the client to subscribe again. New subscriptions during
-configured recovery fail rather than bypassing its delay. Null preserves the existing
-immediate attempt followed by 250 ms exponential waits capped at five seconds. See
-[connection recovery](reconnect-policy.md#pubsub-reconnection-and-resubscription) for
-attempt semantics, cancellation, lifecycle events, and telemetry.
+Subscriptions resubscribe after reconnection. `RespireOptions.ReconnectPolicy` can bound and delay this:
 
-Subscriptions resubscribe after reconnection. The subscription buffer is bounded; configure
-`SubscriptionOverflow` in `RespireOptions` to drop either the oldest buffered message or the
-newest incoming message when a consumer falls behind. Override those defaults for one
-subscription with `RespireSubscriptionOptions`:
+- The budget resets only after all live routes are acknowledged.
+- Exhaustion ends live subscriptions; recreate the client to subscribe again.
+- New subscriptions during configured recovery fail instead of skipping its delay.
+- With no policy (default `null`): an immediate attempt, then exponential waits from 250 ms, capped at five seconds.
+
+See [connection recovery](reconnect-policy.md#pubsub-reconnection-and-resubscription) for attempts, cancellation, events, and telemetry.
+
+The subscription buffer is bounded:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `RespireOptions.SubscriptionBufferSize` | 1,024 | Messages buffered per subscription. |
+| `RespireOptions.SubscriptionOverflow` | `DropOldest` | When a consumer falls behind, drop the oldest buffered message (`DropOldest`) or the newest incoming one (`DropNewest`). |
+| `RespireSubscriptionOptions.MaxPayloadBytes` | `null` (unlimited) | Larger payloads are discarded before queuing and produce a `PayloadTooLarge` gap. |
+
+Override per subscription with `RespireSubscriptionOptions`; a `null` argument inherits the client setting:
 
 ```csharp
 var options = new RespireSubscriptionOptions(
@@ -220,27 +186,17 @@ await using var telemetry = await redis.SubscribeAsync(
     "telemetry", options, stoppingToken);
 ```
 
-Blocking and throwing policies are intentionally unavailable because they would stop the shared
-pub/sub reader and affect unrelated subscriptions. `DroppedMessages` reports the number discarded
-for that subscription, and the `respire.pubsub.messages.dropped` counter exposes the same event to
-metrics collectors.
+- There is no blocking or throwing policy: it would stall the shared reader and affect other subscriptions.
+- `MaxPayloadBytes` limits retained payloads only; the transport still parses frames with its normal buffers. Each subscription on a route has its own limit.
+- `DroppedMessages` counts discards for the subscription, including oversized payloads. The `respire.pubsub.messages.dropped` counter reports the same.
 
-`MaxPayloadBytes` is optional and defaults to null, preserving unrestricted payload sizes.
-An oversized payload is discarded before being copied into this subscription's queue and produces
-a `PayloadTooLarge` gap. Other subscriptions on the same route keep their own limits. The transport
-still parses incoming Redis frames using its ordinary buffers; this limit bounds retained subscription
-payloads. `DroppedMessages` also counts these discards.
-
-Pub/sub is transient: Redis does not retain messages for disconnected subscribers. Use streams when delivery tracking and replay matter.
+Redis does not keep messages for disconnected subscribers. Use streams when you need delivery tracking or replay.
 
 ## Detecting delivery gaps
 
-**Pre-release behavior change:** subscription streams now include `RespireMessageKind.Gap` items.
-Check `Kind` before reading or deserializing a published payload. A gap has empty channel/payload
-fields, and `As<T>()` throws because there is no published value.
+Streams contain `RespireMessageKind.Gap` items as well as messages. Check `Kind` before reading a payload: a gap has empty channel and payload, and `As<T>()` throws.
 
-The following example logs each item. Replace the gap log with your application's
-state reload, and replace the message log with its normal update handler.
+Replace the gap log with your state reload and the message log with your handler:
 
 ```csharp
 await using var subscription = await redis.SubscribeAsync("orders", stoppingToken);
@@ -260,26 +216,23 @@ await foreach (var message in subscription.WithCancellation(stoppingToken))
 }
 ```
 
-`message.Gap` reports `Reason` (`Reconnect`, `BufferOverflow`, `PayloadTooLarge`, or combined reasons), `StartedAt`, `EndedAt`,
-`Duration`, and the known local `DroppedMessages` count. Connection loss counts are unknown.
-The reconnect interval begins when the client observes a failed connection, which can be later
-than the actual interruption, and ends at the target's resubscription acknowledgement.
+`message.Gap` reports:
 
-Each affected target produces a reconnect gap before any messages received after its acknowledgement,
-including when both arrive in one socket read. Multi-target subscriptions can report more than one
-gap as targets resume. Messages already buffered before reconnect remain before the marker.
-Overflow markers sit at the loss position: before retained data for `DropOldest`, after previously
-buffered data for `DropNewest`. Adjacent markers coalesce by combining reasons, observed intervals,
-and discard counts. Markers do not consume data capacity and cannot themselves be dropped; their
-storage remains bounded by the configured message capacity plus one pending marker.
+| Property | Meaning |
+| --- | --- |
+| `Reason` | `Reconnect`, `BufferOverflow`, `PayloadTooLarge`, or a combination. |
+| `StartedAt` | When the client saw the connection fail (can be later than the real interruption). |
+| `EndedAt` | The target's resubscription acknowledgement. |
+| `Duration` | Length of the interval. |
+| `DroppedMessages` | Known local discards. Messages lost while disconnected are not counted. |
 
-`subscription.DeliveryGap` and the `respire.pubsub.delivery.gaps` counter report each detected target
-interruption or local discard, even without enumeration. Their count can exceed the number of
-coalesced stream markers. Counter tags are `respire.subscription.kind` and
-`respire.subscription.gap.reason`; channel names and payloads are not tags. Event handlers run
-synchronously on the receive path: keep them short, signal background work, and never block on
-Redis or subscription operations. Handler exceptions are logged without stopping message delivery.
+Marker placement:
 
-Reloading is application-specific: use versions or idempotent updates when reconciling buffered
-messages with a fresh snapshot. Redis pub/sub cannot replay lost messages; use Streams when replay
-or acknowledged delivery is required.
+- Each affected target gets a reconnect gap before any message received after its acknowledgement, even in the same socket read. Multi-target subscriptions can report several gaps.
+- Messages buffered before the reconnect stay before the marker.
+- Overflow markers sit at the loss point: before retained data for `DropOldest`, after buffered data for `DropNewest`.
+- Adjacent markers merge their reasons, intervals, and counts. Markers use no data capacity and are never dropped; at most one pending marker is stored beyond the message capacity.
+
+`subscription.DeliveryGap` and the `respire.pubsub.delivery.gaps` counter fire for every interruption or discard, even without enumeration, so they can exceed the number of stream markers. Counter tags are `respire.subscription.kind` and `respire.subscription.gap.reason`; channel names and payloads are not tags. Handlers run synchronously on the receive path: keep them short, hand off work, and never block on Redis or subscription calls. Handler exceptions are logged and delivery continues.
+
+When reloading, use versions or idempotent updates to reconcile buffered messages with the fresh snapshot. Use Streams when you need replay or acknowledged delivery.

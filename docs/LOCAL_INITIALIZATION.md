@@ -1,58 +1,48 @@
 # Local initialization (`SkipLocalsInit`) findings
 
-This page records the code-generation evidence behind #1065. It explains why no Respire package
-suppresses local initialization. It is a record of findings, not a policy or status list, and
-feature pull requests do not need to update it. The enforced policy is
-`LocalInitializationAuditTests.ReviewedSkipLocalsInitScopes`, which is empty. The per-site
-`stackalloc` justifications sit next to each allocation in `src/`.
+Do not apply `SkipLocalsInit` at module, type or method scope. No Respire package suppresses local
+initialization. `LocalInitializationAuditTests.ReviewedSkipLocalsInitScopes` enforces this and is
+empty. Every `stackalloc` needs its own justification comment next to the allocation in `src/`.
 
-## Conclusion
+This page records the evidence. Feature pull requests do not need to update it.
 
-Do not apply `SkipLocalsInit`, at module, type or method scope, to the measured paths.
+## Findings
 
-- On the methods that regressed in #1076, the attribute removes one or two prologue stores per
-  call. That is the most it can save.
-- No other instruction in those methods changes deterministically. The CoreLib UTF-8 callees
-  that differed in #1076 also differ between two runs of the same unchanged binary under
-  Dynamic PGO. The #1076 listing differences are consistent with that run-to-run variation,
-  but these controls do not establish the cause of the earlier timing regressions.
-- Timing across separate processes shows no benefit on either framework. The spread between
-  processes of the same build is much larger than any difference between the builds.
-
-A targeted method-level scope has nothing to target. `ResponseReader.StringOrNull` already
-compiles with no locals to zero. With the attribute, `Utf8String.GetString` and
-`RespValue.AsString`/`ToString` keep every prologue store but one or two. The JIT still zeroes
-GC-tracked locals whatever the attribute says, so a narrower scope cannot remove more than the
-module attribute does.
+- On the measured methods, the attribute removes at most one or two prologue stores per call.
+  Nothing else changes deterministically.
+- Timing across processes shows no benefit on either framework. Process-to-process spread within
+  one build is far larger than any difference between builds.
+- A narrower scope cannot help. `ResponseReader.StringOrNull` already zeroes no locals, and the JIT
+  zeroes GC-tracked locals regardless of the attribute.
+- Under Dynamic PGO, CoreLib UTF-8 callees differ between two runs of the same binary. Earlier
+  listing differences fit that variation. These controls do not explain the earlier timing
+  regressions; their cause is unresolved.
 
 ## Method
 
-The probe built `src/Respire` twice from the same commit (`6d666d82d`). The candidate added only
-`[module: System.Runtime.CompilerServices.SkipLocalsInit]`. Reflection confirmed that only the
-candidate's module carries the attribute. A console host named `Respire.Benchmarks`, which
-reaches the internals through the existing `InternalsVisibleTo`, ran the `ProtocolBenchmarks`
-inputs through tier-up. It called the methods through a delegate, as BenchmarkDotNet does.
-
+- Two builds of `src/Respire` from commit `6d666d82d`. The candidate added only
+  `[module: System.Runtime.CompilerServices.SkipLocalsInit]`, confirmed by reflection.
+- A console host named `Respire.Benchmarks` (using the existing `InternalsVisibleTo`) ran the
+  `ProtocolBenchmarks` inputs through tier-up, calling methods through a delegate as
+  BenchmarkDotNet does.
 - Machine: Intel Core i7-12700K, Windows 11, runtimes 8.0.31 and 10.0.12.
-- Listings: `DOTNET_JitDisasm` on the Respire methods and their CoreLib callees
+- Listings: `DOTNET_JitDisasm` on the Respire methods and CoreLib callees
   (`String.CreateStringFromEncoding`, `UTF8Encoding.GetChars`, `Utf8Utility.TranscodeToUtf16`,
-  `Utf8Utility.GetPointerToFirstInvalidByte`, `Ascii.WidenAsciiToUtf16`). Comparisons use each
-  method's final Tier1 listing, with labels and embedded addresses normalized. The listings
-  were captured in separate runs, never during timing.
-- Controls: three PGO-on listing runs per variant, plus one run with `DOTNET_TieredPGO=0`.
-  Timing used 10 PGO-on processes and 6 PGO-off processes per variant, interleaved. Each
-  process reports a median of 15 samples per row.
+  `Utf8Utility.GetPointerToFirstInvalidByte`, `Ascii.WidenAsciiToUtf16`). Final Tier1 listings,
+  labels and addresses normalized, captured in separate runs from timing.
+- Controls: three PGO-on listing runs per variant plus one with `DOTNET_TieredPGO=0`. Timing: 10
+  PGO-on and 6 PGO-off processes per variant, interleaved, each reporting a median of 15 samples.
 
-On Windows, a class in `DOTNET_JitDisasm` must be written as `*Class:Method` (or with its full
-namespace), and the variable must be set from PowerShell or cmd. Git Bash rewrites values that
-contain colons as path lists, and the JIT then prints nothing.
+On Windows, write a `DOTNET_JitDisasm` class as `*Class:Method` (or fully qualified) and set the
+variable from PowerShell or cmd. Git Bash rewrites values with colons as path lists, and the JIT
+prints nothing.
 
 ## Listings
 
-### With Dynamic PGO off: the attribute's own effect
+### Dynamic PGO off: the attribute's own effect
 
-The code-size column shows baseline bytes, then candidate bytes. The last column counts
-instructions that differ after normalization.
+Code size is baseline bytes / candidate bytes. "diff" counts differing instructions after
+normalization.
 
 | Method | net8.0 | net8.0 diff | net10.0 | net10.0 diff |
 | --- | --- | --- | --- | --- |
@@ -65,14 +55,11 @@ instructions that differ after normalization.
 
 - `RespValue.AsString` drops one `mov qword ptr [rsp+...], rax` zeroing store on both frameworks.
 - On net8.0, `Utf8String.GetString(ReadOnlySpan<byte>)` zeroes 24 bytes of frame instead of 40.
-  One 8-byte and two 16-byte stores become one 16-byte and one 8-byte store.
-- Nothing else changes.
 
-### With Dynamic PGO on: run-to-run control
+### Dynamic PGO on: run-to-run control
 
-The table counts instructions that differ between pairs of runs. "Same build" compares two runs
-of one unchanged binary. "Attribute" compares a baseline run with a candidate run captured in
-the same round.
+Differing instructions between pairs of runs. "Same build" compares two runs of one binary;
+"Attribute" compares baseline and candidate runs from the same round.
 
 | Method | Framework | Same build (baseline) | Same build (candidate) | Attribute (round 2) | Attribute (round 3) |
 | --- | --- | --- | --- | --- | --- |
@@ -84,17 +71,12 @@ the same round.
 | `Ascii.WidenAsciiToUtf16` | net10.0 | 39, 0 | 0 | 0 | 0 |
 | `Utf8String.GetString(ReadOnlySpan<byte>)` | net10.0 | 52, 0 | 0 | 0 | 0 |
 
-Under Dynamic PGO, the same binary produces different Tier1 layouts for the library methods and
-the CoreLib transcoders from one process to the next. The baseline-to-candidate differences fall
-inside that range, and some baseline/candidate pairs are identical. The #1076 listings showed
-`TranscodeToUtf16` hot/cold moves and the net10.0 `WidenAsciiToUtf16` tail moving below `ret`.
-Similar moves occur in these unchanged-binary controls. A single BenchmarkDotNet process per
-measurement samples one layout; listing variation alone does not quantify its timing effect.
+Baseline-to-candidate differences fall inside the same-build range. A single BenchmarkDotNet
+process samples one layout; listing variation alone does not quantify its timing effect.
 
 ## Timing
 
-Median ns/op, with the minimum and maximum across processes in brackets. Each cell is baseline,
-then candidate.
+Median ns/op, with the min–max across processes in brackets. Each cell is baseline / candidate.
 
 | Row | Framework | PGO on | PGO off |
 | --- | --- | --- | --- |
@@ -107,26 +89,18 @@ then candidate.
 | `FormatLargeUnicodeBulkString` | net10.0 | 378.2 [360.5–506.7] / 406.2 [361.7–427.9] | 374.5 [369.0–421.7] / 400.2 [367.6–482.9] |
 | `FormatLargeAsciiBulkString` | net10.0 | 307.6 [297.3–375.1] / 343.0 [296.8–375.0] | 317.4 [311.1–366.3] / 315.9 [304.0–333.1] |
 
-The candidate's minimum never beats the baseline's minimum by more than the noise in the
-baseline's own range. On the large rows, one build's processes range over 20 to 40 percent.
-For net10.0 `FormatLargeUnicodeBulkString`, that row's spread exceeds the +10 percent
-regression reported in #1076. For net8.0 `ReadUnicodeBulkString`, the widest same-build
-range is 15.58–18.50 ns with PGO on (about 19 percent), or 21.60–22.70 ns with PGO off
-(about 5 percent). Neither range covers its earlier +35 percent regression. These measurements
-therefore do not explain that regression; its cause remains unresolved. Variation in other
-rows cannot establish the cause of a slowdown in this row.
-
-The Linux probe also produced different results with PGO on and off in
-[run 38278398897](https://github.com/thomhurst/Respire/actions/runs/38278398897), the probe run
-of the merged comparison workflow on Linux. With PGO on, all of that run's gates passed, with
-candidate/control ratios from 0.912 to 1.025. With PGO off, its report-only leg flagged four
-rows between 1.019 and 1.127. No pair of rows showed a consistent improvement.
+- The candidate's minimum never beats the baseline's minimum by more than the baseline's own noise.
+- On the large rows, one build's processes range over 20 to 40 percent.
+- The Linux probe run of the comparison workflow also showed no consistent improvement: with PGO on,
+  all gates passed (candidate/control ratios 0.912 to 1.025); with PGO off, the report-only leg
+  flagged four rows between 1.019 and 1.127.
 
 ## Reopening
 
-A future proposal needs a method whose removable zeroing is large compared with its work. An
-example is a large `stackalloc` buffer or a big non-GC struct local that is always overwritten
-before it is read. The 39 audited sites are not such cases. A proposal adds its scope to
-`ReviewedSkipLocalsInitScopes` and extends `benchmark-local-initialization.yml` with
-benchmarks that cover every method in the scope. It must show a benefit larger than the
-process-to-process spread above, measured across several processes.
+A proposal needs a method whose removable zeroing is large compared with its work, such as a large
+`stackalloc` buffer or a big non-GC struct local that is always written before it is read. None of
+the audited `stackalloc` sites qualify. To propose one:
+
+1. Add the scope to `ReviewedSkipLocalsInitScopes`.
+2. Extend `benchmark-local-initialization.yml` with benchmarks covering every method in the scope.
+3. Show a benefit larger than the process-to-process spread above, across several processes.

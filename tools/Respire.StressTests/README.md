@@ -1,14 +1,13 @@
 # Respire.StressTests
 
-Sustained stress comparison of Respire against StackExchange.Redis across common Redis
-operations. Where the BenchmarkDotNet comparison (`benchmarks/Respire.ComparisonBenchmarks`)
-measures steady-state per-operation cost, this runner holds a concurrent workload for
-minutes at a time and watches for what short benchmarks miss: throughput drift,
-latency tail growth, allocation buildup, errors, and outright stalls.
+A sustained stress comparison of Respire and StackExchange.Redis. Where the
+BenchmarkDotNet comparison (`benchmarks/Respire.ComparisonBenchmarks`) measures
+per-operation cost, this runner holds a concurrent workload for minutes and looks
+for throughput drift, latency tail growth, allocation buildup, errors, and stalls.
 
-Both clients are driven through the same `IStressClient` surface, so each scenario issues
-an identical operation sequence per client. Within every scenario StackExchange.Redis
-runs first as the baseline, then Respire, each on a fresh connection.
+Both clients run the same operation sequence through `IStressClient`. In each
+scenario StackExchange.Redis runs first as the baseline, then Respire, each on a
+fresh connection.
 
 ## Scenarios
 
@@ -24,6 +23,8 @@ runs first as the baseline, then Respire, each on a fresh connection.
 
 ## Running locally
 
+From `tools/Respire.StressTests`:
+
 ```bash
 # Full run: all scenarios, both clients, 5 minutes measured per pass
 dotnet run -c Release -f net10.0 -- --duration 5
@@ -35,53 +36,50 @@ dotnet run -c Release -f net10.0 -- --duration-seconds 5 --warmup 2
 dotnet run -c Release -f net10.0 -- --scenario get --client respire --duration 2
 ```
 
-Uses `REDIS_HOST` / `REDIS_PORT` when set; otherwise starts a throwaway Redis
-Testcontainer (requires Docker). Run `dotnet run -- --help` for all options — any
-unknown option prints usage.
-
-Results land in `./results`: one JSON file per scenario/client pass plus
-`stress-report.md`, a markdown comparison report.
+- Uses `REDIS_HOST` / `REDIS_PORT` (default port 6379) when set; otherwise starts a
+  throwaway `redis:8.10` Testcontainer (needs Docker).
+- Each pass has a 10-second warmup by default, so the full run takes about
+  14 × 5 min 10 s.
+- `dotnet run -- --help` lists all options; an unknown option prints usage.
+- Results go to `./results`: one JSON file per pass plus `stress-report.md`.
 
 ## Hedged-read tail latency
 
-Run a separate, bounded experiment against an owned Redis 7.2 primary/replica deployment:
+A separate experiment against its own Redis 7.2 primary and replica (needs
+Docker; ignores `REDIS_HOST`/`REDIS_PORT`). From the repository root:
 
 ```powershell
 & ./scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @('run', '--project', 'tools/Respire.StressTests', '-c', 'Release', '-f', 'net10.0', '--', '--hedged-read-latency', 'results')
 ```
 
-Run from the repository root. Docker is required. This mode does not use `REDIS_HOST` or
-`REDIS_PORT`; it pauses only its owned replica. It runs baseline, hedged, and baseline passes
-with 20 warmup reads and 1,000 measured sequential GETs per pass. Every twentieth measured
-read follows an acknowledged 50 ms `CLIENT PAUSE ALL` on the replica. The hedged pass uses
-`ReplicaPreferred`, a 5 ms delay, and a 5% extra-load budget.
-
-The probe waits for each pause to expire outside the timed GET before starting the next read.
-This isolates each induced stall; it does not model sustained arrival rates or backlog under
-overload. Redis scheduling can make a 50 ms pause last longer, and host timer resolution can
-make a 5 ms hedge start later. Fresh clients share one fixture across the three passes.
-
-`hedged-read-latency.json` includes all measured samples, nearest-rank p50/p95/p99, runtime,
-OS, configuration, and hedge counters. Counters and the budget include warmup; latency
-percentiles exclude warmup. The process fails on incorrect replies, timeouts, or budget
-violations. It reports latency improvement without imposing a noisy CI performance threshold.
+- It runs baseline, hedged, and baseline passes, each with 20 warmup reads and
+  1,000 measured sequential GETs.
+- Every twentieth read follows a 50 ms `CLIENT PAUSE ALL` on the replica. The
+  hedged pass uses `ReplicaPreferred`, a 5 ms delay, and a 5% extra-load budget.
+- Each pause expires before the next read, so this isolates single stalls; it
+  does not model sustained load or backlog.
+- `hedged-read-latency.json` holds all samples, p50/p95/p99 (excluding warmup),
+  environment, configuration, and hedge counters (including warmup).
+- The run fails on wrong replies, timeouts, or budget violations, but has no
+  latency threshold.
 
 One Windows/.NET 10 run on 2026-10-03 measured p99 93.632 ms before and 93.800 ms after,
 versus 16.572 ms with hedging. All 50 hedges won: 4.90% extra requests across 1,020 reads,
-below the 51-request budget. These are results for this controlled pause experiment,
-not a throughput claim or a prediction for production workloads.
+below the 51-request budget. This is a controlled pause experiment, not a
+production prediction.
 
 ## Failure policy
 
 The process exits non-zero when any pass records an operation error, stalls (no
-completed operations for 60 consecutive seconds), or an unobserved task exception
-surfaces — so CI runs fail loudly rather than publishing numbers from a broken run.
-Throughput drift is reported but does not fail the run; shared CI runners are too
-noisy for that to be a reliable signal.
+completed operations for 60 seconds), or surfaces an unobserved task exception.
+Throughput drift is reported but does not fail the run, because shared CI
+runners are too noisy.
 
 ## CI
 
-`.github/workflows/stress-tests.yml` runs weekly (all scenarios, both clients) and on
-manual dispatch with scenario/client/duration/concurrency/value-size/framework inputs,
-against a Redis 8.0 service container on `ubuntu-latest`. The report is published to
-the job summary and the full results are uploaded as an artifact.
+`.github/workflows/stress-tests.yml` runs weekly (all scenarios, both clients,
+3 minutes per pass) against a Redis 8.10 service container on `ubuntu-latest`.
+Manual dispatch accepts scenario, client, duration, concurrency, value-size, and
+framework inputs. The report goes to the job summary and the results to an
+artifact. Scheduled runs, and manual runs on `main` with `full_run`, also
+regenerate [`website/docs/stress-tests.md`](../../website/docs/stress-tests.md).

@@ -6,26 +6,21 @@ description: Run Redis and Valkey with an Aspire AppHost, HTTP caches, health ch
 # .NET Aspire sample
 
 The [AppHost](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Aspire.AppHost)
-models Redis (`cache`), Valkey (`valkey`), and an HTTP service (`api`). The service uses the
-public `Aspire.Respire` integration and its HybridCache/output-cache companions. Project
-references use the repository versions of those packages; no integration logic is copied
-into the sample.
-
-`WithReference` injects both named connection strings, including generated credentials.
-`WaitFor` starts the service after both servers are healthy. No server ports, passwords,
-or dashboard ports belong in application configuration.
+runs Redis (`cache`), Valkey (`valkey`), and an HTTP service (`api`) that uses `Aspire.Respire`
+and its HybridCache and output-cache companions. `WithReference` injects the connection strings
+and credentials, and `WaitFor` starts the service once both servers are healthy, so the app has no
+ports or passwords in its configuration. For configuration details, see
+[Aspire integration](aspire.md).
 
 ## Requirements and build
 
-- The .NET 10 SDK selected by the repository's `global.json` (currently 10.0.401 or a
-  compatible later feature band), and the .NET 10 runtime. Both sample projects target
-  `net10.0`; the client integration also supports .NET 8, but this AppHost does not.
-- Aspire CLI 13.6, compatible with the repository's Aspire 13.6.1 hosting packages.
-  Follow the [Aspire CLI installation guide](https://aspire.dev/get-started/install-cli/).
-- A running Docker-compatible container runtime, with access to the Redis 8.10 and
-  Valkey 9 images. The first start downloads images.
+- The .NET 10 SDK from `global.json` (10.0.401 or a later compatible band) and runtime. The
+  sample targets `net10.0` only; the integration itself also supports .NET 8.
+- [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6 (the repository uses Aspire 13.6.1
+  hosting packages).
+- A running Docker-compatible runtime. The first start downloads the Redis 8.10 and Valkey 9 images.
 - PowerShell 7 for the optional `Smoke.ps1` helper.
-- A trusted ASP.NET Core development certificate for HTTPS dashboard access.
+- A trusted ASP.NET Core development certificate for the HTTPS dashboard.
 
 From the repository root:
 
@@ -34,13 +29,11 @@ dotnet dev-certs https --trust
 dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0
 ```
 
-Building the AppHost also builds its HTTP service. CI explicitly builds the .NET 10 sample
-and runs `Aspire.Respire.IntegrationTests`, which starts this same AppHost with real
-Redis/Valkey resources and verifies readiness plus all three cache APIs.
+Building the AppHost also builds the HTTP service.
 
 ## Start, readiness, and dashboard
 
-Run all subsequent Aspire commands from the AppHost directory so they select this sample:
+Run the remaining Aspire commands from the AppHost directory:
 
 ```powershell
 cd samples/Respire.Samples.Aspire.AppHost
@@ -51,23 +44,19 @@ aspire wait api --non-interactive --timeout 120
 aspire describe --non-interactive
 ```
 
-Add `--isolated` to `aspire start` in a worktree or when running multiple instances. It
-randomizes local endpoints and isolates AppHost secrets. Endpoints are dynamic in either
-mode: use the dashboard login URL printed by `start`, and the `api` HTTP URL from
-`describe` or the dashboard Resources page. Keep the generated dashboard login token
-local; do not paste it into issues or commits.
+- Add `--isolated` to `aspire start` in a worktree or to run several instances. It randomizes
+  endpoints and isolates AppHost secrets.
+- Endpoints are dynamic. Use the dashboard login URL printed by `start`, and the `api` HTTP URL
+  from `describe` or the dashboard Resources page.
+- Keep the dashboard login token private; do not paste it into issues or commits.
 
-`aspire wait api` checks the AppHost's HTTP readiness probe at `/health`. The service
-issues bounded startup PINGs through both registered clients before serving requests.
-The integration's health checks reuse those established connections; health checks do
-not connect a previously unused client. `/health` aggregates Redis and Valkey readiness,
-rather than reporting process liveness alone.
+`aspire wait api` checks `/health`, which reports Redis and Valkey readiness. The service sends
+a bounded `PING` through both clients at startup, because health checks never connect an unused
+client.
 
 ## Example requests and cache smoke check
 
-Set `$baseUrl` to the discovered **HTTP** URL, without a trailing slash. No fixed port is
-required. `Invoke-WebRequest` shows plain string responses; JSON endpoints use
-`Invoke-RestMethod`:
+Set `$baseUrl` to the **HTTP** URL, without a trailing slash:
 
 ```powershell
 $baseUrl = Read-Host 'Paste the api HTTP URL from aspire describe'
@@ -81,28 +70,24 @@ Invoke-WebRequest "$baseUrl/output"
 pwsh -NoProfile -File ./Smoke.ps1 -BaseUrl $baseUrl
 ```
 
-The distributed endpoint creates a value and reads it back from Redis. Repeated HybridCache
-requests reuse their value; the `/distributed` variant bypasses L1 and throws on a miss,
-so it proves the Redis-backed L2 contains the value. Use different keys for distributed
-and HybridCache requests because their stored formats differ. Repeated output requests
-reuse the response until its cache policy expires. `Smoke.ps1` uses fresh keys and fails
-on any health, connectivity, or cache mismatch.
+- `/distributed/{key}` writes a value and reads it back from Redis.
+- `/hybrid/{key}` returns the same value on repeat. Its `/distributed` variant skips L1 and throws
+  on a miss, proving the value is in Redis.
+- Use different keys for distributed and HybridCache requests; their stored formats differ.
+- `/output` returns the cached response until its policy expires.
+- `Smoke.ps1` uses fresh keys and fails on any health, connection, or cache mismatch.
 
 ## Dashboard telemetry and failure behavior
 
 After making requests, select `api` in the dashboard:
 
-- **Structured logs** show application requests and cache hits/misses. The application
-  enables OpenTelemetry logging with formatted messages.
-- **Traces** show spans from the `Respire` activity source, including PING and cache
-  commands. The client integration registers that source automatically.
-- **Metrics** expose the `Respire` meter. The sample enables the command metric group,
-  including command duration, before creating clients. Select an instrument and generate
-  more requests to inspect new measurements.
+- **Structured logs** show requests and cache hits and misses.
+- **Traces** show `Respire` spans, including `PING` and cache commands.
+- **Metrics** show the `Respire` meter. The sample calls `RespireMetrics.Configure` before
+  creating clients to add `RespireMetricGroups.Command` (command duration).
 
-The service exports telemetry to the AppHost-provided OTLP endpoint. Export runs in
-batches, so allow several seconds for new data to appear. CLI inspection uses the same
-dashboard data:
+Telemetry is exported in batches, so new data takes a few seconds to appear. The CLI shows the same
+data:
 
 ```powershell
 aspire otel logs api --non-interactive --limit 20
@@ -121,11 +106,10 @@ aspire wait cache --non-interactive --timeout 120
 aspire wait api --non-interactive --timeout 120
 ```
 
-After the disconnected connection is observed, `/health` returns HTTP 503 with `Unhealthy`,
-and the AppHost probe marks `api` unhealthy. Recovery follows the client's reconnect
-policy. Stopping Valkey also makes aggregate readiness unhealthy. Cached L1/output
-responses alone do not establish Redis availability; use `/health` and the distributed
-round trip. The sample is for local learning, not a production availability guarantee.
+Once the client notices the disconnect, `/health` returns HTTP 503 `Unhealthy` and `api` is
+marked unhealthy; stopping Valkey does the same. The client recovers according to its reconnect
+policy. Cached L1 and output responses do not prove Redis is up; use `/health` and the distributed
+round trip.
 
 ## Owned-resource cleanup
 
@@ -135,12 +119,11 @@ From the same AppHost directory:
 aspire stop --non-interactive
 ```
 
-This stops this AppHost, its service, dashboard, and its session-owned Redis/Valkey
-containers. The sample does not request persistent volumes or persistent container
-lifetimes; cache data is disposable. Do not stop unrelated AppHosts, shared lock Redis,
-or other containers. If startup fails, inspect `aspire logs api --non-interactive` and
-`aspire describe --non-interactive`, then stop this sample before rebuilding.
+This stops the AppHost, service, dashboard, and this session's Redis and Valkey containers (no
+persistent volumes, so cache data is discarded). Other AppHosts and containers are untouched. If
+startup fails, check `aspire logs api --non-interactive` and `aspire describe --non-interactive`,
+then stop the sample before rebuilding.
 
-The [ASP.NET Core sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AspNetCore)
-and [Cluster/Sentinel samples](https://github.com/thomhurst/Respire/tree/main/samples)
-are separate sample families tracked by [#898](https://github.com/thomhurst/Respire/issues/898).
+For other hosting models, see the
+[ASP.NET Core sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AspNetCore)
+and the [Cluster and Sentinel samples](https://github.com/thomhurst/Respire/tree/main/samples).

@@ -1,54 +1,47 @@
 ---
 title: Incremental StackExchange.Redis migration
-description: Supported library versions, upstream coverage, ownership contracts, and migration from StackExchange.Redis to native Respire APIs.
+description: Use Respire with libraries that expect StackExchange.Redis types, and migrate to native Respire APIs.
 ---
 
 # Incremental StackExchange.Redis migration
 
-Prefer Respire's native typed APIs for normal application code. Install
-`Respire.StackExchangeCompat` when migrating code that still passes `RedisKey`,
-`RedisValue`, or consumes `RedisResult`. The package uses the repository's pinned
-StackExchange.Redis version, currently 3.4.0, and targets .NET 8 and .NET 10.
+`Respire.StackExchangeCompat` lets code and libraries that use StackExchange.Redis types (`RedisKey`,
+`RedisValue`, `RedisResult`, `IConnectionMultiplexer`) run on Respire. Use it during migration or at
+library boundaries; use Respire's native typed APIs everywhere else.
+
+The package targets .NET 8 and .NET 10 and depends on StackExchange.Redis 3.4.0 or later.
+
+```bash
+dotnet add package Respire.StackExchangeCompat
+```
 
 ## Supported libraries and versions
 
-The compatibility adapter supports the integration call sites listed below.
-These versions match `Directory.Packages.props`; support for other versions must
-be verified separately. All acceptance runs use standalone Redis. This evidence
-does not establish every feature or general StackExchange.Redis interface parity.
+The adapter supports the call sites these libraries use, tested against the pinned versions on standalone Redis.
+Verify other versions yourself. It does not provide general StackExchange.Redis parity.
 
-| Library | Pinned version | Verified scope | Native migration |
+| Library | Pinned version | Status | Native replacement |
 | --- | --- | --- | --- |
-| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.12 on both frameworks | Public upstream cache and expiration classes, six service registration facts, buffer cache | `Respire.Caching` via `AddRespireDistributedCache` |
-| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.12 on both frameworks | All four repository scenarios and the builder extension fact, shared persisted key rings | `Respire.DataProtection` via `PersistKeysToRespire` |
-| `Hangfire.Redis.StackExchange` | 1.12.0 | 93 upstream facts and two worker lifecycle cases; [exact exclusions](./hangfire-acceptance) | Keep the shim at the Hangfire boundary; use native typed facets in application code |
-| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Not supported:** requires queue-returning subscriptions, which the adapter will not provide ([#1268](https://github.com/thomhurst/Respire/issues/1268)) | `Respire.SignalR` via `AddRespire` |
+| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.12 | Supported (upstream cache, expiration, and registration tests) | `Respire.Caching` via `AddRespireDistributedCache` |
+| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.12 | Supported (upstream repository and builder tests) | `Respire.DataProtection` via `PersistKeysToRespire` |
+| `Hangfire.Redis.StackExchange` | 1.12.0 | Supported; see [exclusions](./hangfire-acceptance) | Keep the adapter at the Hangfire boundary |
+| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Not supported** | `Respire.SignalR` via `AddRespire` |
+| Orleans Redis providers | 10.2.2 | Supported; see [Orleans compatibility](./orleans-compatibility) | |
 
-The cache/DataProtection upstream inventory covers **52 cases across six test
-classes**. Only the two rows of the cache's internal HybridCache detection test
-are excluded: they need ASP.NET Core's friend assembly grant and never use Redis
-or the adapter. Registration facts verify DI behavior, not Redis wire behavior.
-The [source inventory and adaptations](https://github.com/thomhurst/Respire/blob/main/tests/Respire.StackExchangeCompat.Tests/Upstream/NOTICE.md)
-record each class, case count and exclusion. Hangfire's excluded string constructors
-create StackExchange.Redis internally and cannot test an injected adapter.
+SignalR's backplane needs queue-returning `ISubscriber` overloads (`ChannelMessageQueue`), which depend on
+StackExchange.Redis internals. Use the native [`Respire.SignalR` backplane](../integrations/signalr) instead;
+it interoperates with servers still running Microsoft's backplane.
 
-`IConnectionMultiplexer`, `IDatabase`/`IDatabaseAsync`, `IBatch`,
-`ITransaction`/`ITransactionAsync`, `IServer` and `ISubscriber` have only the
-documented supported members. Use the command and lifetime inventories below
-before migrating a new library. Unsupported operations throw
-`NotSupportedException` with native API guidance. Server errors retain native
-Respire exception types; consumers catching StackExchange.Redis-specific
-exceptions must update their handlers. Ordinary commands provide sync and async
-variants; batches and transactions queue async commands until execution.
+The [upstream test inventory](https://github.com/thomhurst/Respire/blob/main/tests/Respire.StackExchangeCompat.Tests/Upstream/NOTICE.md)
+lists each ported test class and exclusion.
 
-SignalR's `ChannelMessageQueue` construction, message delivery/completion and
-owned unsubscribe require internal StackExchange.Redis APIs. Callback pub/sub
-support for Hangfire does not satisfy that contract. The adapter does not reach
-into StackExchange.Redis internals, so the queue-returning `ISubscriber`
-overloads stay unsupported and Microsoft's SignalR backplane cannot run on the
-adapter. Use the native [`Respire.SignalR` backplane](../integrations/signalr)
-instead; it interoperates with servers that still run Microsoft's backplane.
-Orleans is assessed separately in the [Orleans compatibility guide](./orleans-compatibility).
+General rules:
+
+- `IConnectionMultiplexer`, `IDatabase`/`IDatabaseAsync`, `IBatch`, `ITransaction`/`ITransactionAsync`, `IServer`, and `ISubscriber` support only the members listed on this page. Check the lists before migrating a new library.
+- Unsupported members throw `NotSupportedException` with guidance on the native API.
+- Exceptions are native Respire types (for example `RespireServerException`). Update handlers that catch StackExchange.Redis exceptions.
+
+## Execute native commands with StackExchange.Redis values
 
 ```csharp
 using Respire;
@@ -67,41 +60,21 @@ RedisResult reply = await client.ExecuteStackExchangeAsync(
 byte[]? bytes = (byte[]?)reply;
 ```
 
-The bridge accepts an `IRespireClient`, a native `RespireCommand`, and
-`ReadOnlySpan<RedisValue>` arguments. It forwards `RespireCommandFlags` and
-`CancellationToken` unchanged. Routing, key-prefix handling, blocking commands,
-and server exceptions follow native `ExecuteAsync` semantics. Catalog descriptors
-retain catalog routing metadata; a caller-supplied command string retains the
-native raw-command behavior. This does not translate StackExchange.Redis
-`CommandFlags` or emulate its database API.
+`ExecuteStackExchangeAsync` takes an `IRespireClient`, a native `RespireCommand`, and `ReadOnlySpan<RedisValue>`
+arguments. It behaves like native `ExecuteAsync`: `RespireCommandFlags`, cancellation, routing, key prefixes,
+blocking commands, and errors all work the same way. It does not translate StackExchange.Redis `CommandFlags`.
+Key-prefixed views can reject commands they cannot prefix; use typed facets with `ToRespireKey`/`ToRespireValue` for those.
 
-Native key-prefixed views can reject raw/catalog commands whose layouts are not
-prefixable. Use typed facets with `ToRespireKey`/`ToRespireValue` for those calls;
-the bridge preserves the rejection rather than applying additional rewriting.
+### Arguments and buffer ownership
 
-## Arguments and buffer ownership
+- `ToRespireKey` rejects null keys and keeps empty keys. `ToRespireValue` keeps null distinct from empty.
+- The bridge rejects null arguments before sending.
+- Conversions use StackExchange.Redis's exact wire bytes. Binary data is never decoded as UTF-8, and numbers are not reformatted.
+- Binary buffers can be borrowed. Do not mutate or release them until the command completes; copy them first if you need a snapshot.
 
-`ToRespireKey` rejects null keys and preserves empty keys. `ToRespireValue`
-preserves null versus empty values. The bridge rejects null arguments before
-I/O because Redis command arguments cannot be null.
+### Supported replies
 
-Conversions use StackExchange.Redis's byte representation. Binary keys and
-values are never decoded as UTF-8. Integers, unsigned integers, doubles, booleans,
-strings, memory slices, and sequences retain StackExchange.Redis's wire bytes
-without conversion through floating point or the current culture.
-
-Binary storage can be borrowed from the caller. Do not mutate or release the
-underlying array, memory, or sequence until the native command completes. The
-bridge creates its own argument array; changing the caller's `RedisValue` array
-after invocation does not change that array, but its binary buffers remain
-subject to the same lifetime requirement. Copy binary buffers first when an
-independent snapshot is needed.
-
-## Supported replies
-
-`ToStackExchangeResult` copies supported replies into standalone `RedisResult`
-instances. The copy remains valid after the native root is disposed, including
-nested aggregates and binary payloads.
+`ToStackExchangeResult` copies a reply into a standalone `RedisResult` that stays valid after the native reply is disposed.
 
 | Native reply | `RedisResult.Resp3Type` |
 | --- | --- |
@@ -110,35 +83,17 @@ nested aggregates and binary payloads.
 | Array, map, set | `Array`, `Map`, `Set` |
 | RESP2 null bulk string, null array; RESP3 null | `Null` |
 
-Null bulk strings retain `Resp2Type.BulkString`; null arrays retain
-`Resp2Type.Array`. RESP3 null uses the factory's scalar null identity. Empty
-strings and empty aggregates remain non-null, and map pairs remain flattened
-key/value elements. `RespireResult.NullWireType` exposes the original null
-framing while `Type` remains `RespDataType.Null` for every null reply.
+- Null bulk strings keep `Resp2Type.BulkString`; null arrays keep `Resp2Type.Array`. `RespireResult.NullWireType` exposes the original null framing.
+- Empty strings and aggregates stay non-null. Maps are flattened key/value elements.
+- Error elements, bulk errors, verbatim strings, pushes, and attributes throw `NotSupportedException`. Errors are never converted to values. Top-level server errors throw `RespireServerException`.
+- With `ToStackExchangeResult`, you dispose the native reply. `ExecuteStackExchangeAsync` disposes it for you, but never disposes the client.
 
-Error elements, bulk errors, verbatim strings, push replies, attributes, and
-other unsupported shapes are rejected with `NotSupportedException` and native
-API guidance when presented to the converter. Public
-[`RedisResult` factories](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.0/src/StackExchange.Redis/RedisResult.cs)
-cannot faithfully construct their full semantics. Errors are never converted
-into successful values. Native connection handling consumes attributes and
-routes push messages before command results reach this boundary; this bridge
-does not expose those out-of-band messages. Top-level server errors keep the
-native `RespireServerException` behavior.
+## Distributed cache and DataProtection adapter
 
-The direct converter leaves the caller responsible for disposing the native
-root. `ExecuteStackExchangeAsync` disposes its root after conversion, including
-conversion failures. It never disposes the caller's client.
-
-## Official distributed cache and DataProtection adapter
-
-`RespireConnectionMultiplexer` implements the limited `IConnectionMultiplexer`,
-`IDatabase`, `IDatabaseAsync`, `IBatch`, and `ITransaction` surface required by
-`Microsoft.Extensions.Caching.StackExchangeRedis` and
-`Microsoft.AspNetCore.DataProtection.StackExchangeRedis`. Acceptance tests use
-the pinned 10.0.12 packages on both .NET 8 and .NET 10, with StackExchange.Redis
-3.4.0 and RESP2/RESP3. Prefer the native `Respire.Caching` and
-`Respire.DataProtection` packages when their interfaces fit your application.
+`RespireConnectionMultiplexer` implements the parts of `IConnectionMultiplexer`, `IDatabase`, `IDatabaseAsync`,
+`IBatch`, and `ITransaction` used by `Microsoft.Extensions.Caching.StackExchangeRedis` and
+`Microsoft.AspNetCore.DataProtection.StackExchangeRedis`. Prefer the native `Respire.Caching` and
+`Respire.DataProtection` packages when they fit.
 
 ```csharp
 using Microsoft.AspNetCore.DataProtection;
@@ -166,23 +121,16 @@ services.AddDataProtection().PersistKeysToStackExchangeRedis(connection, "app:ke
 await using var provider = services.BuildServiceProvider();
 ```
 
-The cache closes its factory-provided multiplexer when disposed. Avoid sharing
-that adapter with consumers that must outlive the cache. To retain ownership of
-an existing native client, use `RespireConnectionMultiplexer.Wrap(client)`.
-The wrapper reads the client's actual database and configuration; it never
-disposes that client unless `ownsClient: true` is specified.
+### Ownership and databases
 
-`Create` owns one lazy native client per selected database. `GetDatabase()` uses
-the configured default, and `GetDatabase(n)` creates an isolated client for `n`
-without sending connection-scoped `SELECT` commands on a shared connection.
-`Wrap` accepts only its client's actual database and explicitly rejects other
-selections. Native database restrictions, including server and Cluster support,
-still apply. `Configuration` identifies the default database without exposing
-credentials; it is not a reconnectable connection string.
+- The cache closes its multiplexer when disposed. Do not share that adapter with longer-lived consumers.
+- `Create` owns one lazy native client per database. `GetDatabase()` uses the configured default; `GetDatabase(n)` creates a separate client for `n`.
+- `RespireConnectionMultiplexer.Wrap(client)` borrows an existing client and never disposes it unless you pass `ownsClient: true`. It accepts only that client's database.
+- `Configuration` shows endpoints and the default database without credentials. It is not a reconnectable connection string.
 
 ### Supported commands
 
-Both synchronous and asynchronous variants are supported:
+Each member has sync and async variants.
 
 | Member | Supported overloads and behavior |
 | --- | --- |
@@ -202,136 +150,90 @@ Both synchronous and asynchronous variants are supported:
 | `SortedSetLength` | Inclusive or exclusive score bounds; the default `-Infinity` to `+Infinity` range uses `ZCARD` and ignores endpoint exclusions, matching StackExchange.Redis |
 | `SortedSetRangeByRank`, `SortedSetRangeByRankWithScores` | Inclusive signed indexes and ascending/descending order, with original binary members and optional scores |
 | `SortedSetRangeByScore`, `SortedSetRangeByScoreWithScores` | Minimum/maximum score bounds, exclusion flags, order, skip/take, and optional scores; `take = -1` means unlimited |
+| `SortedSetRangeByValue`, `SortedSetRemoveRangeByValue` | Ascending/descending, inclusive/exclusive binary bounds, open bounds, `skip`/`take`. All members need the same score for defined order |
 | `SortedSetScan` | Lazy `ZSCAN` with binary patterns, page size, cursor, page offset, and asynchronous enumeration; see scan contracts below |
 | `ListRange` | Start/stop indexes, including Redis negative indexes |
 | `ListLeftPush`, `ListRightPush` | Scalar or array with `When.Always`/`When.Exists`; original list length, including an empty-array length query |
 | `ListLength`, `ListGetByIndex` | Original length and binary indexed value; negative indexes supported, null for a missing index |
 | `ListRemove`, `ListTrim` | Signed removal count and inclusive start/stop indexes, including negative indexes; Redis removal count and trimming behavior |
 | `ListRightPopLeftPush` | Atomic move between lists; original binary value or null when the source is empty |
+| `ScriptEvaluate` | String scripts only; see [locks and scripts](#locks-and-scripts) |
+| `LockTake`, `LockExtend`, `LockRelease` | See [locks and scripts](#locks-and-scripts) |
 | `Wait`, `WaitAll`, `TryWait` | Wait helpers used by the official cache; synchronous timeout follows native `CommandTimeout` |
 
-Individual database commands require native `Connections = 1` (the default).
-They reject a multi-connection configuration before dispatch, because independent
-pool connections can reorder a hash write and its expiry. They initialize and
-enqueue commands in caller order, then await replies independently. Settings
-are never silently overridden. Native reconnect and failover semantics still
-apply; a failed write is not replayed by the adapter.
+Unsupported: floating-point and bounded/expiring string increments, conditional sorted-set additions,
+profiling registration, library-name suffixes, events, non-null `asyncState`, and every unlisted member.
 
-Keys, fields, and values are copied to their exact StackExchange.Redis wire
-bytes at invocation/queue time. Mutating the original buffers afterward does
-not change the queued command. Replies and leases remain independent of native
-result storage. Null keys and null wire arguments are rejected; empty binary
-keys/values are preserved. Server booleans, counts, nulls, and exceptions are
-not replaced with successful default values.
+### Command rules
 
-Supported individual flags are `None`, `NoRedirect`, `DemandMaster`,
-`PreferReplica`, `DemandReplica`, and `FireAndForget`. Replica flags apply to
-read commands using configured native replica/Cluster/Sentinel routing.
-Fire-and-forget returns StackExchange.Redis's default result and discards
-ordinary server errors using native fire-and-forget behavior; native Cluster
-redirect failures can still surface. Combining `FireAndForget` with
-`NoRedirect` is rejected. Other flags, including retry categories, are rejected
-with native API guidance. Exceptions retain native Respire types; they are not
-translated into StackExchange.Redis exception types.
-Zero integer increment/decrement operations in fire-and-forget mode are no-ops,
-matching StackExchange.Redis without creating a missing counter.
-Integer adjustments select `INCR`/`DECR` for changes of one and the corresponding
-`INCRBY`/`DECRBY` for other signed changes, including deferred batches. Existing
-command-specific Redis ACLs therefore see the same commands as StackExchange.Redis.
+- Database commands require native `Connections = 1` (the default). A multi-connection configuration is rejected before sending, because separate connections can reorder a hash write and its expiry.
+- Arguments are copied at call time; later buffer changes do not affect the command. Null keys and arguments are rejected.
+- The adapter never replays a failed write. Native reconnect and failover still apply.
+- Increments of 1 send `INCR`/`DECR`; other values send `INCRBY`/`DECRBY`, matching StackExchange.Redis for ACLs. A zero increment in fire-and-forget mode is a no-op.
 
-### Batch and lifetime behavior
+Supported `CommandFlags`:
 
-`CreateBatch()` supports the listed hash/list/key/string/set/sorted-set asynchronous
-methods, string-based `ScriptEvaluateAsync`, and `KeyExpireAsync` with `None`/`DemandMaster` flags. No queued command executes
-before `Execute()`; empty hash field, key, member, and sorted-set entry arrays
-remain immediate no-ops. Execution
-uses a native `RespireBatch`, so commands for the same key share an ordered
-pipeline even when a wrapped client has multiple connections. Each call to
-`Execute()` takes the current queue; later calls can send newly queued work,
-and an empty call does not replay earlier work. Execution is not transactional.
-Different Cluster slot groups can execute independently, following native batch
-rules. Every queued task observes its own result/error/cancellation; one failed
-command does not hide another command's result.
+| Flag | Behavior |
+| --- | --- |
+| `None`, `DemandMaster` | Normal. |
+| `PreferReplica`, `DemandReplica` | Read commands use native replica, Cluster, or Sentinel routing. |
+| `NoRedirect` | Supported. Cannot combine with `FireAndForget`. |
+| `FireAndForget` | Returns the default result and discards server errors. Cluster redirect failures can still surface. |
 
-`SortedSetScan` and `SortedSetScanAsync` expose `IScanningCursor` on both the
-enumerable and its enumerator. `Cursor` identifies the server page containing
-the current entry, and `PageOffset` identifies that entry within the page.
-Resume with both values to include the current entry again, or increment the
-offset to continue after it. A scan copies its key/pattern when created and
-fetches pages only during enumeration. `pageSize` is a positive Redis `COUNT`
-hint, not a limit on returned entries. Null, empty, and `*` patterns match all
-members. Empty pages do not end a scan unless
-Redis returns cursor zero. Results follow Redis scan semantics: no ordering or
-snapshot guarantee, and mutations can cause repeats or omissions. Async
-enumeration accepts cancellation through `GetAsyncEnumerator`/`WithCancellation`.
-Fire-and-forget scans are rejected. A batch scan queues one page when its
-enumerator needs it; call `Execute()` for each pending page before awaiting
-that move. Buffered entries do not require another execution.
-Filtered scans can cross several empty pages during a single move, requiring
-several executions before that move completes. Use an ordinary database scan
-when the caller cannot drive those deferred pages.
+Other flags, including retry categories, throw `NotSupportedException`.
 
-`Close`/`Dispose` and their asynchronous variants reject new work and cancel
-unexecuted queued tasks. The default close drains started commands before
-disposing owned clients. `Close(false)` cancels started commands, observes their
-completion, and disposes owned clients. Closing is idempotent. Borrowed clients
-remain usable. Disposing a native view retains that view's native ownership
-behavior; use the owning root client when transferring ownership.
+### Batches
 
-Profiling registration, library-name suffixes, events, unlisted subscriber/server APIs,
-non-null `asyncState`, and all unlisted commands are explicitly
-unsupported. Unsupported members throw `NotSupportedException` with native
-API guidance rather than returning fabricated success. This adapter does not
-provide general StackExchange.Redis parity. Pinned Hangfire acceptance is
-documented [separately](./hangfire-acceptance). Microsoft's SignalR backplane is
-not supported; use [`Respire.SignalR`](../integrations/signalr).
-Floating-point and bounded/expiring string increment overloads and conditional
-sorted-set additions remain unsupported.
+`CreateBatch()` supports the listed async hash, list, key, string, set, and sorted-set methods, string
+`ScriptEvaluateAsync`, and `KeyExpireAsync` with `None`/`DemandMaster`.
 
-`SortedSetRangeByValue[Async]` supports both overloads, ascending/descending order,
-inclusive/exclusive binary bounds, null/open bounds, and `skip`/`take` pagination.
-`SortedSetRemoveRangeByValue[Async]` preserves the supplied bound order and returns
-the number removed. These use Redis lexicographic commands; all members must have
-the same score for Redis to provide defined lexicographic ordering.
+- Nothing runs before `Execute()`. Empty argument arrays complete immediately as no-ops.
+- Each `Execute()` sends the current queue only. An empty call does not replay earlier work.
+- Commands for the same key stay in order, even when a wrapped client has multiple connections.
+- Batches are not transactional. Cluster slot groups can run independently.
+- Each task gets its own result, error, or cancellation.
+
+### Sorted-set scans
+
+`SortedSetScan` and `SortedSetScanAsync` expose `IScanningCursor` on the enumerable and enumerator.
+
+- `Cursor` is the server page of the current entry; `PageOffset` is its position in that page. Resume with both to repeat the current entry, or increment the offset to continue after it.
+- `pageSize` is a Redis `COUNT` hint, not a result limit. Null, empty, and `*` patterns match all members.
+- Redis scan semantics apply: no ordering or snapshot, and mutations can cause repeats or omissions.
+- Pass cancellation through `GetAsyncEnumerator` or `WithCancellation`. Fire-and-forget scans are rejected.
+- In a batch, each move that needs a new page queues it; call `Execute()` before awaiting the move. A filtered scan can need several executions for one move. Use a database scan if the caller cannot drive this.
+
+### Close and dispose
+
+- `Close`/`Dispose` reject new work and cancel queued tasks that have not run.
+- The default close waits for started commands, then disposes owned clients. `Close(false)` cancels started commands first.
+- Closing is idempotent. Borrowed clients stay usable.
 
 ### Transactions and conditions
 
-`IDatabase.CreateTransaction()` and `IDatabaseAsync.CreateTransaction()` return a
-deferred `ITransaction`/`ITransactionAsync`. Transactions support the listed
-hash/list/key/string/set/sorted-set asynchronous commands, except cursor scans,
-plus literal `PublishAsync`. They copy binary arguments when queued, preserve
-command order, and execute through native `MULTI`/`EXEC`. Publish is part of that
-same transaction, including the notifications used by Hangfire. String-based
-`ScriptEvaluateAsync` and lexicographic ranges/removals are also supported.
-Lock operations, other script overloads, scans, synchronous command calls,
-and nested transactions remain unsupported.
+`CreateTransaction()` returns a deferred `ITransaction`/`ITransactionAsync` that runs through native `MULTI`/`EXEC`.
+It supports the listed async commands (except scans), literal `PublishAsync`, string `ScriptEvaluateAsync`, and
+lexicographic ranges and removals. Locks, other script overloads, scans, sync calls, and nested transactions are unsupported.
 
-Result-bearing `Execute` and `ExecuteAsync`, and queued commands, accept only
-`None` and `DemandMaster`. Replica routing, `NoRedirect`, `FireAndForget`, and
-other flags throw before consuming the pending queue. `IBatch.Execute()` on a
-transaction starts execution without returning its commit result; queued tasks
-still receive their results or errors. Non-null `asyncState` is unsupported.
+- `Execute`, `ExecuteAsync`, and queued commands accept only `None` and `DemandMaster`. Other flags throw before the queue is consumed.
+- `IBatch.Execute()` on a transaction starts it without returning the commit result.
+- Each `Execute` takes the current commands and conditions. Overlapping executions run in order. An empty `Execute` sends `PING` and returns `true`.
+- After `Execute` returns `false`, the aborted tasks stay cancelled and nothing is retried. Queue a new attempt to retry.
+- A cancelled transaction may still run on Redis.
 
-Each Execute takes the current commands and conditions. New work can be queued
-for a later Execute, and overlapping executions on one transaction run in order.
-An empty Execute sends PING and returns true after its reply, without replaying
-earlier commands. Repeat Execute
-after false has the same queue-consumption behavior as StackExchange.Redis:
-the aborted tasks stay canceled, and neither commands nor conditions are retried.
-Queue a fresh attempt explicitly when a retry is needed.
+Conditions:
 
-`AddCondition` snapshots its key and value bytes. Execution WATCHes every condition
-key before reading conditions through an uncached primary view. All conditions
-are evaluated, including after a failed condition, and each returned
-`ConditionResult.WasSatisfied` reports its own check. A false check discards the
-transaction without running commands. A mutation between WATCH and EXEC returns
-false and cancels every queued task, while already satisfied ConditionResults stay
-true. `WasWatchConflict` distinguishes that Redis abort from a failed check.
-The native same-slot restriction applies to watched and queued keys in Cluster.
+- `AddCondition` copies its key and value. Execution `WATCH`es every condition key, then evaluates all conditions; each `ConditionResult.WasSatisfied` reports its own check.
+- A failed check discards the transaction. A Redis error during a check counts as unsatisfied.
+- A change between `WATCH` and `EXEC` returns `false` and cancels all tasks. `WasWatchConflict` tells this apart from a failed check.
+- In Cluster, watched and queued keys must share a slot.
 
-The condition inventory is pinned to
-[StackExchange.Redis 3.3.1 Condition.cs](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/src/StackExchange.Redis/Condition.cs),
-and the private shapes are also validated by tests against the repository's 3.4.0 pin:
+Errors:
+
+- A command error inside `EXEC` faults only that task; `Execute` returns `true`.
+- A Redis queue error, or a local error while building the queue, discards the whole transaction and faults every task.
+
+Supported condition factories ([StackExchange.Redis Condition.cs](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/src/StackExchange.Redis/Condition.cs), tested against 3.4.0):
 
 | Condition family | Supported factories |
 | --- | --- |
@@ -341,169 +243,54 @@ and the private shapes are also validated by tests against the repository's 3.4.
 | Length | `HashLength`, `StringLength`, `ListLength`, `SetLength`, `SortedSetLength`, and `StreamLength` with `Equal`, `LessThan`, and `GreaterThan` suffixes |
 | Score-range length | The three bounded `SortedSetLength` condition overloads, with inclusive minimum/maximum scores and infinity bounds |
 
-`SortedSetContainsStarting`/`SortedSetNotContainsStarting` and all
-`SortedSetScoreExists`/`SortedSetScoreNotExists` overloads are unsupported.
-Unknown private condition shapes throw actionable `NotSupportedException`
-at AddCondition, with guidance to use native WATCH. The public Condition API
-has no visitor and ConditionResult has no factory or setter, so the bridge uses
-explicitly audited private fields and accessors. It preserves supported fields
-for trimming and never parses `Condition.ToString()`, which would lose binary data.
+Unsupported: `SortedSetContainsStarting`, `SortedSetNotContainsStarting`, `SortedSetScoreExists`, and
+`SortedSetScoreNotExists`. Unknown conditions throw `NotSupportedException` at `AddCondition`; use native `WATCH`.
+The adapter reads condition data through audited private fields, preserved for trimming.
 
-Redis errors while checking conditions count as unsatisfied conditions, matching
-upstream. Runtime command errors inside EXEC fault only that command's task;
-other tasks retain their results and Execute returns true. Redis queue errors
-discard the entire transaction, fault all its tasks, and fail Execute. Local
-queue-construction failures also discard the entire queue rather than committing
-a subset. Native server exception types and messages are preserved.
+### Servers and endpoints
 
-Closing the adapter cancels unexecuted transaction tasks. Default close drains
-admitted executions, including their condition checks; `Close(false)` cancels
-started execution and settles every task. A canceled accepted transaction may
-still run on Redis. Native results are disposed after conversion, watched leases
-are released on every outcome, and borrowed clients remain caller-owned.
+- `GetEndPoints(true)` returns configured endpoints. `GetEndPoints(false)` connects and returns the live primary and replicas (standalone or Sentinel) or all Cluster nodes.
+- `IdentifyEndpoint[Async]` returns the primary for a key's slot, or the connection for a keyless command. It supports `None`, `DemandMaster`, and `NoRedirect`; not replicas or `IBatch`.
+- `GetServer` and `GetServers` return cached handles. Each owns a native client with the adapter's authentication, TLS, protocol, and database settings, and never redirects or fails over.
+- Server members: `IsConnected` (connects and reports failures), `IsReplica` (queries `ROLE`), `InfoRaw[Async]` (`INFO` text, optional section), `Time[Async]` (`TIME` as UTC `DateTime`). Only `CommandFlags.None`.
+- Closing the adapter disposes server clients; retained handles then reject calls.
 
-### Server discovery, locks, and storage subscriptions
+### Locks and scripts
 
-`GetEndPoints(true)` returns configured endpoints (including configured standalone
-replicas). `GetEndPoints(false)` connects and returns the actual standalone or
-Sentinel primary and replicas, or discovered Cluster nodes including replicas.
-`IdentifyEndpoint[Async]` returns the selected primary for the supplied key's slot;
-without a key it returns the native connection selected for a keyless command.
-It supports `None`, `DemandMaster`, and `NoRedirect`; replica selection and use on
-`IBatch` are explicitly unsupported. DNS, IP, and Unix socket endpoint identities
-are retained. Discovery reports live topology rather than inventing a localhost
-endpoint. `Configuration` contains parseable endpoints and the default database,
-without credentials; it is a diagnostic string, not a complete connection recipe.
+- `LockTake[Async]` sends `SET key token PX milliseconds NX`.
+- `LockExtend[Async]` and `LockRelease[Async]` compare the binary token and run `PEXPIRE` or `DEL` atomically in Lua. A missing key or different owner returns `false`.
+- Expiry must be positive, is truncated to milliseconds, and is at least 1 ms.
+- Database flag rules apply; replica writes are rejected. `FireAndForget` returns `false`. Locks are not supported on `IBatch`.
+- `ScriptEvaluate[Async]` takes a string script with binary keys and values. A 40-character hex string runs `EVALSHA`; anything else runs `EVAL`. A missing hash returns `NOSCRIPT` without retry.
+- Unsupported: byte-array hashes, `LuaScript`, `LoadedLuaScript`, and read-only script overloads. Script errors throw `RespireServerException`.
 
-`GetServer` overloads and `GetServers` return cached handles for physical endpoints.
-Each handle owns an independent native client with the adapter's authentication,
-TLS, protocol, and database settings. Server calls never redirect or fail over to
-another endpoint. `IsConnected` establishes that handle's connection and reports
-connection failures; `IsReplica` queries Redis `ROLE`. `InfoRaw[Async]` returns
-Redis `INFO` text with an optional section; `Time[Async]` returns Redis `TIME` as
-a UTC `DateTime`. These server commands support only `CommandFlags.None`.
-Closing the adapter drains/cancels admitted calls, disposes its server clients,
-and rejects subsequent calls on retained handles. A caller-owned wrapped client
-remains usable.
+### Subscriptions
 
-`LockTake[Async]` sends atomic `SET key token PX milliseconds NX`.
-`LockExtend[Async]` and `LockRelease[Async]` use Lua to compare the original binary
-token and perform `PEXPIRE` or `DEL` atomically. No token substitution or managed
-lock handle is involved. A missing key or different owner returns `false`;
-an expired holder cannot extend or delete a replacement lock. Expiry must be
-positive, is truncated to milliseconds, and has a one-millisecond minimum.
-The individual database flag rules above apply, including rejection of replica
-writes. `FireAndForget` returns the default `false` after admission and discards
-the server reply. Lock operations on `IBatch` remain unsupported.
-Lua errors preserve native `RespireServerException` and the server message;
-there are no direct `ScriptEvaluate` call sites in the pinned Hangfire source,
-but string-based `ScriptEvaluate[Async]` is supported for Orleans and other callers.
-Scripts execute atomically with binary `KEYS`/`ARGV`, optional key/value arrays,
-and standalone scalar, null, or nested array replies. A 40-character hexadecimal
-string executes `EVALSHA`; other strings execute `EVAL` without a script-cache
-probe. SHA string calls on an ordinary database hold its dispatch gate until
-the reply completes because native stored-procedure telemetry has no admission
-signal. Lua script errors preserve native `RespireServerException`; missing
-hashes return `NOSCRIPT` without retries. Byte-array hash, `LuaScript`,
-`LoadedLuaScript`, and read-only script overloads remain unsupported. The existing
-boundary conversion restrictions, including nested error replies, still apply.
+- `GetSubscriber()` supports callback `Subscribe[Async]`, `Unsubscribe[Async]`, and `UnsubscribeAll[Async]` on literal channels with `None`.
+- Handlers on one channel share a native subscription; duplicate handlers are ignored. Unsubscribing one handler keeps the others.
+- Callback exceptions do not stop delivery.
+- Native reconnect and resubscribe apply; messages sent during a gap are lost. If the reconnect limit is exhausted, subscribing throws; recreate the client and adapter.
+- `Publish[Async]` works on the subscriber and database with `None` or `DemandMaster`, not in batches.
+- Both apply the native pub/sub prefix.
+- `ChannelMessageQueue`, patterns, and other subscriber members are unsupported.
+- Closing the adapter removes only its own subscriptions.
 
-`GetSubscriber()` supports literal, binary channel callback
-`Subscribe[Async]`, `Unsubscribe[Async]`, and `UnsubscribeAll[Async]` with `None`.
-Handlers for the same channel share a native subscription; duplicate handlers
-are ignored. Channel buffers are copied at the adapter boundary.
-Unsubscribing a handler retains other handlers. Native reconnect
-and resubscription behavior applies; delivery gaps cannot replay messages.
-If the native reconnect limit is exhausted, subscribing again propagates the
-native reconnect-limit exception; recreate the client and adapter to resume delivery.
-Callbacks execute separately from subscription admission, and callback exceptions
-do not terminate delivery. `ChannelMessageQueue`, patterns, and all other
-subscriber calls remain unsupported. `Publish[Async]` is available on the
-subscriber and database with `None` or `DemandMaster`; batches and other flags
-are rejected. Subscription and publication both apply the native pub/sub prefix.
-Adapter close removes only its subscriptions, even when borrowing a client.
+### Call sites covered
 
-### Pinned source inventory and validation
+- [ASP.NET Core RedisCache](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs): hash reads and writes, leases, expiry, deletion, batches, wait helpers. It calls unsupported profiling and library-name suffix members and handles the failure.
+- [RedisXmlRepository](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/DataProtection/StackExchangeRedis/src/RedisXmlRepository.cs): `ListRange` and `ListRightPush`.
+- [`Hangfire.Redis.StackExchange` 1.12.0](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55): the listed commands, scans, transactions with notifications, server discovery, `InfoRaw`, `Time`, locks, and callback subscriptions.
 
-The hash/list and key/string/set/sorted-set facets were inventoried against `Hangfire.Redis.StackExchange`
-1.12.0 at the NuGet package's repository commit
-[`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55).
-Its `RedisConnection`, `RedisFetchedJob`, `RedisMonitoringApi`,
-`RedisWriteDirectlyToDatabase` and `RedisWriteOnlyTransaction` use hash
-deletion/count/entry reads and list pushes, lengths, indexed reads, removal,
-trimming and atomic moves. Focused tests exercise these contracts against
-real Redis with RESP2/RESP3 on .NET 8 and .NET 10, including binary snapshots,
-database isolation, deferred batch reads/writes, server errors and shutdown.
-`RedisConnection`, `RedisMonitoringApi`, `RedisWriteDirectlyToDatabase`, and
-`ExpiredJobsWatcher` also use key existence/persistence/TTL, string reads and
-integer counters, set membership/cardinality, sorted-set additions/removals,
-score counts, rank/score ranges with scores, and scans. Tests cover this facet
-on both frameworks and protocols, compare score bounds/order against
-StackExchange.Redis on the same Redis server, and verify scan resume and
-deferred page execution.
-The transaction inventory additionally covers `RedisConnection`, `RedisFetchedJob`,
-and `RedisWriteOnlyTransaction`, including synchronous Execute, repeat Execute
-after an abort, and queued notifications. Focused tests also invoke the pinned
-Hangfire package's write transaction Commit, fetch/requeue/remove operations,
-and server announcement/removal with `UseTransactions = true`.
-Transaction tests run on .NET 8 and
-.NET 10 with RESP2/RESP3 against real Redis, covering atomic visibility, binary
-snapshots, conditions, deterministic WATCH races, discarded commands, runtime
-errors and ACL queue errors. Wire and lifetime controls cover active cancellation,
-close during condition evaluation, retained tasks, and abandoned task collection.
-The [pinned Hangfire acceptance](./hangfire-acceptance) ports 93 upstream facts
-and adds two real worker lifecycle cases, on both frameworks and protocols.
-It records the exact tests, exclusions, supported scope, and limitations.
-
-The server/lock inventory additionally checks `RedisStorage` discovery and
-dashboard `InfoRaw`, `RedisConnection.GetUtcDateTime` (`IServer.Time`),
-`RedisLock` acquisition/extension/release, and `RedisSubscription` literal
-callback subscribe/unsubscribe. Real Redis tests run on .NET 8 and .NET 10 with
-RESP2/RESP3, including physical replica identity, token/TTL wire controls,
-competing acquisitions, stale ownership, Lua errors, and borrowed-client cleanup.
-Tests also construct the pinned 1.12.0 `RedisStorage`, obtain a storage connection,
-read server time, and acquire/release its distributed lock. These focused
-scenarios supplement the pinned upstream acceptance; they do not establish
-general StackExchange.Redis interface parity.
-
-Before implementing this surface, the integration call sites were checked in
-[ASP.NET Core 10.0.12 RedisCache.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs)
-and
-[RedisXmlRepository.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/DataProtection/StackExchangeRedis/src/RedisXmlRepository.cs).
-The cache uses hash reads/writes, leases, expiry, deletion, batches and wait
-helpers; its setup/cleanup uses `GetDatabase`, profiling registration,
-library-name suffixes, `Close` and `Dispose`. Optional profiling is unsupported;
-the cache catches unsupported suffix calls. DataProtection uses `ListRange` and
-`ListRightPush` through a database factory.
-
-The test project adapts upstream `RedisCacheSetAndRemoveTests`,
-`TimeExpirationTests`, `TimeExpirationAsyncTests`, the public
-`CacheServiceExtensionsTests` facts, all four `DataProtectionRedisTests` scenarios,
-and `RedisDataProtectionBuilderExtensionsTest` to TUnit/Testcontainers with the adapter.
-Additional tests exercise the official buffer cache and DataProtection service
-registration, plus Redis wire controls for binary data, database isolation,
-TTL, deferred pipeline order, command errors, cancellation and ownership.
-The complete applicable class inventory and the two internal-only exclusions
-are recorded above. This is coverage of these Redis integrations, not every
-test in ASP.NET Core.
+Tests run against real Redis with RESP2 and RESP3 on .NET 8 and .NET 10.
 
 ## Move application code to native APIs
 
-Keep one adapter at each remaining library boundary. Replace direct database
-calls with native facets such as `client.Strings`, `client.Hashes`, `client.Lists`
-and `client.SortedSets`. Use native batches/transactions when ordering or atomicity
-is required; do not replace a transaction with independent calls.
+1. Keep one adapter at each library boundary that still needs StackExchange.Redis types (for example Hangfire storage).
+2. Replace direct database calls with native facets such as `client.Strings`, `client.Hashes`, `client.Lists`, and `client.SortedSets`. Use native batches or transactions where you need order or atomicity; do not replace a transaction with separate calls.
+3. Switch Microsoft integrations to the native [distributed cache](../integrations/caching), `Respire.DataProtection`, or [SignalR](../integrations/signalr) package. Keep instance and key prefixes, the database, and ownership the same. Application code can keep using `IDistributedCache`, `IDataProtectionProvider`, or SignalR hubs.
+4. Replace remaining `ExecuteStackExchangeAsync` calls with native typed commands. Native APIs avoid the adapter's argument and reply copies.
 
-For Microsoft integrations, switch service registration to the native
-[distributed cache](../integrations/caching), `Respire.DataProtection` or
-[SignalR](../integrations/signalr) package. Preserve instance/key prefixes, selected database
-and ownership when changing registration. Existing application consumers can
-keep using `IDistributedCache`, `IDataProtectionProvider` or SignalR hub APIs.
-Hangfire's storage package still consumes StackExchange.Redis interfaces, so
-retain its injected adapter while migrating unrelated application commands.
-
-For native DataProtection, install `Respire.DataProtection` and pass a factory
-for the existing native client, keeping the shared Redis list key:
+For native DataProtection, pass a factory for your client and keep the same Redis list key:
 
 ```csharp
 using Microsoft.AspNetCore.DataProtection;
@@ -516,26 +303,8 @@ var services = new ServiceCollection();
 services.AddDataProtection().PersistKeysToRespire(() => client, "app:keys");
 ```
 
-The repository borrows this client. Preserve DataProtection application names,
-purposes and key encryption settings so existing protected payloads remain usable.
+The repository borrows the client. Keep the same DataProtection application name, purposes, and key encryption
+settings so existing protected payloads still decrypt.
 
-Keep borrowed native clients alive until all cache/storage operations and
-callback subscriptions finish. Closing the adapter removes its own subscriptions
-and settles queued/in-flight work; a borrowed client remains usable. An owned
-client closes with its adapter. Do not share a cache-owned adapter with a
-longer-lived Hangfire worker or DataProtection key repository.
-
-### Orleans Redis providers
-
-The [Orleans 10.2.2 acceptance suite](./orleans-compatibility) inventories clustering,
-grain persistence, and reminders against the adapter. Its 18 provider cases
-exercise membership/gateways, atomic binary storage and ETag conflicts, expiry,
-reminder replacement and hash-ring ranges, and bidirectional interoperability
-with the official client. The factory injection uses the existing official
-providers without a fork. These providers do not use SignalR's
-`ChannelMessageQueue` path. The guide records setup, exact versions, and exclusions.
-
-Migrate one call site at a time, then replace the bridge with native typed
-commands when its callers no longer require StackExchange.Redis values. The
-boundary allocates argument arrays and standalone reply copies; native APIs
-avoid those migration costs.
+Keep borrowed clients alive until all cache, storage, and subscription work finishes. Do not share a cache-owned
+adapter with a longer-lived Hangfire worker or DataProtection repository.

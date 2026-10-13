@@ -40,6 +40,11 @@ def _framework_for(report: Path, results_dir: Path) -> str:
     for part in report.relative_to(results_dir).parts:
         if part.startswith(ARTIFACT_PREFIX):
             return part.removeprefix(ARTIFACT_PREFIX)
+    # download-artifact extracts a lone matching artifact without its folder, so fall back
+    # to the runtime BenchmarkDotNet records in the report header.
+    runtime = re.search(r"\.NET (\d+\.\d+)", report.read_text(encoding="utf-8"))
+    if runtime:
+        return f"net{runtime.group(1)}"
     return "unknown framework"
 
 

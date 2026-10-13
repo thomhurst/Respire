@@ -1,17 +1,6 @@
 # Vector sets
 
-`redis.VectorSets` exposes Redis vector-set commands through typed methods. The wire
-contracts and integration tests are pinned to Redis 8.6.0, including RESP2 and RESP3.
-Servers without the requested command return their original `RespireServerException`;
-Respire does not substitute a search module or another data type.
-
-Replacing an existing member returns `false` from `AddAsync`: this means no new member
-was inserted, not that replacement failed. However, on evaluated Redis **8.6.0** and
-**8.10.2**, acknowledged `VADD` replacements lose their new vector and attributes after
-an AOF crash/reload. Lua-wrapped `VADD` has the same limitation. See the
-[VectorData backend decision](vector-data.md#vector-set-backend-decision) and
-[evaluation evidence](https://github.com/thomhurst/Respire/issues/1261) before relying
-on durable replacement. Respire forwards native commands without adding a replacement protocol.
+`VectorSets` on `IRespireClient` exposes Redis vector-set commands (`VADD`, `VSIM` and related) as typed methods. Use it for native vector similarity on a single key without a Search index. The wire format follows Redis 8.6.0 over RESP2 and RESP3. Servers without the command return their original `RespireServerException`. The examples use `redis` for a connected `RespireClient`.
 
 ```csharp
 float[] embedding = [1, 0, 0];
@@ -31,49 +20,46 @@ foreach (var match in matches)
     Console.WriteLine($"{Convert.ToHexString(match.Member)}: {match.Score}");
 ```
 
+`AddAsync` returns `false` when it replaces an existing member: no new member was inserted, but the replacement succeeded.
+
+:::warning Replacement durability
+On Redis **8.6.0** and **8.10.2**, acknowledged `VADD` replacements lose their new vector and attributes after an AOF crash/reload. Lua-wrapped `VADD` has the same problem. Respire forwards the native command unchanged. See the [VectorData backend decision](vector-data.md#vector-set-backend-decision) before relying on durable replacement.
+:::
+
 ## Inputs and ownership
 
-`AddAsync` and `SearchAsync` accept `ReadOnlyMemory<float>`. The default `Fp32`
-encoding writes little-endian components directly into the RESP output buffer without
-an intermediate vector-sized byte array or per-component string formatting. This still
-copies bytes into the command buffer; it is not zero-copy networking. Command options,
-owned replies, and deferred snapshots can allocate. The focused measurements below
-quantify encoding only; they do not predict end-to-end client throughput.
+`AddAsync` and `SearchAsync` take `ReadOnlyMemory<float>`.
 
-Pass `encoding: RespireVectorEncoding.Values` to send invariant decimal components
-instead. Empty vectors and nonfinite components are rejected locally. Server checks
-still govern dimensions, reduction compatibility, quantization, and filter syntax.
-`SearchByMemberAsync` uses `VSIM ELE` and accepts a binary-safe existing member.
+- The default `Fp32` encoding writes little-endian components straight into the command buffer, with no intermediate array.
+- `encoding: RespireVectorEncoding.Values` sends invariant decimal components instead.
+- Empty vectors and nonfinite components are rejected locally. Redis checks dimensions, reduction, quantization and filter syntax.
+- `SearchByMemberAsync` uses `VSIM ELE` with a binary-safe existing member.
+- Keep vector, key, member and attribute memory unchanged until an immediate call completes. Batches and transactions snapshot inputs at enqueue time.
+- Only the key gets the client's key prefix and decides the Cluster slot. Members, filters and range bounds are literal.
 
-Keep immediate-call vector, key, member, and raw attribute memory unchanged until the
-operation completes. Batch and transaction methods snapshot these inputs at enqueue
-time. Only the Redis key receives the client view's prefix and determines its Cluster
-slot; members, filter expressions, and range bounds are literal.
+Replies:
 
-Replies own their arrays and remain valid after client disposal. Arrays are mutable;
-record equality compares their references, not contents. Unknown VINFO fields are
-owned `RespireResult` values in `AdditionalFields`; they need no disposal, and explicit
-disposal invalidates their views. Search results retain server order and binary member
-bytes. A null score means scores were not requested. Null attributes can mean either
-not requested or absent on that member; retain the request options to distinguish them.
+- Replies own their arrays and stay valid after client disposal. Arrays are mutable, and record equality compares references, not contents.
+- Unknown VINFO fields are owned `RespireResult` values in `AdditionalFields`. They need no disposal; disposing them invalidates their views.
+- Search results keep server order and binary member bytes.
+- A null score means scores were not requested. A null attribute means not requested or absent; check your request options to tell which.
 
 ## Options and command mapping
 
-VADD options include `ReduceDimensions` (`REDUCE`, emitted before the vector),
-`CheckAndSet` (`CAS`), `Quantization` (`NOQUANT`, `Q8`, or `BIN`), `ExplorationFactor`
-(`EF`), raw `AttributesJson` (`SETATTR`), and `Links` (`M`). Null/unspecified options
-preserve server defaults. Quantization and reduction affect accuracy and memory;
-creation-time settings cannot simply be changed by adding another member.
-Redis 8.6 requires subsequent VADD calls to repeat compatible quantization, M, and
-REDUCE settings. Omitting them sends server defaults, which can produce a mismatch
-error for a set created with nondefault settings. Respire does not discover or remember
-per-key creation settings.
+VADD options (null keeps the server default):
 
-VSIM supports result count, scores, attributes, `ExplorationFactor`, `Filter`,
-`FilterExplorationFactor`, `Epsilon`, `Exact` (`TRUTH`), and `NoThread` (`NOTHREAD`).
-Exact search scans the set; disabling threads can increase server main-thread latency.
-Scores are similarity values, not distances. The parser handles RESP2 flat arrays and
-RESP3 maps, including nested score/attribute pairs when both are requested.
+| Option | Token |
+| --- | --- |
+| `ReduceDimensions` | `REDUCE` (sent before the vector) |
+| `CheckAndSet` | `CAS` |
+| `Quantization` | `NOQUANT`, `Q8` or `BIN` |
+| `ExplorationFactor` | `EF` |
+| `AttributesJson` | `SETATTR` (raw JSON) |
+| `Links` | `M` |
+
+**Repeat creation settings on every VADD.** Quantization and reduction are fixed when the set is created. Redis 8.6 requires later VADD calls to send compatible quantization, `M` and `REDUCE`. Omitting them sends server defaults, which fails on a set created with other settings. Respire does not remember per-key settings.
+
+VSIM options: result count, scores, attributes, `ExplorationFactor`, `Filter`, `FilterExplorationFactor`, `Epsilon`, `Exact` (`TRUTH`) and `NoThread` (`NOTHREAD`). Exact search scans the whole set. `NoThread` can increase latency on the server's main thread. Scores are similarities, not distances.
 
 | Method | Command | Missing result |
 | --- | --- | --- |
@@ -92,26 +78,15 @@ RESP3 maps, including nested score/attribute pairs when both are requested.
 | `RangeAsync` | VRANGE | Empty array |
 | `SearchAsync`, `SearchByMemberAsync` | VSIM | Missing key: empty array; missing ELE member: server error |
 
-`EmbeddingAsync` returns normalized/reconstructed components; quantization can make
-them differ from the original vector. `LinksAsync` returns graph levels from highest
-to lowest, optionally with similarity scores. `RandomMembersAsync` uses positive counts
-for distinct members and negative counts for sampling with replacement. `long.MinValue`
-is rejected to avoid a server-side absolute-count overflow.
-
-`RangeAsync` accepts binary-safe wire bounds: `-` for the start, `+` for the end, and
-`[`/`(` prefixes for inclusive/exclusive members. Bounds are not key-prefixed. Count is
-a positional argument, not a `COUNT` token; null omits it. Omitted or negative counts
-request all matching members on the pinned server, and zero requests none. Bound syntax
-is validated by Redis. Unbounded range/random requests and large searches can allocate
-large replies; choose counts appropriate to the workload.
+- `EmbeddingAsync` returns normalized or reconstructed components; quantization can make them differ from the original.
+- `LinksAsync` returns graph levels from highest to lowest, optionally with similarity scores.
+- `RandomMembersAsync`: a positive count returns distinct members; a negative count samples with replacement. `long.MinValue` is rejected.
+- `RangeAsync` bounds: `-` for start, `+` for end, `[`/`(` prefix for inclusive/exclusive members. Bounds are binary-safe, not key-prefixed and validated by Redis. Count is positional (no `COUNT` token). Null or negative requests all matches; zero requests none.
+- Unbounded range/random requests and large searches can return large replies. Set counts to suit the workload.
 
 ## Attribute serialization and deferred commands
 
-Typed attribute helpers always call the configured `IRespireSerializer`, including for
-primitive types. That serializer must produce JSON accepted by Redis. A binary or
-compression serializer is unsuitable here; use raw JSON helpers or a client configured
-with a JSON serializer. Empty raw JSON removes attributes. Missing attributes return
-default without invoking deserialization. Serializer trim/AOT annotations still apply.
+Typed attribute helpers always use the configured `IRespireSerializer`, even for primitives, and Redis must accept its output as JSON. Do not use a binary or compressing serializer here; use the raw JSON helpers instead. Empty raw JSON removes attributes. Missing attributes return default without calling the serializer. Serializer trim/AOT annotations still apply.
 
 ```csharp
 await redis.VectorSets.SetAttributesAsync("products", "sku:1", new { Category = "tools" });
@@ -122,35 +97,21 @@ await batch.ExecuteAsync();
 Console.WriteLine(count.Result);
 ```
 
-Every immediate method has a batch/transaction mirror without `Async` or a per-command
-cancellation token. Execute/commit controls cancellation. Pre-cancelled immediate calls
-send no command; cancellation after dispatch cannot undo a write. Existing Cluster
-routing and redirection behavior applies. Read-only vector commands preserve cached
-keyspace values; mutations use the existing invalidation fences. Ordinary metadata
-and member-based reads participate in the existing opt-in query cache. Vector-input
-searches do not construct cache identities and therefore execute against the server.
+- Each immediate method has a batch/transaction mirror without `Async` or a per-command cancellation token. Execute/commit controls cancellation.
+- A pre-cancelled immediate call sends nothing. Cancelling after dispatch cannot undo a write.
+- Normal Cluster routing and redirection apply.
+- Client-side cache: reads keep cached values; writes invalidate the key. Metadata and member-based reads use the opt-in query cache. Vector-input searches always go to the server.
+- The raw command catalog covers options this facet omits, such as `VEMB RAW`.
 
-**Interface compatibility:** `IRespireClient` and `IRespireCommandQueue` gain a required
-`VectorSets` property. External implementations and decorators must implement/forward it.
-The generated raw catalog remains available, including specialized options not exposed
-by this facet, such as `VEMB RAW`.
+**Interface implementers:** `IRespireClient` and `IRespireCommandQueue` declare `VectorSets` with no default implementation. Custom implementations and decorators must implement or forward it.
 
 Protocol reference: [Redis 8.6 vector-set implementation](https://github.com/redis/redis/blob/8.6.0/modules/vector-sets/vset.c).
 
 ## Encoding measurements
 
-[CI run 36700806149](https://github.com/thomhurst/Respire/actions/runs/36700806149)
-measured candidate `a98b4750a968ccd5371f0a4d9583a17642b17dfb` between two runs of
-baseline `09926d2c50e73986d09f8438fec24a1e854fc87b` on one GitHub-hosted runner.
-These point-in-time measurements from September 30, 2026 use the earlier harness revision named above, before
-report-gate and documentation fixes. Timed methods and production encoding are unchanged
-in those follow-ups. The same benchmark source was copied into the baseline checkout. This compares encoding
-alternatives; differences between revisions are runner variation, not a shipped speedup.
+BenchmarkDotNet results from September 30, 2026, on one GitHub-hosted runner. They compare encoding alternatives within one build, not releases, and cover encoding only, not end-to-end throughput. The run used an A/B/A sequence with identical production code; the table shows the middle (candidate) phase.
 
-Environment: BenchmarkDotNet 0.15.8, Ubuntu 24.04.5, Intel Xeon 6973P-C 2.60 GHz
-(2 physical / 4 logical cores exposed), .NET SDK 10.0.401, .NET 10.0.12 X64 RyuJIT,
-Concurrent Workstation GC. Each phase used one Default-job launch with adaptive
-warmup/measurement iterations. A six-case Dry validation preceded the A/B/A sequence.
+Environment: BenchmarkDotNet 0.15.8, Ubuntu 24.04.5, Intel Xeon 6973P-C 2.60 GHz (2 physical / 4 logical cores exposed), .NET SDK 10.0.401, .NET 10.0.12 X64 RyuJIT, Concurrent Workstation GC.
 
 | Components | Encoding | Candidate mean +/- StdDev (ns) | Managed B/op | Complete RESP bytes |
 | ---: | --- | ---: | ---: | ---: |
@@ -161,32 +122,11 @@ warmup/measurement iterations. A six-case Dry validation preceded the A/B/A sequ
 | 1,536 | Intermediate array FP32 | 470.97 +/- 35.63 | 6,168 | 6,202 |
 | 1,536 | VALUES | 102,003.89 +/- 152.99 | 0 | 26,026 |
 
-Inputs use seed 534 with finite components in [-1, 1], including positive and negative
-zero. All methods encode the complete `VADD vectors ... member` command into equally
-preallocated reusable output capacity. Setup checks exact FP32 command bytes, every
-component bit, VALUES round-tripping, and capacity. The intermediate path allocates
-and copies the vector bytes on every operation; its argument array is prepared outside
-timing. The VALUES path formats components directly into the writer, so its measured
-0 B/op does not imply low CPU cost.
+Baseline means, first / second phase (ns): direct FP32 36.16 / 35.57 at 16 components and 78.19 / 77.69 at 1,536; intermediate FP32 60.15 / 61.34 and 387.48 / 405.25; VALUES 987.80 / 1,035.23 and 103,850.83 / 103,113.66.
 
-The two baseline means bracket runner drift as follows (first / second, in ns):
-direct FP32 36.16 / 35.57 at 16 components and 78.19 / 77.69 at 1,536; intermediate
-FP32 60.15 / 61.34 and 387.48 / 405.25; VALUES 987.80 / 1,035.23 and
-103,850.83 / 103,113.66. Allocations and encoded sizes agree across all three phases.
-The larger intermediate-array case has substantial timing variation, including its
-candidate mean outside both baseline means. Do not treat its exact ratio as stable.
-The process could not obtain high scheduling priority on the shared runner.
+- Each case encodes the full `VADD vectors ... member` command into preallocated output. Inputs use seed 534 with finite components in [-1, 1].
+- The 1,536-component intermediate-array timing varies widely; do not treat its ratio as stable.
+- VALUES shows 0 B/op but costs the most CPU.
+- Measurements exclude validation, command construction, batch snapshots, networking, Redis and replies. 0 B/op does not mean zero-copy networking.
 
-These results support avoiding the intermediate vector-sized allocation and decimal
-formatting for this workload. They exclude immediate-call validation, options/command
-construction, deferred snapshots, networking, Redis execution, replies, and concurrency.
-Immediate calls still require caller-owned memory to remain unchanged until completion;
-batch and transaction calls still allocate owned snapshots at enqueue time. The output
-copy remains unavoidable here. No zero-copy networking claim follows from 0 B/op.
-
-The run's `vector-encoding-comparison` artifact retains full BDN JSON, Markdown, and
-logs for every phase, including encoded-size evidence and exact revisions. Reproduce
-with `benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs` through the focused
-`.github/workflows/benchmark-vector.yml` workflow. Evidence is tracked in
-[#534](https://github.com/thomhurst/Respire/issues/534) under
-[#414](https://github.com/thomhurst/Respire/issues/414).
+Reproduce with `benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs` through the `.github/workflows/benchmark-vector.yml` workflow.

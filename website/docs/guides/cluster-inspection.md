@@ -1,9 +1,6 @@
 # Cluster inspection
 
-The Server facet exposes typed, read-only Cluster inspection. An ordinary call reports
-one execution node's view. It does not replace the client's slot map, deduplicate a
-global topology, configure Cluster membership, or enable Cluster mode on a standalone
-server. `AllowAdmin` is not required; the server still enforces ACL permissions.
+The Server facet offers typed, read-only Cluster inspection. Use it to see a node's view of the topology, slots, links, and slot statistics. An ordinary call reports one node's view. It does not update the client's slot map, merge a global topology, change membership, or enable Cluster mode. `AllowAdmin` is not required; the server still enforces ACLs.
 
 | API | Redis command | Minimum Redis version |
 | --- | --- | --- |
@@ -18,10 +15,7 @@ server. `AllowAdmin` is not required; the server still enforces ACL permissions.
 | `ClusterSlotStatsAsync` | CLUSTER SLOT-STATS SLOTSRANGE | 8.2 |
 | `ClusterSlotStatsByMetricAsync` | CLUSTER SLOT-STATS ORDERBY | 8.2 |
 
-Unsupported commands and standalone-server failures remain `RespireServerException`.
-No fallback fabricates a topology or returns an empty success. Redis 7.0 and 8.4
-Cluster tests cover RESP2 and RESP3, including explicit errors for newer commands
-against Redis 7.0. Standalone tests cover preserved server errors.
+Unsupported commands and standalone servers throw `RespireServerException`; no fake topology or empty success is returned. RESP2 and RESP3 are both supported.
 
 ```csharp
 RespireClusterInfo info = await redis.Server.ClusterInfoAsync();
@@ -38,50 +32,33 @@ foreach (var shard in shards)
 
 ## Owned node views
 
-`RespireClusterInfo` exposes common counters and retains all report fields in
-`Attributes`. `RespireClusterNode` retains advertised address text, flags, primary ID,
-timing/epoch counters, link state, inclusive slot ranges, and importing/migrating slot
-annotations. Unknown trailing tokens remain in `AdditionalTokens`. An address such as
-`:0@0` is retained for inspection even when it cannot be used for a connection.
+`RespireClusterInfo`:
 
-`RespireClusterInfo.CurrentEpoch` and `MyEpoch` are `ulong?` and preserve the full
-unsigned 64-bit epoch range, including values above `long.MaxValue`. Missing epoch
-fields remain null. This corrects their earlier `long?` type: callers that store or
-construct these values using signed locals must migrate those locals to `ulong?`.
-The other INFO counters remain nonnegative `long?` values; their signed limits do
-not change. `Attributes` retains the original text of known and unknown fields.
-See the [Redis Cluster epoch specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#cluster-current-epoch).
+- Exposes common counters and keeps every field's original text in `Attributes`.
+- `CurrentEpoch` and `MyEpoch` are `ulong?`, covering the full unsigned 64-bit range (including values above `long.MaxValue`); missing fields are null. Store them in `ulong?`, not `long?`. See the [epoch specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#cluster-current-epoch).
+- Other counters are nonnegative `long?` values.
 
-Shard models contain slot ranges and member nodes. Endpoint, IP, hostname, plain port,
-and TLS port remain distinct. Null, empty, and `?` endpoints are preserved; a zero port
-means unavailable. The client does not turn these advertised values into reachable
-endpoints or infer missing addresses. Role and health strings preserve future values.
-See Redis's [SHARDS](https://redis.io/docs/latest/commands/cluster-shards/) and
-[NODES](https://redis.io/docs/latest/commands/cluster-nodes/) references.
+`RespireClusterNode` ([NODES](https://redis.io/docs/latest/commands/cluster-nodes/)) keeps the advertised address text, flags, primary ID, timing and epoch counters, link state, inclusive slot ranges, and importing/migrating annotations. Unknown trailing tokens go to `AdditionalTokens`. Unusable addresses such as `:0@0` are kept for inspection.
 
-Link models describe Cluster bus connections, including direction, peer ID, Unix
-millisecond creation time, event flags, and buffer sizes. They do not represent the
-client's own connections. See [CLUSTER LINKS](https://redis.io/docs/latest/commands/cluster-links/).
+Shard models ([SHARDS](https://redis.io/docs/latest/commands/cluster-shards/)) hold slot ranges and member nodes:
 
-Structured models retain unknown fields in `AdditionalFields`. Those `RespireResult`
-values are recursively copied into GC-owned storage; disposal is optional and
-invalidates their element views. Other models need no disposal. All results remain
-valid after the reply and client are disposed.
+- Endpoint, IP, hostname, plain port, and TLS port are separate. Null, empty, and `?` endpoints are kept; port zero means unavailable.
+- The client does not turn advertised values into reachable endpoints or guess missing addresses.
+- Role and health strings keep future values.
 
-Each call returns its own snapshot; inspection results are not shared cached topology.
-Array members are caller-owned and mutable. Record equality compares array references,
-not their elements; compare elements explicitly when comparing snapshots.
+Link models ([CLUSTER LINKS](https://redis.io/docs/latest/commands/cluster-links/)) describe Cluster bus connections, not the client's: direction, peer ID, creation time (Unix milliseconds), event flags, and buffer sizes.
+
+All models:
+
+- Unknown fields go to `AdditionalFields` as `RespireResult` values. Disposing them is optional and invalidates their element views. Other models need no disposal.
+- Results stay valid after the reply and client are disposed.
+- Each call returns its own snapshot. Arrays are caller-owned and mutable. Record equality compares array references, so compare elements yourself when comparing snapshots.
 
 ## Keys, slots, and statistics
 
-`ClusterKeySlotAsync` applies the client view's key prefix and preserves binary key
-bytes. It asks the execution node to calculate that key's slot; it does not route to
-the key owner. Numeric slot arguments are literal numbers, validated in 0–16383.
-Ranges are inclusive and cannot be reversed.
-
-`ClusterCountKeysInSlotAsync` counts keys on the execution node, even if another node
-owns the slot. Use the all-node variant to compare node-local counts. Summing replica
-and primary counts can count the same data more than once.
+- `ClusterKeySlotAsync` applies the view's key prefix and keeps binary key bytes. The node calculates the slot; the call is not routed to the key's owner.
+- Numeric slot arguments must be 0–16383. Ranges are inclusive and cannot be reversed.
+- `ClusterCountKeysInSlotAsync` counts keys on the queried node, even if another node owns the slot. Use the all-node variant to compare nodes. Summing primary and replica counts double-counts data.
 
 ```csharp
 int slot = await redis.Server.ClusterKeySlotAsync("orders:42");
@@ -90,23 +67,19 @@ RespireClusterSlotStats[] busiest = await redis.Server.ClusterSlotStatsByMetricA
     RespireClusterSlotMetric.KeyCount, limit: 10, descending: true);
 ```
 
-SLOT-STATS returns slots belonging to the queried node's shard. Range results retain
-server order. Metric results default to descending order, with optional limits from
-1 through 16384. `KeyCount` is always present; other metrics are nullable when disabled
-by server configuration. Ordering by an unavailable metric surfaces the server error.
-These APIs do not enable statistics collection. See
-[CLUSTER SLOT-STATS](https://redis.io/docs/latest/commands/cluster-slot-stats/) for
-metric configuration and ordering semantics.
+[CLUSTER SLOT-STATS](https://redis.io/docs/latest/commands/cluster-slot-stats/):
+
+- Returns slots in the queried node's shard. Range results keep server order.
+- Metric results default to descending; `limit` is 1 to 16384.
+- `KeyCount` is always present. Other metrics are null when disabled in server configuration. Ordering by a disabled metric returns the server error.
+- These APIs do not enable statistics collection.
 
 ## Results from every node
 
-Every method has an `OnAllNodesAsync` counterpart with the same arguments. Discovery
-includes replicas and members without assigned slots. Each `RespireServerResult<T>`
-contains its endpoint and either an owned value or the original failure. Standalone
-clients query their one endpoint; Cluster-only commands still fail on that server.
-Without `UseCluster`, discovery queries only that connected endpoint even if the
-server belongs to a Cluster.
-Discovery itself requires permission to execute CLUSTER NODES.
+Every method has an `OnAllNodesAsync` counterpart with the same arguments. It returns a `RespireServerResult<T>` per endpoint with an owned value or the original failure.
+
+- Discovery includes replicas and slotless members, and needs permission to run CLUSTER NODES.
+- Without `UseCluster`, only the connected endpoint is queried, even if it belongs to a Cluster. Cluster-only commands still fail on a standalone server.
 
 ```csharp
 var results = await redis.Server.ClusterShardsOnAllNodesAsync();
@@ -119,10 +92,7 @@ foreach (var result in results)
 }
 ```
 
-Inspect every result. Node views may overlap or disagree during failover; no merge or
-deduplication is implied. Cancellation during discovery throws. After discovery it is
-attributed to affected nodes while completed successes remain available.
+- Check every result. Views can overlap or disagree during failover; nothing is merged.
+- Cancellation during discovery throws. After discovery it is recorded per node, and completed results stay available.
 
-These 20 methods extend `IServerCommands`; external implementations, decorators, and
-mocks must implement or forward them. They are immediate inspection APIs and do not
-add batch or transaction methods.
+These 20 methods are `IServerCommands` members; external implementations, decorators, and mocks must implement or forward them. They are immediate, with no batch or transaction versions.

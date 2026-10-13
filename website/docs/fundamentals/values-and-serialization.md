@@ -5,11 +5,12 @@ description: Understand RespireKey, RespireValue, typed objects, and leased read
 
 # Values and serialization
 
-Respire separates flexible command inputs from convenient application outputs.
+Commands take flexible `RespireKey` and `RespireValue` inputs. Reads return the representation you
+choose at the call site: text, bytes, a typed object, pooled memory, or a stream.
 
 ## Keys and input values
 
-`RespireKey` accepts `string`, `byte[]`, or `ReadOnlyMemory<byte>`. `RespireValue` accepts keys, text, binary data (`byte[]`, `Memory<byte>`, `ReadOnlyMemory<byte>`, or `ArraySegment<byte>`), numeric primitives, booleans, `Guid`, `DateTimeOffset`, `TimeSpan`, and `char` through implicit conversions.
+`RespireKey` accepts `string`, `byte[]`, or `ReadOnlyMemory<byte>`. `RespireValue` converts implicitly from keys, text, binary data (`byte[]`, `Memory<byte>`, `ReadOnlyMemory<byte>`, `ArraySegment<byte>`), numeric primitives, booleans, `Guid`, `DateTimeOffset`, `TimeSpan`, and `char`.
 
 ```csharp
 RespireKey key = "counter";
@@ -18,13 +19,16 @@ RespireValue value = 42;
 await redis.SetAsync(key, value);
 ```
 
-These small readonly structs keep command overloads manageable without forcing a protocol union type on every result.
+Both use value equality. `RespireValue` compares the exact bulk-string payload sent to Redis, so `5`, `"5"`, and the UTF-8 bytes for `5` are equal and share a hash code.
 
-Keys and values use value equality. `RespireValue` compares the exact bulk-string payload sent to Redis, so `5`, `"5"`, and the UTF-8 bytes for `5` are equal and share a hash code. GUIDs use the invariant `D` format, `DateTimeOffset` uses the invariant round-trip `O` format, `TimeSpan` uses the invariant constant `c` format, and `char` uses its one-character textual representation.
+| Type | Encoding |
+| --- | --- |
+| `Guid` | Invariant `D` format |
+| `DateTimeOffset` | Invariant round-trip `O` format |
+| `TimeSpan` | Invariant constant `c` format |
+| `char` | One-character text |
 
 ## Typed output
-
-Choose the representation at the call site:
 
 ```csharp
 string? text = await redis.GetStringAsync("payload");
@@ -32,11 +36,11 @@ byte[]? bytes = await redis.GetBytesAsync("payload");
 Order? order = await redis.GetAsync<Order>("order:42");
 ```
 
-A missing key returns `null` from string, byte-array, reference-type, and explicitly nullable reads. `GetAsync<T>` returns `default(T)` for a non-nullable value type, so a missing `GetAsync<int>` result is `0`. Numeric and condition commands return `long`, `double`, or `bool` as appropriate.
+A missing key returns `null` from string, byte-array, reference-type, and nullable reads. For a non-nullable value type, `GetAsync<T>` returns `default(T)`, so a missing `GetAsync<int>` is `0`. Numeric and condition commands return `long`, `double`, or `bool`.
 
 ## Missing keys versus stored defaults
 
-`TryGetAsync<T>` returns a `RespireGet<T>` that reports presence alongside the value, so a missing key stays distinguishable from a stored `default(T)` without a second existence round trip:
+`TryGetAsync<T>` returns a `RespireGet<T>` that reports presence alongside the value, so you can tell a missing key from a stored `default(T)` in one round trip:
 
 ```csharp
 var (found, hits) = await redis.TryGetAsync<int>("page:hits");
@@ -45,11 +49,11 @@ if (!found) { /* key is absent */ }
 else if (hits == 0) { /* key holds 0 */ }
 ```
 
-`RespireGet<T>` also exposes `GetValueOrDefault(fallback)`. The same method exists on `redis.Strings` and, per field, on `redis.Hashes`.
+`RespireGet<T>` also has `GetValueOrDefault(fallback)`. The same method exists on `redis.Strings` and, per field, on `redis.Hashes`.
 
 ## Object serialization
 
-`SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for object values. `SystemTextJsonSerializer` is the default. Supply an `IRespireSerializer` for another format:
+`SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for objects. The default is `SystemTextJsonSerializer`. Supply an `IRespireSerializer` for another format:
 
 <!-- doc-test-ignore: MyMessagePackSerializer is the application's omitted IRespireSerializer implementation. -->
 ```csharp
@@ -60,21 +64,22 @@ var options = new RespireOptions
 };
 ```
 
-Custom serializers must implement all four `IRespireSerializer` methods: generic
+A custom serializer must implement all four `IRespireSerializer` methods: generic
 `Serialize<T>` / `Deserialize<T>` and runtime-type `Serialize(..., Type, object?)` /
-`Deserialize(Type, ...)`. Runtime-type methods use the supplied declared type. They have no
-default throwing implementation, so a missing method is reported at compile time.
+`Deserialize(Type, ...)`. See [NativeAOT and trimming](#nativeaot-and-trimming) for a forwarding example.
 
-Typed `string`, `byte[]`, `char`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Boolean writes use Redis-native `1`/`0`; reads also accept `true`/`false` for interoperability with existing data. Nullable forms use the same fast path when they contain a value.
+What bypasses the serializer:
 
-Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
+- Typed `string`, `byte[]`, `char`, Boolean, and numeric primitives, including nullable forms with a value. Custom serializers do not control their encoding.
+- Numbers use invariant Redis text. Booleans write `1`/`0` on every path (generic, raw, and collection members); reads also accept `true`/`false`.
+- Objects, enums, and other types use the configured serializer. Pass a `RespireValue` when an input must use raw Redis scalar conventions.
 
-Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, textual characters, and non-finite floating-point arguments because those previously bound to `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
+Facets that take a single payload have a generic overload beside the `RespireValue` one: `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument typed as `RespireValue` selects the raw overload; anything else selects the generic one. On generic overloads, `ReadOnlyMemory<byte>`, `char`, and non-finite floating-point values keep their `RespireValue` encoding.
 
 ## NativeAOT and trimming
 
 Typed values use reflection-based System.Text.Json metadata by default. For a trimmed or NativeAOT
-application, generate metadata for every stored type and pass that context to Respire:
+app, generate metadata for every stored type and pass that context to Respire:
 
 <!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
 ```csharp
@@ -103,11 +108,11 @@ internal partial class AppJsonContext : JsonSerializerContext
 }
 ```
 
-Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Boolean values,
-and numeric values use Respire's built-in codecs and do not need generated JSON metadata. Custom
-serializers must implement all four `IRespireSerializer` members, including both `Type`-based
-methods. Forward the supplied declared type instead of substituting `object` or `value.GetType()`.
-For example, a serializer decorator preserves each overload:
+Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Booleans, and
+numbers use built-in codecs and need no JSON metadata.
+
+A custom serializer or decorator must forward the declared type in the `Type`-based methods, not
+substitute `object` or `value.GetType()`:
 
 <!-- doc-test-declaration -->
 ```csharp
@@ -139,12 +144,12 @@ public sealed class ForwardingSerializer(IRespireSerializer inner) : IRespireSer
 }
 ```
 
-These annotations preserve the interface's conservative trimming and NativeAOT warnings.
-Use a source-generated serializer, as shown above, when the application requires AOT safety.
+The annotations keep the interface's trimming and NativeAOT warnings. When the app requires AOT
+safety, use a source-generated serializer as shown above.
 
 ## Zero-copy leased reads
 
-Normal reads prioritize convenient managed values. Large or hot-path payloads can opt into pooled memory:
+For large or hot-path payloads, read into pooled memory:
 
 ```csharp
 using RespireLease lease = await redis.Strings.GetLeaseAsync("blob:4mb");
@@ -155,12 +160,12 @@ if (!lease.IsNull)
 }
 ```
 
-The memory remains valid only until `Dispose`. The `Lease` name makes that ownership obligation visible.
+The memory is valid only until `Dispose`.
 
 ## Streaming large reads
 
-`GetStreamAsync` exposes a Redis bulk value as a readable stream without creating a value-sized
-managed array:
+`GetStreamAsync` exposes a Redis bulk value as a readable stream without a value-sized managed
+array:
 
 ```csharp
 await using Stream? value = await redis.Strings.GetStreamAsync("archive:latest");
@@ -171,20 +176,20 @@ if (value is not null)
 }
 ```
 
-Respire uses a bounded 64 KiB pipe between the socket reader and your stream. If you read slowly,
-the socket reader pauses when that pipe fills. The connection uses one ordered response reader, so
-later command replies on that connection wait until the streamed value is consumed or disposed.
-Always dispose the stream, including when you stop early; Respire drains the remaining bulk frame
-before reading the next reply. A stream that is neither read nor disposed stalls every later reply
-on its connection. Time spent waiting for you to read does not count toward the connection's
-idle-read timeout, and graceful connection retirement waits for the streamed frame to finish. Use another client connection for long-running reads that must not delay ordinary
-commands. Streaming reads bypass the client-side value cache. The cancellation token passed to
-`GetStreamAsync` applies while waiting for the reply header; pass a token to stream read/copy calls
-to cancel payload consumption.
+- **Always dispose the stream**, including when you stop early. Later replies on the same
+  connection wait until the stream is consumed or disposed; an abandoned stream stalls them all.
+- Respire buffers through a bounded 64 KiB pipe. If you read slowly, the socket reader pauses.
+- Use another client connection for long reads that must not delay ordinary commands.
+- Time spent waiting for you does not count toward the idle-read timeout. Graceful connection
+  retirement waits for the stream to finish.
+- The token passed to `GetStreamAsync` stays active for the stream's life. Canceling it fails pending
+  reads and abandons the rest of the payload. You can also pass tokens to individual read or copy
+  calls.
+- Streaming reads bypass the [client-side cache](client-side-caching.md).
 
 ## Expiry without sentinels
 
-Redis represents missing keys and persistent keys with negative TTL values. Respire returns `RespireTtl` instead:
+Redis uses negative TTL values for missing and persistent keys. Respire returns `RespireTtl` instead:
 
 ```csharp
 RespireTtl expiry = await redis.Keys.ExpiryAsync("session:42");

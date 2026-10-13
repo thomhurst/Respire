@@ -2,19 +2,13 @@
 title: Probabilistic data structures
 ---
 
-`Respire.Probabilistic` adds typed command methods for Redis Bloom filters, Cuckoo filters, Count-Min Sketches, Top-K sketches, and t-digest sketches.
-
-These data types are built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisBloom module. The package, assembly, and root namespace are all `Respire.Probabilistic`.
+`Respire.Probabilistic` adds typed commands for Redis Bloom filters, Cuckoo filters, Count-Min Sketches, Top-K sketches and t-digest sketches. These types are built into Redis Open Source 8+; older deployments need Redis Stack or the RedisBloom module.
 
 ```bash
 dotnet add package Respire.Probabilistic
 ```
 
-With C# 14 or later, import the namespace shown below and use `client.Probabilistic` on
-`RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
-performs no network I/O, and leaves ownership of the underlying client with you.
-Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
-The existing `new RespireProbabilisticClient(client)` constructor remains available.
+With C# 14 or later, import `Respire.Probabilistic` and use `client.Probabilistic` on `RespireClient` or `IRespireClient`. It returns one wrapper per client (a `WithKeyPrefix` view gets its own, keeping its prefix), does no network I/O, and never disposes the client. On earlier C# versions, use `new RespireProbabilisticClient(client)`.
 
 ```csharp
 using Respire;
@@ -40,8 +34,15 @@ await probabilistic.TDigestAddAsync("latency:api", [12.4, 19.1, 35.8]);
 var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 0.95, 0.99]);
 ```
 
-Bloom supports reserve, add, exists, multi-add, multi-exists, insert options, cardinality, info, and incremental dump/load. Cuckoo supports reserve, add/add-if-absent, insert/insert-if-absent, delete, exists, multi-exists, count, info, and incremental dump/load. Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists`, or `FilterFull`), so a full filter is not reported as success.
+| Type | Operations |
+| --- | --- |
+| Bloom | Reserve, add, exists, multi-add, multi-exists, insert (capacity and error rate set independently), cardinality, info, incremental dump/load |
+| Cuckoo | Reserve, add/add-if-absent, insert/insert-if-absent, delete, exists, multi-exists, count, info, incremental dump/load |
+| Count-Min | Initialize by dimensions or probability, batched increment and query, info, merge with positive integer weights |
+| Top-K | Reserve options, add, weighted increment, query, count, list (optionally with counts), info |
+| t-digest | Create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/by-reverse-rank, trimmed mean, info |
 
-Count-Min supports dimension or probability initialization, batched increments and queries, info, and merges with positive integer weights. Top-K supports reserve options, add, weighted increment, query, count, list with optional counts, and info. Eviction results from add and increment are returned as nullable byte arrays to preserve binary items. Bloom insert capacity and error-rate options can each be provided independently. t-digest supports create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/reverse rank, trimmed mean, and info.
-
-The generated command interface uses the shared analyzer, so package consumers can define their own command interfaces with the same AOT-safe execution path. Known command keys receive `WithKeyPrefix` prefixes. Multi-key merge commands route using destination and source keys and enforce Cluster slot rules. Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache. The caller owns the underlying client.
+- Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists` or `FilterFull`), so a full filter is not reported as success.
+- Top-K add and increment return evicted items as nullable byte arrays, preserving binary items.
+- Keys receive the `WithKeyPrefix` prefix. Multi-key merges route by destination and source keys and enforce Cluster slot rules.
+- Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache.

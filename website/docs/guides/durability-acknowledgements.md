@@ -1,10 +1,8 @@
 # Durability acknowledgements
 
-Redis `WAIT` acknowledges earlier writes from the same physical connection. `WAITAOF`
-adds acknowledgement of AOF fsync. Sending either command through a separate ordinary
-client call cannot establish that relationship with earlier pooled writes.
-
-Use a batch execution method that keeps its writes and acknowledgement together:
+Redis `WAIT` confirms replication of earlier writes on the same connection; `WAITAOF` also
+confirms AOF fsync. A separate client call cannot do this for pooled writes, so use a batch
+method that sends the writes and the acknowledgement together:
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -17,13 +15,12 @@ bool fieldCreated = second.Result;
 bool replicationTargetMet = acknowledgedReplicas >= 2;
 ```
 
-`ExecuteAndWaitForReplicationAsync` uses Redis 3.0+ `WAIT`. It returns the actual number
-of acknowledging replicas. A server timeout returns that count even when it is below
-the requested level; it does not throw a client timeout exception or roll back writes.
-Check the count explicitly. Successful pending results describe command success,
-independently of whether the requested replication level was reached.
+`ExecuteAndWaitForReplicationAsync` uses `WAIT` (Redis 3.0+) and returns the number of
+acknowledging replicas. On a server timeout it returns that count, even below the requested level;
+it does not throw or roll back. Check the count yourself: pending results report command success
+only.
 
-For Redis 7.2+ AOF acknowledgements:
+For AOF acknowledgements (Redis 7.2+):
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -33,86 +30,72 @@ RespireAofAcknowledgement acknowledgement = await batch.ExecuteAndWaitForAofAsyn
 bool persistenceTargetMet = acknowledgement.Local >= 1 && acknowledgement.Replicas >= 1;
 ```
 
-`Local` is the actual local fsync count (0 or 1); `Replicas` is the number of replicas
-that acknowledged fsync. `requireLocal: false` sends `numlocal = 0`, disabling the
-local requirement; the server may still report a local acknowledgement. A true local
-requirement needs AOF enabled on the primary. Replica AOF acknowledgements also need
-the corresponding server persistence configuration. Unsupported versions and AOF
-configurations retain their server errors; there is no fallback from WAITAOF to WAIT.
-The server can reject the acknowledgement after the batch's writes have succeeded.
+- `Local` is the local fsync count (0 or 1); `Replicas` is the number of replicas that acknowledged fsync.
+- `requireLocal: false` sends `numlocal = 0`; the server may still report a local acknowledgement.
+- `requireLocal: true` needs AOF enabled on the primary. Replica acknowledgements need matching replica persistence configuration.
+- Unsupported versions and AOF configurations return their server errors. There is no fallback from `WAITAOF` to `WAIT`.
+- The server can reject the acknowledgement after the writes succeeded.
 
 ## Connection and execution contract
 
-Each execution creates one fresh exclusive connection tracked by the dedicated pool, pipelines all
-queued commands on it, and waits for every command reply. Only when every command has
-succeeded does it send WAIT or WAITAOF on that same connection. Other client operations
-continue on multiplexed connections while the acknowledgement blocks. Every execution closes
-its connection, including after success. This prevents a read-only or non-propagating batch
-from inheriting an earlier borrower's replication offset, and keeps a failed server-side wait
-from blocking another borrower. Connection setup is therefore part of every durability execution.
+1. Each execution opens a fresh exclusive connection and pipelines all queued commands on it.
+2. If every command succeeds, it sends `WAIT` or `WAITAOF` on that same connection.
+3. It always closes the connection afterwards, so every execution includes connection setup.
 
-This is a single-shot, non-atomic pipeline. It supports the same typed command facets
-and key prefixes as a normal batch. It acknowledges the writes queued in this batch,
-not earlier calls made through the client. Queue helper code can still use
-`IRespireCommandQueue`; execution remains on the concrete `RespireBatch`. No new client
-or queue interface members are required. Empty batches are rejected before sending and remain
-unsent: add commands to the same batch and execute it again.
+Other client operations continue on multiplexed connections meanwhile.
 
-If any queued command fails, all command pendings finish and the earliest failure in
-queue order is rethrown. The acknowledgement is not sent. Other commands may already
-have succeeded. If the acknowledgement fails, successful write pendings remain
-readable. The client never repeats writes after a disconnect, cancellation, or
-Cluster redirect; failure after a send may leave the write outcome uncertain.
+- The batch is single-shot and non-atomic. It supports the usual typed facets and key prefixes.
+- It acknowledges only this batch's writes, not earlier client calls.
+- The execution methods are on the concrete `RespireBatch`; helpers can still take `IRespireCommandQueue` to queue commands.
+- An empty batch is rejected and stays unsent: add commands and execute it again.
+- The client-side cache is invalidated before writes and again after execution, as with ordinary batches.
+- Borrowed input buffers must not change until execution completes.
+- Dispose the batch after use. Disposing an unsent batch faults its pendings; completed results stay readable.
 
-After an execution exception, inspect each queued pending's `Status` and `Error`.
-If every status is `RespirePendingStatus.Succeeded`, all command replies completed
-successfully and execution failed afterward, for example during acknowledgement or
-cancellation. Those results remain readable, but durability is unconfirmed. A failed
-command pending does not prove its write was never applied. Do not replay writes
-merely because the acknowledgement failed.
+### Failures
 
-Durability execution conservatively invalidates the client-side cache before writes
-and again when execution finishes, just like ordinary batches. Borrowed input buffers
-must remain unchanged until execution completes. Dispose the batch after use;
-disposing an unsent batch faults its pendings, while completed results remain readable.
+- If a command fails, all pendings finish, the earliest failure in queue order is rethrown, and no acknowledgement is sent. Other commands may already have succeeded.
+- If the acknowledgement fails, successful write results stay readable.
+- The client never repeats writes after a disconnect, cancellation or Cluster redirect.
+
+After an exception, inspect each pending's `Status` and `Error`. If every status is
+`RespirePendingStatus.Succeeded`, all writes succeeded and execution failed later (during the
+acknowledgement or cancellation): results are readable but durability is unconfirmed.
+
+:::warning
+A failure after sending can leave the write outcome uncertain. A failed pending does not prove its
+write was never applied. Do not replay writes just because the acknowledgement failed.
+:::
 
 ## Timeouts and cancellation
 
 The timeout is the server's acknowledgement wait, not a deadline for the whole batch.
-Zero waits indefinitely; use a cancellation token when the caller needs a bound.
-Negative values and negative replica counts are rejected before sending. Positive
-durations round **up** to whole milliseconds, so a sub-millisecond timeout never
-accidentally becomes an infinite server wait.
 
-Connection acquisition and each queued command retain their existing timeouts.
-`RespireOptions.CommandTimeout` and `ConnectionIdleReadTimeout` do not end WAIT or
-WAITAOF early. The execution cancellation token applies to acquisition, the writes,
-and the acknowledgement. Cancellation closes an outstanding lease; it does not undo
-writes or prove they did not execute. Disposing the owning client aborts leased waits.
+- Zero waits indefinitely; use a cancellation token to bound it.
+- Negative timeouts and replica counts are rejected before sending.
+- Positive durations round **up** to whole milliseconds, so a sub-millisecond timeout never becomes an infinite wait.
+- Connection acquisition and each command keep their own timeouts. `RespireOptions.CommandTimeout` and `ConnectionIdleReadTimeout` do not end `WAIT` or `WAITAOF` early.
+- The cancellation token covers acquisition, writes and acknowledgement. Cancelling closes the connection but does not undo writes or prove they did not run.
+- Disposing the client aborts outstanding waits.
 
 ## Cluster and transaction restrictions
 
-In Cluster mode, every queued command must have a routing key, and those routing keys
-must share a slot after prefixing. Keyless commands and batches spanning routing slots
-are rejected before connection acquisition and before the batch is marked sent.
-Multi-key commands retain their usual key validation and Redis CROSSSLOT errors; all
-keys within such a command must also share the slot. A server-rejected multi-key
-command can coexist with successful neighboring commands in this non-atomic batch.
+In Cluster mode, every queued command needs a routing key, and all keys must share a slot after
+prefixing. Keyless commands and cross-slot batches are rejected before connecting. Multi-key
+commands keep their usual validation and `CROSSSLOT` errors.
 
-Respire selects the slot's primary before starting. Once writes start, MOVED, ASK,
-READONLY, and transport failures surface without redirecting or replaying the batch.
-It does not send an acknowledgement on a replacement connection. This keeps the
-acknowledgement tied to the connection that actually received the writes.
+Respire picks the slot's primary up front. Once writes start, `MOVED`, `ASK`, `READONLY` and
+transport failures surface as errors; the batch is not redirected or replayed, and no
+acknowledgement is sent on a replacement connection.
 
-These execution methods are available on batches, not MULTI/EXEC or watched
-transactions. A WAIT/WAITAOF inside MULTI does not acquire normal blocking behavior;
-it returns the currently available counts. Committing an ordinary transaction and
-then executing an unrelated acknowledgement batch does not acknowledge that
-transaction. Scripts or modules that propagate writes only to AOF and suppress
-replication propagation are incompatible with WAITAOF's server contract.
+- The methods are on batches only, not `MULTI`/`EXEC` or watched transactions.
+- `WAIT`/`WAITAOF` inside `MULTI` does not block; it returns the current counts.
+- An acknowledgement batch run after a transaction does not acknowledge that transaction.
+- Scripts or modules that propagate writes only to AOF, suppressing replication, are incompatible with `WAITAOF`.
 
-WAIT and WAITAOF improve data safety but do not make Redis strongly consistent or
-guarantee that acknowledged writes survive every failover or restart. Choose the
-required counts and persistence configuration for the application's failure model.
-See the Redis [WAIT](https://redis.io/docs/latest/commands/wait/) and
+:::warning
+`WAIT` and `WAITAOF` improve data safety but do not make Redis strongly consistent or guarantee
+that acknowledged writes survive every failover or restart. Choose counts and persistence settings
+for your failure model. See the Redis [WAIT](https://redis.io/docs/latest/commands/wait/) and
 [WAITAOF](https://redis.io/docs/latest/commands/waitaof/) contracts.
+:::

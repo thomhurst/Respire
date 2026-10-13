@@ -5,9 +5,9 @@ description: Redis 8.8+ sparse arrays, range scans, aggregation, and ring buffer
 
 # Sparse arrays
 
-`redis.Arrays` exposes all 18 Redis array commands, available since Redis Open Source 8.8.0 (see the [Redis array command reference](https://redis.io/docs/latest/commands/arscan/)). Older servers report their usual unknown-command error for unavailable operations. Arrays store values at unsigned indexes without shifting other positions when slots are deleted.
+`redis.Arrays` exposes all 18 Redis array commands (Redis Open Source 8.8.0+; see the [Redis array command reference](https://redis.io/docs/latest/commands/arscan/)). Arrays store values at unsigned indexes; deleting a slot does not shift the others. Older servers return an unknown-command error.
 
-Indexes use `ulong`, including positions beyond `long.MaxValue`. Redis reserves `ulong.MaxValue` for normal slot operations. `SeekAsync` also accepts that value to exhaust the insertion cursor.
+Indexes are `ulong`. Redis reserves `ulong.MaxValue`, so slot operations reject it; `SeekAsync` accepts it to exhaust the insertion cursor.
 
 ```csharp
 await redis.Arrays.SetAsync("samples", 2, "0", "7");
@@ -22,11 +22,13 @@ await redis.Arrays.SetManyAsync("samples",
 await redis.Arrays.DeleteRangeAsync("samples", new RespireArrayRange(2, 3));
 ```
 
-`SetAsync` and `SetManyAsync` return the number of newly populated slots, rather than the number of supplied values. `CountAsync` counts populated slots; `LengthAsync` returns the highest populated index plus one. Deleting the final populated slot removes the key.
+- `SetAsync` and `SetManyAsync` return the number of newly populated slots.
+- `CountAsync` counts populated slots; `LengthAsync` returns the highest populated index plus one.
+- Deleting the last populated slot removes the key.
 
 ## Typed values and holes
 
-`SetAsync<T>` uses the configured serializer. `GetAsync<T>` returns `default` for a missing slot. For value types, use nullable `T` or `TryGetAsync<T>` to distinguish absence from a stored default. `GetManyAsync<T>`, `RangeAsync<T>`, and `LastItemsAsync<T>` retain the reply's positions; nullable value types preserve empty slots. Typed scan and grep entries identify populated slots, but their values may deserialize to null (for example, stored JSON `null`).
+`SetAsync<T>` uses the configured serializer. `GetAsync<T>` returns `default` for a missing slot; for value types, use a nullable `T` or `TryGetAsync<T>` to tell absence from a stored default. `GetManyAsync<T>`, `RangeAsync<T>`, and `LastItemsAsync<T>` keep reply positions, so nullable types show empty slots. Typed scan and grep entries are populated slots, but a value can still deserialize to null (for example, stored JSON `null`).
 
 ```csharp
 RespireGet<int> slot = await redis.Arrays.TryGetAsync<int>("samples", 2);
@@ -34,11 +36,11 @@ if (slot.Found) Console.WriteLine(slot.Value); // Stored 0 is still found.
 int?[] values = await redis.Arrays.RangeAsync<int?>("samples", 0, 3);
 ```
 
-Ranges include both endpoints. Descending endpoints return values in reverse order. [ARGETRANGE](https://redis.io/docs/latest/commands/argetrange/) returns nil for each missing position, even when the entire key is missing, and rejects ranges larger than one million positions.
+Ranges include both endpoints; descending endpoints return values in reverse. [ARGETRANGE](https://redis.io/docs/latest/commands/argetrange/) returns nil for each missing position (even if the key is missing) and rejects ranges over one million positions.
 
 ## Scans and searches
 
-[ARSCAN](https://redis.io/docs/latest/commands/arscan/) takes index ranges, skips empty slots, and returns nested index/value pairs. `ScanPageAsync` performs one command. `ScanAsync` requests pages with `LIMIT`, then advances past the last returned index. Each page is a separate read; changes during enumeration can affect later pages.
+[ARSCAN](https://redis.io/docs/latest/commands/arscan/) returns index/value pairs for populated slots in a range. `ScanPageAsync` sends one command. `ScanAsync` pages with `LIMIT`; each page is a separate read, so concurrent changes can affect later pages.
 
 ```csharp
 await foreach (var entry in redis.Arrays.ScanAsync("samples", 0, 1000, pageSize: 100))
@@ -54,9 +56,12 @@ ulong[] matches = await redis.Arrays.GrepAsync("log",
     new RespireArrayGrepOptions { IgnoreCase = true, Limit = 20 });
 ```
 
-`GrepAsync` returns indexes. `GrepEntriesAsync` requests `WITHVALUES` and returns indexes with values. Predicate kinds are exact equality, substring (`MATCH`), Redis glob, and POSIX extended regex (`RE`). Predicates use OR by default; `MatchAll` requests AND. Logical bounds `First` and `Last` encode Redis's `-` and `+` tokens.
+- `GrepAsync` returns indexes; `GrepEntriesAsync` (`WITHVALUES`) returns indexes with values.
+- Predicate kinds: exact equality, substring (`MATCH`), Redis glob, and POSIX extended regex (`RE`).
+- Predicates are ORed; `MatchAll` ANDs them.
+- `RespireArrayBound.First` and `Last` send Redis's `-` and `+`.
 
-Read operations use generated catalog metadata and honor replica read policies. `ARSCAN` retains the catalog's `CursorRead` classification with no standard cursor argument layout. Array enumeration does not invent a Redis cursor or acquire its own cursor-affinity lease; routing retains the existing shared read-policy behavior. Transactions execute on their selected primary.
+Reads follow the client's replica read policy. `ScanAsync` routes each page independently, so pages can come from different servers. Transactions run on their selected primary.
 
 ## Aggregation and insertion cursors
 
@@ -77,16 +82,35 @@ string?[] recent = await redis.Arrays.LastItemsAsync("recent", 3);
 // ["b", "c", "d"]
 ```
 
-`AggregateAsync` preserves the server's numeric text for SUM/MIN/MAX and signed integers for AND/OR/XOR/MATCH/USED. Empty numeric or bitwise input gives `IsNull`; MATCH and USED give zero. MATCH requires the optional `match` argument. Redis traverses the range in the requested direction: descending when `start > end`.
+`AggregateAsync`:
 
-`InsertAsync` writes at the insertion cursor and returns the last written index. `SetAsync` and `SetManyAsync` do not move that cursor. `NextIndexAsync` returns zero before insertion or when the key is missing, and null after exhaustion. `SeekAsync` returns false for a missing key.
+- SUM/MIN/MAX return the server's numeric text (`NumericText`); AND/OR/XOR/MATCH/USED return signed integers (`Integer`).
+- Empty input gives `IsNull` for numeric and bitwise operations, and zero for MATCH and USED.
+- MATCH requires the `match` argument.
+- The range is traversed descending when `start > end`.
 
-`RingAsync` wraps writes into a positive size and returns the last written slot. Resizing preserves the latest contiguous tail; a hole ends the retained tail. `LastItemsAsync` walks recent positions and can return holes. Results are oldest first unless `reverse: true` is specified. Redis 8.10 caps its count by the number of populated slots; zero or negative counts return an empty array.
+Insertion cursor:
 
-`InfoAsync(key, full: true)` returns typed ARINFO metadata and optional slice statistics. Missing keys raise a server error. ARINFO reports insertion position zero when exhausted; `NextIndexAsync` distinguishes that state.
+- `InsertAsync` writes at the cursor and returns the last written index. `SetAsync` and `SetManyAsync` do not move it.
+- `NextIndexAsync` returns zero before any insertion or for a missing key, and null once exhausted.
+- `SeekAsync` returns false for a missing key.
+
+Ring buffers:
+
+- `RingAsync` wraps writes into a positive size and returns the last written slot. Resizing keeps the latest contiguous tail; a hole ends it.
+- `LastItemsAsync` returns recent positions, holes included, oldest first unless `reverse: true`. Redis 8.10 caps the count at the number of populated slots; zero or negative counts return an empty array.
+
+`InfoAsync(key, full: true)` returns typed ARINFO metadata and optional slice statistics. Missing keys raise a server error. ARINFO reports insertion position zero when the cursor is exhausted; use `NextIndexAsync` to tell that apart.
 
 ## Batches, transactions, and the fake server
 
-`batch.Arrays` and `transaction.Arrays` expose the same single-command methods without `Async`. Queue `ScanPage`, then read its pending result after execution; streaming `ScanAsync` remains immediate-only. Batches copy argument spans when queued, but referenced byte buffers must remain unchanged until execution completes. Transactions serialize arguments into their owned buffer when queued.
+`batch.Arrays` and `transaction.Arrays` expose the same single-command methods without `Async`. Use `ScanPage` in a queue; streaming `ScanAsync` is immediate-only. Batches copy argument spans when queued, but referenced byte buffers must not change until execution completes. Transactions serialize arguments when queued.
 
-`Respire.Testing` supports the complete command family, sparse slots, unsigned indexes, insertion cursors, and ring resizing. It stores a dictionary rather than Redis slices, so ARINFO storage statistics are zero. Its AROP numeric arithmetic is bounded to .NET `decimal`; unsupported numeric ranges report explicit errors. ARGREP RE supports printable ASCII values and the common regex subset without escapes, POSIX classes, or .NET-specific groups. Glob matching is iterative and shares a one-million-step work budget across the command; exceeding it returns an explicit error. Use real Redis for allocator statistics, long-double precision, and full POSIX regex compatibility.
+`Respire.Testing` supports the whole command family. Its limits:
+
+- ARINFO storage statistics are zero.
+- AROP arithmetic is bounded to .NET `decimal`; values outside it return an error.
+- ARGREP `RE` supports printable ASCII and a common regex subset: no escapes, POSIX classes, or .NET-specific groups.
+- Glob matching has a one-million-step budget per command; exceeding it returns an error.
+
+Use real Redis for allocator statistics, long-double precision, and full POSIX regex.

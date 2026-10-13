@@ -5,27 +5,21 @@ description: How Respire compares with StackExchange.Redis, and how to move exis
 
 # Coming from StackExchange.Redis
 
-StackExchange.Redis is the established .NET Redis client. Respire covers the same core ground —
-multiplexed connections, automatic pipelining, Cluster, Sentinel, pub/sub, transactions, and
-scripting — with a different API shape and some capabilities StackExchange.Redis does not provide.
-This page compares the two and maps common StackExchange.Redis code to Respire.
+This page compares Respire with StackExchange.Redis and maps common StackExchange.Redis code to Respire.
+Both cover multiplexed connections, automatic pipelining, Cluster, Sentinel, pub/sub, transactions,
+and scripting. Respire has a different API shape and some extra capabilities.
 
-For call sites that still pass `RedisKey`/`RedisValue` or consume `RedisResult`,
-use the [incremental migration boundary](./guides/stackexchange-interop).
-The boundary also includes a limited database adapter for the official distributed cache
-and DataProtection integrations, with [pinned Hangfire acceptance](./guides/hangfire-acceptance).
-General interface parity and combined Microsoft/Hangfire acceptance remain
-pending under [#889](https://github.com/thomhurst/Respire/issues/889). Microsoft's
-SignalR backplane is not supported on the adapter; use [`Respire.SignalR`](./integrations/signalr).
+To migrate gradually, use the [incremental migration adapter](./guides/stackexchange-interop). It
+accepts `RedisKey`, `RedisValue`, and `RedisResult`, and provides a limited `IConnectionMultiplexer`
+for the official distributed cache, DataProtection, and [Hangfire](./guides/hangfire-acceptance).
+It is not a general StackExchange.Redis replacement. It does not support Microsoft's SignalR
+backplane; use [`Respire.SignalR`](./integrations/signalr).
 
-The feature table below describes StackExchange.Redis 3.4.5. The published comparison
-benchmarks were measured against 3.3.1; a rerun against 3.4 and the 4.0 previews is tracked in
-[#1575](https://github.com/thomhurst/Respire/issues/1575).
-Recheck these claims against the version used by your application.
-The upstream [configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Configuration.md),
-[failover/retry](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Failover.md)
-and [maintenance event](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/ServerMaintenanceEvent.md)
-documentation describes its RESP3 defaults, smart client handoffs, connection groups, and retry categories.
+The feature table describes StackExchange.Redis 3.4.5; the published benchmarks used 3.3.1.
+Recheck claims against your version. See the upstream
+[configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Configuration.md),
+[failover/retry](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Failover.md),
+and [maintenance event](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/ServerMaintenanceEvent.md) docs.
 
 :::note Pre-release
 Respire's public API may still change before a stable release. See the [roadmap](./roadmap).
@@ -68,15 +62,14 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 | Smart client handoffs | Maintenance notifications and endpoint handoff; on by default for Redis Enterprise and Azure Managed Redis since 3.4, opt-in elsewhere | Opt-in [maintenance notifications and handoff](./fundamentals/connections#maintenance-notifications), including [failover group candidates](./guides/failover-groups#maintenance-notifications) |
 | Command retry policy | Async `WithRetry(...)` wrapper with `RetryPolicy` and `CommandRetry*` categories | [`RetryPolicy`](./guides/command-retries) option with `RespireCommandRetryCategory` limits, plus whole-unit batch and transaction retries |
 | Diagnostics | `RegisterProfiler` profiling sessions | OpenTelemetry `ActivitySource` and `Meter` |
-| Analyzers | Transaction and sync-over-async diagnostics (`SER305`–`SER308`) | Pooled-result and batch-read diagnostics (`RESP001`, `RESP002`) |
+| Analyzers | Transaction and sync-over-async diagnostics (`SER305`–`SER308`) | Pooled-result and batch-read diagnostics (`RESP001`, `RESP002`), plus source-generator input checks (`RESP003`–`RESP006`) |
 | `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching); entries are interchangeable while `ValueCodec` is unset |
 | Module commands | Raw `Execute` | Typed `Json`, `Search`, `TimeSeries`, and `Probabilistic` packages |
 | Test double | None built in | [`Respire.Testing`](./guides/in-memory-testing) in-memory server |
 
 ## Behavior differences
 
-These differences can change application behavior after a migration. Review them before you
-switch.
+Review these before you switch; they can change application behavior.
 
 - **No synchronous API.** Every command returns `ValueTask` or `ValueTask<T>`. Replace sync calls
   with `await`; do not block on `.Result`.
@@ -112,19 +105,16 @@ switch.
 
 ## Connecting
 
-Respire accepts most StackExchange.Redis connection strings, so existing configuration can stay
-in place:
+Respire accepts most StackExchange.Redis connection strings:
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(
     "cache-a:6380,password=secret,ssl=true,defaultDatabase=2");
 ```
 
-Respire rejects unknown options with `ArgumentException` instead of ignoring them. Remove
-StackExchange.Redis-only options such as `abortConnect` before you pass the string to Respire. See
-[StackExchange.Redis connection strings](./fundamentals/connections#stackexchangeredis-connection-strings)
-for the supported options. URIs such as `rediss://user:pass@cache-a:6380/2` and `RespireOptions`
-also work.
+Unknown options throw `ArgumentException`. Remove StackExchange.Redis-only options such as
+`abortConnect`. See [StackExchange.Redis connection strings](./fundamentals/connections#stackexchangeredis-connection-strings)
+for the supported options. URIs such as `rediss://user:pass@cache-a:6380/2` and `RespireOptions` also work.
 
 | StackExchange.Redis | Respire |
 | --- | --- |
@@ -133,7 +123,7 @@ also work.
 | `multiplexer.GetDatabase()` | The client itself (`IRespireClient`) |
 | `multiplexer.GetDatabase(2)` | A separate client with `Database = 2` |
 | `multiplexer.GetSubscriber()` | `redis.SubscribeAsync` and `redis.PublishAsync` on the client |
-| `multiplexer.GetServer(endpoint)` | No per-endpoint selection. `redis.Server` uses normal routing; `*OnAllNodesAsync` methods run on every node |
+| `multiplexer.GetServer(endpoint)` | `redis.Server.OnNode(endpoint)` for [one explicit node](./guides/server-node-lifecycle). `redis.Server` otherwise uses normal routing; `*OnAllNodesAsync` methods run on every node |
 | `ConnectionFailed`, `ConnectionRestored` | `ConnectionStateChanged` |
 | `multiplexer.IsConnected` | `redis.IsConnected` |
 | `services.AddSingleton<IConnectionMultiplexer>(...)` | [`services.AddRespire(...)`](./integrations/dependency-injection) |
@@ -194,28 +184,25 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
 | `ExecuteAsync("CMD", args)` | `ExecuteAsync("CMD", args)` or the generated `RespireCommands` catalog |
 | `CommandFlags.FireAndForget` | `ExecuteFireAndForgetAsync` |
 
-`RedisValue` results can hold arbitrary bytes. Respire's non-generic read methods return strings,
-which decode UTF-8 and replace invalid byte sequences. This applies to strings, hashes, lists,
-sets, sorted sets, and `Keys.ScanAsync`. For binary data, use `GetBytesAsync` or the generic
-`<byte[]>` overloads, such as `GetAsync<byte[]>`, `Hashes.GetAllAsync<byte[]>`,
-`Lists.RangeAsync<byte[]>`, `Sets.MembersAsync<byte[]>`, and `SortedSets.RangeAsync<byte[]>`.
-Hash field names, stream field names, and scanned keys are always strings. Use raw `HGETALL`,
-`XADD`, stream read, or `SCAN` commands when field names or keys are binary. In Cluster mode, a
-raw `SCAN` reaches one node only, so it does not enumerate keys on every primary.
+**Binary data.** Non-generic read methods return UTF-8 strings and replace invalid bytes. This
+applies to strings, hashes, lists, sets, sorted sets, and `Keys.ScanAsync`. For binary data, use
+`GetBytesAsync` or a `<byte[]>` overload, such as `GetAsync<byte[]>`, `Hashes.GetAllAsync<byte[]>`,
+`Lists.RangeAsync<byte[]>`, `Sets.MembersAsync<byte[]>`, or `SortedSets.RangeAsync<byte[]>`.
+Hash field names, stream field names, and scanned keys are always strings; use raw `HGETALL`,
+`XADD`, stream read, or `SCAN` commands when they are binary. In Cluster mode, a raw `SCAN` reaches one node only.
 
-`StreamReadGroupAsync` returns one batch. The single-key `Streams.ReadGroupAsync` is a continuous consumer: it
-keeps issuing blocking `XREADGROUP` calls on a dedicated connection and ends only when its
-cancellation token is canceled. Use `Streams.ReadGroupOnceAsync` for a single batch, or the
-multi-stream `Streams.ReadGroupAsync` overload for one page across streams. `StreamReadOptions`
-supports cumulative Redis 8.10 reply limits, `NoAck`, and Redis 8.4 `ClaimMinIdle`.
+**Stream consumer groups.** StackExchange.Redis `StreamReadGroupAsync` returns one batch; the equivalent
+is `Streams.ReadGroupOnceAsync`. The single-key `Streams.ReadGroupAsync` reads continuously on a
+dedicated connection until its cancellation token is cancelled. The multi-stream `Streams.ReadGroupAsync`
+overload returns one page across streams. `StreamReadOptions` supports Redis 8.10 reply limits,
+`NoAck`, and Redis 8.4 `ClaimMinIdle`.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and
 [raw commands](./guides/raw-commands) for the full surface.
 
 ## Batches and transactions
 
-StackExchange.Redis batch and transaction methods return tasks that complete when the batch
-runs. Respire returns `RespirePending<T>`, and the batch methods drop the `Async` suffix:
+Respire batch methods return `RespirePending<T>` instead of tasks, and drop the `Async` suffix:
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -226,9 +213,8 @@ await batch.ExecuteAsync();
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
-StackExchange.Redis `AddCondition` checks have no direct equivalent. Use `WATCH` through
-`CreateTransactionAsync`, read the current state with the client, and retry when `CommitAsync`
-returns `false`:
+`AddCondition` has no direct equivalent. Watch keys with `CreateTransactionAsync`, read the
+current state, and retry when `CommitAsync` returns `false`:
 
 ```csharp
 bool applied;
@@ -252,9 +238,8 @@ For single-key compare-and-set on Redis 8.4+, use `Strings.SetConditionalAsync` 
 
 ## Pub/sub
 
-StackExchange.Redis delivers messages to a handler or a `ChannelMessageQueue`. Respire returns
-a subscription that is an async stream. `SubscribeAsync` returns after the server acknowledges
-the subscription:
+A Respire subscription is an async stream, not a handler or `ChannelMessageQueue`.
+`SubscribeAsync` returns after the server acknowledges the subscription:
 
 ```csharp
 await using var subscription = await redis.SubscribeAsync("orders", token);
@@ -272,8 +257,7 @@ await foreach (var message in subscription.WithCancellation(token))
 }
 ```
 
-A `Gap` item means messages may have been lost during a reconnect or buffer overflow; it has no
-channel or payload. `message.Text` decodes the payload as UTF-8. Use `message.Payload` or
+A `Gap` item has no channel or payload. `message.Text` decodes the payload as UTF-8. Use `message.Payload` or
 `message.As<byte[]>()` for binary payloads. Disposing the subscription unsubscribes. See
 [pub/sub](./guides/pub-sub#detecting-delivery-gaps).
 
@@ -290,12 +274,11 @@ channel or payload. `message.Text` decodes the payload as UTF-8. Use `message.Pa
 | `ScriptEvaluateAsync(script, keys, values)` | `Scripts.ExecuteAsync(script, keys, args)` (`EVALSHA` with `EVAL` fallback) |
 | `db.WithKeyPrefix("tenant:")` | `redis.WithKeyPrefix("tenant:")` |
 
-Respire sends script source unchanged. It does not support StackExchange.Redis named `@parameter`
-binding. Rewrite each `@key` reference as `KEYS[n]` and each `@value` reference as `ARGV[n]`, then
-pass the keys and arguments as arrays in the same order.
+Respire sends script source unchanged and has no named `@parameter` binding. Rewrite each `@key`
+as `KEYS[n]` and each `@value` as `ARGV[n]`, then pass keys and arguments as arrays in that order.
 
 See [distributed locks](./guides/distributed-locks) and
-[Lua scripting](https://github.com/thomhurst/Respire/blob/main/docs/SCRIPTING.md).
+[Lua scripting](guides/scripting.md).
 
 ## Replicas, Cluster, and Sentinel
 

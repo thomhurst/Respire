@@ -79,7 +79,7 @@ internal static class MarkdownReporter
             sb.Append(Invariant($"| {r.Gc.Gen0Collections}/{r.Gc.Gen1Collections}/{r.Gc.Gen2Collections} "));
             sb.Append(Invariant($"| {r.Gc.PauseMs / 1000.0:0.00} "));
             sb.Append(Invariant($"| {(r.CpuMicrosecondsPerOperation is { } cpu ? cpu.ToString("0.0", CultureInfo.InvariantCulture) : "—")} "));
-            sb.Append(Invariant($"| {(r.ThroughputDriftPercent is { } drift ? drift.ToString("+0.0;-0.0", CultureInfo.InvariantCulture) : "—")} "));
+            sb.Append(Invariant($"| {(r.ThroughputDriftPercent is { } drift ? drift.ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) : "—")} "));
             sb.AppendLine(Invariant($"| {r.Status} |"));
         }
 

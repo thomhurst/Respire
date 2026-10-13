@@ -1,17 +1,11 @@
 ---
 title: Blocking queues
-description: Use blocking list and stream commands without stalling multiplexed traffic.
+description: Use blocking list commands without stalling multiplexed traffic.
 ---
 
 # Blocking queues
 
-Respire supports Redis blocking commands without letting one long wait stall unrelated requests.
-
-## Why dedicated connections matter
-
-A multiplexed connection serves many callers. If `BLPOP` waited on that socket, commands queued behind it could not receive replies. Respire rents a separate connection for the blocking operation while regular traffic stays on the shared multiplexer.
-
-No second client or manual connection is required.
+Respire runs blocking list commands such as `BLPOP` on a separate pooled connection, so a long wait never stalls other requests on the shared connection. You need no second client or manual connection.
 
 ## Wait for work
 
@@ -30,11 +24,17 @@ while (!stoppingToken.IsCancellationRequested)
 }
 ```
 
-`waitFor: null` performs non-blocking `LPOP`. Supplying a duration performs `BLPOP` on a dedicated pooled connection.
+| `waitFor` | Command | Result when empty |
+| --- | --- | --- |
+| `null` (default) | `LPOP` | `null` immediately |
+| A duration | `BLPOP` | `null` after the timeout |
+| `Timeout.InfiniteTimeSpan` | `BLPOP` | Waits indefinitely |
+
+`RightPopAsync` (`RPOP`/`BRPOP`) and the typed `LeftPopAsync<T>`/`RightPopAsync<T>` overloads take the same `waitFor` argument.
 
 ## Reliable queue movement
 
-Move a job atomically from a pending queue into a processing queue:
+Move a job atomically from a pending queue to a processing queue:
 
 ```csharp
 string? job = await redis.Lists.MoveAsync(
@@ -46,10 +46,10 @@ string? job = await redis.Lists.MoveAsync(
     cancellationToken: stoppingToken);
 ```
 
-After successful processing, remove the item from `jobs:processing`. Recovery code can requeue abandoned items.
+With `waitFor` this runs `BLMOVE`; without it, `LMOVE`. After processing, remove the item from `jobs:processing`. Recovery code can requeue abandoned items.
 
-## Cancellation semantics
+For consumer groups with acknowledgements and retry, use a [hosted stream consumer](stream-workers.md).
 
-Cancellation stops your wait. If a blocking command has already reached the server, Respire safely retires or cleans up the dedicated connection rather than leaving a partial protocol exchange in the shared pool.
+## Cancellation
 
-Use bounded wait durations when workers also need periodic housekeeping or health updates.
+Cancellation stops your wait. If the command already reached the server, Respire retires or cleans up the dedicated connection so the shared pool stays consistent. Use bounded waits when workers also need periodic housekeeping or health updates.

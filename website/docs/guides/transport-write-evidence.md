@@ -1,15 +1,22 @@
 ---
 title: Transport write evidence
-description: Write outcome ownership and the pinned transport performance measurements.
+description: Engineering evidence log for transport write outcomes, their ownership limits, and pinned transport performance comparisons.
 ---
 
 # Transport write evidence
 
-Transport write evidence distinguishes an attempt that is definitely unwritten from one whose effect may have reached Redis. It does not enable automatic retries. An ambiguous or unknown outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.
+This is an engineering evidence log, not a usage guide. **Application developers can stop here.**
+
+- **What it is.** Respire records whether each send attempt was definitely not written or may have reached Redis. This log states the limits of that record and keeps dated audits of the `run-transport-benchmarks` comparisons, newest first.
+- **Who needs it.** Contributors changing the transport write path, streaming uploads, batches, or connection selection, and reviewers auditing a transport benchmark run.
+- **What to configure.** Nothing. The only public feature that uses it is [`RespireOptions.RetryPolicy`](./command-retries); leave it `null` (the default) for no automatic retries.
+- **Status.** Write evidence works as specified. Only a definitely unwritten attempt can authorize a resend that the command's retry category would not otherwise allow. The latest audit (#1481) left transport performance acceptance unmet: latency and allocation results are mixed, with no production defect identified. Each dated section records issue state at its audit time.
+
+Write evidence never retries anything by itself. An ambiguous outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.
 
 ## Ownership and retention limits
 
-The foundation is internal. Ordinary public commands do not call `SendAttemptAsync` or `SendAskingStreamAttemptAsync`. Each of these opt-in owners allocates one non-pooled `CommandWriteObservation`. The observation contains one connection reference, two `long` frame coordinates and one `bool` for multiple frames. It holds no pending-response source, task token, payload array, stream, exception or collection of historical attempts. `RecordQueued` records coordinates under the write gate. A second frame sets the multiple-frame flag rather than adding another entry. The completed result copies only the outcome enum, normal response and optional `ExceptionDispatchInfo`; it does not expose or retain the observation itself.
+The foundation is internal. With the default `RetryPolicy = null`, ordinary public commands never create an attempt owner. When `RetryPolicy` is set, retry-eligible buffered commands send through `SendAttemptAsync` ([`RespireClient.CommandRetries.cs`](https://github.com/thomhurst/Respire/blob/main/src/Respire/RespireClient.CommandRetries.cs)), and retryable transactions send through `SendTransactionAttemptAsync`, which wraps it. `SendAskingStreamAttemptAsync` currently has no caller. Each attempt owner allocates one non-pooled `CommandWriteObservation`. The observation contains one connection reference, two `long` frame coordinates and one `bool` for multiple frames. It holds no pending-response source, task token, payload array, stream, exception or collection of historical attempts. `RecordQueued` records coordinates under the write gate. A second frame sets the multiple-frame flag rather than adding another entry. The completed result copies only the outcome enum, normal response and optional `ExceptionDispatchInfo`; it does not expose or retain the observation itself.
 
 This is a constant amount of observation state **per attempt**, not a global count or byte limit. The async send owner and its borrowed send frames can retain the observation while the operation is outstanding. The connection reference can retain the connection graph during that lifetime. Admission capacity does not bound owners waiting to enter the ring: `MaxInflightCommands` defaults to 16,384 replies per connection, but callers can create more waiting operations. There is no observation-specific timeout, eviction cap or fixed wall-clock retention limit. A cancelled owner can finish while its frame remains eligible for sending; freezing its outcome does not end actual transport ownership. Retaining an unconsumed `ValueTask`, response or exception can retain other owner/result state. These limits do not establish complete reclamation or a measured retained byte cost.
 
@@ -77,7 +84,7 @@ The reviewed aggregate audit closes #1481, so #1520 can request the corrected co
 
 The label event captures this request from its immutable PR merge, verifies the PR head, and runs baseline/candidate/baseline on one runner per metric mode. `revisions.log`, `selection-request.log` and the three `.commit` files bind the request source, library revisions, copied fixture revision and SHA-256 hashes of every copied input, production multiplexer source and provenance gate. The gate is unchanged from the merged corrections. A request applies only when its JSON differs from the PR merge's first parent; later PRs that inherit this historical request retain the ordinary merge/first-parent comparison.
 
-The request retains every public Medium timing body, two launches, both connection profiles, and the separate Short reference, tiering-off, pinned and no-subtraction controls with unroll factor 16. Linux pinned children use the merged pre-runtime `taskset` launcher. Request `run-transport-benchmarks` once after this request is reviewable. A later pass must verify every public and diagnostic selection process in both metric modes with the unchanged gate, then audit both launches against A and B, B/A drift, raw overhead/workload, native addresses, code/tier versions and scheduling at both boundaries. Do not rerun unchanged evidence for a favorable result.
+The request retains every public Medium timing body, two launches, both connection profiles, and the separate Short reference, tiering-off, pinned and no-subtraction controls with unroll factor 16. Linux pinned children use the merged pre-runtime `taskset` launcher. Run 38266422052 executed this request once; its audit below verifies every public and diagnostic selection process in both metric modes with the unchanged gate, then compares both launches against A and B, B/A drift, raw overhead/workload, native addresses, code/tier versions and scheduling at both boundaries. Unchanged evidence is not rerun for a favorable result. Keep the JSON block above unchanged: the transport workflow reads it from this page and applies it only when it differs from the PR merge's first parent.
 
 #### Corrected selection comparison audit: run 38266422052
 
@@ -112,13 +119,15 @@ Diagnostic controls, A/C/B report means in ns:
 
 Scheduling and frequency limits: per-task context-switch deltas cover only tasks alive at both boundaries. Some public deltas are negative because tasks exited between boundaries, so they are not process totals. On the enabled runner `scaling_cur_freq` is usable at all 128 boundaries, at 2,320,267–4,465,658 kHz. On the disabled runner it is unavailable at all 128 boundaries because the cpufreq path is absent. Boundary snapshots do not cover an iteration and do not attribute any launch regime.
 
-**Selection disposition: provenance positive; selection timing negative as acceptance evidence; no production defect.** This pinned Linux comparison validates the corrected capture and causal controls: every public and diagnostic process passes the unchanged gate in both modes. With identical production selection source, it still shows launch-level separated differences: +12.47% against both controls for disabled one connection, and +30.63% B/A drift for enabled two connections. Pinned, tiering-off and no-subtraction launches are bimodal with matching normalized selection code. Single-launch selection regimes of this size therefore occur without a production change and cannot alone establish a selection regression or improvement. Overlapping rows do not prove equivalence either. No control isolates a focused production defect, so no implementation child is filed. One connection skips the round-robin atomic increment; two connections use it.
+**Selection disposition: provenance positive; selection timing negative as acceptance evidence; no production defect.** This pinned Linux comparison validates the corrected capture and causal controls: every public and diagnostic process passes the unchanged gate in both modes. With identical production selection source, it still shows launch-level separated differences: +12.47% against both controls for disabled one connection, and +30.63% B/A drift for enabled two connections. Pinned, tiering-off and no-subtraction launches are bimodal with matching normalized selection code. Single-launch selection regimes of this size therefore occur without a production change and cannot alone establish a selection regression or improvement. Overlapping rows do not prove equivalence either. No control isolates a focused production defect, so no implementation child is filed.
 
 The historical enabled two-connection 9.798/8.538 ns and disabled one-connection +17.80%/+18.49% regimes come from earlier processes without matching launch-bound evidence, so they remain unattributed. This run shows that similar shapes can arise from identical source, but it does not explain those processes. No unfavorable launch is excluded and no historical total is subtracted.
 
 This closes only the #1520 selection evidence gap. It does not clear the other public latency/allocation gaps from #1481. #1474, #1214 and #862 remain open until full aggregate acceptance is established; #976 remains separate.
 
-Run 38195553203 contains **128 selection processes**: 32 Dry/public processes and 96 separate diagnostic processes across both metric modes and three bracket phases. Every process has matching before/after identity, JIT code/tier output, perf-map addresses, scheduling snapshots and raw workload samples. Required overhead samples are present; no-subtraction and Dry controls omit them as designed. Diagnostic unroll factor is explicitly 16. Tiering-off controls stamp `DOTNET_TieredCompilation=0`. These checks establish capture provenance, not which tier ran throughout a timed iteration or a causal layout effect.
+#### Earlier selection capture: run 38195553203
+
+The audit above supersedes this run for selection. It is kept because its rejection motivated the corrected request. Run 38195553203 contains **128 selection processes**: 32 Dry/public processes and 96 separate diagnostic processes across both metric modes and three bracket phases. Every process has matching before/after identity, JIT code/tier output, perf-map addresses, scheduling snapshots and raw workload samples. Required overhead samples are present; no-subtraction and Dry controls omit them as designed. Diagnostic unroll factor is explicitly 16. Tiering-off controls stamp `DOTNET_TieredCompilation=0`. These checks establish capture provenance, not which tier ran throughout a timed iteration or a causal layout effect.
 
 The current full provenance gate rejects all six diagnostic phase/mode combinations with **`Missing affinity target`**. All **24 pinned launches** lack the later `affinityMask` identity. Their captured process/task masks are singleton masks, but the missing requested target prevents verification against the corrected control, and this run predates the pre-runtime `taskset` correction. Do not weaken the current verifier to accept the old artifacts. The remaining historical records were audited separately without treating affinity as verified. Local corrected captures at `a88a40e80fc397073e5bec48f6d845f999c76dd8` pass the current gate for 32 Linux diagnostic processes; shortened local sampling validates instrumentation, not the required pinned acceptance comparison. #1520 owns that specific remaining evidence gap and reuses the merged corrections.
 
@@ -716,7 +725,9 @@ Baseline `82a6fda724b1e79f95ac3eb778547586e286b4fc`; measured candidate `f35ff14
 
 </details>
 
-## Evidence audit: 2026-10-12
+## Final-frame wait audit: 2026-10-12 (#1433)
+
+The aggregate audit (#1481) at the top of this page supersedes this disposition. The comparison, tables and open questions below remain as recorded.
 
 ### Pinned final-frame wait comparison
 

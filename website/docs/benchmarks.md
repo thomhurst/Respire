@@ -18,7 +18,7 @@ StackExchange.Redis is the baseline. A ratio below `1.00` means Respire complete
 StackExchange.Redis has no built-in server-assisted client cache, so its values are ordinary server reads. Respire server reads are included for a like-for-like uncached comparison.
 
 <ComparisonBarChart
-  title="Client-cache hit time — unknown framework"
+  title="Client-cache hit time — net10.0"
   description="StackExchange.Redis and Respire server reads vs Respire client-cache hit. Shorter bars are faster."
   format="duration-ns"
   respireLabel="Respire cache hit"
@@ -28,7 +28,7 @@ StackExchange.Redis has no built-in server-assisted client cache, so its values 
 />
 
 <ComparisonBarChart
-  title="Selected operation time — unknown framework"
+  title="Selected operation time — net10.0"
   description="Mean time. Shorter bars are faster."
   format="duration-ns"
   scale="group"
@@ -36,7 +36,7 @@ StackExchange.Redis has no built-in server-assisted client cache, so its values 
   data={[{"label":"GET","other":187631.0,"respire":189147.0},{"label":"GET x200 pipelined","other":2445.0,"respire":2286.0},{"label":"GET x50 concurrent","other":5223.0,"respire":5081.0},{"label":"HGET","other":191612.0,"respire":186657.0},{"label":"HSET","other":187943.0,"respire":190351.0},{"label":"LPUSH+LPOP","other":367379.0,"respire":387748.0},{"label":"SET 1KB","other":229367.0,"respire":232937.0}]}
 />
 
-## unknown framework
+## net10.0
 
 ### ClientSideCachingBenchmarks
 

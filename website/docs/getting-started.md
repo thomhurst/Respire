@@ -6,26 +6,21 @@ description: Install Respire and send your first commands.
 
 # Getting started
 
-Connect to a local RESP server and send typed commands in a few lines.
+Install Respire, start a server, and send typed commands.
 
-## Prerequisites
-
-- .NET 10 SDK or later (Respire targets both `net8.0` and `net10.0`)
-- Redis, Valkey, KeyDB, or another RESP2-compatible server
+You need .NET 8 or later (Respire ships `net8.0` and `net10.0` builds) and Redis, Valkey, KeyDB, or another RESP2-compatible server.
 
 ## Install Respire
 
-Respire is available on [NuGet](https://www.nuget.org/packages/Respire). It is still pre-release, so its public APIs may change. Install the package with prerelease versions included:
-
 ```bash
-dotnet add package Respire --prerelease
+dotnet add package Respire
 ```
+
+The package is on [NuGet](https://www.nuget.org/packages/Respire); its API may change before 1.0. Optional features and integrations ship as [separate packages](./packages).
 
 ## Start a server
 
-See [Packages and namespaces](./packages) for optional Redis features, .NET integrations, and the naming convention.
-
-If you do not have a server running locally, Docker is the quickest option:
+No local server? Use Docker:
 
 ```bash
 docker run --name respire-redis --rm -p 6379:6379 redis:7-alpine
@@ -47,7 +42,9 @@ string? state = await redis.GetStringAsync("session:42");
 Console.WriteLine(state);
 ```
 
-`ConnectAsync` connects immediately and fails fast when the endpoint is unavailable. The client is `IAsyncDisposable`; use `await using` or dispose it during application shutdown.
+- `ConnectAsync` connects immediately and fails fast if the endpoint is unavailable.
+- The client is `IAsyncDisposable`: use `await using` or dispose it at shutdown.
+- Create one client and share it. It multiplexes concurrent callers over one connection.
 
 ## Store a typed object
 
@@ -61,7 +58,7 @@ await redis.SetAsync("user:ada", new User("Ada", 7));
 User? user = await redis.GetAsync<User>("user:ada");
 ```
 
-Typed strings, byte arrays, numeric primitives, and Boolean values bypass the object serializer. Other values use the configured serializer. See [values and serialization](./fundamentals/values-and-serialization).
+Strings, byte arrays, numbers, and Booleans bypass the serializer. See [values and serialization](./fundamentals/values-and-serialization).
 
 ## Explore commands by data type
 
@@ -73,17 +70,17 @@ await redis.Sets.AddAsync("online", "ada", "grace");
 bool online = await redis.Sets.ContainsAsync("online", "ada");
 ```
 
-Root shortcuts cover frequent operations. Facets—`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Scripts`, `Functions`, and `Server`—keep IntelliSense focused.
+Root methods cover common operations. Facets group the rest: `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Bitmaps`, `HyperLogLog`, `Geo`, `VectorSets`, `Arrays`, `Locks`, `Scripts`, `Functions`, and `Server`.
 
 ## Connection URI
-
-The common form is:
 
 ```text
 redis://[username:password@]host[:port][/database]
 ```
 
-For connection timeouts, protocol selection, serialization, or logging, use [RespireOptions](./fundamentals/connections).
+- Use `rediss://` for TLS. The port defaults to `6379`.
+- Query parameters such as `?clientName=api&commandTimeoutMs=2000` set common options. See [URI query options](./fundamentals/connections#uri-query-options).
+- For timeouts, protocol, serialization, or logging, use [RespireOptions](./fundamentals/connections).
 
 ## Next
 

@@ -5,24 +5,23 @@ description: Register lazy Respire clients in ASP.NET Core and worker services.
 
 # Dependency injection
 
-`Respire.DependencyInjection` registers `IRespireClient` with lazy connection behavior. Application startup does not wait for Redis availability.
+`Respire.DependencyInjection` registers a lazy `IRespireClient` in ASP.NET Core and worker
+services. Startup does not wait for Redis.
 
 ## Register a default client
 
-Install [Respire.DependencyInjection from NuGet](https://www.nuget.org/packages/Respire.DependencyInjection), including prerelease versions. The package also brings in `Respire` as a dependency:
+Install [Respire.DependencyInjection](https://www.nuget.org/packages/Respire.DependencyInjection) (include prerelease versions). It brings in `Respire`:
 
 ```bash
-dotnet add package Respire.DependencyInjection --prerelease
+dotnet add package Respire.DependencyInjection
 ```
 
-Register a connection string:
+Register a connection string, then inject `IRespireClient`:
 
 ```csharp
 builder.Services.AddRespire(
     builder.Configuration.GetConnectionString("redis")!);
 ```
-
-Inject `IRespireClient`:
 
 <!-- doc-test-declaration -->
 ```csharp
@@ -37,7 +36,7 @@ The container owns disposal.
 
 ## Named clients
 
-Use keyed services when an application talks to separate endpoints:
+Use keyed services for separate endpoints:
 
 <!-- doc-test-tail-declaration: split-before=public sealed class CartService -->
 ```csharp
@@ -54,7 +53,8 @@ public sealed class CartService(
 
 ## Configure options
 
-Use the options overload when you need explicit timeouts, connection counts, serialization, or logging. Keep secrets in configuration providers; do not embed credentials in source.
+Use the options overload for timeouts, connection counts, serialization, or logging. Keep
+credentials in configuration providers, not in source.
 
 ```csharp
 builder.Services.AddRespire(options =>
@@ -66,31 +66,33 @@ builder.Services.AddRespire(options =>
 });
 ```
 
-Default registrations and each service key may be added only once. A duplicate registration
-throws immediately instead of silently retaining the first configuration.
-
-For these lazy DI registrations, multiple `Endpoints` require `UseCluster = true`.
-A standalone client with several endpoints throws `RespireConfigurationException` when the
-container first resolves it. Register separate named clients for independent deployments;
-endpoint order does not imply automatic failover.
-
-`AddRespire` and `AddKeyedRespire` support Sentinel through their lazy clients. Set
-`SentinelPrimaryName` and configure Sentinel endpoints; discovery occurs on the first network
-operation. Use `await RespireClient.ConnectAsync(options)` when startup must validate the
-primary eagerly. Prefixed views and DI consumers retain the same client across reactive
-Sentinel primary changes.
+- To build options from other services, pass a `Func<IServiceProvider, RespireOptions>`.
+  `AddKeyedRespire` has both forms too.
+- Without `LoggerFactory`, the client uses the container's `ILoggerFactory`.
+- Register the default client, and each key, once. A duplicate throws
+  `InvalidOperationException` immediately.
+- Several `Endpoints` require `UseCluster = true` or `SentinelPrimaryName`; otherwise the
+  container throws `RespireConfigurationException` on first resolve. Endpoint order is not
+  failover: register separate named clients for independent deployments.
+- For Sentinel, set `SentinelPrimaryName` and the Sentinel endpoints. Discovery happens on the
+  first network operation. To validate the primary at startup, use
+  `await RespireClient.ConnectAsync(options)` instead. Consumers and prefixed views keep the
+  same client when the primary changes.
 
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).
 For readiness endpoints, see [health checks](./health-checks).
 
 ## Default key namespaces with Aspire
 
-`Aspire.Respire` accepts a text prefix at `Aspire:Respire:Options:KeyPrefix`, with
-a per-client override at `Aspire:Respire:<connectionName>:Options:KeyPrefix`.
-Configuration values are literal text; they are not percent-decoded. An absent value
-preserves the connection-string or global prefix, and an empty value clears it.
-The `configureOptions` callback runs last and can supply arbitrary binary prefixes
-through `RespireOptions.KeyPrefix`. Both `AddRespireClient` and `AddKeyedRespireClient`
-apply these rules when creating the lazy root client. See
+`Aspire.Respire` reads a key prefix from `Aspire:Respire:Options:KeyPrefix`, overridden per
+client by `Aspire:Respire:<connectionName>:Options:KeyPrefix`. `AddRespireClient` and
+`AddKeyedRespireClient` both apply it.
+
+- Values are literal text, not percent-decoded.
+- An absent value keeps the connection-string or global prefix; an empty value clears it.
+- The `configureOptions` callback runs last and can set a binary prefix through
+  `RespireOptions.KeyPrefix`.
+
+See
 [default root namespaces](../commands/strings-and-keys.md#default-root-namespace)
 for key, scan, cache and disposal behavior.

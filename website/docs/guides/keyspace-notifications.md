@@ -5,17 +5,11 @@ description: Parse binary-safe key, event, and Redis 8.8 subkey notifications.
 
 # Keyspace notifications
 
-Notification factories describe physical Redis keys and choose `SUBSCRIBE` or `PSUBSCRIBE`.
-`RespireMessage.TryParseKeyNotification` exposes the database, event, key, and subkeys as
-owned memory slices. Parsing and struct enumeration do not copy message bytes. Unrecognized
-event names have `Type == Unknown` and remain available through `RawType`.
+Subscribe to Redis keyspace, keyevent, and Redis 8.8 subkey notifications, and parse them without copying. Use them for application events about key changes. Delivery is at most once.
 
 ## Configure the server explicitly
 
-Notifications start disabled. Configure the deployment or use admin-gated
-`redis.Server.SetConfigAsync("notify-keyspace-events", "KEA")`. Subscription never sends
-`CONFIG SET`. These settings affect the entire server and add processing overhead; managed
-services may restrict them.
+Notifications are off by default, and subscribing never sends `CONFIG SET`. Configure the deployment, or use admin-gated `redis.Server.SetConfigAsync("notify-keyspace-events", "KEA")`. The setting is server-wide, adds overhead, and managed services may restrict it.
 
 ```shell
 redis-cli CONFIG SET notify-keyspace-events KEA
@@ -23,9 +17,10 @@ redis-cli CONFIG SET notify-keyspace-events KEA
 redis-cli CONFIG SET notify-keyspace-events KEASTIVh
 ```
 
-Choose `K`/`E` for keyspace/keyevent channels, or `S`/`T`/`I`/`V` for subkey channels, plus
-needed event classes. `A` does not include miss, new-key, overwrite, or type-change classes;
-add `m`, `n`, `o`, or `c` explicitly. See Redis's [configuration reference](https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/#configuration).
+- `K`/`E` enable keyspace/keyevent channels; `S`/`T`/`I`/`V` enable subkey channels. Add the event classes you need.
+- `A` excludes the miss, new-key, overwrite, and type-change classes; add `m`, `n`, `o`, or `c` explicitly.
+
+See Redis's [configuration reference](https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/#configuration).
 
 ## Subscribe and parse
 
@@ -46,14 +41,13 @@ await foreach (var message in subscription)
 }
 ```
 
-The factory's prefix is physical; the parser's explicit prefix filters and strips that prefix.
-`WithKeyPrefix` does not alter notification descriptors or ordinary Pub/Sub channels.
-`WithPubSubPrefix` also leaves notification descriptors unchanged. With configured and nested
-key prefixes, pass `redis.ResolveKey(RespireKey.Empty).ToBytes()` from the effective view to
-`TryParseKeyNotification`; this filters and strips the entire physical key namespace, rather
-than only its last component. Resolve descriptor keys and prefixes through that same view.
-`Key`/`KeyBytes` expose the stripped logical key; `Channel` and `RawValue` retain the original
-physical message. `KeyStartsWith` and `TryCopyKey` operate on the exposed key.
+`TryParseKeyNotification` exposes the database, event, key, and subkeys as slices of the message; parsing and struct enumeration do not copy. Unrecognized events have `Type == Unknown`, with the name in `RawType`.
+
+Prefixes:
+
+- Factory prefixes and keys are physical. `WithKeyPrefix` and `WithPubSubPrefix` do not change notification descriptors.
+- The parser's prefix argument filters and strips that prefix. With configured or nested key prefixes, pass the full physical prefix, not just the last part. For text prefixes, get it from the view with `Encoding.UTF8.GetBytes(view.ResolveKey(RespireKey.Empty).ToString())`, and resolve descriptor keys through the same view.
+- `Key`/`KeyBytes` are the stripped key; `KeyStartsWith` and `TryCopyKey` work on it. `Channel` and `RawValue` keep the original physical message.
 
 | Factory | Match | Command |
 | --- | --- | --- |
@@ -62,26 +56,19 @@ physical message. `KeyStartsWith` and `TryCopyKey` operate on the exposed key.
 | `KeySpacePrefix(prefix, database)` | Literal prefix, with glob characters escaped | `PSUBSCRIBE` |
 | `KeyEvent(type, database)` | Keys affected by one event | `SUBSCRIBE`, or `PSUBSCRIBE` for all databases |
 
-An explicit database targets that database regardless of the client's selected database.
-A nullable database omitted from a pattern/event factory matches every database. Exact-key
-factories require an explicit database. Raw event-name overloads support future/module events.
-`Unknown` is not a factory event name; supply the raw name instead.
+- An explicit database applies regardless of the client's selected database.
+- Omitting the nullable database on a pattern or event factory matches every database. Exact-key factories require a database.
+- Raw event-name overloads support future and module events. `Unknown` is not a valid event name; pass the raw name.
 
-Notification descriptors cannot be published or converted to a different subscription kind.
-Construct `new RespireChannel(descriptor.Bytes)` to deliberately use equivalent bytes as an
-ordinary application channel. Reserved-looking names alone never change routing semantics.
-Channel equality remains byte-based; it does not compare kind or notification metadata.
-Delivered message `Channel` and `Pattern` values contain wire names, without the subscription
-descriptor's routing/database metadata. This remains consistent when ordinary names and
-notification descriptors share a route, regardless of registration order. Read the emitting
-database from the parsed notification's `Database` property; retain the original descriptor
-when its routing intent is needed.
+Descriptor rules:
+
+- Descriptors cannot be published or converted to another subscription kind. To use the same bytes as an ordinary channel, construct `new RespireChannel(descriptor.Bytes)`. A reserved-looking name alone never changes routing.
+- Channel equality compares bytes only, not kind or notification metadata.
+- Delivered `Channel` and `Pattern` values are wire names without the descriptor's metadata, even when ordinary channels and descriptors share a route. Read the emitting database from the parsed `Database`; keep the descriptor if you need its routing intent.
 
 ## Redis 8.8 subkeys
 
-The subkey factories are `SubKeySpaceSingleKey`, `SubKeySpacePattern`, `SubKeySpacePrefix`,
-`SubKeyEvent`, `SubKeySpaceItem`, and `SubKeySpaceEvent`. They retain the same physical-key
-and database rules. Redis 8.8 currently emits these events for hash fields.
+Subkey factories: `SubKeySpaceSingleKey`, `SubKeySpacePattern`, `SubKeySpacePrefix`, `SubKeyEvent`, `SubKeySpaceItem`, and `SubKeySpaceEvent`. They follow the same physical-key and database rules. Redis 8.8 emits these events for hash fields.
 
 ```csharp
 await using var subscription = await redis.SubscribeAsync(
@@ -97,88 +84,56 @@ await foreach (var message in subscription)
 }
 ```
 
-`GetSubKeys()` offers `Count`, `FirstOrDefault`, `CopyTo`, and an explicitly allocating
-`ToArray`. Empty field names count as subkeys. Delimiter bytes, NUL, and invalid UTF-8 survive
-parsing. Decimal length prefixes are validated before exposing slices; truncated, overflowing,
-or inconsistent frames return false. Gap markers and empty event names also return false.
-Unknown nonempty event names remain available losslessly through `RawType`.
+- `GetSubKeys()` offers `Count`, `FirstOrDefault`, `CopyTo`, and an allocating `ToArray`.
+- Empty field names count. Delimiter bytes, NUL, and invalid UTF-8 survive parsing.
+- Parsing returns false for truncated, overflowing, or inconsistent length prefixes, gap markers, and empty event names.
+- Redis emits no item-channel notifications for keys containing a newline, so `SubKeySpaceItem` rejects them. Other layouts accept them.
+- Event names containing `|` cannot use `SubKeySpaceEvent`.
+- Older Redis versions can acknowledge these channels but never emit subkey events, so a successful subscribe is not feature detection.
 
-Redis does not emit item-channel notifications for keys containing newline, so
-`SubKeySpaceItem` rejects such keys. Other layouts support them. Event names containing `|`
-cannot use `SubKeySpaceEvent`. Older Redis versions can acknowledge reserved channel names
-but do not generate subkey notifications; subscription success is not feature detection.
 See the [Redis subkey format specification](https://redis.io/docs/latest/develop/pubsub/subkeyspace-notifications/).
 
 ## Field-level cache decision
 
-The [completed investigation](https://github.com/thomhurst/Respire/issues/896) decided
-against replacing `CLIENT TRACKING` with subkey notifications in Respire's coherent
-response cache. The Redis 8.8 investigation found that subkey events do not cover
-whole-key mutations or JSON paths. Notifications on a separate Pub/Sub connection do
-not fence an in-flight read's cache insertion. Disconnects, buffer drops and Cluster ownership changes also require cache
-continuity handling beyond subscription routing.
+Respire's response cache uses `CLIENT TRACKING`, not subkey notifications, because in Redis 8.8:
 
-The [archived report](https://github.com/thomhurst/Respire/blob/d30260306be7cfb440bfbc7d5f7b1fc8e186d5a6/docs/SUBKEY_CACHE_SPIKE.md)
-records the Redis 8.8 source review and Redis 8.8.3 runtime evidence. This decision does
-not rule out an application cache with an explicitly best-effort contract. Respire's
-[partial hash cache](../fundamentals/client-side-caching.md#partial-hash-reads)
-continues to depend on whole-key tracking invalidations.
+- Subkey events do not cover whole-key mutations or JSON paths.
+- Notifications on a separate connection cannot prevent a stale in-flight read from entering the cache.
+- Disconnects, buffer drops, and Cluster ownership changes would need extra cache handling.
+
+The [archived evaluation](https://github.com/thomhurst/Respire/blob/d30260306be7cfb440bfbc7d5f7b1fc8e186d5a6/docs/SUBKEY_CACHE_SPIKE.md) has the details. Subkey notifications suit an application cache that is explicitly best effort. The [partial hash cache](../fundamentals/client-side-caching.md#partial-hash-reads) relies on whole-key tracking invalidations.
 
 ## Delivery, pressure, and Redis Cluster
 
-Subscription return is an acknowledgement barrier. Enumeration uses the existing bounded
-Pub/Sub buffer and `RespireSubscriptionOptions`; drops update `DroppedMessages`, delivery-gap
-markers, and `respire.pubsub.messages.dropped`. Cancellation/disposal and automatic
-resubscription use the same lifecycle as ordinary subscriptions. See [Pub/sub](pub-sub.md).
+Notification subscriptions behave like ordinary [Pub/sub](pub-sub.md) subscriptions: `SubscribeAsync` returns after acknowledgement, and they share the bounded buffer, `RespireSubscriptionOptions`, `DroppedMessages`, gap markers, `respire.pubsub.messages.dropped`, cancellation, disposal, and automatic resubscription.
 
-Redis notifications have at-most-once delivery. Reconnect cannot replay missed events, and
-expiry events report actual deletion rather than an exact TTL deadline. Use a durable log
-when replay is required. [Redis delivery semantics](https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/)
+Delivery is at most once. Reconnect cannot replay missed events. Expiry events report the actual deletion, not the exact TTL deadline. Use a durable log when you need replay. See [Redis delivery semantics](https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/).
 
-Redis Cluster ordinary `SUBSCRIBE` and `PSUBSCRIBE` channels are cluster-wide through the
-cluster bus. Keyspace and subkey notifications are node-specific. Respire therefore keeps
-ordinary application Pub/Sub on its existing single logical subscription and uses dedicated
-Pub/Sub connections for notification descriptors:
+### Redis Cluster
 
-- Exact-key descriptors subscribe only on the current primary that owns the key's slot.
-- Prefix, pattern, keyevent, and subkeyevent descriptors subscribe on every current primary.
-- Connections are shared by notification routes that use the same primary. One logical
-  subscription does not unsubscribe another route's channel.
-- `SubscribeAsync` returns only after every required primary acknowledges its route. For a
-  cluster-wide descriptor it first reloads the slot map with one `CLUSTER SLOTS` call, so a
-  primary added or promoted since the last discovery is included. If activation fails or is
-  cancelled, Respire removes its routes and closes connections whose server-side subscription
-  state is uncertain.
-- A primary added by topology discovery is acknowledged before an old primary's route is
-  removed. Exact-key subscriptions move when slot ownership changes.
-- A failure on one primary reconnects that primary's notification connection. Delivery from
-  healthy primaries continues. `ConnectionStateChanged` reports endpoint-specific reconnect
-  state; `Connected` for an endpoint follows acknowledgement of its current notification routes.
-- `ReconnectPolicy.MaxAttempts` bounds both per-primary reconnects and the attempts to subscribe
-  a primary that topology discovery adds. Each failing primary gets the full attempt budget. When
-  the limit is reached, every subscription with a route on that primary completes with
-  `ReconnectExhausted`, including a cluster-wide subscription whose other primaries are healthy,
-  because it would otherwise silently miss that primary's events. Its routes on other primaries
-  are released. Topology reconciliation does not retry an exhausted primary. A later
-  `SubscribeAsync` that needs it tries to connect again, and the primary is also forgotten once
-  it leaves the discovered topology. An exhausted primary stays `Disconnected` until then, even
-  if a topology retry for it was still pending. A subscription rejected by a reachable primary (for example
-  `NOPERM`), or one that fails on a connection other subscriptions still use, ends only that
-  subscription.
-- When a primary rejects one route of a multi-channel subscription during replay, the replayed
-  routes still report a `Reconnect` delivery gap at once. The rejected route reports its own gap
-  when topology reconciliation restores it.
+Ordinary channels are cluster-wide, but keyspace and subkey notifications are per node. Respire keeps ordinary Pub/Sub on one logical subscription and gives notification descriptors dedicated connections:
 
-Every primary must have the needed `notify-keyspace-events` flags configured by the deployment.
-Respire does not read or change this setting. Redis can acknowledge a subscription while emitting
-no events when notification flags are disabled.
+- Exact-key descriptors subscribe only on the primary that owns the key's slot. They move when slot ownership changes.
+- Prefix, pattern, keyevent, and subkeyevent descriptors subscribe on every primary.
+- Routes on the same primary share a connection. Unsubscribing one route never removes another's channel.
+- `SubscribeAsync` returns after every required primary acknowledges. For a cluster-wide descriptor it first reloads the slot map with one `CLUSTER SLOTS` call, so new or promoted primaries are included. If activation fails or is cancelled, Respire removes its routes and closes connections with uncertain state.
+- A newly discovered primary is acknowledged before an old primary's route is removed.
+- A failure on one primary reconnects only that primary; others keep delivering. `ConnectionStateChanged` reports per-endpoint state, and `Connected` follows acknowledgement of that endpoint's routes.
+- When a primary rejects one route of a multi-channel subscription during replay, the other routes report a `Reconnect` gap at once. The rejected route reports its gap when topology reconciliation restores it.
+- A subscription rejected by a reachable primary (for example `NOPERM`), or one that fails on a connection other subscriptions still use, ends only that subscription.
 
-Each primary preserves its own message order. A merged subscription has no total order across
-primaries. Redis Pub/Sub is at-most-once: messages emitted during a disconnect are lost. Slot
-moves, promotions, or topology changes can also expose a short gap or duplicate event because
-Redis provides no event IDs or replay. The existing bounded buffer, overflow policy,
-`DroppedMessages`, and `respire.pubsub.messages.dropped` metric apply to the merged stream.
+`ReconnectPolicy.MaxAttempts` bounds per-primary reconnects and attempts to subscribe on a newly discovered primary. Each failing primary gets the full budget. When it runs out:
 
-Notifications are application events, separate from Respire's
-[`CLIENT TRACKING` response cache](../fundamentals/client-side-caching.md). They do not
-replace that cache's invalidation protocol.
+1. Every subscription with a route on that primary completes with `ReconnectExhausted`, including cluster-wide subscriptions whose other primaries are healthy, so they never silently miss events. Their routes on other primaries are released.
+2. Topology reconciliation stops retrying that primary, which stays `Disconnected`.
+3. A later `SubscribeAsync` that needs the primary tries again. The primary is forgotten once it leaves the topology.
+
+Every primary needs the `notify-keyspace-events` flags set by the deployment. Respire never reads or changes them, and Redis acknowledges subscriptions even when notifications are disabled.
+
+Ordering and loss:
+
+- Each primary keeps its own order; a merged subscription has no total order.
+- Events emitted during a disconnect are lost. Slot moves, promotions, and topology changes can cause a short gap or a duplicate, because Redis has no event IDs or replay.
+- The merged stream uses the same bounded buffer, overflow policy, `DroppedMessages`, and `respire.pubsub.messages.dropped` metric.
+
+Notifications are application events. They do not replace the [`CLIENT TRACKING` response cache](../fundamentals/client-side-caching.md) invalidation protocol.

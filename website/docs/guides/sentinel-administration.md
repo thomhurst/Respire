@@ -5,9 +5,7 @@ description: Query and administer one Sentinel directly with typed results, sepa
 
 # Typed Sentinel administration
 
-`RespireSentinelClient` connects directly to one Sentinel endpoint. It is independent of
-the data client: commands do not go through primary discovery or Cluster routing.
-The client owns its connection and must be disposed separately.
+`RespireSentinelClient` connects directly to one Sentinel endpoint to query and administer it. It is separate from the data client: no primary discovery or Cluster routing. It owns its connection; dispose it separately.
 
 ```csharp
 var options = new RespireOptions
@@ -31,20 +29,18 @@ await sentinel.SetAsync("orders", new Dictionary<string, string>
 });
 ```
 
-The existing Sentinel credential rules apply: separate Sentinel credentials take
-precedence over data credentials; an empty `SentinelPassword` explicitly disables
-authentication. `SentinelUseTls` and `SentinelTlsOptions` override the data transport
-settings. No database selection, client-side cache, key prefix, replica routing, or
-data-primary discovery is applied to this client.
+Connection settings:
 
-When `INFO SERVER` is available during connection, Valkey 8+ uses `PRIMARY`,
-`PRIMARIES`, and `IS-PRIMARY-DOWN-BY-ADDR`; Redis uses the legacy master names.
-Redis before 5 uses `SLAVES`, while Redis 5+ and Valkey use `REPLICAS`.
-These names are selected from server family/version rather than retrying arbitrary
-server errors. Unsupported commands retain their original server errors.
-An ACL `NOPERM` response to `INFO SERVER` falls back to legacy master/slave names
-and single-option global configuration. Authentication failures and other errors
-still fail connection. Grant INFO permission to enable version-specific capabilities.
+- `SentinelUsername`, `SentinelPassword`, and `SentinelCredentialProvider` override the data credentials; null falls back to them. An empty `SentinelPassword` disables authentication.
+- `SentinelUseTls` and `SentinelTlsOptions` override the data transport settings.
+- No database selection, client-side cache, key prefix, replica routing, or primary discovery applies.
+
+Command names are chosen from the server family and version reported by `INFO SERVER` at connect, not by retrying errors:
+
+- Valkey 8+ uses `PRIMARY`, `PRIMARIES`, and `IS-PRIMARY-DOWN-BY-ADDR`; Redis uses the legacy master names.
+- Redis before 5 uses `SLAVES`; Redis 5+ and Valkey use `REPLICAS`.
+- If `INFO SERVER` returns ACL `NOPERM`, the client uses legacy master/slave names and single-option global configuration. Grant INFO permission to enable version-specific features. Authentication and other errors still fail the connection.
+- Unsupported commands return the server error.
 
 ## Commands and results
 
@@ -64,30 +60,27 @@ still fail connection. Grant INFO permission to enable version-specific capabili
 | `MonitorAsync`, `RemoveAsync` | `MONITOR`, `REMOVE` | Start/stop monitoring one primary |
 | `SimulateFailureAsync` | `SIMULATE-FAILURE` | Crash simulation; `None` clears flags; Redis 3.2+ |
 
-Snapshots retain down/disconnected rows and all reported scalar attributes. A replica's
-`Primary` is null when Sentinel has not yet learned its upstream address from INFO. They do
-not filter the server's observations into a healthy routing table. Malformed replies
-throw `RespireProtocolException`; an unknown primary throws the server error.
-Returned strings and records remain valid after subsequent commands or client disposal.
-`SetAsync` preserves the supplied enumeration order, including duplicate options.
-Supply a list or array when order matters, such as setting `auth-user` before `auth-pass`.
-`SimulateFailureAsync(None)` uses `SIMULATE-FAILURE HELP`, which clears flags before
-returning the supported flag names; the client validates that reply.
+- Snapshots include down and disconnected rows and every reported attribute; they are not a filtered routing table.
+- A replica's `Primary` is null until Sentinel learns its upstream address from INFO.
+- Malformed replies throw `RespireProtocolException`. An unknown primary throws the server error.
+- Results stay valid after later commands and client disposal.
+- `SetAsync` keeps your enumeration order, including duplicates. Use a list or array when order matters, such as `auth-user` before `auth-pass`.
+- `SimulateFailureAsync(None)` sends `SIMULATE-FAILURE HELP`, which clears flags and returns the supported flag names; the client validates the reply.
 
-Every mutation requires `AllowAdmin=true`. `IsPrimaryDownByAddressAsync` defaults to
-`runId="*"`, which only observes state. A different run ID requests a leader vote and
-also requires `AllowAdmin`. Operations affect only the selected Sentinel. In particular,
-`FAILOVER` forces failover without agreement from other Sentinels, and crash simulation
-can terminate the server. Coordinate changes across your deployment explicitly.
-Accepted commands are not replayed after a disconnect. Cancellation and command
-timeouts use the existing Respire connection lifecycle.
+## Mutations
 
-`ConfigSetAsync` sends one command. On older or unidentified servers it rejects
-multiple option pairs before writing; callers can explicitly send separate single-option
-updates when partial application is acceptable. Serialize dependent administrative steps.
-An interrupted write may have applied even when the caller observes cancellation,
-timeout, or disposal. Inspect authoritative Sentinel state before repeating operations
-such as failover, reset, monitoring changes, or crash simulation.
+Every mutation needs `AllowAdmin=true`.
+
+- `IsPrimaryDownByAddressAsync` defaults to `runId="*"`, which only observes. Any other run ID requests a leader vote and also needs `AllowAdmin`.
+- Operations affect only the connected Sentinel. `FAILOVER` forces failover without agreement from other Sentinels, and crash simulation can terminate the server. Coordinate changes across your deployment yourself.
+- `ConfigSetAsync` sends one command. On older or unidentified servers, multiple option pairs throw `NotSupportedException` before writing. Send separate single-option updates if partial application is acceptable.
+- Serialize dependent steps.
+
+:::warning
+Accepted commands are not replayed after a disconnect. An interrupted write may have applied even if you see cancellation, timeout, or disposal. Check Sentinel state before repeating failover, reset, monitoring changes, or crash simulation.
+:::
+
+Cancellation and command timeouts work as on a data client.
 
 Wire-name and reply-shape references:
 [Redis Sentinel API](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-api),

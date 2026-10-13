@@ -27,6 +27,24 @@ class BenchmarkDocsTests(unittest.TestCase):
         self.assertIn("| Get | 1 ns |", document)
         self.assertIn("`0123456789ab`", document)
 
+    def test_reads_framework_from_report_without_artifact_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "results" / "Respire.Benchmarks.Sample-report-github.md"
+            report.parent.mkdir(parents=True)
+            report.write_text(
+                "```\n  [Host] : .NET 10.0.3 (10.0.326.7603), X64 RyuJIT\n```\n\n"
+                "| Method | Mean |\n|---|---:|\n| Get | 1 ns |",
+                encoding="utf-8",
+            )
+
+            document = benchmark_docs.build_document(
+                [report], root, "0123456789abcdef", "2026-08-08 12:00 UTC", "https://example.test/run"
+            )
+
+        self.assertIn("## net10.0", document)
+        self.assertNotIn("unknown framework", document)
+
     def test_adds_visual_comparison_from_latest_framework(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
