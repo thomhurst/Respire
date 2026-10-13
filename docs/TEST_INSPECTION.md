@@ -1,7 +1,10 @@
 # Typed friend-test inspection
 
-These four owners expose `InspectForTests()` through `.TestInspection.cs` partials,
-returning nested internal `readonly ref struct TestInspection` views. They read
+Four owners expose `InspectForTests()` through `.TestInspection.cs` partials:
+`RespireConnection`, `PendingResponse`, `ClientSideCacheCoordinator` and
+`RespireTransactionBase`. Each returns a nested internal `readonly ref struct TestInspection`
+view. `RespireTelemetry.ErrorObservation` has a similar view declared in
+`RespireTelemetry.Errors.cs`; the architecture guards below cover only the four owners. They read
 private state directly without allocation, delegates, leases, or ownership transfer.
 Existing `InternalsVisibleTo` declarations remain the boundary; no public hooks
 are added. Production coordination must use ordinary owner methods.

@@ -7,22 +7,26 @@ description: Supported library versions, upstream coverage, ownership contracts,
 
 Prefer Respire's native typed APIs for normal application code. Install
 `Respire.StackExchangeCompat` when migrating code that still passes `RedisKey`,
-`RedisValue`, or consumes `RedisResult`. The package uses the repository's pinned
-StackExchange.Redis version, currently 3.4.0, and targets .NET 8 and .NET 10.
+`RedisValue`, or consumes `RedisResult`. The package depends on StackExchange.Redis
+3.4.0 or later and targets .NET 8 and .NET 10.
+
+```bash
+dotnet add package Respire.StackExchangeCompat
+```
 
 ## Supported libraries and versions
 
 The compatibility adapter supports the integration call sites listed below.
-These versions match `Directory.Packages.props`; support for other versions must
-be verified separately. All acceptance runs use standalone Redis. This evidence
-does not establish every feature or general StackExchange.Redis interface parity.
+Respire tests against these versions; verify other versions yourself. All
+acceptance runs use standalone Redis. This evidence does not establish every
+feature or general StackExchange.Redis interface parity.
 
 | Library | Pinned version | Verified scope | Native migration |
 | --- | --- | --- | --- |
 | `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.12 on both frameworks | Public upstream cache and expiration classes, six service registration facts, buffer cache | `Respire.Caching` via `AddRespireDistributedCache` |
 | `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.12 on both frameworks | All four repository scenarios and the builder extension fact, shared persisted key rings | `Respire.DataProtection` via `PersistKeysToRespire` |
 | `Hangfire.Redis.StackExchange` | 1.12.0 | 93 upstream facts and two worker lifecycle cases; [exact exclusions](./hangfire-acceptance) | Keep the shim at the Hangfire boundary; use native typed facets in application code |
-| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Not supported:** requires queue-returning subscriptions, which the adapter will not provide ([#1268](https://github.com/thomhurst/Respire/issues/1268)) | `Respire.SignalR` via `AddRespire` |
+| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Not supported:** requires queue-returning subscriptions, which the adapter does not provide | `Respire.SignalR` via `AddRespire` |
 
 The cache/DataProtection upstream inventory covers **52 cases across six test
 classes**. Only the two rows of the cache's internal HybridCache detection test
@@ -329,9 +333,9 @@ false and cancels every queued task, while already satisfied ConditionResults st
 true. `WasWatchConflict` distinguishes that Redis abort from a failed check.
 The native same-slot restriction applies to watched and queued keys in Cluster.
 
-The condition inventory is pinned to
+The condition inventory follows
 [StackExchange.Redis 3.3.1 Condition.cs](https://github.com/StackExchange/StackExchange.Redis/blob/3.3.1/src/StackExchange.Redis/Condition.cs),
-and the private shapes are also validated by tests against the repository's 3.4.0 pin:
+and tests also validate the condition shapes against StackExchange.Redis 3.4.0:
 
 | Condition family | Supported factories |
 | --- | --- |
@@ -423,69 +427,28 @@ subscriber and database with `None` or `DemandMaster`; batches and other flags
 are rejected. Subscription and publication both apply the native pub/sub prefix.
 Adapter close removes only its subscriptions, even when borrowing a client.
 
-### Pinned source inventory and validation
+### How the adapter is validated
 
-The hash/list and key/string/set/sorted-set facets were inventoried against `Hangfire.Redis.StackExchange`
-1.12.0 at the NuGet package's repository commit
-[`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55).
-Its `RedisConnection`, `RedisFetchedJob`, `RedisMonitoringApi`,
-`RedisWriteDirectlyToDatabase` and `RedisWriteOnlyTransaction` use hash
-deletion/count/entry reads and list pushes, lengths, indexed reads, removal,
-trimming and atomic moves. Focused tests exercise these contracts against
-real Redis with RESP2/RESP3 on .NET 8 and .NET 10, including binary snapshots,
-database isolation, deferred batch reads/writes, server errors and shutdown.
-`RedisConnection`, `RedisMonitoringApi`, `RedisWriteDirectlyToDatabase`, and
-`ExpiredJobsWatcher` also use key existence/persistence/TTL, string reads and
-integer counters, set membership/cardinality, sorted-set additions/removals,
-score counts, rank/score ranges with scores, and scans. Tests cover this facet
-on both frameworks and protocols, compare score bounds/order against
-StackExchange.Redis on the same Redis server, and verify scan resume and
-deferred page execution.
-The transaction inventory additionally covers `RedisConnection`, `RedisFetchedJob`,
-and `RedisWriteOnlyTransaction`, including synchronous Execute, repeat Execute
-after an abort, and queued notifications. Focused tests also invoke the pinned
-Hangfire package's write transaction Commit, fetch/requeue/remove operations,
-and server announcement/removal with `UseTransactions = true`.
-Transaction tests run on .NET 8 and
-.NET 10 with RESP2/RESP3 against real Redis, covering atomic visibility, binary
-snapshots, conditions, deterministic WATCH races, discarded commands, runtime
-errors and ACL queue errors. Wire and lifetime controls cover active cancellation,
-close during condition evaluation, retained tasks, and abandoned task collection.
-The [pinned Hangfire acceptance](./hangfire-acceptance) ports 93 upstream facts
-and adds two real worker lifecycle cases, on both frameworks and protocols.
-It records the exact tests, exclusions, supported scope, and limitations.
+The supported members were chosen by inventorying the call sites of each library:
 
-The server/lock inventory additionally checks `RedisStorage` discovery and
-dashboard `InfoRaw`, `RedisConnection.GetUtcDateTime` (`IServer.Time`),
-`RedisLock` acquisition/extension/release, and `RedisSubscription` literal
-callback subscribe/unsubscribe. Real Redis tests run on .NET 8 and .NET 10 with
-RESP2/RESP3, including physical replica identity, token/TTL wire controls,
-competing acquisitions, stale ownership, Lua errors, and borrowed-client cleanup.
-Tests also construct the pinned 1.12.0 `RedisStorage`, obtain a storage connection,
-read server time, and acquire/release its distributed lock. These focused
-scenarios supplement the pinned upstream acceptance; they do not establish
-general StackExchange.Redis interface parity.
+- [ASP.NET Core 10.0.12 RedisCache.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs)
+  uses hash reads and writes, leases, expiry, deletion, batches, and wait helpers. Its setup and
+  cleanup use `GetDatabase`, profiling registration, library-name suffixes, `Close`, and `Dispose`.
+  Profiling is unsupported, and the cache catches the unsupported suffix calls.
+- [RedisXmlRepository.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/DataProtection/StackExchangeRedis/src/RedisXmlRepository.cs)
+  uses `ListRange` and `ListRightPush` through a database factory.
+- `Hangfire.Redis.StackExchange` 1.12.0, at repository commit
+  [`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55),
+  uses the listed hash, list, key, string, set, and sorted-set commands, scans, transactions with
+  queued notifications, server discovery, `InfoRaw`, `Time`, token locks, and literal callback
+  subscriptions.
 
-Before implementing this surface, the integration call sites were checked in
-[ASP.NET Core 10.0.12 RedisCache.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/Caching/StackExchangeRedis/src/RedisCache.cs)
-and
-[RedisXmlRepository.cs](https://github.com/dotnet/aspnetcore/blob/v10.0.12/src/DataProtection/StackExchangeRedis/src/RedisXmlRepository.cs).
-The cache uses hash reads/writes, leases, expiry, deletion, batches and wait
-helpers; its setup/cleanup uses `GetDatabase`, profiling registration,
-library-name suffixes, `Close` and `Dispose`. Optional profiling is unsupported;
-the cache catches unsupported suffix calls. DataProtection uses `ListRange` and
-`ListRightPush` through a database factory.
-
-The test project adapts upstream `RedisCacheSetAndRemoveTests`,
-`TimeExpirationTests`, `TimeExpirationAsyncTests`, the public
-`CacheServiceExtensionsTests` facts, all four `DataProtectionRedisTests` scenarios,
-and `RedisDataProtectionBuilderExtensionsTest` to TUnit/Testcontainers with the adapter.
-Additional tests exercise the official buffer cache and DataProtection service
-registration, plus Redis wire controls for binary data, database isolation,
-TTL, deferred pipeline order, command errors, cancellation and ownership.
-The complete applicable class inventory and the two internal-only exclusions
-are recorded above. This is coverage of these Redis integrations, not every
-test in ASP.NET Core.
+Tests run against real Redis with RESP2 and RESP3 on .NET 8 and .NET 10. They port the upstream
+cache and DataProtection test classes listed above, and the
+[Hangfire acceptance](./hangfire-acceptance) ports 93 upstream facts plus two worker lifecycle
+cases. Focused tests add wire-level controls for binary data, database isolation, TTL, deferred
+batch and transaction order, conditions and WATCH races, server errors, cancellation, and client
+ownership. This is coverage of these integrations, not general StackExchange.Redis interface parity.
 
 ## Move application code to native APIs
 

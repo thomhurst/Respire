@@ -46,15 +46,18 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-cluster-replica.yml` | `run-cluster-replica-benchmarks` |
 | `benchmark-command-conversion.yml` | `run-command-conversion-benchmarks` |
 | `benchmark-command-duration.yml` | `run-command-duration-benchmarks` |
+| `benchmark-command-retry-owners.yml` | `run-command-retry-owner-benchmarks`, `run-command-retry-default-benchmarks`, `run-command-retry-audit-benchmarks`, `run-unit-retry-benchmarks` |
 | `benchmark-command-retry.yml` | `run-command-retry-benchmarks` |
 | `benchmark-connection-contention.yml` | `run-connection-contention-benchmarks` |
 | `benchmark-dedicated-pool.yml` | `run-dedicated-pool-benchmarks` |
 | `benchmark-fenced-locks.yml` | `run-fenced-locks-benchmarks` |
 | `benchmark-hash-partial-reads.yml` | `run-hash-partial-reads-benchmarks` |
+| `benchmark-hedge-ownership.yml` | `run-hedge-ownership-benchmarks` |
 | `benchmark-idle-read-watchdog.yml` | `run-idle-read-watchdog-benchmarks` |
 | `benchmark-inflight.yml` | `run-inflight-benchmarks` |
 | `benchmark-key-prefix.yml` | `run-key-prefix-benchmarks` |
 | `benchmark-large-command-serialization.yml` | `run-large-command-serialization-benchmarks`, `run-large-command-original-benchmarks` |
+| `benchmark-local-initialization.yml` | `run-local-initialization-benchmarks` |
 | `benchmark-mapper.yml` | `run-mapper-benchmarks` |
 | `benchmark-pinned-receive.yml` | `run-pinned-receive-benchmarks` |
 | `benchmark-primitive-codec.yml` | `run-primitive-codec-benchmarks` |
@@ -66,6 +69,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-response-pools.yml` | `run-response-pools-benchmarks` |
 | `benchmark-semaphores.yml` | `run-semaphores-benchmarks` |
 | `benchmark-sentinel-routing.yml` | `run-ready-strategy-benchmarks`, `run-sentinel-benchmarks` |
+| `benchmark-single-reply-completion.yml` | `run-single-reply-completion-benchmarks` |
 | `benchmark-standalone-replica.yml` | `run-standalone-replica-benchmarks` |
 | `benchmark-thread-pool.yml` | `run-thread-pool-benchmarks` |
 | `benchmark-transport.yml` | `run-transport-benchmarks` |
@@ -76,7 +80,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-value-codecs.yml` | `benchmark-value-codecs` |
 | `benchmark-vector.yml` | `run-vector-benchmarks` |
 
-`benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
+`benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. `benchmark-compare.yml` is a reusable workflow that the label-triggered workflows call; do not run it directly. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
 
 ## Never wait on results
 

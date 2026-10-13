@@ -39,12 +39,15 @@ can still be run directly on other supported .NET platforms.
 From the repository root:
 
 ```sh
-python scripts/smoke_topology_samples.py --sample Cluster --framework net8.0 --artifacts artifacts/cluster-net8
-python scripts/smoke_topology_samples.py --sample Cluster --framework net10.0 --artifacts artifacts/cluster-net10
-python scripts/smoke_topology_samples.py --sample Sentinel --framework net8.0 --artifacts artifacts/sentinel-net8
-python scripts/smoke_topology_samples.py --sample Sentinel --framework net10.0 --artifacts artifacts/sentinel-net10
-python -m unittest discover -s scripts -p test_topology_sample_smoke.py -v
+python3 scripts/smoke_topology_samples.py --sample Cluster --framework net8.0 --artifacts artifacts/cluster-net8
+python3 scripts/smoke_topology_samples.py --sample Cluster --framework net10.0 --artifacts artifacts/cluster-net10
+python3 scripts/smoke_topology_samples.py --sample Sentinel --framework net8.0 --artifacts artifacts/sentinel-net8
+python3 scripts/smoke_topology_samples.py --sample Sentinel --framework net10.0 --artifacts artifacts/sentinel-net10
+python3 -m unittest discover -s scripts -p test_topology_sample_smoke.py -v
 ```
+
+A passing run ends with `PASS: <sample> <framework> smoke`, for example
+`PASS: Cluster net10.0 smoke`. Logs land in the `--artifacts` directory.
 
 The controller supplies each sample's local connection string, so an inherited
 `RESPIRE_CONNECTION` cannot redirect the smoke test to another deployment.

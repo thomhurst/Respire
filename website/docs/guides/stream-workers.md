@@ -5,10 +5,16 @@ description: Process Redis stream entries with scoped handlers, bounded concurre
 
 # Hosted stream consumers
 
-Install `Respire.Streaming` and register an `IRespireClient` with dependency injection.
-The worker uses the existing client's stream facet, including a key-prefixed view. The
-worker does not own or dispose that client. `Respire.DependencyInjection` can register
-the client for you.
+`Respire.Streaming` runs Redis consumer-group readers as hosted services. Each delivery is
+passed to a scoped handler, which returns `Ack`, `Nack` or `DeadLetter`.
+
+```bash
+dotnet add package Respire.Streaming
+```
+
+Register an `IRespireClient` with dependency injection; `Respire.DependencyInjection` can do
+this for you. The worker uses that client's stream facet, including a key-prefixed view, and
+does not own or dispose it.
 
 <!-- doc-test-tail-declaration: split-before=public sealed class OrderHandler -->
 ```csharp
@@ -40,16 +46,41 @@ public sealed class OrderHandler : IRespireStreamHandler<RespireStreamEntry>
 }
 ```
 
-Each registration creates a separate hosted service with unique consumer names by default.
-Set `ConsumerName` to a stable name for a particular host slot when its next process should
-resume its own pending deliveries. Each reader appends its zero-based index to that name.
+Each registration creates a separate hosted service. By default each registration generates a
+new random consumer name every time the process starts. Set `ConsumerName` to a stable name for a particular host slot
+when its next process should resume its own pending deliveries. Each reader appends `-` and its
+zero-based index to that name (`orders-host-1-0`, `orders-host-1-1`, ...).
 Active hosts and registrations sharing a group must use different names; keep the same
 consumer count across restarts to retain all reader identities. Reducing `ConsumerCount`
 leaves pending entries owned by the removed reader indexes; idle recovery claims those entries
 after the visibility timeout.
+
 Handlers are registered as scoped services unless already registered. A new asynchronous
 DI scope is created for each entry and disposed after handling and acknowledgement finish.
 Avoid registering a handler as a singleton when it depends on scoped services.
+
+## Options
+
+`RespireStreamWorkerOptions` has these settings. Each is explained in the sections below.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `ConsumerName` | random at each start | Stable consumer-name base for resuming own pending entries. |
+| `ConsumerCount` | `1` | Readers, and therefore maximum concurrent handlers. |
+| `BatchSize` | `1` | Entries fetched per read; processed sequentially by that reader. |
+| `ReadWait` | 5 seconds | Blocking wait for new entries. |
+| `MinimumIdleTime` | 1 minute | Visibility timeout before idle pending entries are recovered. |
+| `RecoveryPollInterval` | 5 seconds | How often each reader looks for idle pending entries. |
+| `CreateGroup` | `true` | Create the stream and group at startup. |
+| `GroupStart` | `RespireStreamId.Beginning` | Position for a newly created group. |
+| `DeleteAcknowledgedEntries` | `false` | Use `XACKDEL ACKED` on Redis 8.2+. |
+| `DeadLetterStream` | `null` | Destination for dead-lettered entries. |
+| `DeliveryLimit` | `null` | Maximum attempts before dead-lettering; requires `DeadLetterStream`. |
+| `TelemetryName` | `"default"` | Metric and activity dimension; unique per service collection. |
+| `MetricsPollInterval` | 30 seconds | Lag and pending gauge refresh interval. |
+| `MetricsPollTimeout` | 5 seconds | Timeout for each gauge query. |
+| `TraceParentField` | `"traceparent"` | Stream field holding the W3C parent; `null` disables extraction. |
+| `TraceStateField` | `"tracestate"` | Stream field holding W3C vendor state; `null` ignores it. |
 
 ## Typed payloads
 
@@ -98,9 +129,9 @@ use Respire's dedicated blocking connection path.
 Return `Ack` only after successful processing. By default `Nack`, a serializer or handler exception,
 an unknown result, or handler cancellation leaves the entry pending. The worker continues
 reading new entries and retries pending entries after the visibility timeout. A warning
-reports the exception type for handler/serializer failures
-without including exception messages or payloads. DI activation, scope disposal, read and
-acknowledgement or dead-letter completion failures fault the background service and follow the application's `HostOptions`
+reports the exception type for handler/serializer failures without including exception
+messages or payloads. DI activation, scope disposal, read, acknowledgement and dead-letter
+completion failures fault the background service and follow the application's `HostOptions`
 background-service failure policy. Handler activation failures, including transient dependency
 construction failures, stop the worker rather than retry activation. The first consumer's
 infrastructure failure reaches the host even when a sibling handler ignores cancellation;
@@ -122,10 +153,8 @@ Nacks, handler failures and deliveries interrupted by shutdown. `MinimumIdleTime
 visibility timeout, defaulting to one minute. `RecoveryPollInterval` defaults to five seconds.
 Both settings must be positive and at most `Int32.MaxValue` milliseconds; fractional
 milliseconds round up on the server. Set the visibility timeout above normal processing
-time, including time spent waiting behind earlier entries in a prefetched batch. For sequential
-handlers, budget at least `BatchSize` times the worst-case handler duration, plus acknowledgement
-and dispatch time. There is
-no lease extension: a long-running handler can overlap a recovery attempt. Handlers must
+time, including time spent waiting behind earlier entries in a prefetched batch. Budget at least `BatchSize` times the worst-case handler duration, plus acknowledgement and
+dispatch time. There is no lease extension: a long-running handler can overlap a recovery attempt. Handlers must
 be idempotent and consumer identities must be unique among active hosts and registrations.
 
 Each existing reader runs at most one recovery page per polling interval and fetches
@@ -383,14 +412,18 @@ activity and restores the prior ambient activity, including when a listener thro
 An uncooperative handler retains its activity
 until that attempt actually completes, just as it retains its handler scope.
 
+## Producer retries
+
 For producers, [idempotent stream appends](command-retries.md#idempotent-stream-appends)
 automatically attach stable per-call identities to eligible retry-enabled typed `XADD`
 calls on Redis 8.6 or later. Deduplication lasts only within the stream's configured
 retention limits; older servers retain ordinary `XADD` retry safety. Producer deduplication
 does not prevent consumer redelivery, so handlers must still be idempotent.
 
-Use `RespireFakeServer` from `Respire.Testing` with its `CreateOptions()` client to test handlers
-without Docker. It supports this worker's group creation, blocking reads, `XAUTOCLAIM`,
+## Test without Redis
+
+Use `RespireFakeServer` from `Respire.Testing`, and connect a client with its `CreateOptions()`,
+to test handlers without Docker. It supports this worker's group creation, blocking reads, `XAUTOCLAIM`,
 `XDEL`, the exact built-in atomic worker scripts, pending inspection and group metadata.
 It does not interpret arbitrary Lua. Default fake consumer registration matches Redis 7.0.
 Use `new RespireFakeServer(clock: null, createConsumersOnEmptyReads: true)` to model Redis 7.2

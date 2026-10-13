@@ -49,4 +49,5 @@ Level 0 and levels 3–12 are accepted. Raw LZ4 blocks, LZ4 frame streams, and K
 are different formats: reserved ID 3 denotes only a raw block inside a versioned
 Respire frame. Cross-level decoding, an independent block fixture, trailing/truncated
 input, checksum-valid malformed blocks, size limits, and writer commit behavior are
-covered by tests. Performance comparisons remain separate in #527.
+covered by tests. Performance results from #527 are in the
+[value codec benchmarks guide](../website/docs/guides/value-codec-benchmarks.md).

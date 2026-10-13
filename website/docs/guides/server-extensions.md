@@ -56,8 +56,9 @@ which should be targeted explicitly. `CONFIG`, `FLUSHSLOTS`, and `RM` change ser
 state or delete data; the catalog does not emulate or broadcast them. Server ACLs apply.
 Private inter-server replication protocols are outside this catalog expansion.
 
-These commands retain the raw execution contract: arguments are separate binary-safe
-tokens, caller keys are explicit, and prefixed views reject immediate catalog execution.
+These commands follow the raw execution contract: arguments are separate binary-safe
+tokens, caller keys are explicit, and prefixed views reject them (`JSON.DEBUG FIELDS` is the
+exception: its key is prefixed).
 Key-based descriptors route using their first key argument. Administrative commands and
 the `RM` cursor have no routing key and run on one selected node, without Cluster fan-out.
 `KEYDB.MEXISTS key [key ...]` is a multi-key command. With `UseCluster`, raw execution validates
@@ -76,11 +77,9 @@ The real-server smoke tests verify `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and
 `FIELDEXPIRE` on Dragonfly 2.0.0, and `EXPIREMEMBER`, `PEXPIREMEMBERAT`,
 `KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, each under RESP2 and RESP3.
 These scenarios do not certify every descriptor against those image versions. They carry
-the `CompatibleServers` test category and can also be selected or excluded by the
-`ServerExtensionIntegrationTests` class filter. CI runs them without skips. The KeyDB
-fixture requires a Docker engine capable of running its pinned x86_64 image, either
-natively or through configured emulation; the test process architecture alone does not
-determine the architecture of a local or remote Docker engine.
+the `CompatibleServers` test category (class `ServerExtensionIntegrationTests`). The KeyDB
+fixture needs a Docker engine that can run its pinned x86_64 image, natively or through
+emulation.
 
 References: [Dragonfly command documentation](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
 [Dragonfly Cluster administration](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md),

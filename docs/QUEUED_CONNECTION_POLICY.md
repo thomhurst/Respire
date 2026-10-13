@@ -9,6 +9,9 @@ Ordinary queues may recover **rejected** commands using the existing cluster rou
 helpers. This is not permission to replay a command accepted by Redis. WATCH leases
 and import sessions carry connection-local state and must never follow that recovery
 path. A watched redirect instead requests a fresh WATCH/read/queue/EXEC attempt.
+Separately, an opt-in `RespireOptions.RetryPolicy` can resend a complete standalone or
+Sentinel batch or unwatched transaction when every member's retry category permits it;
+that whole-unit retry also excludes import sessions, WATCH leases and Cluster batches.
 
 ## Execution and recovery inventory
 
@@ -26,7 +29,7 @@ path. A watched redirect instead requests a fresh WATCH/read/queue/EXEC attempt.
 | Import transaction uncertain completion | Apply the same expiration classifier. If MULTI started and server transaction state is not confirmed cleared, force expiration even for an otherwise recoverable server error. Preserve proven-not-submitted cancellation/timeout behavior. |
 | Immediate import operation | Use the same policy expiration classifier. The send remains pinned with streaming rerouting disabled. |
 | Durability batch | Policy rejects execution from an import session. Ordinary durability execution rents a fresh dedicated connection and sends directly, without cluster recovery handlers. Writes and WAIT/WAITAOF never replay; the connection is discarded afterward. |
-| `RunTransactionAsync` helpers | Repeat only a false WATCH-conflict result from commit, with a new transaction and callback. They do not replay an existing queue or catch routing/transport failures. Import sessions cannot enter this helper. |
+| `RunTransactionAsync` helpers | Each attempt runs a new watched transaction and callback; an existing queue is never replayed. A false WATCH-conflict result repeats up to `RespireTransactionRetryOptions.MaxAttempts`. Transient failures repeat only when `RespireOptions.RetryPolicy` is set and every queued command's retry category permits replay, under a separate budget. Timeouts, cancellation and Cluster routing rejections propagate without replay. Import sessions cannot enter this helper. |
 
 The policy does not own replies, buffers, cache fences, pending completion, credential
 sequence leases, or WATCH pool return. Those responsibilities stay at their original

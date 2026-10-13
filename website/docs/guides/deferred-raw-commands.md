@@ -53,7 +53,7 @@ leading/trailing/repeated spaces, control characters, and non-ASCII names are no
 accepted. Null arguments cannot be serialized. The client validates the key layout;
 Redis validates remaining arity, options, types, and version requirements.
 
-Supported forms are deliberately explicit. Unknown or module layouts throw
+Supported forms are deliberately explicit. Unknown, module, and immediate-only layouts throw
 `NotSupportedException` before enqueueing, including on standalone unprefixed clients.
 The client does not infer key positions from arbitrary argument contents. There is no
 metadata override that can bypass these checks. Use a typed facet or immediate raw
@@ -61,22 +61,22 @@ execution for unsupported forms, subject to that API's own prefix/routing restri
 
 | Key layout | Commands |
 | --- | --- |
-| No keys | PING, ECHO, TIME |
-| First argument | GET, SET, GETSET, SETNX, SETEX, PSETEX, GETDEL, GETEX, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, INCRBY, INCRBYFLOAT, DECR, DECRBY |
+| No keys | PING, ECHO, TIME, PUBLISH |
+| First argument | GET, SET, GETSET, SETNX, SETEX, PSETEX, GETDEL, GETEX, APPEND, STRLEN, GETRANGE, SETRANGE, INCR, INCRBY, INCRBYFLOAT, INCREX, DECR, DECRBY, DELEX, DELIFEQ |
 | First argument | TYPE, TTL, PTTL, EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, EXPIRETIME, PEXPIRETIME, PERSIST, DUMP, RESTORE |
 | First argument | HGET, HSET, HSETNX, HMGET, HMSET, HGETALL, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HSTRLEN, HINCRBY, HINCRBYFLOAT, HRANDFIELD |
 | First argument | LPUSH, RPUSH, LPUSHX, RPUSHX, LPOP, RPOP, LLEN, LRANGE, LINDEX, LSET, LINSERT, LREM, LTRIM, LPOS |
 | First argument | SADD, SREM, SCARD, SMEMBERS, SISMEMBER, SMISMEMBER, SPOP, SRANDMEMBER |
 | First argument | ZADD, ZREM, ZCARD, ZSCORE, ZMSCORE, ZINCRBY, ZCOUNT, ZLEXCOUNT, ZSCAN (one cursor page), ZRANGE, ZREVRANGE, ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZRANGEBYLEX, ZREVRANGEBYLEX, ZRANK, ZREVRANK, ZREMRANGEBYRANK, ZREMRANGEBYSCORE, ZREMRANGEBYLEX, ZPOPMIN, ZPOPMAX, ZRANDMEMBER |
 | First argument | GETBIT, SETBIT, BITCOUNT, BITPOS, BITFIELD, BITFIELD_RO, PFADD, GEOADD, GEODIST, GEOHASH, GEOPOS, GEOSEARCH |
-| First argument | XADD, XACK, XDEL, XTRIM, XLEN, XRANGE, XREVRANGE, XPENDING, XCLAIM, XAUTOCLAIM |
+| First argument | XADD, XACK, XDEL, XTRIM, XLEN, XRANGE, XREVRANGE, XPENDING, XCLAIM, XAUTOCLAIM, XCFGSET, XSETID |
 | First argument after the named subcommand | OBJECT ENCODING/FREQ/IDLETIME/REFCOUNT; MEMORY USAGE; XINFO STREAM/GROUPS/CONSUMERS; XGROUP CREATE/SETID/DESTROY/CREATECONSUMER/DELCONSUMER |
-| First two arguments | RENAME, RENAMENX, COPY, LCS, SMOVE, LMOVE, RPOPLPUSH, ZRANGESTORE, GEOSEARCHSTORE |
+| First two arguments | RENAME, RENAMENX, COPY, LCS, SMOVE, LMOVE, LMOVEM, RPOPLPUSH, ZRANGESTORE, GEOSEARCHSTORE |
 | Every argument | DEL, UNLINK, EXISTS, TOUCH, MGET, SDIFF, SINTER, SUNION, SDIFFSTORE, SINTERSTORE, SUNIONSTORE, PFCOUNT, PFMERGE |
 | Alternating keys and values | MSET, MSETNX |
 | All arguments after the bit operation | BITOP |
 | Source/name, key count, keys, other arguments | EVAL, EVALSHA, EVAL_RO, EVALSHA_RO, FCALL, FCALL_RO |
-| Key count, keys, other arguments | LMPOP, ZMPOP, SINTERCARD, ZDIFF, ZINTER, ZUNION, ZINTERCARD |
+| Key count, keys, other arguments | LMPOP, ZMPOP, SINTERCARD, SDIFFCARD, SUNIONCARD, ZDIFF, ZINTER, ZUNION, ZINTERCARD |
 | Destination, key count, source keys, other arguments | ZDIFFSTORE, ZINTERSTORE, ZUNIONSTORE |
 
 Script/function key counts may be zero. Other counted layouts require a positive
@@ -87,9 +87,8 @@ and functions must access keys through the declared key arguments; source is not
 ## Cluster and queue restrictions
 
 Every key within one raw command must share a slot after prefixing. A mismatch throws
-`RespireServerException` with code `CROSSSLOT` locally, before enqueueing. This matches
-the existing typed multi-key command contract; the exception type does not imply a
-server round trip. Rejected
+`RespireServerException` with code `CROSSSLOT` locally, before enqueueing, as typed
+multi-key commands do; the exception type does not imply a server round trip. Rejected
 commands do not pin a transaction to a slot. A Cluster transaction also requires all
 its commands to share one slot. Cluster batches group commands by slot; order is
 preserved within a group, while different groups may execute independently. Keyless
@@ -97,13 +96,15 @@ commands use an execution node and never fan out across primaries.
 
 Blocking and connection-state commands are rejected: blocking list/sorted-set pops,
 subscriptions, WATCH, transaction control, connection setup, CLIENT commands,
-WAIT/WAITAOF, and similar session operations. XREAD/XREADGROUP are currently rejected
-even without BLOCK because their layouts are not supported here. Administrative,
-unknown, and module forms are rejected rather than trusted to preserve queue state.
-SORT and the GEORADIUS family are also excluded because their optional external keys need their
-own parsing rules; use the typed sorting/geospatial APIs where available.
+WAIT/WAITAOF, and similar session operations. Raw XREAD/XREADGROUP are rejected even
+without BLOCK; queue reads through the typed `Streams.Read` and `Streams.ReadGroup`
+methods instead. Administrative, unknown, and module forms are rejected rather than
+trusted to preserve queue state. SORT and the GEORADIUS family are also excluded because
+their optional external keys need their own parsing rules; use the typed sorting/geospatial
+APIs where available.
 
 No per-command flags, fire-and-forget mode, or implicit cluster-wide administration
-are available. Deferred execution keeps the queue's existing cancellation, redirect,
-and conservative client-cache invalidation behavior. Custom queue adapters must
-implement the added `IRespireCommandQueue.Execute` member.
+are available. Deferred execution keeps the queue's cancellation, redirect, and
+conservative client-cache invalidation behavior. A deferred raw command can join a
+batch or transaction retry only with a category declared through `WithRetryCategory`;
+see [command retries](command-retries.md#batches).

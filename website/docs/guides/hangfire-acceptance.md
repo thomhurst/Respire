@@ -5,7 +5,7 @@ description: Pinned upstream tests, worker lifecycle, supported contracts, and e
 
 # Hangfire compatibility acceptance
 
-The [StackExchange.Redis migration boundary](./stackexchange-interop) is verified with
+The [StackExchange.Redis migration boundary](stackexchange-interop.md) is verified with
 `Hangfire.Redis.StackExchange` **1.12.0**. Its NuGet repository commit is
 [`da8e39a33df204900afc30aeb65110f76f081c55`](https://github.com/marcoCasamento/Hangfire.Redis.StackExchange/tree/da8e39a33df204900afc30aeb65110f76f081c55).
 The acceptance project executes that published package against real Redis through
@@ -13,9 +13,14 @@ The acceptance project executes that published package against real Redis throug
 
 Inject the adapter into `RedisStorage`; construct and configure it using native Respire options:
 
+```bash
+dotnet add package Respire.StackExchangeCompat
+```
+
 ```csharp
 using Respire.StackExchangeCompat;
 
+// options is your RespireOptions, for example RespireOptions.Parse("localhost:6379").
 await using var multiplexer = RespireConnectionMultiplexer.Create(options);
 var storage = new Hangfire.Redis.StackExchange.RedisStorage(multiplexer,
     new Hangfire.Redis.StackExchange.RedisStorageOptions
@@ -38,8 +43,8 @@ on the test thread after joining, with waiters released even when a callback fai
 An independent StackExchange.Redis connection
 arranges and checks Redis state. Production storage, connections, fetched jobs, write
 transactions, locks, and subscriptions receive the shim. Test-only control calls do not
-extend the supported adapter interface. The package's existing friend assembly grant
-allows the port to exercise its internal types without modifying production code.
+extend the supported adapter interface. The package's friend-assembly grant to its test
+assembly name allows the port to exercise its internal types without modifying production code.
 
 | Upstream class | Facts exercised |
 | --- | ---: |
@@ -92,7 +97,7 @@ extension/release ownership, server script errors, and borrowed-client disposal.
 ## Supported scope and limitations
 
 The supported command, transaction, condition, server, lock, and subscription contracts
-are listed in the [migration guide](./stackexchange-interop). This acceptance verifies
+are listed in the [migration guide](stackexchange-interop.md). This acceptance verifies
 the pinned package's upstream scenarios and basic worker lifecycle on standalone Redis;
 it does not establish arbitrary StackExchange.Redis interface parity, other Hangfire package
 versions, Redis Cluster/Sentinel deployments, every dashboard query, or every Hangfire feature.
@@ -100,8 +105,3 @@ Unsupported members and flags still throw `NotSupportedException`; they never re
 successful default to bypass an integration call. `ListRightPop`, `HashExists`, `SortedSetRank`,
 `SetContains`, and newer `StringSet` overloads used only by upstream test setup/assertions
 remain outside this contract unless separately documented in the migration guide.
-
-This Hangfire-specific evidence does not close
-[#889](https://github.com/thomhurst/Respire/issues/889), which requires independent combined
-Microsoft/Hangfire acceptance. The parent
-[#1269](https://github.com/thomhurst/Respire/issues/1269) retains its complete acceptance gate.

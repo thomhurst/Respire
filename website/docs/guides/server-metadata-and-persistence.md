@@ -19,8 +19,9 @@ These calls do not reconcile metadata, change client routing, or replicate confi
 | `BackgroundRewriteAofAsync` | BGREWRITEAOF | 1.0 |
 
 Unsupported commands, missing ACL permissions, and server failures remain
-`RespireServerException`. No fallback substitutes another operation. Existing INFO,
-COMMAND COUNT/LIST, CONFIG GET/SET, and LASTSAVE methods remain available.
+`RespireServerException`. No fallback substitutes another operation. For INFO,
+COMMAND COUNT/LIST, CONFIG GET/SET, and LASTSAVE, use `InfoAsync`, `CommandCountAsync`,
+`CommandListAsync`, `ConfigAsync`, `SetConfigAsync`, and `LastSaveAsync`.
 
 ## Command and module inspection
 
@@ -71,8 +72,8 @@ that SAVE completed on that node. It can delay unrelated clients and should be u
 deliberately. Background save and AOF rewrite return
 `RespireBackgroundPersistenceResult`, which distinguishes `Started`, `Scheduled`, and
 `Unknown` success messages while preserving the original message. Acceptance does not
-prove completion or persistence success. Inspect `InfoAsync("persistence")` and the
-existing `LastSaveAsync` as appropriate. See
+prove completion or persistence success. Check `InfoAsync("persistence")` or
+`LastSaveAsync` for the outcome. See
 [BGSAVE](https://redis.io/docs/latest/commands/bgsave/) and
 [BGREWRITEAOF](https://redis.io/docs/latest/commands/bgrewriteaof/).
 
@@ -93,6 +94,6 @@ success is possible, and no rollback or cluster-wide atomicity is promised. Stan
 clients return one result. Discovery in Cluster mode requires CLUSTER NODES permission.
 Explicit all-node SAVE can block several servers at once.
 
-These 18 methods extend `IServerCommands` under the repository's pre-release API policy.
-Custom implementations, decorators, and mocks must implement or forward them. They
+These 18 methods (nine single-node methods and their all-node counterparts) are
+`IServerCommands` members. Custom implementations, decorators, and mocks must implement or forward them. They
 are immediate Server operations, with no batch or transaction variants.

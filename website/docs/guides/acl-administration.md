@@ -23,8 +23,8 @@ if (!check.IsAllowed) Console.WriteLine(check.DenialReason);
 ```
 
 `AclSetUserAsync`, `AclDeleteUsersAsync`, and `AclLogResetAsync`, including their
-all-node variants, require `AllowAdmin = true` before network I/O. Inspection methods
-follow the existing read-only Server convention and do not require this client option.
+all-node variants, require `AllowAdmin = true`; without it they throw
+`NotSupportedException` before any network I/O. Read-only inspection methods do not require `AllowAdmin`.
 The server still enforces the authenticated user's ACL permissions for every command.
 
 Rules are separate, ordered `RespireValue` arguments. Updates are additive unless a
@@ -73,6 +73,7 @@ Every ACL method has an `OnAllNodesAsync` counterpart. These discover Cluster me
 including replicas, and return `RespireServerResult<T>[]` with endpoint provenance.
 Standalone returns one result. Discovery requires permission to inspect `CLUSTER NODES`.
 WHOAMI reports the identity authenticated on the connection used for that node.
+In this example, `redis` is a client created with `AllowAdmin = true`, like the one above.
 
 ```csharp
 var results = await redis.Server.AclGetUserOnAllNodesAsync("reader");
@@ -95,6 +96,7 @@ ACL responses can contain password hashes and security details. Do not log rule
 arguments or credentials. Respire records operation names rather than adding argument
 logging; server error messages remain intact for diagnosis.
 
-The 18 methods extend `IServerCommands`. External implementations, decorators, and
-mocks must implement or forward them. These APIs are immediate Server operations;
+The 18 ACL methods (nine single-node methods and their all-node counterparts) are
+`IServerCommands` members. External implementations, decorators, and mocks must
+implement or forward them. These APIs are immediate Server operations;
 they do not add ACL methods to batches or transactions.

@@ -11,10 +11,12 @@ dotnet add package Respire.TimeSeries
 With C# 14 or later, import the namespace shown below and use `client.TimeSeries` on
 `RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
 performs no network I/O, and leaves ownership of the underlying client with you.
-Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
-The existing `new RespireTimeSeriesClient(client)` constructor remains available.
+A key-prefixed view from `WithKeyPrefix` gets its own wrapper, which keeps that view's prefix
+(see [Key prefixes and Cluster](#key-prefixes-and-cluster)). On earlier C# versions, create the
+wrapper with `new RespireTimeSeriesClient(client)`.
 
 ```csharp
+using Respire;
 using Respire.TimeSeries;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
@@ -43,16 +45,19 @@ Console.WriteLine($"Read {recent.Samples.Count} samples from {key}.");
 
 ## Writes
 
-`CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding, and supplying labels to `AlterAsync` replaces every existing label. `AddAsync` creates the series on first write when needed and returns the assigned timestamp; its options also set `ON_DUPLICATE` for that write. `MultiAddAsync` writes key/timestamp/value triples to existing series and returns the timestamps in request order. If the server rejects some samples, for example because a series does not exist, it throws `RespireTimeSeriesMultiAddException`. The accepted samples are still written, and the exception's `Timestamps` and `Errors` report the outcome of each sample. By default the whole batch goes to Redis as one `TS.MADD` command, and Respire does not limit its size. Redis finishes the command before it serves other clients, so for very large batches pass a maximum batch size, as in `MultiAddAsync(samples, maxBatchSize: 2_000)`. Respire then sends the samples in `TS.MADD` commands of at most that many samples, one after another, and still returns or reports every sample's outcome in request order. The chunked batch is not atomic: other clients can run commands between chunks, and if a chunk fails to send or the call is cancelled, the earlier chunks stay written. Timestamps are still validated before the first chunk is sent. `IncrementByAsync` and `DecrementByAsync` update the latest sample. Their `RespireTimeSeriesIncrementOptions` set an explicit `TIMESTAMP`, and the retention, encoding, chunk size, duplicate policy, IGNORE thresholds, and labels of a series the call creates.
+`CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds, and labels. Only `CreateAsync` sets encoding; `AlterAsync` throws `ArgumentException` if `Encoding` is set. Supplying labels to `AlterAsync` replaces every existing label, and `ClearLabels = true` removes them all (alter only).
 
-If a later chunk is interrupted after at least one confirmed reply, `MultiAddAsync` throws
-`RespireTimeSeriesMultiAddInterruptedException`, with the original failure in `InnerException`.
-Cancellation throws `RespireTimeSeriesMultiAddCanceledException`, which remains an
-`OperationCanceledException` and preserves its cancellation token. Both expose `Progress`;
-`RespireTimeSeriesMultiAddProgress.FromException(error)` also retrieves it from either exception.
-Failures before the first confirmed chunk retain their original exception type. Programming and
-resource failures, including client disposal and allocation failures, also retain their original
-type; progress wrappers cover transport, server, malformed-reply, and cancellation failures.
+`AddAsync` creates the series on first write when needed and returns the assigned timestamp. Its `RespireTimeSeriesAddOptions` also set `ON_DUPLICATE` for that write. `IncrementByAsync` and `DecrementByAsync` update the latest sample. Their `RespireTimeSeriesIncrementOptions` set an explicit `TIMESTAMP`, and the retention, encoding, chunk size, duplicate policy, IGNORE thresholds, and labels of a series the call creates.
+
+### Multi-series writes
+
+`MultiAddAsync` writes key/timestamp/value triples (`RespireTimeSeriesWrite`) to existing series and returns the timestamps in request order. If the server rejects some samples, for example because a series does not exist, it throws `RespireTimeSeriesMultiAddException`. The accepted samples are still written, and the exception's `Timestamps` and `Errors` report the outcome of each sample.
+
+By default the whole batch goes to Redis as one `TS.MADD` command, and Respire does not limit its size. Redis finishes the command before it serves other clients, so for very large batches pass a maximum batch size, as in `MultiAddAsync(samples, maxBatchSize: 2_000)`. Respire then sends the samples in `TS.MADD` commands of at most that many samples, one after another, and still returns or reports every sample's outcome in request order. Timestamps are validated before the first chunk is sent.
+
+The chunked batch is not atomic: other clients can run commands between chunks, and if a chunk fails to send or the call is cancelled, the earlier chunks stay written. If a later chunk is interrupted after at least one confirmed reply, `MultiAddAsync` throws `RespireTimeSeriesMultiAddInterruptedException`, with the original failure in `InnerException`. Cancellation throws `RespireTimeSeriesMultiAddCanceledException`, which is an `OperationCanceledException` and preserves its cancellation token. Both expose `Progress`, and `RespireTimeSeriesMultiAddProgress.FromException(error)` retrieves it from either exception.
+
+Failures before the first confirmed chunk keep their original exception type. So do programming and resource failures, such as client disposal and allocation failures. The progress exceptions cover transport, server, malformed-reply, and cancellation failures.
 
 Progress describes three consecutive parts of the request:
 
@@ -63,17 +68,18 @@ Progress describes three consecutive parts of the request:
   detected before attempting the next chunk leaves this count at zero.
 - The final `UnattemptedSampleCount` samples were never attempted by this call.
 
-A lost reply does **not** prove that a write failed. Do not automatically replay the uncertain
-chunk or the whole batch: duplicate policies and server-assigned timestamps can change the result.
-Respire does not automatically replay uncertain chunks. Server rejection replies still accumulate across
-all chunks and produce the existing `RespireTimeSeriesMultiAddException` when every chunk finishes.
+A lost reply does **not** prove that a write failed. Respire does not replay uncertain chunks, and you
+should not replay the uncertain chunk or the whole batch automatically either: duplicate policies and
+server-assigned timestamps can change the result. Per-sample server rejections still accumulate across
+all chunks and produce `RespireTimeSeriesMultiAddException` when every chunk finishes.
 
+### Timestamps
 
 Timestamps are checked before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions, and `Align` take a non-negative millisecond timestamp, `Minimum`, or `Maximum`.
 
 ## Client-side cache
 
-When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `DecrementByAsync`, `DeleteRangeAsync`, or `MultiAddAsync` call flushes the local cache. A write can also update compaction destination series, and the command does not identify every destination. The flush keeps cached reads correct when compaction rules are configured; high-volume ingestion therefore gets no cache reuse between these writes. [Issue #689 tracks deriving invalidation from command key layouts](https://github.com/thomhurst/Respire/issues/689). `CreateRuleAsync` and `DeleteRuleAsync` fence their source and destination keys.
+When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `DecrementByAsync`, `DeleteRangeAsync`, or `MultiAddAsync` call flushes the local cache. A write can also update compaction destination series, and the command does not identify every destination. The flush keeps cached reads correct when compaction rules are configured, so high-volume ingestion gets no cache reuse between these writes. `CreateRuleAsync` and `DeleteRuleAsync` fence their source and destination keys.
 
 ## Reads
 
@@ -88,6 +94,7 @@ When client-side caching is enabled, each `AddAsync`, `IncrementByAsync`, `Decre
 `RangeKeysAsync` (`TS.NRANGE`) and `ReverseRangeKeysAsync` (`TS.NREVRANGE`) combine explicit series into timestamp rows. `RespireTimeSeriesRow.Values` follows key order, including duplicate keys. Missing values are `double.NaN`, which the server cannot distinguish from stored or aggregated NaN values. All keys must share a Cluster hash slot; Respire preserves key prefixes and binary key bytes.
 
 ```csharp
+using Respire;
 using Respire.TimeSeries;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
@@ -110,13 +117,15 @@ With aggregation, each key contributes its requested aggregators in order. Here 
 `ReadAsync` (`TS.READ`) returns samples at or after an inclusive timestamp. `RespireTimeSeriesReadOptions` sets `MaximumCount` and optional `BlockMilliseconds`/`MinimumCount`. Zero milliseconds waits indefinitely. Timeout returns available samples, possibly none; deletion while blocked returns an empty list. Blocking calls use the dedicated pool, leaving ordinary commands responsive.
 
 ```csharp
+using Respire;
 using Respire.TimeSeries;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var timeSeries = client.TimeSeries;
+using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 await foreach (var sample in timeSeries.FollowAsync(
     "sensor:temperature", RespireTimeSeriesTimestamp.New,
-    batchSize: 256, cancellationToken: cancellationToken))
+    batchSize: 256, cancellationToken: cts.Token))
 {
     Console.WriteLine($"{sample.Timestamp}: {sample.Value}");
 }
@@ -145,4 +154,4 @@ See Redis's [explicit-key range semantics](https://redis.io/docs/latest/commands
 
 The package uses Respire's generated command infrastructure and does not use reflection. On a `WithKeyPrefix` view, every series key is prefixed, including both keys of a compaction rule and every key passed to `MultiAddAsync`. Label queries (`MultiGetAsync`, `MultiRangeAsync`, `MultiReverseRangeAsync`, `QueryIndexAsync`, `QueryLabelsAsync`, and `QueryLabelValuesAsync`) name no keys and can expose series or label data outside the prefix. A prefixed view therefore rejects them with `NotSupportedException`, including label queries without filters. Run them through an unprefixed client instead.
 
-In Redis Cluster, `MultiAddAsync` and `CreateRuleAsync` require all their keys to share a hash slot. The caller owns the underlying client.
+In Redis Cluster, `MultiAddAsync` and `CreateRuleAsync` require all their keys to share a hash slot.

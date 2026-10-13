@@ -1,7 +1,13 @@
+---
+title: Pub/sub introspection
+description: Query active channels, subscriber counts and pattern counts with PUBSUB commands, on one node or every Cluster member.
+---
+
 # Pub/sub introspection
 
 The Server facet exposes PUBSUB CHANNELS, NUMSUB, NUMPAT, SHARDCHANNELS, and
-SHARDNUMSUB. Ordinary introspection requires Redis 2.8+; sharded introspection
+SHARDNUMSUB through `PubSubChannelsAsync`, `PubSubSubscriberCountsAsync`, and
+`PubSubPatternCountAsync`. Pass `sharded: true` for the SHARD variants. Ordinary introspection requires Redis 2.8+; sharded introspection
 requires Redis 7+. Unsupported versions and denied ACL permissions retain server
 errors. These read-only commands do not require `AllowAdmin`.
 
@@ -92,7 +98,8 @@ remain available. No command is replayed or redirected
 away from its target endpoint.
 
 Custom `IServerCommands` implementations, decorators, and mocks must implement or forward
-all six new methods. No deferred command facet is added.
+all six methods (the three single-node methods and their `OnAllNodesAsync` counterparts).
+These queries are not available on batches or transactions.
 
 Redis contracts: [CHANNELS](https://redis.io/docs/latest/commands/pubsub-channels/),
 [NUMSUB](https://redis.io/docs/latest/commands/pubsub-numsub/),

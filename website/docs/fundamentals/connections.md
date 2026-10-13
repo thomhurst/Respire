@@ -7,7 +7,355 @@ description: Configure endpoints, timeouts, reconnects, and connection lifecycle
 
 Use a URI for the common case or `RespireOptions` when the connection needs explicit control.
 
-For opt-in standalone or Cluster data-node admission, configure [circuit breakers](../guides/circuit-breakers.md).
+To stop sending new commands to an unhealthy endpoint, configure [circuit breakers](../guides/circuit-breakers.md).
+
+## Connect immediately
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379/0");
+```
+
+`ConnectAsync` establishes connections before returning, so an unreachable server fails here instead of on an unrelated later command. A standalone connection surfaces the underlying error, such as a `SocketException` for a refused connection or `RespireTimeoutException` when `ConnectTimeout` expires. Cluster clients wrap seed failures in `RespireConnectionException`.
+
+## Lazy creation
+
+Applications that must start before Redis can use `Create`:
+
+```csharp
+await using var redis = RespireClient.Create(options);
+```
+
+`Create` performs no network I/O. The first command connects, and a failed attempt is retried by a later command. Dependency-injection registration uses this lazy behavior so Redis availability does not block host startup.
+
+## Full configuration
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("cache.internal", 6379) },
+    Username = configuration["Redis:Username"],
+    Password = configuration["Redis:Password"],
+    Database = 0,
+    ClientName = "checkout-api",
+    ConnectTimeout = TimeSpan.FromSeconds(5),
+    CommandTimeout = TimeSpan.FromSeconds(2),
+    Connections = 4,
+    AllowAdmin = false,
+    LoggerFactory = loggerFactory,
+};
+
+await using var redis = await RespireClient.ConnectAsync(options);
+```
+
+Common defaults:
+
+| Option | Default |
+| --- | --- |
+| `ConnectTimeout` | 10 seconds per TCP/TLS connection attempt |
+| `CommandTimeout` | 10 seconds; `null` disables it. Intentionally blocking commands use their own wait |
+| `Connections` | 1 multiplexed connection |
+| `Database` | 0 |
+| `Protocol` | `RespProtocol.Auto` (RESP3, falling back to RESP2) |
+| `AllowAdmin` | `false` |
+| `ConnectionIdleReadTimeout` | `null` (disabled) |
+| `ClusterTopologyRefreshInterval` | 60 seconds |
+| `ReplicaRefreshInterval` | 1 second |
+
+Omitting `Connections` uses one multiplexed connection. The value must be at least one; raise the fixed pool size only when profiling shows one socket is saturated.
+
+When `ConnectTimeout` expires during TCP/TLS setup, Respire throws `RespireTimeoutException` with
+`CommandName = "CONNECT"` and diagnostics at the `Connecting` stage, including during
+dedicated connection acquisition. Catch `RespireTimeoutException`, not
+`OperationCanceledException`, for connect timeouts. Caller cancellation remains
+`OperationCanceledException` with the caller's token, and wins if both have fired. Pool
+retirement keeps its separate cancellation identity so routing can select a replacement. The
+Redis handshake that follows uses `CommandTimeout`.
+Routing samples pool retirement when handling the failure. A CONNECT timeout can therefore
+trigger reselection even if the timeout preceded retirement; this never replays an
+admitted application command. Cluster routes enforce their retirement retry limit. Standalone
+and Sentinel dedicated rentals have no retirement attempt limit: repeated pool replacement can
+continue until acquisition succeeds, cancellation or disposal occurs, or a terminal failure is
+encountered. `ConnectTimeout` bounds each connection attempt, not the entire rental across
+replacements. Active-pool and Redis handshake timeouts remain failures.
+
+`AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
+
+For expiring passwords or access tokens, use a caller-owned
+[`IRespireCredentialProvider`](../guides/renewable-credentials.md). It supplies current credentials
+for new connections and renews expiring credentials on live connections through AUTH.
+
+## URI query options
+
+Connection URI query parameters cover common options:
+
+```text
+redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
+```
+
+Supported query parameters:
+
+| Parameter | Sets |
+| --- | --- |
+| `clientName` | `ClientName` |
+| `connections` | `Connections` |
+| `connectTimeoutMs` | `ConnectTimeout` |
+| `commandTimeoutMs` | `CommandTimeout` |
+| `connectionIdleReadTimeoutMs` (or `responseTimeoutMs`) | `ConnectionIdleReadTimeout` |
+| `gatheredWriteStallTimeoutMs` | `GatheredWriteStallTimeout` (`-1` disables it) |
+| `protocol` | `Protocol`: `auto`, `2`/`resp2`, or `3`/`resp3`, case-insensitive |
+| `db` | `Database` (overrides the `/database` path segment) |
+| `allowAdmin` | `AllowAdmin` |
+| `cluster` (or `useCluster`) | `UseCluster` |
+| `serviceName` (or `sentinelPrimaryName`), `sentinelUser`, `sentinelPassword`, `sentinelTls` | [Sentinel](#redis-sentinel) discovery |
+| `keyPrefix`, `pubSubPrefix` | `KeyPrefix`, `PubSubPrefix` |
+
+Unknown parameters throw `ArgumentException`. Use `rediss://` to enable TLS. Portless `redis://`
+and `rediss://` URIs both use Redis's standard port, `6379` (26379 with `serviceName`); specify an
+explicit port when your provider uses another one. Unix domain sockets use
+`unix:///path/to/redis.sock` (or `redis+unix://`), with `?db=N` for the database.
+
+`keyPrefix` configures a [default root key namespace](../commands/strings-and-keys.md#default-root-namespace).
+It accepts percent-escaped UTF-8 text in URI and comma-delimited strings, decodes once,
+and leaves pub/sub channels unchanged. Empty disables prefixing; repeated entries use
+the last value. Use `Uri.EscapeDataString` to escape delimiters and literal percent signs.
+Configure arbitrary binary prefixes through `RespireOptions.KeyPrefix`.
+
+`pubSubPrefix` independently configures the [root pub/sub namespace](../guides/pub-sub.md#explicit-pubsub-prefixes).
+It follows the same decode-once, last-entry, and empty-value rules. Use
+`RespireOptions.PubSubPrefix` for binary bytes. Typed publication and subscription methods
+apply it; notification descriptors and Server PUBSUB queries retain explicit physical names.
+
+Unsupported protocol values and malformed or overflowing integer options throw `ArgumentException`
+with the option name and `ParamName == "connectionString"`. This applies to URI and comma-delimited
+connection strings. Existing option range checks still apply after parsing.
+
+## StackExchange.Redis connection strings
+
+Respire also accepts the common comma-delimited format, which eases migration from
+StackExchange.Redis:
+
+```text
+cache-a:6380,password=secret,ssl=true,defaultDatabase=2
+```
+
+Multiple endpoints require an explicit deployment mode:
+
+| Configuration | Meaning |
+| --- | --- |
+| `cache-a,cache-b,cluster=true` | Redis Cluster seeds, tried during connection setup; discovered slot owners and redirects route later commands. |
+| `sentinel-a,sentinel-b,serviceName=mymaster` | Sentinel discovery endpoints used to select and validate the current primary. |
+| `cache-a,cache-b` | Rejected: the endpoints could belong to unrelated standalone deployments. |
+
+Use `ConnectAnyAsync` with separate `RespireOptions` candidates for connection-time fallback
+between independent deployments. It does not perform continuous failover; use a
+[failover group](../guides/failover-groups.md) for that. Sentinel
+discovers the primary on connection or first use, then discovers a replacement after a
+disconnect or READONLY rejection. Ordinary standalone reconnection targets the deployment already selected. Cluster routing
+is distinct from either standalone fallback or Sentinel discovery.
+
+An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
+bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
+peers, and failed primary ROLE validation share that resolution budget. Each new Sentinel
+resolution uses this policy, and so do the Sentinel event monitors described below.
+Cluster uses the same option for
+[node, topology, and seed fallback](../guides/reconnect-policy.md#cluster-discovery-fallback),
+with one shared budget per discovery round. Periodic Cluster refresh remains separate.
+
+Programmatic `RespireOptions.Endpoints` follows the same rule: standalone mode requires one
+endpoint; a longer standalone list throws `RespireConfigurationException`.
+Cluster and Sentinel cannot both be selected in one comma-delimited string.
+
+Supported options are `user` (or `username`), `password`, `ssl`, `sslHost`, `sslProtocols`,
+`checkCertificateRevocation`, `clientName` (or `name`), `defaultDatabase` (or `db`),
+`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`auto`, `2`/`resp2`, or `3`/`resp3`),
+`allowAdmin`, `keyPrefix`, and `pubSubPrefix`. Timeouts are in milliseconds. `asyncTimeout` and
+`syncTimeout` set `CommandTimeout`; `asyncTimeout` wins when both are present. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
+`ssl=false` explicitly disables it, regardless of option order. `sslProtocols`
+accepts pipe-separated enum names, such as `Tls12|Tls13`, or numeric masks combining defined
+protocol bits, such as `15360`. `sslProtocols` and `checkCertificateRevocation` configure TLS
+settings but do not enable TLS by themselves; those settings have no effect on a plaintext
+connection. Use `ssl=true` or `sslHost` without `ssl=false` to enable TLS. Boolean options accept `true` or `false`
+(case-insensitive); other values throw `ArgumentException`.
+
+In Cluster mode, an explicit `sslHost` applies the same certificate/SNI target to every seed
+and discovered node. Use it only when every node certificate covers that shared name; omit it
+to validate each connection's own hostname.
+
+Mode options are `cluster` (or `useCluster`) and `serviceName` (or `sentinelPrimaryName`).
+Sentinel also accepts `sentinelUser`, `sentinelPassword`, `sentinelTls`, and `sentinelSslHost`; an empty
+`sentinelPassword=` disables inherited authentication. Omitted ports default to 26379 in
+Sentinel mode and to 6379 otherwise, including with TLS. Explicit ports always take precedence.
+
+Set `sentinelSslHost=sentinel.example` when Sentinel certificates use a different hostname from
+the primary's `sslHost`. This overrides only the Sentinel TLS target; protocol and revocation
+settings remain inherited. It enables Sentinel TLS unless `sentinelTls=false` explicitly
+disables it. Without `sentinelSslHost`, Sentinel inherits the primary TLS settings.
+
+`sslHost`, `sentinelSslHost`, `sslProtocols`, and `checkCertificateRevocation` are options for
+the comma-delimited format, not URI query parameters. With `rediss://`, configure `TlsOptions`
+and `SentinelTlsOptions` on the parsed options in code when you need these overrides.
+
+Unknown or unsupported options, such as StackExchange.Redis `abortConnect`, throw `ArgumentException`, which also catches spelling mistakes.
+For example, StackExchange.Redis `keepAlive` sends protocol messages; it is not equivalent to
+Respire's TCP keepalive settings. Configure `TcpKeepAliveTime` directly when kernel probes are
+wanted. An endpoint list never silently enables StackExchange.Redis-style connection groups or
+continuous failover; configure a [failover group](../guides/failover-groups.md) explicitly. See the [StackExchange.Redis option reference](https://seredis.dev/Configuration.html)
+for its original option semantics, and use `RespireOptions` directly for Respire-only settings.
+
+Bare IPv6 endpoints use the default Redis port. Add brackets when specifying a port: `::1` or
+`[::1]:6380`.
+
+## Protocol negotiation
+
+The default `Protocol = RespProtocol.Auto` starts each data connection with `HELLO 3`.
+Redis 6+ and compatible servers normally select RESP3. If the server explicitly reports
+an unknown `HELLO` command or `NOPROTO`, the same connection remains in RESP2 and completes
+AUTH, client naming, and database selection before any application command runs.
+Authentication/ACL errors, malformed replies, disconnects, and timeouts do not trigger fallback.
+No application command is replayed during negotiation.
+
+Automatic negotiation adds one serialized HELLO round trip before the remaining setup
+commands on each new physical connection. It adds no round trip to ordinary commands.
+Large pools and reconnect storms pay this setup cost for every socket, including endpoints
+that repeatedly fall back to RESP2. Protocol negotiation is not cached across connections.
+Information logs identify unsupported-HELLO fallback to RESP2 on each physical connection;
+Debug logs identify successful RESP3 negotiation. Neither includes credentials. Different unknown-command wording is not treated as proof
+that HELLO is unsupported; configure RESP2 explicitly for such a proxy. An unclassified
+`ERR` during automatic HELLO includes that compatibility hint unless its wording indicates
+an authentication or ACL failure. The connection still fails and preserves the original error.
+
+Choose `Protocol = RespProtocol.Resp2` or `protocol=2` to skip HELLO and use RESP2. Choose `RespProtocol.Resp3` or `protocol=3` to require RESP3 and reject
+unsupported servers. `protocol=auto` explicitly selects the default policy.
+Client-side caching always requires RESP3 and never falls back. Sentinel discovery retains
+RESP2 for compatibility; the discovered data connections use the configured policy.
+
+Raw callers see the negotiated reply shapes: RESP3 can return maps, sets, doubles,
+booleans, and native nulls where RESP2 used arrays, bulk strings, integers, or null arrays.
+Typed commands normalize both reply shapes. Raw `RespireResult` consumers must handle both
+or select RESP2 explicitly. Negotiation is per physical connection, including reconnects.
+A pool can therefore contain RESP2 and RESP3 connections when endpoints or intervening
+proxies support different protocols. Consecutive raw reads can have different reply shapes;
+select an explicit protocol when a consumer requires one fixed shape.
+Automatic negotiation can also make authentication errors surface at connection time,
+before the first application command.
+
+## Connection-time failover
+
+Use `ConnectAnyAsync` when an application can connect to one of several independent Redis deployments and should try them in priority order at startup:
+
+```csharp
+await using var redis = await RespireClient.ConnectAnyAsync([
+    new RespireOptions
+    {
+        Endpoints = { new RespireEndpoint("redis-primary.internal", 6379) },
+        Username = configuration["Redis:Username"],
+        Password = configuration["Redis:Password"],
+        ConnectTimeout = TimeSpan.FromSeconds(3),
+    },
+    new RespireOptions
+    {
+        Endpoints = { new RespireEndpoint("redis-secondary.internal", 6379) },
+        Username = configuration["Redis:Username"],
+        Password = configuration["Redis:Password"],
+        ConnectTimeout = TimeSpan.FromSeconds(3),
+    },
+]);
+```
+
+Each candidate keeps its full `RespireOptions`, including TLS, authentication, timeout, cluster, and serializer settings. Respire tries candidates in order, disposes failed partial clients, and returns the first connected client. If every candidate fails, `ConnectAnyAsync` throws `RespireConnectionException` with each attempt in the message and an aggregate inner exception.
+
+This is connection-time fallback only. After a client is returned, commands run against that selected deployment and use Respire's normal reconnect behavior. `ConnectAnyAsync` is not a health-checked circuit breaker and does not continuously route commands between independent deployments. Use a [failover group](../guides/failover-groups.md) for health-checked switching and failback.
+
+## Connection state
+
+`IsConnected` reports current availability. Subscribe to `ConnectionStateChanged` when a health surface needs transition events:
+
+```csharp
+redis.ConnectionStateChanged += change =>
+    logger.LogInformation(
+        change.Error,
+        "Redis endpoint {Endpoint} is {State}",
+        change.Endpoint,
+        change.State);
+```
+
+Respire reconnects failed connections in the background. Pub/sub subscriptions reconnect and resubscribe automatically.
+
+## Cancellation and timeouts
+
+Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. A `params` parameter must come last, so variadic `params ReadOnlySpan<T>` commands carry their token on a sibling overload that takes the items non-params followed by a required token — `DeleteAsync(keys)` for the convenient form, `DeleteAsync(keys, cancellationToken)` when you need cancellation.
+
+A `RespireTimeoutException` can report an expired command-response budget or replica function
+propagation budget. For response timeouts, treat writes as potentially executed and design
+retries around operation idempotency. Function propagation expiry has a distinct message:
+responses may have arrived, but the function remained unavailable on the selected replica.
+Check library replication and replica health. Increasing or disabling `CommandTimeout` cannot
+extend the five-second propagation ceiling. The exception's `Timeout` property reports the
+budget that expired, which can be shorter than the configured response timeout.
+
+`RespireTimeoutException.Diagnostics` captures the command stage, physical endpoint and
+process-local connection ID, outstanding reply count and serialized bytes, bytes waiting to
+be written, and time since the last successful read and write. It also includes busy/minimum
+worker and I/O thread counts, pending thread-pool work, and a diagnostic hint.
+
+```csharp
+try
+{
+    await redis.GetStringAsync("session:123");
+}
+catch (RespireTimeoutException error)
+{
+    var snapshot = error.Diagnostics;
+    Console.WriteLine($"{snapshot.Stage}: {snapshot.Endpoint}, pending bytes={snapshot.PendingWriteBytes}");
+    Console.WriteLine(snapshot.Hint);
+}
+```
+
+`WaitingForCapacity` means this attempt was not enqueued. `Buffered`, `Writing`, and
+`AwaitingReply` distinguish buffered data, a partial write, and a completed write whose reply
+has not completed. A successful socket write does not prove server execution. Transactions
+report their complete MULTI/EXEC frame: its full byte count remains outstanding until EXEC
+replies, while intermediate replies reduce the outstanding slot count. Other multi-command
+frames use the same accounting.
+`Buffered` is an observation, not a safe retry guarantee: a queued frame can still be sent
+after caller cancellation or a timeout. A socket or TLS write can also transfer bytes before
+the successful-write counter advances. Command retry metadata does not enable automatic
+transport retries; an unknown or partial write remains ambiguous for a non-idempotent command.
+Snapshots also accompany batch failures and dedicated connection operations. Relabeled
+internal timeout exceptions preserve the original snapshot. Exceptions constructed by application code
+have an unavailable snapshot unless wrapping another timeout exception; they do not sample unrelated
+thread-pool activity. Cluster discovery, redirection, and multi-step acquisition can report the stage
+without a physical endpoint or connection when none can be reliably identified.
+
+Counters are best-effort observations, not an atomic connection view. Null fields mean no
+physical connection or measurement was available, such as during connection acquisition or
+multi-step setup. `ConnectionId` is local to the process; `ServerClientId` is populated only
+when Redis CLIENT ID was already obtained. Snapshot capture performs no network I/O and
+includes no keys, values, or credentials. The snapshot and thread-pool inspection are created
+only on failure; successful commands update numeric counters without diagnostic allocations.
+Commands expired by one deadline sweep share its connection and thread-pool observations;
+each command retains its own stage.
+
+Hints suggest checks; they do not identify a root cause. In particular, queued work with busy
+workers at or above the configured minimum is only a possible starvation signal. Inspect
+blocking application work, Redis SLOWLOG, payload sizes, and network health before changing
+timeouts or thread-pool settings. Intentional blocking commands retain their existing timeout
+and cancellation semantics.
+
+Do not block a thread on a Respire result inside a continuation of another Respire command
+(`.Result`, `.Wait()`, `GetAwaiter().GetResult()` on a pending command). Replies for one
+connection are delivered in order, one after another, so the reply you are waiting for can sit
+behind the continuation that is waiting for it. Respire detects this: when replies have waited
+about 500 ms behind a continuation that is not making progress, it delivers them on another
+thread and logs a warning ("Reply delivery ... was blocked by a continuation"). The caller
+recovers, but it has paid that delay, and replies delivered this way run concurrently with
+the blocked continuation instead of after it. If you see the warning, make the blocking code
+path `await` instead.
+
+Redis error replies throw `RespireServerException`. Its `Code` identifies the Redis error,
+`CommandName` identifies the originating command when available, and `IsTransient` classifies
+`LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, and `MASTERDOWN`. Use `RespireErrorCodes` instead of
+string literals when building retry policies.
 
 ## Independent liveness bounds
 
@@ -45,49 +393,6 @@ does not abandon an accepted frame. Keep binary input unchanged until public com
 including exceptional completion: the completion barrier still waits for the kernel to release
 caller memory. With the write bound disabled, a parked peer can retain memory until reading
 resumes, the socket fails, or the client is disposed. See [large binary SET ownership](../commands/strings-and-keys.md).
-
-## Connect immediately
-
-```csharp
-await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379/0");
-```
-
-`ConnectAsync` establishes connections before returning. An unreachable server produces `RespireConnectionException` instead of deferring failure to an unrelated command.
-
-## Protocol negotiation
-
-The default `Protocol = RespProtocol.Auto` starts each data connection with `HELLO 3`.
-Redis 6+ and compatible servers normally select RESP3. If the server explicitly reports
-an unknown `HELLO` command or `NOPROTO`, the same connection remains in RESP2 and completes
-AUTH, client naming, and database selection before any application command runs.
-Authentication/ACL errors, malformed replies, disconnects, and timeouts do not trigger fallback.
-No application command is replayed during negotiation.
-
-Automatic negotiation adds one serialized HELLO round trip before the remaining setup
-commands on each new physical connection. It adds no round trip to ordinary commands.
-Large pools and reconnect storms pay this setup cost for every socket, including endpoints
-that repeatedly fall back to RESP2. Protocol negotiation is not cached across connections.
-Information logs identify unsupported-HELLO fallback to RESP2 on each physical connection;
-Debug logs identify successful RESP3 negotiation. Neither includes credentials. Different unknown-command wording is not treated as proof
-that HELLO is unsupported; configure RESP2 explicitly for such a proxy. An unclassified
-`ERR` during automatic HELLO includes that compatibility hint unless its wording indicates
-an authentication or ACL failure. The connection still fails and preserves the original error.
-
-Choose `Protocol = RespProtocol.Resp2` or `protocol=2` to skip HELLO and keep the earlier
-RESP2 behavior. Choose `RespProtocol.Resp3` or `protocol=3` to require RESP3 and reject
-unsupported servers. `protocol=auto` explicitly selects the default policy.
-Client-side caching always requires RESP3 and never falls back. Sentinel discovery retains
-RESP2 for compatibility; the discovered data connections use the configured policy.
-
-This is a breaking default change for raw callers: RESP3 can return maps, sets, doubles,
-booleans, and native nulls where RESP2 used arrays, bulk strings, integers, or null arrays.
-Typed commands normalize both reply shapes. Raw `RespireResult` consumers must handle both
-or select RESP2 explicitly. Negotiation is per physical connection, including reconnects.
-A pool can therefore contain RESP2 and RESP3 connections when endpoints or intervening
-proxies support different protocols. Consecutive raw reads can have different reply shapes;
-select an explicit protocol when a consumer requires one fixed shape.
-Automatic negotiation can also make authentication errors surface at connection time,
-before the first application command.
 
 ## Maintenance notifications
 
@@ -158,7 +463,7 @@ Sequence IDs are tracked per announcing server, so the replacement server can an
 announced ends, so a server that restarts at the same address and numbers from 1 again is
 followed after that.
 
-This release implements notifications, diagnostics, timeout relaxation, and proactive Cluster
+Respire implements notifications, diagnostics, timeout relaxation, and proactive Cluster
 slot updates from `SMIGRATED`. The receive loop queues parsed notifications for a bounded topology
 worker. The worker moves only slots still owned by the advertised source and not reassigned by a
 `MOVED` redirect or discovery since the notification arrived. It ignores sequence IDs already seen
@@ -176,7 +481,7 @@ and topology discovery remain the fallback. Until one of them runs, commands for
 slots go to the previous owner and are redirected. Queue drops request a topology refresh
 using the same debounce and failure backoff as `MOVED`. Periodic topology refresh also
 repairs missed notifications when its timer is enabled.
-See [Cluster topology refresh](#redis-cluster-endpoint-identity).
+See [Cluster topology refresh](#cluster-topology-refresh).
 Drops and other skipped notifications are counted
 in `respire.cluster.slot_migrations.skipped` (see [Observability](../integrations/observability.md)).
 Client disposal waits for a topology callback that is already running, such as a
@@ -187,213 +492,6 @@ Server support and deployment restrictions are described in the
 This mechanism targets supporting Redis Cloud/Software deployments; enabling the option does
 not add server support. See [maintenance diagnostics](../integrations/observability.md#maintenance-notifications)
 for activity, metric, and logging delivery.
-
-## Connection-time failover
-
-Use `ConnectAnyAsync` when an application can connect to one of several independent Redis deployments and should try them in priority order at startup:
-
-```csharp
-await using var redis = await RespireClient.ConnectAnyAsync([
-    new RespireOptions
-    {
-        Endpoints = { new RespireEndpoint("redis-primary.internal", 6379) },
-        Username = configuration["Redis:Username"],
-        Password = configuration["Redis:Password"],
-        ConnectTimeout = TimeSpan.FromSeconds(3),
-    },
-    new RespireOptions
-    {
-        Endpoints = { new RespireEndpoint("redis-secondary.internal", 6379) },
-        Username = configuration["Redis:Username"],
-        Password = configuration["Redis:Password"],
-        ConnectTimeout = TimeSpan.FromSeconds(3),
-    },
-]);
-```
-
-Each candidate keeps its full `RespireOptions`, including TLS, authentication, timeout, cluster, and serializer settings. Respire tries candidates in order, disposes failed partial clients, and returns the first connected client. If every candidate fails, `ConnectAnyAsync` throws `RespireConnectionException` with each attempt in the message and an aggregate inner exception.
-
-This is connection-time fallback only. After a client is returned, commands run against that selected deployment and use Respire's normal reconnect behavior. `ConnectAnyAsync` is not a health-checked circuit breaker and does not continuously route commands between independent deployments. Use a [failover group](../guides/failover-groups.md) for health-checked switching and failback.
-
-## Cluster primary changes
-
-In Cluster mode, a keyed command that receives `READONLY` invalidates its cached slot owner.
-Respire refreshes `CLUSTER SLOTS` through other discovered primaries or configured seeds and
-retries against a different owner. The replacement is cached for later commands. One refresh
-round is bounded by `ConnectTimeout`, and commands share the existing five-retry redirect
-budget. If discovery fails or still identifies the same node, the original `READONLY` error is
-returned, including for keyed fire-and-forget commands. Cached-owner probes and discovered
-primaries share at most half of the round deadline, leaving time for configured seeds.
-Earlier configured seeds then share half of the remaining time; the final configured seed
-can use the entire remainder. Exhausted phases skip remaining candidates in that phase.
-This preserves a usable final-seed allowance even with many stalled earlier endpoints.
-Caller cancellation still cancels recovery.
-
-This applies to immediate, raw/catalog, fire-and-forget, batch, blocking/dedicated, and tracked
-script commands. Transactions retry only when a queue error aborted the whole transaction;
-errors inside an executed result array are never replayed because other commands may have
-succeeded. Watched Cluster transactions instead throw `RespireTransactionRetryException` for
-MOVED, ASK, or READONLY rejections: restart WATCH and re-read inputs before retrying. They never
-replay on another connection. `NoRedirect`, commands without a
-known slot, standalone clients, and other server error codes retain their existing behavior.
-
-## Full configuration
-
-```csharp
-var options = new RespireOptions
-{
-    Endpoints = { new RespireEndpoint("cache.internal", 6379) },
-    Username = configuration["Redis:Username"],
-    Password = configuration["Redis:Password"],
-    Database = 0,
-    ClientName = "checkout-api",
-    ConnectTimeout = TimeSpan.FromSeconds(5),
-    CommandTimeout = TimeSpan.FromSeconds(2),
-    Connections = 4,
-    AllowAdmin = false,
-    LoggerFactory = loggerFactory,
-};
-
-await using var redis = await RespireClient.ConnectAsync(options);
-```
-
-Omitting `Connections` uses one multiplexed connection, the default. The value must be at least one; raise the fixed pool size only when profiling shows one socket is saturated.
-
-An independent TCP/TLS `ConnectTimeout` throws `RespireTimeoutException` with
-`CommandName = "CONNECT"` and diagnostics at the `Connecting` stage, including during
-dedicated connection acquisition. Caller cancellation remains `OperationCanceledException`
-with the caller's token. Pool retirement keeps its separate cancellation identity so routing
-can select a replacement. Redis handshake replies retain their command timeout behavior.
-
-This changes the exception type for independent connect deadlines that previously surfaced
-as `OperationCanceledException`. Catch `RespireTimeoutException` for connect timeouts;
-a catch for `OperationCanceledException` alone no longer handles those deadlines.
-If caller cancellation and the deadline have both fired when classified, caller cancellation wins.
-Routing samples pool retirement when handling the failure. A CONNECT timeout can therefore
-trigger reselection even if the timeout preceded retirement; this never replays an
-admitted application command. Cluster routes enforce their retirement retry limit. Standalone
-and Sentinel dedicated rentals have no retirement attempt limit: repeated pool replacement can
-continue until acquisition succeeds, cancellation or disposal occurs, or a terminal failure is
-encountered. `ConnectTimeout` bounds each connection attempt, not the entire rental across
-replacements. Active-pool and Redis handshake timeouts remain failures.
-
-`AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
-
-For expiring passwords or access tokens, use a caller-owned
-[`IRespireCredentialProvider`](../guides/renewable-credentials.md). It supplies current credentials
-for new connections and renews expiring credentials on live connections through AUTH.
-
-## URI query options
-
-Connection URI query parameters cover common options:
-
-```text
-redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
-```
-
-Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`auto`, `2`/`resp2` or `3`/`resp3`, case-insensitive), `db`, `cluster`, `allowAdmin`, `keyPrefix`, and `pubSubPrefix`.
-
-`keyPrefix` configures a [default root key namespace](../commands/strings-and-keys.md#default-root-namespace).
-It accepts percent-escaped UTF-8 text in URI and comma-delimited strings, decodes once,
-and leaves pub/sub channels unchanged. Empty disables prefixing; repeated entries use
-the last value. Use `Uri.EscapeDataString` to escape delimiters and literal percent signs.
-Configure arbitrary binary prefixes through `RespireOptions.KeyPrefix`.
-
-`pubSubPrefix` independently configures the [root pub/sub namespace](../guides/pub-sub.md#explicit-pubsub-prefixes).
-It follows the same decode-once, last-entry, and empty-value rules. Use
-`RespireOptions.PubSubPrefix` for binary bytes. Typed publication and subscription methods
-apply it; notification descriptors and Server PUBSUB queries retain explicit physical names.
-
-Unsupported protocol values and malformed or overflowing integer options throw `ArgumentException`
-with the option name and `ParamName == "connectionString"`. This applies to URI and comma-delimited
-connection strings. Existing option range checks still apply after parsing.
-
-## StackExchange.Redis connection strings
-
-Respire also accepts the common comma-delimited format, which eases migration from
-StackExchange.Redis:
-
-```text
-cache-a:6380,password=secret,ssl=true,defaultDatabase=2
-```
-
-Multiple endpoints require an explicit deployment mode:
-
-| Configuration | Meaning |
-| --- | --- |
-| `cache-a,cache-b,cluster=true` | Redis Cluster seeds, tried during connection setup; discovered slot owners and redirects route later commands. |
-| `sentinel-a,sentinel-b,serviceName=mymaster` | Sentinel discovery endpoints used to select and validate the current primary. |
-| `cache-a,cache-b` | Rejected: the endpoints could belong to unrelated standalone deployments. |
-
-Use `ConnectAnyAsync` with separate `RespireOptions` candidates for connection-time fallback
-between independent deployments. It does not perform continuous failover; use a
-[failover group](../guides/failover-groups.md) for that. Sentinel
-discovers the primary on connection or first use, then discovers a replacement after a
-disconnect or READONLY rejection. Ordinary standalone reconnection targets the deployment already selected. Cluster routing
-is distinct from either standalone fallback or Sentinel discovery.
-
-An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
-bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
-peers, and failed primary ROLE validation share that resolution budget. Each new Sentinel
-resolution uses this policy, and so do the Sentinel event monitors described below.
-Cluster uses the same option for
-[node, topology, and seed fallback](../guides/reconnect-policy.md#cluster-discovery-fallback),
-with one shared budget per discovery round. Periodic Cluster refresh remains separate.
-
-Programmatic `RespireOptions.Endpoints` follows the same rule: standalone mode requires one
-endpoint. Lists that previously left extra standalone endpoints unused now fail validation.
-Cluster and Sentinel cannot both be selected in one comma-delimited string.
-
-Supported options are `user` (or `username`), `password`, `ssl`, `sslHost`, `sslProtocols`,
-`checkCertificateRevocation`, `clientName` (or `name`), `defaultDatabase` (or `db`),
-`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`auto`, `resp2` or `resp3`), and
-`allowAdmin`, `keyPrefix`, and `pubSubPrefix`. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
-`ssl=false` explicitly disables it, regardless of option order. `sslProtocols`
-accepts pipe-separated enum names, such as `Tls12|Tls13`, or numeric masks combining defined
-protocol bits, such as `15360`. `sslProtocols` and `checkCertificateRevocation` configure TLS
-settings but do not enable TLS by themselves; those settings have no effect on a plaintext
-connection. Use `ssl=true` or `sslHost` without `ssl=false` to enable TLS. Boolean options accept `true` or `false`
-(case-insensitive); other values throw `ArgumentException`. Existing password splitting and
-async-timeout precedence stay unchanged.
-
-In Cluster mode, an explicit `sslHost` applies the same certificate/SNI target to every seed
-and discovered node. Use it only when every node certificate covers that shared name; omit it
-to validate each connection's own hostname.
-
-Mode options are `cluster` (or `useCluster`) and `serviceName` (or `sentinelPrimaryName`).
-Sentinel also accepts `sentinelUser`, `sentinelPassword`, `sentinelTls`, and `sentinelSslHost`; an empty
-`sentinelPassword=` disables inherited authentication. Omitted ports default to 26379 in
-Sentinel mode and retain Respire's existing 6379 default otherwise, including TLS. Explicit
-ports always take precedence.
-
-Set `sentinelSslHost=sentinel.example` when Sentinel certificates use a different hostname from
-the primary's `sslHost`. This overrides only the Sentinel TLS target; protocol and revocation
-settings remain inherited. It enables Sentinel TLS unless `sentinelTls=false` explicitly
-disables it. Without `sentinelSslHost`, Sentinel inherits the primary TLS settings.
-
-`sslHost`, `sentinelSslHost`, `sslProtocols`, and `checkCertificateRevocation` are options for
-the comma-delimited format, not URI query parameters. With `rediss://`, configure `TlsOptions`
-and `SentinelTlsOptions` on the parsed options in code when you need these overrides.
-
-Unknown or unsupported options still throw `ArgumentException`, catching spelling mistakes.
-For example, StackExchange.Redis `keepAlive` sends protocol messages; it is not equivalent to
-Respire's TCP keepalive settings. Configure `TcpKeepAliveTime` directly when kernel probes are
-wanted. An endpoint list never silently enables StackExchange.Redis-style connection groups or
-continuous failover; configure a [failover group](../guides/failover-groups.md) explicitly. See the [StackExchange.Redis option reference](https://seredis.dev/Configuration.html)
-for its original option semantics, and use `RespireOptions` directly for Respire-only settings.
-
-Bare IPv6 endpoints use the default Redis port. Add brackets when specifying a port: `::1` or
-`[::1]:6380`.
-
-## Lazy creation
-
-Applications that must start before Redis can use `Create`:
-
-```csharp
-await using var redis = RespireClient.Create(options);
-```
-
-The first command triggers connection. Dependency-injection registration uses this lazy behavior so Redis availability does not block host startup.
 
 ## Redis Cluster endpoint identity
 
@@ -408,8 +506,9 @@ An alias does not change an existing connection's TLS certificate/SNI name. Conf
 that explicit value remains authoritative. Configured seed connections are reused when
 topology identifies their aliases.
 
-Cluster topology refresh runs every 60 seconds by default, which is a behavior change for
-existing Cluster clients. The background worker starts after the first connection, so `Create`
+## Cluster topology refresh
+
+Cluster topology refresh runs every 60 seconds by default. The background worker starts after the first connection, so `Create`
 stays lazy. Each periodic refresh sends one `CLUSTER SLOTS` to one node, and the interval is
 shortened by up to 10% of random jitter so that many clients started together do not refresh in
 step. On large fleets, a longer interval reduces `CLUSTER SLOTS` load.
@@ -435,6 +534,73 @@ that has lost a shard, updates the slots it covers and keeps the previous owners
 in router metadata and are used as refresh fallbacks when every primary and seed fails; command
 routing uses primaries by default. Read policies can select replicas for eligible commands,
 as described in [Read from replicas](#read-from-replicas).
+
+## Cluster primary changes
+
+In Cluster mode, a keyed command that receives `READONLY` invalidates its cached slot owner.
+Respire refreshes `CLUSTER SLOTS` through other discovered primaries or configured seeds and
+retries against a different owner. The replacement is cached for later commands. One refresh
+round is bounded by `ConnectTimeout`, and commands share the existing five-retry redirect
+budget. If discovery fails or still identifies the same node, the original `READONLY` error is
+returned, including for keyed fire-and-forget commands. Cached-owner probes and discovered
+primaries share at most half of the round deadline, leaving time for configured seeds.
+Earlier configured seeds then share half of the remaining time; the final configured seed
+can use the entire remainder. Exhausted phases skip remaining candidates in that phase.
+This preserves a usable final-seed allowance even with many stalled earlier endpoints.
+Caller cancellation still cancels recovery.
+
+This applies to immediate, raw/catalog, fire-and-forget, batch, blocking/dedicated, and tracked
+script commands. Transactions retry only when a queue error aborted the whole transaction;
+errors inside an executed result array are never replayed because other commands may have
+succeeded. Watched Cluster transactions instead throw `RespireTransactionRetryException` for
+MOVED, ASK, or READONLY rejections: restart WATCH and re-read inputs before retrying. They never
+replay on another connection. `NoRedirect`, commands without a
+known slot, standalone clients, and other server error codes retain their existing behavior.
+
+## Non-zero databases in Valkey Cluster
+
+Set `UseCluster = true` and `Database` to the required database number when connecting to a
+Valkey 9+ cluster. Configure `cluster-databases` on every cluster node first: it defaults to
+`1`, so database `0` is the only valid selection until that setting is increased. The standalone
+`databases` setting does not enable additional Cluster databases.
+
+Respire verifies `INFO SERVER` reports Valkey 9+ in Cluster mode before sending `SELECT` on each
+physical connection. This includes discovered nodes, MOVED/ASK destinations, replacement sockets,
+dedicated blocking/control connections, and pub/sub connections. The selected database is never
+borrowed from another node's capability result. `HELLO` alone is insufficient because Valkey's
+version there is a Redis compatibility version.
+
+This opt-in handshake uses sequential round trips for `INFO SERVER`, `SELECT`, and, when
+enabled, `CLIENT TRACKING`. Validation completes before selection, and selection completes
+before tracking or application commands. This cost repeats for each new physical connection.
+
+Grant the client `INFO` and `SELECT` permissions when using a non-zero Cluster database.
+An incompatible server produces `RespireConfigurationException` during connection setup;
+`RespireClient.Create` remains lazy, so validation happens on first connection rather than at
+construction. Authentication errors, denied discovery/selection, and out-of-range database
+errors fail connection setup; Respire never falls back to database `0`. Reconnection repeats
+validation and selection before the socket can execute application commands.
+
+An incompatible seed stops setup immediately, even if a later seed is compatible. Respire does
+not hide a mixed-version or incorrectly configured endpoint behind another seed. Transient
+connection failures still allow the next seed to be tried. Capability errors include the
+observed server name, Valkey version, and mode to help identify the incompatible endpoint.
+
+The same configuration failure propagates from discovered-node selection, redirect targets,
+dedicated connection acquisition, and initial subscription setup. It is not treated as a
+transient discovery failure. Background recovery retains the existing reconnect policy:
+command-socket replacement reports the error through `ConnectionStateChanged` and logging;
+pub/sub recovery logs failed attempts and continues its backoff while subscriptions wait.
+Configure logging to observe subscription recovery failures. No incompatible replacement
+receives `SELECT` or application commands, and every later attempt validates again.
+
+Database `0` and standalone connections skip this check and need no `INFO` permission. Redis Cluster and Valkey before version 9 still support only database `0`.
+Hash slots depend on key bytes, not the selected database; multi-key and transaction slot rules
+still apply. Pub/sub channels are not isolated by logical database. Each client has one configured
+database; create separate clients for different databases instead of sending raw `SELECT`.
+
+See Valkey's [SELECT reference](https://valkey.io/commands/select/) and
+[Cluster specification](https://valkey.io/topics/cluster-spec/) for server configuration and scope.
 
 ## Redis Sentinel
 
@@ -499,9 +665,7 @@ revalidates the primary role before accepting new work; there is no reconnect gr
 EXEC and script array replies are scanned for nested READONLY errors in time proportional to
 their elements. Ordinary collection reads do not perform this additional scan.
 Fire-and-forget replies retain their operation identity for the same checks, while the call
-still completes after writing rather than waiting for a reply. This metadata uses a bounded
-array allocated on the connection's first fire-and-forget command; ordinary connections do
-not allocate that array.
+still completes after writing rather than waiting for a reply.
 New commands cannot enter a retired generation. Already accepted commands and blocking
 operations drain on their original sockets; ambiguous writes and existing WATCH state are
 never replayed. Start a new watched transaction after a failover. Client disposal aborts
@@ -602,8 +766,10 @@ clients discover replica endpoints with `SENTINEL REPLICAS`, using the first Sen
 a well-formed answer, in the same order as primary discovery. Replies from different Sentinels
 are not merged, because during a failover or partition a stale Sentinel can still list replicas
 that the others have dropped. A reply with a malformed entry counts as a failed Sentinel; an empty
-list is accepted and removes every replica. Existing multi-endpoint standalone
-configuration keeps its current validation and connection-time fallback behavior.
+list is accepted and removes every replica. `ReplicaEndpoints` does not change the rule that a
+standalone `Endpoints` list holds exactly one primary, and it cannot be combined with
+`UseCluster`. A `ReadFrom` other than `Primary` requires Sentinel, Cluster, or at least one
+replica endpoint; otherwise connecting throws `RespireConfigurationException`.
 
 `RespireOptions.ReadFrom` sets the default policy. `WithReadFrom` creates a per-view override;
 it composes with `WithKeyPrefix`. Policies apply only to commands whose catalog metadata marks
@@ -675,33 +841,6 @@ endpoints that recovered without changing address. A concurrent topology publica
 one retry when it replaces every captured candidate, under the original sampling budget.
 Healthy cached candidates continue serving reads while that refresh runs.
 
-Prepared Cluster replica selection does not allocate refresh callbacks until a refresh is
-needed. Optimized Release allocation controls cover healthy `Replica`, `ReplicaPreferred`, pinned replica
-cursor routes, and `Nearest` routes with cached latency samples, plus a primary control.
-They do not claim that a public read, connection establishment, discovery, an expired
-sample, or a topology retry is allocation-free. Replica revalidation and sampling intervals
-are unchanged. Debug builds also validate routing correctness, but compiler-generated async
-state-machine objects still allocate in that configuration.
-
-The `run-cluster-replica-benchmarks` pull request label compares the pinned merge and its
-actual base on one net10.0 runner, using the same real primary/replica cluster and fixture.
-It brackets the candidate with two baseline runs and measures prepared routing, public
-replica GETs at one and fifty concurrent reads, and matching primary controls. Review
-latency confidence intervals, allocations, dispersion, and CPU per operation before
-accepting a performance change. CPU counters include the entire client benchmark process
-after setup, including calibration, warmup, background refresh and response completion;
-they do not isolate measured iterations or Redis server CPU. Dry runs establish fixture
-correctness only.
-
-The [selected cluster comparison](https://github.com/thomhurst/Respire/actions/runs/37707575496)
-removes 80 bytes per prepared replica selection and reduces its measured latency by
-17–19% and whole-process client CPU per operation by 15–16% against both controls.
-Public replica GET allocation falls by about 80 bytes, but its latency confidence
-intervals overlap and its CPU counters do not establish an improvement. The primary
-prepared control costs an additional 0.40–0.66 ns; public primary GET latency intervals
-overlap. These results describe prepared routing, not a general read-throughput or
-server CPU improvement. Discovery, sampling and refresh intervals remain unchanged.
-
 PING round-trip time includes local connection queues, server scheduling, and network delay.
 It does not measure geographic distance, replication lag, or the execution time of a particular
 read. Configured and Sentinel candidates still follow the replication-link preference described
@@ -731,7 +870,7 @@ var options = new RespireOptions
 };
 ```
 
-`Delay` is a fixed threshold between 1 ms and one minute, starting after initial connection
+`Delay` (default 10 ms) is a fixed threshold between 1 ms and one minute, starting after initial connection
 selection. Choose it from your observed latency distribution; Respire does not automatically
 track command p95/p99. `Nearest` continues to use its existing per-connection PING EWMA to select
 the original endpoint. Optional connection discovery or handshake cannot delay an original reply.
@@ -745,7 +884,8 @@ Configured and Sentinel replicas must pass the same role validation as ordinary 
 Cluster candidates must belong to the key's current slot topology. All replica-capable policies
 can return stale data, including a replica hedge that beats a primary read.
 
-The client shares one budget across all its views. Each eligible logical read adds credit after
+`MaximumExtraLoadPercent` (default 5, range 1–100) caps hedge starts. The client shares one budget
+across all its views. Each eligible logical read adds credit after
 initial endpoint selection, including fast reads and reads with no second eligible peer;
 starting a hedge consumes it. Primary-only reads and excluded commands do not add credit.
 At 5%, at least twenty eligible reads fund one hedge. The budget
@@ -760,11 +900,8 @@ unknown commands are excluded. Cluster reads also require a known slot. Eligible
 `GET`/`MGET`, deterministic hash/list/set/sorted-set reads, geo lookups, and stream range reads.
 Argument bytes are copied when a request can hedge, because a losing request may outlive the caller.
 This opt-in path is not zero-allocation: asynchronous originals can also allocate tasks, timers,
-and linked cancellation sources. A synchronously successful original avoids conversion to a race
-task and timer setup, but still needs its argument snapshot. Deferring that snapshot until the
-timer fires would leave an original request waiting for admission with caller-owned bytes after
-a hedge returns. Reads without credit or without a possible second replica under strict `Replica`
-routing use the ordinary awaited send path.
+and linked cancellation sources. Reads without credit, or without a possible second replica under
+strict `Replica` routing, use the ordinary send path.
 Accepted losing requests retain their normal timeout and FIFO response slot; hedging does not
 cancel them when another reply wins.
 
@@ -796,39 +933,6 @@ topology can be:
   replica does not add a connect timeout to every read.
 
 `TimeSpan.Zero` revalidates on every read and disables the cooldown.
-
-Uninstrumented typed reads can dispatch directly on a prepared standalone replica when the
-view uses `Replica` or `ReplicaPreferred`, the current topology has exactly one replica,
-one physical connection is configured, and that connection has a fresh successful `ROLE` check with a connected
-replication link. A cached single-replica entry is tied to the exact endpoint publication.
-Topology publication, entry removal and router disposal invalidate that identity under the
-router lifecycle gate. Warm selection checks the publication identity instead of repeating
-endpoint dictionary lookups; connection health is still checked on every read.
-Selection rechecks the current endpoint publication, entry identity and
-connection admission state. String, binary and scalar replies use their specialized pooled
-sources. Cache coordination, telemetry listeners, hedging, cursor affinity, multiple replicas,
-multiple sockets, zone policies, and `Nearest` retain their existing routing paths. Sentinel
-discovery still runs when its refresh interval expires. Readiness does not lease a socket;
-connection retirement and command admission continue to enforce their normal lifetime rules.
-
-Prepared single-replica reads still advance the shared atomic rotation counter. A topology-growth
-regression checks that selection across multiple replicas resumes from that cursor. The counter
-is retained to preserve this behavior; no counter-only performance improvement is claimed.
-The prepared-read comparison isolates fresh validation and dispatch. Its results do not isolate
-the counter cost, measure periodic `ROLE` checks or establish performance for every routing policy.
-It exercises string `GET` calls and prepared route selection, with matching primary controls.
-
-The [selected pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37728047447)
-brackets the candidate with two baseline runs on the same runner and Redis primary/replica pair.
-Prepared routing and concurrent replica reads improve, and public allocations fall, but serial
-replica `GET` costs 160,445.36 ns of client process CPU per operation against 160,052.63 and
-161,553.49 ns in the bracketing baselines. The serial row fails the required improvement against
-both baselines; overlapping launch ranges do not establish that improvement.
-[Issue #1186](https://github.com/thomhurst/Respire/issues/1186) remains open for CPU acceptance.
-The publication cache needs its own unchanged six-row comparison, including primary controls,
-allocation, latency dispersion and CPU per operation. No improvement is claimed for that cache
-before the comparison passes and its distributions are reviewed. The comparison covers prepared
-string reads and route selection, not every routing policy or server CPU.
 
 A replica removed from the topology stops receiving new reads at once. Its connections stay open
 for up to one second, then drain the commands they already accepted before closing. The drain
@@ -968,145 +1072,3 @@ replicas for the requested slot, remaining probes are cancelled and observed. Em
 snapshots are published only if no candidate supplies replicas. A failed refresh keeps existing
 routes, and partial replies preserve uncovered slot ranges.
 
-## Cancellation and timeouts
-
-Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. A `params` parameter must come last, so variadic `params ReadOnlySpan<T>` commands carry their token on a sibling overload that takes the items non-params followed by a required token — `DeleteAsync(keys)` for the convenient form, `DeleteAsync(keys, cancellationToken)` when you need cancellation.
-
-A `RespireTimeoutException` can report an expired command-response budget or replica function
-propagation budget. For response timeouts, treat writes as potentially executed and design
-retries around operation idempotency. Function propagation expiry has a distinct message:
-responses may have arrived, but the function remained unavailable on the selected replica.
-Check library replication and replica health. Increasing or disabling `CommandTimeout` cannot
-extend the five-second propagation ceiling. The exception's `Timeout` property reports the
-budget that expired, which can be shorter than the configured response timeout.
-
-`RespireTimeoutException.Diagnostics` captures the command stage, physical endpoint and
-process-local connection ID, outstanding reply count and serialized bytes, bytes waiting to
-be written, and time since the last successful read and write. It also includes busy/minimum
-worker and I/O thread counts, pending thread-pool work, and a diagnostic hint.
-
-```csharp
-try
-{
-    await redis.GetStringAsync("session:123");
-}
-catch (RespireTimeoutException error)
-{
-    var snapshot = error.Diagnostics;
-    Console.WriteLine($"{snapshot.Stage}: {snapshot.Endpoint}, pending bytes={snapshot.PendingWriteBytes}");
-    Console.WriteLine(snapshot.Hint);
-}
-```
-
-`WaitingForCapacity` means this attempt was not enqueued. `Buffered`, `Writing`, and
-`AwaitingReply` distinguish buffered data, a partial write, and a completed write whose reply
-has not completed. A successful socket write does not prove server execution. Transactions
-report their complete MULTI/EXEC frame: its full byte count remains outstanding until EXEC
-replies, while intermediate replies reduce the outstanding slot count. Other multi-command
-frames use the same accounting.
-`Buffered` is an observation, not a safe retry guarantee: a queued frame can still be sent
-after caller cancellation or a timeout. A socket or TLS write can also transfer bytes before
-the successful-write counter advances. Command retry metadata does not enable automatic
-transport retries; an unknown or partial write remains ambiguous for a non-idempotent command.
-Snapshots also accompany batch failures and dedicated connection operations. Relabeled
-internal timeout exceptions preserve the original snapshot. Exceptions constructed by application code
-have an unavailable snapshot unless wrapping another timeout exception; they do not sample unrelated
-thread-pool activity. Cluster discovery, redirection, and multi-step acquisition can report the stage
-without a physical endpoint or connection when none can be reliably identified.
-
-Counters are best-effort observations, not an atomic connection view. Null fields mean no
-physical connection or measurement was available, such as during connection acquisition or
-multi-step setup. `ConnectionId` is local to the process; `ServerClientId` is populated only
-when Redis CLIENT ID was already obtained. Snapshot capture performs no network I/O and
-includes no keys, values, or credentials. The snapshot and thread-pool inspection are created
-only on failure; successful commands update numeric counters without diagnostic allocations.
-Commands expired by one deadline sweep share its connection and thread-pool observations;
-each command retains its own stage.
-
-Hints suggest checks; they do not identify a root cause. In particular, queued work with busy
-workers at or above the configured minimum is only a possible starvation signal. Inspect
-blocking application work, Redis SLOWLOG, payload sizes, and network health before changing
-timeouts or thread-pool settings. Intentional blocking commands retain their existing timeout
-and cancellation semantics.
-
-Do not block a thread on a Respire result inside a continuation of another Respire command
-(`.Result`, `.Wait()`, `GetAwaiter().GetResult()` on a pending command). Replies for one
-connection are delivered in order, one after another, so the reply you are waiting for can sit
-behind the continuation that is waiting for it. Respire detects this: when replies have waited
-about 500 ms behind a continuation that is not making progress, it delivers them on another
-thread and logs a warning ("Reply delivery ... was blocked by a continuation"). The caller
-recovers, but it has paid that delay, and replies delivered this way run concurrently with
-the blocked continuation instead of after it. If you see the warning, make the blocking code
-path `await` instead.
-
-Redis error replies throw `RespireServerException`. Its `Code` identifies the Redis error,
-`CommandName` identifies the originating command when available, and `IsTransient` classifies
-`LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, and `MASTERDOWN`. Use `RespireErrorCodes` instead of
-string literals when building retry policies.
-
-## Connection state
-
-`IsConnected` reports current availability. Subscribe to `ConnectionStateChanged` when a health surface needs transition events:
-
-```csharp
-redis.ConnectionStateChanged += change =>
-    logger.LogInformation(
-        change.Error,
-        "Redis endpoint {Endpoint} is {State}",
-        change.Endpoint,
-        change.State);
-```
-
-Respire reconnects failed connections in the background. Pub/sub subscriptions reconnect and resubscribe automatically.
-
-:::note TLS
-
-Use `rediss://` to enable TLS. Portless `redis://` and `rediss://` URIs both use Redis's standard port, `6379`; specify an explicit port when your provider uses another one.
-
-:::
-
-## Non-zero databases in Valkey Cluster
-
-Set `UseCluster = true` and `Database` to the required database number when connecting to a
-Valkey 9+ cluster. Configure `cluster-databases` on every cluster node first: it defaults to
-`1`, so database `0` is the only valid selection until that setting is increased. The standalone
-`databases` setting does not enable additional Cluster databases.
-
-Respire verifies `INFO SERVER` reports Valkey 9+ in Cluster mode before sending `SELECT` on each
-physical connection. This includes discovered nodes, MOVED/ASK destinations, replacement sockets,
-dedicated blocking/control connections, and pub/sub connections. The selected database is never
-borrowed from another node's capability result. `HELLO` alone is insufficient because Valkey's
-version there is a Redis compatibility version.
-
-This opt-in handshake uses sequential round trips for `INFO SERVER`, `SELECT`, and, when
-enabled, `CLIENT TRACKING`. Validation completes before selection, and selection completes
-before tracking or application commands. This cost repeats for each new physical connection.
-
-Grant the client `INFO` and `SELECT` permissions when using a non-zero Cluster database.
-An incompatible server produces `RespireConfigurationException` during connection setup;
-`RespireClient.Create` remains lazy, so validation happens on first connection rather than at
-construction. Authentication errors, denied discovery/selection, and out-of-range database
-errors fail connection setup; Respire never falls back to database `0`. Reconnection repeats
-validation and selection before the socket can execute application commands.
-
-An incompatible seed stops setup immediately, even if a later seed is compatible. Respire does
-not hide a mixed-version or incorrectly configured endpoint behind another seed. Transient
-connection failures still allow the next seed to be tried. Capability errors include the
-observed server name, Valkey version, and mode to help identify the incompatible endpoint.
-
-The same configuration failure propagates from discovered-node selection, redirect targets,
-dedicated connection acquisition, and initial subscription setup. It is not treated as a
-transient discovery failure. Background recovery retains the existing reconnect policy:
-command-socket replacement reports the error through `ConnectionStateChanged` and logging;
-pub/sub recovery logs failed attempts and continues its backoff while subscriptions wait.
-Configure logging to observe subscription recovery failures. No incompatible replacement
-receives `SELECT` or application commands, and every later attempt validates again.
-
-Database `0` and standalone connections retain their existing handshake and need no new discovery
-permission. Redis Cluster and Valkey before version 9 still support only database `0`.
-Hash slots depend on key bytes, not the selected database; multi-key and transaction slot rules
-still apply. Pub/sub channels are not isolated by logical database. Each client has one configured
-database; create separate clients for different databases instead of sending raw `SELECT`.
-
-See Valkey's [SELECT reference](https://valkey.io/commands/select/) and
-[Cluster specification](https://valkey.io/topics/cluster-spec/) for server configuration and scope.

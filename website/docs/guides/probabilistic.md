@@ -13,8 +13,8 @@ dotnet add package Respire.Probabilistic
 With C# 14 or later, import the namespace shown below and use `client.Probabilistic` on
 `RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
 performs no network I/O, and leaves ownership of the underlying client with you.
-Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
-The existing `new RespireProbabilisticClient(client)` constructor remains available.
+A key-prefixed view from `WithKeyPrefix` gets its own wrapper, which keeps that view's prefix.
+On earlier C# versions, create the wrapper with `new RespireProbabilisticClient(client)`.
 
 ```csharp
 using Respire;
@@ -40,8 +40,8 @@ await probabilistic.TDigestAddAsync("latency:api", [12.4, 19.1, 35.8]);
 var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 0.95, 0.99]);
 ```
 
-Bloom supports reserve, add, exists, multi-add, multi-exists, insert options, cardinality, info, and incremental dump/load. Cuckoo supports reserve, add/add-if-absent, insert/insert-if-absent, delete, exists, multi-exists, count, info, and incremental dump/load. Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists`, or `FilterFull`), so a full filter is not reported as success.
+Bloom supports reserve, add, exists, multi-add, multi-exists, insert options, cardinality, info, and incremental dump/load. Bloom insert capacity and error-rate options can each be provided independently. Cuckoo supports reserve, add/add-if-absent, insert/insert-if-absent, delete, exists, multi-exists, count, info, and incremental dump/load. Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists`, or `FilterFull`), so a full filter is not reported as success.
 
-Count-Min supports dimension or probability initialization, batched increments and queries, info, and merges with positive integer weights. Top-K supports reserve options, add, weighted increment, query, count, list with optional counts, and info. Eviction results from add and increment are returned as nullable byte arrays to preserve binary items. Bloom insert capacity and error-rate options can each be provided independently. t-digest supports create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/reverse rank, trimmed mean, and info.
+Count-Min supports dimension or probability initialization, batched increments and queries, info, and merges with positive integer weights. Top-K supports reserve options, add, weighted increment, query, count, list with optional counts, and info. Eviction results from add and increment are returned as nullable byte arrays to preserve binary items. t-digest supports create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/reverse rank, trimmed mean, and info.
 
-The generated command interface uses the shared analyzer, so package consumers can define their own command interfaces with the same AOT-safe execution path. Known command keys receive `WithKeyPrefix` prefixes. Multi-key merge commands route using destination and source keys and enforce Cluster slot rules. Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache. The caller owns the underlying client.
+Key arguments receive the `WithKeyPrefix` prefix. Multi-key merge commands route using destination and source keys and enforce Cluster slot rules. Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache.

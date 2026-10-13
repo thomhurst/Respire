@@ -1,11 +1,11 @@
 ---
 title: Blocking queues
-description: Use blocking list and stream commands without stalling multiplexed traffic.
+description: Use blocking list commands without stalling multiplexed traffic.
 ---
 
 # Blocking queues
 
-Respire supports Redis blocking commands without letting one long wait stall unrelated requests.
+Respire supports Redis blocking list commands without letting one long wait stall unrelated requests.
 
 ## Why dedicated connections matter
 
@@ -30,7 +30,7 @@ while (!stoppingToken.IsCancellationRequested)
 }
 ```
 
-`waitFor: null` performs non-blocking `LPOP`. Supplying a duration performs `BLPOP` on a dedicated pooled connection.
+`waitFor: null` (the default) performs non-blocking `LPOP`. Supplying a duration performs `BLPOP` on a dedicated pooled connection and returns `null` if nothing arrives in time. Pass `Timeout.InfiniteTimeSpan` to wait indefinitely. `RightPopAsync` (`RPOP`/`BRPOP`) and the typed `LeftPopAsync<T>`/`RightPopAsync<T>` overloads accept the same `waitFor` argument.
 
 ## Reliable queue movement
 
@@ -46,7 +46,9 @@ string? job = await redis.Lists.MoveAsync(
     cancellationToken: stoppingToken);
 ```
 
-After successful processing, remove the item from `jobs:processing`. Recovery code can requeue abandoned items.
+With `waitFor`, this runs `BLMOVE`; without it, `LMOVE`. After successful processing, remove the item from `jobs:processing`. Recovery code can requeue abandoned items.
+
+For consumer groups with acknowledgements and automatic retry, use a [hosted stream consumer](stream-workers.md) instead.
 
 ## Cancellation semantics
 

@@ -31,9 +31,9 @@ await sentinel.SetAsync("orders", new Dictionary<string, string>
 });
 ```
 
-The existing Sentinel credential rules apply: separate Sentinel credentials take
-precedence over data credentials; an empty `SentinelPassword` explicitly disables
-authentication. `SentinelUseTls` and `SentinelTlsOptions` override the data transport
+The usual Sentinel credential rules apply: `SentinelUsername`, `SentinelPassword`, and
+`SentinelCredentialProvider` take precedence over the data credentials, and null values
+fall back to them. An empty `SentinelPassword` explicitly disables authentication. `SentinelUseTls` and `SentinelTlsOptions` override the data transport
 settings. No database selection, client-side cache, key prefix, replica routing, or
 data-primary discovery is applied to this client.
 
@@ -80,10 +80,10 @@ also requires `AllowAdmin`. Operations affect only the selected Sentinel. In par
 `FAILOVER` forces failover without agreement from other Sentinels, and crash simulation
 can terminate the server. Coordinate changes across your deployment explicitly.
 Accepted commands are not replayed after a disconnect. Cancellation and command
-timeouts use the existing Respire connection lifecycle.
+timeouts behave as they do on a data client.
 
 `ConfigSetAsync` sends one command. On older or unidentified servers it rejects
-multiple option pairs before writing; callers can explicitly send separate single-option
+multiple option pairs with `NotSupportedException` before writing; callers can explicitly send separate single-option
 updates when partial application is acceptable. Serialize dependent administrative steps.
 An interrupted write may have applied even when the caller observes cancellation,
 timeout, or disposal. Inspect authoritative Sentinel state before repeating operations

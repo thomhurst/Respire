@@ -5,11 +5,17 @@ description: Use Respire as an IDistributedCache, IBufferDistributedCache, or Hy
 
 # Microsoft caching
 
-Respire integrates with Microsoft caching abstractions through two companion projects.
+Respire integrates with Microsoft caching abstractions through two companion packages:
+`Respire.Caching` for `IDistributedCache` and `IBufferDistributedCache`, and
+`Respire.Caching.Hybrid` for `HybridCache`.
 
 ## Distributed cache
 
-`Respire.Caching` provides `IDistributedCache` and `IBufferDistributedCache`:
+```bash
+dotnet add package Respire.Caching
+```
+
+Register a cache with its own client:
 
 ```csharp
 builder.Services.AddRespireDistributedCache(
@@ -40,7 +46,9 @@ The [opt-in HybridCache bridge](#opt-in-l1-coherence) uses a separate tracked ha
 invalidate HybridCache's L1 while retaining these atomic distributed-cache reads.
 
 The cache owns and disposes clients created from `ClientOptions` or `ConnectionString`. If neither
-is set, it uses a separately registered `IRespireClient` without taking ownership.
+is set, it uses the registered `IRespireClient` without taking ownership, and throws
+`RespireConfigurationException` when none is registered. The registration replaces any earlier
+`IDistributedCache` registration, such as `AddDistributedMemoryCache`.
 
 To adapt an existing client directly, use `AsDistributedCache`:
 
@@ -55,13 +63,15 @@ await using var cache = client.AsDistributedCache(new RespireCacheOptions
 var cachedBytes = await cache.GetAsync("product:42");
 ```
 
-Each call creates a new adapter without network I/O. `InstanceName` adds to any existing
-client key prefix, and `ValueCodec` configures the adapter's payload encoding. The caller
-retains ownership of the client; disposing the adapter does not dispose it. `RespireCacheOptions`
-holds only cache settings. A `RespireCacheRegistrationOptions` instance can also be passed here,
-but its connection settings are ignored because the adapter uses the supplied client. The registration
+Each call creates a new adapter without network I/O. `InstanceName` is appended to any existing
+client key prefix, and `ValueCodec` sets the adapter's payload encoding. The caller keeps
+ownership of the client; disposing the adapter does not dispose it. `new
+RespireDistributedCache(client, options)` does the same.
+
+`RespireCacheOptions` holds only cache settings (`InstanceName`, `ValueCodec`). The registration
 methods take `RespireCacheRegistrationOptions`, which adds `ConnectionString` and `ClientOptions`.
-The existing `RespireDistributedCache` constructor remains available.
+If you pass a `RespireCacheRegistrationOptions` to `AsDistributedCache`, its connection settings
+are ignored.
 
 Inject the framework abstraction into application code:
 
@@ -78,13 +88,20 @@ public sealed class ProductCache(IDistributedCache cache)
 
 `Respire.Caching.Hybrid` adds Respire as the L2 backend for `HybridCache`:
 
+```bash
+dotnet add package Respire.Caching.Hybrid
+```
+
 ```csharp
 builder.Services.AddRespireHybridCache(
     "redis://localhost",
     instanceName: "myapp:");
 ```
 
-This combines an in-process L1 with Redis-backed L2 storage.
+This combines an in-process L1 with Redis-backed L2 storage. `AddRespireHybridCache` also has an
+overload that takes a `configureCache` callback (`RespireCacheRegistrationOptions`) and an
+optional `configureHybridCache` callback (`HybridCacheOptions`). Without a connection string or
+`ClientOptions`, it uses the registered `IRespireClient`.
 
 ### Opt-in L1 coherence
 
@@ -151,7 +168,8 @@ The logical L2 key, payload format, serializers, mutable-value copies, entry fla
 factory cancellation and coalescing behavior stay intact. This opt-in mode adds a tracking
 client, an initial tracked read, subscriptions, and context/metadata allocations per observed
 key. Choose the observation bound for the application's working set. Expired or evicted local
-entries release idle observations; a sweep checks expired entries every 30 seconds by default.
+entries release idle observations; a sweep checks expired entries every
+`ObservationSweepInterval` (30 seconds by default).
 Active requests can keep observations until they complete or cancel.
 
 The provider's own L2 writes also notify the separate tracker. A factory miss or `SetAsync`

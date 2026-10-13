@@ -51,8 +51,10 @@ initialize the catalog. Each verb caches its classification without adding field
 typed dispatch performs no table lookup. Raw lookup reuses the table directly.
 
 `RespireCommand.RetryCategory` describes the risk of repeating an invocation after an uncertain
-outcome. It is metadata only: Respire does not use this property to enable automatic retries.
-It does not prove whether socket bytes reached the server, provide exactly-once execution, or
+outcome. Retries stay off unless you set `RespireOptions.RetryPolicy`; the policy's
+`MaxCommandRetryCategory` (default `ReadOnly`) then caps which categories Respire may resend.
+See the [command retries guide](../website/docs/guides/command-retries.md). A category does not
+prove whether socket bytes reached the server, provide exactly-once execution, or
 recover the original reply. Even a repeated conditional or replacement write can return a
 different result and can interact with another client's intervening changes.
 
@@ -68,9 +70,8 @@ different result and can interact with another client's intervening changes.
 | `Never` | No automatic retry permission | Scripts, functions, consuming Search cursors, unknown operations |
 
 The non-`Never` categories are ordered by increasing risk. `Never` is zero so default values
-fail closed; a future permission check must exclude it explicitly rather than treating a
-numeric threshold as permission. Categories describe command-level risk, not an execution
-policy. Option-sensitive `SET` (including `GET`), `ZADD` (including `INCR`) and `BITFIELD`
+fail closed, and the retry policy treats it as "no retry" rather than as the lowest risk.
+Categories describe command-level risk; `RespireRetryPolicy` is the execution policy. Option-sensitive `SET` (including `GET`), `ZADD` (including `INCR`) and `BITFIELD`
 remain `WriteAccumulating`. Search aggregation/profile commands remain `Never` because their
 invocations can create or consume cursors. Ordinary `SCAN` cursors are client-supplied positions
 and remain read-only; `FT.CURSOR READ` consumes server-side cursor state and remains `Never`.
@@ -87,9 +88,11 @@ lookup during healthy dispatch. The added byte uses existing struct padding: on 
 frozen table retains one entry per catalog command after initialization.
 
 Default descriptors, implicit string conversions, and `RespireCommand.Create`, even for a known
-name or with an explicit cache mutation policy, always have retry category `Never`. Caller-supplied
-names cannot acquire retry permission by matching the catalog. This metadata does not add a raw
-retry opt-in API or change existing routing, cache invalidation, blocking, or wire behavior.
+name or with an explicit cache mutation policy, have retry category `Never`. Caller-supplied
+names cannot acquire retry permission by matching the catalog. To opt a caller-supplied
+descriptor in, declare its category explicitly with `RespireCommand.WithRetryCategory`; Respire
+does not validate that declaration against the name or arguments. Retry metadata does not change
+routing, cache invalidation, blocking, or wire behavior.
 
 The compatible-server audit uses [KeyDB's 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 the [KeyDB command reference](https://docs.keydb.dev/docs/commands/),

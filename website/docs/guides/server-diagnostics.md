@@ -14,8 +14,8 @@ string memoryReport = await redis.Server.MemoryDoctorAsync();
 long slowLogLength = await redis.Server.SlowLogLengthAsync();
 ```
 
-The existing `LatestLatencyAsync`, `MemoryStatsAsync`, and `SlowLogAsync` methods keep
-their existing contracts. `SlowLogLengthAsync` counts retained entries, not all commands
+For the latest latency events, memory statistics, and slow-log entries, use
+`LatestLatencyAsync`, `MemoryStatsAsync`, and `SlowLogAsync`. `SlowLogLengthAsync` counts retained entries, not all commands
 that have ever exceeded the configured slow-log threshold.
 
 ## Histories and histograms
@@ -75,7 +75,7 @@ avoid overlapping polls when inspecting large command catalogs or many nodes.
 ## Explicit per-node results
 
 All six methods have `OnAllNodesAsync` counterparts returning `RespireServerResult<T>[]`.
-They follow the [server fan-out contract](pub-sub-introspection.md): fresh Cluster
+They follow the [server fan-out contract](pub-sub-introspection.md#results-from-every-node): fresh Cluster
 discovery includes replicas, execution uses temporary connections with bounded
 concurrency, and each endpoint retains its own value or failure. Standalone clients
 produce one endpoint result. Discovery failure or cancellation throws; after discovery,
@@ -117,8 +117,8 @@ for unsupported histograms. Unsupported commands and ACL denials remain server e
 there is no fallback or emulation. The command minimum versions do not imply every
 Respire connection or fan-out configuration works on those historical server versions.
 
-This prerelease adds twelve required `IServerCommands` members: the six methods above
-and their six `OnAllNodesAsync` counterparts. Custom implementations, decorators, and
+The six methods above and their six `OnAllNodesAsync` counterparts are `IServerCommands`
+members. Custom implementations, decorators, and
 mocks must implement or forward them.
 
 References: Redis [LATENCY DOCTOR](https://redis.io/docs/latest/commands/latency-doctor/),

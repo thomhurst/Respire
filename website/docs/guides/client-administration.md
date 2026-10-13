@@ -28,8 +28,8 @@ deferred forms with execution-node scope, described below.
 
 ## Connection settings
 
-Set `RespireOptions.AllowAdmin = true` before using mutation methods. Permission and
-option validation happen before sending the mutation. Server ACL checks still apply.
+Set `RespireOptions.AllowAdmin = true` before using mutation methods; without it they throw
+`NotSupportedException`. Permission and option validation happen before sending the mutation. Server ACL checks still apply.
 
 ```csharp
 await using var admin = RespireClient.Create(new RespireOptions
@@ -93,7 +93,7 @@ Client names, prefixes in tracking replies, metadata, and echo payloads are neve
 
 `Server.ClientsOnAllNodesAsync()` returns separate client arrays or failures associated
 with each endpoint, including replicas and slotless Cluster members. It uses the
-[server fan-out contract](pub-sub-introspection.md), including fresh discovery, bounded
+[server fan-out contract](pub-sub-introspection.md#results-from-every-node), including fresh discovery, bounded
 concurrency, temporary connections, and cancellation behavior. A temporary inspection
 connection may appear in CLIENT LIST. Results are neither aggregated nor atomic across
 nodes. Discovery errors throw; after discovery, inspect every result's `IsSuccess` or
@@ -129,8 +129,8 @@ long closed = await endpoint.KillClientsAsync(new RespireClientFilterOptions
 }, cancellationToken);
 ```
 
-Existing flat properties such as `Ids`, `User`, and `ExcludedIds` remain supported.
-To migrate, move positive selectors into `RespireClientIncludeFilters` and negative
+The older flat properties on `RespireClientFilterOptions`, such as `Ids`, `User`, and
+`ExcludedIds`, remain supported. To migrate, move positive selectors into `RespireClientIncludeFilters` and negative
 selectors into `RespireClientExcludeFilters`, removing the `Excluded` prefix from their names.
 Keep `SkipMe` and `AllowUnfilteredKill` on the outer options. Either group may be omitted.
 When either group is supplied, any non-null flat scalar selector or nonempty flat ID list
@@ -213,12 +213,11 @@ Sources: [Redis CLIENT LIST](https://redis.io/docs/latest/commands/client-list/)
 | CLIENT NO-EVICT | 7.0 |
 | CLIENT SETINFO and NO-TOUCH | 7.2 |
 
-Creating a handle requires CLIENT ID even when its later command exists on older Redis.
-Older or compatible servers that do not support an operation return their normal error;
-there is no silent fallback. Required `IServerCommands` additions are
-`GetClientConnectionAsync` and `ClientsOnAllNodesAsync`; mocks, decorators, and custom
-implementations must implement or forward both. Parent administrative coverage remains
-tracked separately from this client-command family.
+Creating a handle requires CLIENT ID (Redis 5.0), even when the command you plan to send
+exists on older Redis. Servers that do not support an operation return their normal error;
+there is no silent fallback. `GetClientConnectionAsync`, both `ClientsOnAllNodesAsync`
+overloads, the filtered `ClientsAsync`, and `KillClientsAsync` are `IServerCommands`
+members, so mocks, decorators, and custom implementations must implement or forward them.
 
 References: [CLIENT INFO](https://redis.io/docs/latest/commands/client-info/),
 [SETINFO](https://redis.io/docs/latest/commands/client-setinfo/),

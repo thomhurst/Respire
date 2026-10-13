@@ -40,7 +40,8 @@ an overall process-memory or compression-time budget; encoder workspace depends
 on input and compression level, and concurrent calls own separate workspaces.
 
 Reserved algorithm ID 4 means one ordinary Zstandard frame without an external
-dictionary inside an RVC version 1 frame. The dependency normally accepts multiple
+dictionary inside a versioned Respire value-codec frame (version 1 or 2; see
+[frame compatibility](VALUE_CODEC_DEPENDENCIES.md#frame-compatibility)). The dependency normally accepts multiple
 ordinary/skippable frames. A small pinned-span call to
 `Methods.ZSTD_findFrameCompressedSize` verifies that exactly one ordinary frame
 occupies the payload before decoding. The helper retains no pointers and performs
@@ -51,5 +52,5 @@ zero selects the default, and decoding is independent of the encoder's level.
 Tests include a hand-authored RLE frame based on the
 [Zstandard format specification](https://github.com/facebook/zstd/blob/v1.5.7/doc/zstd_compression_format.md),
 concatenated and skippable frames, corruption, length mismatches, destination commit
-behavior, and the shared typed/cache integration cases. Benchmark acceptance remains
-separate in #527.
+behavior, and the shared typed/cache integration cases. Performance results from #527
+are in the [value codec benchmarks guide](../website/docs/guides/value-codec-benchmarks.md).

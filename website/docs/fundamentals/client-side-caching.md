@@ -6,14 +6,16 @@ description: Enable bounded RESP3 server-assisted caching for Redis reads.
 # Client-side caching
 
 Respire can cache eligible Redis reads in-process while Redis invalidation pushes keep entries
-coherent across clients. Repeated reads skip command encoding, socket I/O, Redis execution, reply
-parsing, and network latency while the application keeps using the same typed API.
+coherent across clients. A cache hit skips command encoding, socket I/O, Redis execution, reply
+parsing, and network latency. Your code keeps using the same typed API.
 
-This is Redis's server-assisted cache—not a second application caching abstraction. Redis tracks
-the keys Respire reads, pushes only invalidations when those keys change, and Respire evicts them.
-The next caller refreshes lazily; Redis never pushes replacement values.
+This is Redis's server-assisted cache (`CLIENT TRACKING`), not a second application caching
+abstraction. Redis tracks the keys Respire reads and pushes an invalidation when one of them
+changes. Respire evicts the entry, and the next read fetches the new value. Redis never pushes
+replacement values.
 
-Application [keyspace notifications](../guides/keyspace-notifications.md) are a separate Pub/Sub feature. They do not configure or replace this `CLIENT TRACKING` cache.
+Application [keyspace notifications](../guides/keyspace-notifications.md) are a separate Pub/Sub
+feature. They do not configure or replace this cache.
 
 ## Enable it
 
@@ -27,28 +29,25 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 });
 ```
 
-Existing typed APIs, catalog `ExecuteAsync` calls, interpolated commands, and `GetLeaseAsync` then
-use the cache transparently. This covers deterministic keyed reads across strings, keys, hashes,
-lists, sets, sorted sets, streams, bitmaps, geospatial indexes, Redis arrays, JSON, and vector sets
-(see [Cached commands](#cached-commands)). Typed `GET` and `MGET` keep optimized
-per-key entries and partial-hit behavior. Opting into `ReuseHashFields` lets `HMGET` reuse individual `HGET` field entries;
-other replies use exact command-and-argument identities, including argument order and binary
-arguments.
+Typed APIs, catalog `ExecuteAsync` calls, interpolated commands, and `GetLeaseAsync` then use the
+cache transparently. This covers deterministic keyed reads across strings, keys, hashes, lists,
+sets, sorted sets, streams, bitmaps, geospatial indexes, Redis arrays, JSON, and vector sets (see
+[Cached commands](#cached-commands)). Typed `GET` and `MGET` keep per-key entries, so an `MGET`
+can combine local hits with one Redis request for the misses. Other replies are cached by their
+exact command and arguments, including argument order and binary arguments. To let `HMGET` reuse
+individual `HGET` field entries, see [Partial hash reads](#partial-hash-reads).
 
-Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
-enabling caching does not introduce shared mutable objects; serializers run on every hit and
-`GetBytesAsync` still returns a caller-owned array. `GetStringAsync` retains its canonical decoded
-immutable string when a `GET` miss is published, so the first local hit reuses that same string.
-Coalesced string readers share the canonical text while binary readers keep independent arrays.
-Byte-only and custom serializer reads keep decoded string storage lazy; their first string reader
-decodes and retains the wire text. String storage counts against `MaxSizeBytes` before a string miss
-returns. An entry whose bytes and decoded text exceed the limit is returned uncached; decoding an
-existing byte-only entry can evict entries when that limit is crossed. One-off string reads therefore
-retain more memory immediately than byte-only reads, within the same cache limit. Other conversions
-keep their existing behavior. One cache belongs to each client and is shared
-by all of its `WithKeyPrefix` views.
+Missing keys are cached too. Cached replies are immutable and converted for each call, so caching
+does not introduce shared mutable objects. Serializers run on every hit, and `GetBytesAsync` still
+returns a caller-owned array. One cache belongs to each client and is shared by all of its
+`WithKeyPrefix` views.
 
-Enabling the cache requires RESP3: connection setup fails if Redis cannot negotiate RESP3 or enable
+String reads keep their decoded text in the cache entry, so a later `GetStringAsync` hit returns
+the same string without decoding again. That text counts against `MaxSizeBytes`, so string reads
+use more cache memory than byte-only reads. An entry that would exceed the limit is returned
+without being cached.
+
+The cache requires RESP3. Connection setup fails if Redis cannot negotiate RESP3 or enable
 `CLIENT TRACKING`. With `ClientSideCache = null` (the default) no cache, tracking handshake, or
 invalidation handler is created.
 
@@ -85,39 +84,14 @@ Everything else bypasses the cache and goes to Redis:
 - Batches and transactions, which keep their server execution semantics and never consult the
   local cache.
 
-While caching is enabled, Respire rejects `HELLO`, `RESET`, `SELECT`, `CLIENT CACHING`, and
-`CLIENT TRACKING`, because changing protocol, database, or tracking state would break coherence.
+While caching is enabled, `HELLO`, `RESET`, `SELECT`, `CLIENT CACHING`, and `CLIENT TRACKING`
+throw `NotSupportedException`, because changing the protocol, database, or tracking state would
+break coherence.
 
-Writes evict the keys they change before dispatch and prevent overlapping reads from entering
-the cache until both caller and native ownership retire. Successful known-key writes can omit
-the second eviction; errors, cancellation, and unproven lifetimes retain it.
-When Respire cannot name the affected keys (unknown raw commands, scripts,
-cluster-wide mutations, blocking commands, batches, transactions, and time-series writes that can
-update compaction destinations), it flushes the whole local cache instead.
-
-Every transport owned by a caching client checks mutation admission before publishing command
-bytes or a response slot. This includes redirected, replica, dedicated, streamed, explicit-node,
-and fan-out dispatch. An internal dispatch path that omits a live admission from its owning client
-fails before reaching Redis. A diagnostic command name cannot authorize a write as a read.
-Compound sends check each prelude independently, so it cannot borrow the final command's
-mutation scope or silently discard a separate mutation owner.
-Audited read-only declarations and internal connection setup retain their existing contracts.
-With caching disabled, native dispatch skips this check.
-
-For contributors adding command paths, retain the mutation fence and immutable command
-classification through `IRespCommandWrapper`. Serialized snapshots preserve classification,
-but do not replace caller/native ownership or acceptance callbacks. Protocol setup must declare
-its connection-owned role explicitly; application data mutations still require logical admission.
-The source architecture tests inventory native publication helpers and restrict read-only
-declarations to the audited script and explicit-node factories. Bypass views retain command
-classification even though they do not serve or publish local cache entries. An empty watched
-transaction still sends `MULTI`/`EXEC` to validate `WATCH`; any queued command requires its fence.
-
-For correctness changes that should preserve local read performance, the
-`run-cache-read-parity-benchmarks` label compares hot hits, concurrent hits, and tracked misses
-against two baseline controls on .NET 10. Review latency intervals, baseline drift, and allocations
-before accepting the comparison. The `run-cache-read-benchmarks` label retains its stricter
-required improvement for concurrent hits and remains the gate for cache-read optimizations.
+Writes evict the keys they change before they are sent, and reads that overlap a write are not
+cached. When Respire cannot name the affected keys (unknown raw commands, scripts, cluster-wide
+mutations, blocking commands, batches, transactions, and time-series writes that can update
+compaction destinations), it flushes the whole local cache instead.
 
 ## Options
 
@@ -144,33 +118,37 @@ ClientSideCache = new()
 },
 ```
 
+Invalid values throw `RespireConfigurationException` when the client is created: `MaxEntries` and
+`MaxSizeBytes` must be at least one, and `LocalExpiration` must be `null` or at least one
+millisecond.
+
 ## Choose what gets cached
 
 By default every eligible read is cached. Set `KeyPrefixes` to cache only the keys that benefit:
 hot, read-mostly data such as catalogs or configuration. Reads of other keys go straight to Redis
 and never compete for cache capacity. In `OptIn` mode they are also sent without
-`CLIENT CACHING YES`, so Redis does not track them, with one exception: the per-key `MGET`
-path used by typed calls (and raw calls with `CoalesceConcurrentMisses = true`) sends mixed
-covered/uncovered misses as one tracked command, so Redis tracks every key it reads.
-Those uncovered keys can generate invalidation pushes but never enter the local cache.
-Respire does not split the command, which keeps `MGET` atomic. Read uncovered keys in a separate
-`MGET` to avoid their tracking. This works in both tracking modes; in `Broadcast` mode the same
-prefixes are also sent to Redis. With the default `CoalesceConcurrentMisses = false`, raw
-`ExecuteAsync(MGET, ...)` uses exact-query caching instead: if any key is uncovered, the whole
-reply is uncached and the command is sent without `CLIENT CACHING YES`.
+`CLIENT CACHING YES`, so Redis does not track them.
 
-Prefixes are literal bytes, not Redis glob patterns; `*`, `?`, NUL, and non-UTF-8 bytes retain
-their literal meaning. Pass binary prefixes as `RespireKey` values. Options snapshot both the list
-and its storage. Prefixes identify **physical wire keys**: a `WithKeyPrefix("tenant:")` view does
-not add its prefix, so `KeyPrefixes = ["tenant:products:"]` covers `products:42` read through
-that view, but not an unprefixed `products:42` call. Duplicates and overlapping prefixes are
-rejected before connecting; one empty prefix covers everything and therefore cannot accompany
-another prefix.
+There is one exception. A typed `MGET` (or a raw `MGET` with `CoalesceConcurrentMisses = true`)
+that mixes covered and uncovered keys sends its misses as one tracked command, which keeps `MGET`
+atomic. Redis then tracks every key it reads, so the uncovered keys can generate invalidation
+pushes, although they never enter the local cache. Read uncovered keys in a separate `MGET` to
+avoid this. With the default `CoalesceConcurrentMisses = false`, a raw `ExecuteAsync(MGET, ...)`
+is cached as one exact query instead: if any key is uncovered, the whole reply is uncached and the
+command is sent without `CLIENT CACHING YES`. In `Broadcast` mode the same prefixes are also sent
+to Redis.
 
-Mixed per-key `MGET` calls retain covered hits and fetch misses together, caching only covered keys
-(in `OptIn` mode that fetch is tracked as described above).
-A cached multi-key projection requires **every** dependency to be covered. Hash fields inherit
-their physical hash key's coverage. Invalidation subscriptions require a covered key.
+Prefix rules:
+
+- Prefixes are literal bytes, not Redis glob patterns; `*` and `?` match only themselves. Pass
+  binary prefixes as `RespireKey` values. The options snapshot both the list and its bytes.
+- Prefixes match **physical wire keys**. A `WithKeyPrefix("tenant:")` view does not add its prefix,
+  so `KeyPrefixes = ["tenant:products:"]` covers `products:42` read through that view, but not an
+  unprefixed `products:42` call.
+- Duplicate and overlapping prefixes are rejected before connecting. One empty prefix covers
+  everything and therefore cannot be combined with another prefix.
+- A cached multi-key read requires **every** key it depends on to be covered. Hash fields inherit
+  their hash key's coverage. Invalidation subscriptions require a covered key.
 
 ## Bypass the cache for one read
 
@@ -190,138 +168,73 @@ caching is disabled, `WithoutClientCache()` returns the same client.
 ## Concurrent misses
 
 Set `ClientSideCache.CoalesceConcurrentMisses = true` to share concurrent misses for the same
-command and byte-for-byte arguments within a client. Sharing is opt-in; the default is `false`. This covers typed `GET` variants, identical ordered `MGET` miss lists, and all
-eligible deterministic query reads. Typed and raw calls can join the same wire command; each
-caller still performs its own conversion and receives independently owned results and leases.
-With sharing enabled, typed and raw `GET`/`MGET` use the same per-key entries, so either caller
-can populate later hits for both APIs. Raw `MGET` also reuses the typed partial-hit path.
-Binary keys and arguments are snapshotted. Prefix views use resolved wire keys; separate clients,
-databases, and Cluster routing contexts never share work. `GET` and `MGET` are different identities,
-and partially overlapping `MGET` lists are not split into individual `GET` requests.
+command and byte-for-byte arguments within a client. Sharing is off by default. It covers typed
+`GET` variants, identical ordered `MGET` miss lists, and all eligible deterministic query reads.
+Typed and raw calls can join the same request; each caller still performs its own conversion and
+receives independently owned results and leases. With sharing enabled, typed and raw `GET`/`MGET`
+use the same per-key entries, so either can populate later hits for both.
 
-Canceling one caller does not cancel callers still waiting for the shared request. When the last
-caller cancels, Respire retires and cancels that request. An already accepted command may still
-execute on Redis; its reply is drained in protocol order. The next caller can start a new request.
-Each caller's cancellation token bounds only that caller's wait. The physical request keeps its
-original `CommandTimeout` deadline; joining an existing request does not restart that deadline.
-Client disposal cancels all shared work, including reads retired by an earlier invalidation.
-Server and transport failures reach every remaining caller, retire the shared request, and allow
-a later call to retry. Sharing never replays an accepted command after a transport failure.
+Prefix views use resolved wire keys. Separate clients, databases, and Cluster routing contexts
+never share work. `GET` and `MGET` are different identities, and partially overlapping `MGET`
+lists are not split into individual `GET` requests.
 
-Invalidations, explicit `Clear()`, and tracking continuity changes prevent new callers from joining
-older work. Callers already waiting may receive their original read result, but the existing
-invalidation fences reject stale cache insertion. Retirement is conservative: an invalidation
-currently ends joining for all pending identities, even those with unrelated keys. Reads
-started during an invalidation run independently and
-cannot become a source for later callers. Overlapping invalidations keep that interval open
-until every cache-state change finishes. Completed work
-is always removed, including oversized responses and other replies that cannot enter the cache.
-Cache hit/miss counters remain per caller, not per wire request. The process-wide observable
-counter `respire.client_cache.shared_read.retirements` counts pending identities removed by invalidation,
-clearing, or continuity loss. Normal completion and last-caller cancellation are excluded.
-Use this counter to assess how often churn prevents new callers from joining existing work.
+Cancellation and failures:
 
-With sharing enabled, writes and continuity flushes skip the shared-read gate when no read
-is joinable or being admitted. Retired producers may still finish for their original callers.
-Read admission and overlapping invalidations remain fenced. Pre-command eviction remains;
-successful known-key writes replace the second eviction with ownership through native retirement.
-Conservative mutations retain completion eviction.
+- Canceling one caller does not cancel the others. When the last caller cancels, Respire cancels
+  the shared request. A command Redis has already accepted may still execute.
+- Each caller's cancellation token bounds only that caller's wait. The shared request keeps its
+  original `CommandTimeout` deadline; joining it does not restart that deadline.
+- Server and transport failures reach every remaining caller, and a later call can retry. A
+  shared request is never replayed after a transport failure.
+- Client disposal cancels all shared work.
 
-Sharing adds bookkeeping and owned-result copies on misses. Keep the default independent
-requests for workloads with little contention. A sole remaining waiter can take the producer's
-owned result; other waiters receive separate copies. Cache hits retain their existing fast path. The CI contention benchmark
-compares default single-caller misses, opted-in single-caller misses, and opted-in 32-caller bursts
-for `GET`, `MGET`, and `HGET`, plus hot `GET`, against both same-run baseline controls. Latency and allocations
-include one complete burst and its local cache eviction. Process CPU counters include benchmark
-warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
+Invalidations, `Clear()`, and connection continuity changes stop new callers from joining older
+requests. Callers already waiting may receive the original result, but it is not inserted into the
+cache. An invalidation currently stops joining for all pending requests, including those for
+unrelated keys. Hit and miss counters count callers, not wire requests. The observable counter
+`respire.client_cache.shared_read.retirements` counts pending requests that new callers could no
+longer join because of invalidation, clearing, or continuity loss; use it to see how often churn
+defeats sharing.
 
-Known command descriptors share cache classification computed on their first cache use.
-Normal typed verb construction does not initialize cache-only classification tables. Each
-verb retains one small lazy holder; cached callers then read its immutable four-byte value.
-Argument-dependent key counts, destination layouts, and `CLIENT` subcommands are still
-checked for each invocation. Explicit mutation declarations remain effective, and unknown
-commands retain conservative invalidation.
-
-The cache-classification comparison measures typed and raw cached `SET` with 50 callers,
-cache-off controls, two-key `MSET`/`DEL` pairs, and an independent `GET` miss. Separate
-classification cases isolate the existing command metadata API. Public write measurements
-include task scheduling, response validation, and cache fencing; classification timings alone
-do not establish an equivalent improvement in Redis throughput. Classification cases retain
-the same call boundary in both versions so cheaper metadata loads remain measurable. These
-cases do not quantify production inlining.
-
-The separate cache-write comparison covers 50 concurrent `SET` callers with sharing enabled,
-sharing disabled, and caching disabled, plus concurrent `SET`/`GET` pairs and shared `GET` miss
-bursts. Its allocation and latency measurements include task scheduling and result validation.
-The threading diagnostic reports total monitor contention; it does not identify the cache's
-shared-read gate. Use workload-specific results before drawing throughput conclusions.
-
-In the [pinned net10.0 comparison](https://github.com/thomhurst/Respire/actions/runs/37712936222),
-empty-sharing cached `SET` measured 5.44 microseconds per normalized operation versus 5.53/5.54
-for the bracketing controls, with 37 bytes allocated in all three phases. Confidence intervals
-overlap, so this run does not establish a throughput gain. Cache-off, disabled-sharing,
-concurrent read/write, and shared-miss controls also have overlapping intervals. The specific
-benefit is eliminating empty shared-gate acquisitions; no general latency improvement is claimed.
+Sharing adds bookkeeping and result copies on every miss. Keep the default for workloads with
+little contention. Cache hits are not affected.
 
 ## Partial hash reads
 
-Set `ClientSideCache = new() { ReuseHashFields = true }` to enable partial hash reads.
-The default is false and retains exact-query HMGET caching. When enabled, immediate
-`Hashes.GetManyAsync` and raw `HMGET` calls look up each field using the same
-cache identity as `HGET`. Cached fields are returned locally; all missing fields are sent
-in one `HMGET`. Results retain requested order, duplicate fields, and nulls for absent hashes
-or fields. An all-hit request sends no command. Binary fields are supported through raw
-command arguments, which are snapshotted before asynchronous work. Typed facets resolve
-`WithKeyPrefix`; raw commands continue to require physical keys explicitly.
+Set `ClientSideCache = new() { ReuseHashFields = true }` to enable partial hash reads. The default
+is `false`, which caches each `HMGET` as one exact query. When enabled, `Hashes.GetManyAsync` and
+raw `HMGET` calls look up each field using the same cache entry as `HGET`. Cached fields are
+returned locally, and all missing fields are sent in one `HMGET`. Results keep the requested order,
+duplicate fields, and nulls for absent hashes or fields. An all-hit request sends no command.
+Typed calls apply `WithKeyPrefix`; raw commands must pass physical keys.
 
-The cache stores each field with a dependency on its hash key. Redis invalidations and
-local hash writes evict every cached field of that hash. In-flight invalidation, clear,
-and reconnect reject stale insertion. A malformed array or invalid field response rejects
-the whole reply before any field is cached. Cluster `MOVED` and `ASK` recovery flush continuity
-and re-establish tracked reads on the redirected node.
+Each cached field depends on its hash key. A Redis invalidation or local write of the hash evicts
+every cached field of that hash. A malformed reply is rejected before any field is cached.
 
-With both `ReuseHashFields` and `CoalesceConcurrentMisses` enabled, concurrent requests with the
-same physical hash key and identical ordered missing fields share one HMGET producer. Full field
-lists may differ when their cached fields differ. Each caller keeps its own cached values, output
-order, and independently owned result. Different missing lists run independently; they are not
-split into per-field requests. For example, missing lists `[a, b]` and `[b, a]` do not share
-one producer: matching uses argument order, not set equality. Cancellation, invalidation, and continuity changes follow the
-shared-read rules above. Hashes outside `KeyPrefixes` bypass per-field reuse.
+With both `ReuseHashFields` and `CoalesceConcurrentMisses` enabled, concurrent requests for the
+same hash with identical ordered missing fields share one `HMGET`. Different missing lists run
+independently: `[a, b]` and `[b, a]` do not share a request. Hashes outside `KeyPrefixes` bypass
+per-field reuse.
 
-Hit/miss statistics count field lookups, including repeated fields. As with cached MGET,
-a result may combine values cached at different times; use an uncached transaction when
-an atomic server snapshot is required. Batched/transactional commands retain their existing
-execution behavior. Disabling client-side caching leaves the ordinary HMGET wire path unchanged.
+Hit and miss statistics count field lookups, including repeated fields. As with a cached `MGET`, a
+result may combine values cached at different times; use an uncached transaction when you need an
+atomic server snapshot.
 
-Typed `Strings.GetManyAsync` retains its existing per-key partial-hit path and checks all
-Cluster slots even on all-hit requests. Raw MGET uses exact-query caching by default and the typed per-key path when coalescing is enabled;
-it does not split overlapping lists into individual GET requests.
-
-Field reuse trades additional entries, lookup work, and owned-result allocations for fewer
-transferred values on overlapping field lists. Small local Redis responses can be slower in
-this mode, even with partial hits; it is not a universal optimization. Benchmark your payload
-sizes, field overlap, and network conditions before enabling it.
-
-The CI hash benchmark compares default and opted-in 0/4, 2/4, and 4/4 cached fields, with
-the default path also checked against two same-run baseline controls. Each measured batch reads
-512 independent hashes once. Cache clearing and field
-priming happen outside the measured batch, so misses cannot turn into hits partway through
-an iteration. Process CPU diagnostics include that priming and benchmark warmup/calibration.
+Field reuse trades extra entries, lookup work, and allocations for fewer transferred values on
+overlapping field lists. Small local responses can be slower in this mode, even with partial hits.
+Benchmark your payload sizes, field overlap, and network conditions before enabling it.
 
 ## Populate missing values with a factory
 
 `GetOrSetAsync<T>(key, factory, ttl, cancellationToken)` combines a tracked read with a
-conditional cache-aside write. Enable `ClientSideCache`; Redis 7 or later is required for
-[`SET NX GET`](https://redis.io/docs/latest/commands/set/). Existing hits use normal local
-caching, serialization and key-prefix rules.
+conditional cache-aside write. It requires `ClientSideCache` and Redis 7.0 or later for
+[`SET NX GET`](https://redis.io/docs/latest/commands/set/). Hits use the normal local cache,
+serialization, and key-prefix rules.
 
-Support for `NX` and `GET` together starts in Redis 7.0; `GET` alone was introduced in 6.2.
-The helper does not preflight server capabilities. On an unsupported server or proxy, a miss
-can run the factory before the conditional write fails with the original server error.
-Factory work and accepted writes are not replayed. Use this helper only on deployments
-supporting that command combination, and keep factories safe to run without a subsequent write.
-The default `IRespireClient` implementation throws `NotSupportedException`; third-party
-implementations and decorators must implement or forward the helper explicitly.
+The helper does not check server capabilities first. On an unsupported server or proxy, a miss can
+run the factory before the conditional write fails with the server error. Keep factories safe to
+run without a subsequent write. `IRespireClient` implementations other than `RespireClient` throw
+`NotSupportedException` unless they implement or forward the method.
 
 <!-- doc-test-tail-declaration: split-before=public sealed record Product -->
 ```csharp
@@ -345,55 +258,44 @@ static ValueTask<Product?> LoadProductAsync(CancellationToken cancellationToken)
 public sealed record Product(int Id, string Name);
 ```
 
-On a miss, the factory runs once for that producer. `SET NX GET` atomically stores the
-computed value only if the key is still absent, or returns the current writer's value.
-It preserves an existing winner's TTL. It does not fence an intervening create/delete cycle:
-if the key is absent again when SET runs, the computed value can be installed. Results describe
-the read or atomic SET, and another writer can change the key immediately afterward.
-There is no distributed lock or exactly-once factory guarantee.
+On a miss, the factory runs and `SET NX GET` stores the computed value only if the key is still
+absent; otherwise it returns the value another writer stored. An existing winner keeps its TTL.
+If the key was created and deleted again before the `SET` runs, the computed value is stored.
+Another writer can change the key immediately afterward. There is no distributed lock or
+exactly-once guarantee for the factory.
 
-The TTL must be at least one millisecond, is truncated to whole milliseconds, and begins at
-the successful server write. Hits and failed conditional writes do not extend expiry. Local
-cache lifetime is configured separately; server expiration is observed through normal tracking
-invalidation, subject to notification delivery and connection-failure detection.
+The TTL must be at least one millisecond, is truncated to whole milliseconds, and starts at the
+successful server write. Hits and failed conditional writes do not extend it. `LocalExpiration`
+is configured separately.
 
-A factory returning `null` does not write or memoize its result. Later calls can run it again.
-An existing stored `0`, empty string, or serialized JSON null is present and does not run the
-factory. Mutable typed results are deserialized independently for each caller. The factory's
-object is never returned directly. Use the same serialization contract for every writer of a key.
+A factory that returns `null` does not write, and a later call can run it again. A stored `0`,
+empty string, or serialized JSON `null` counts as present and does not run the factory. Each caller
+receives its own deserialized result, never the factory's object. Use the same serialization for
+every writer of a key.
 
 `CoalesceConcurrentMisses` also controls factory sharing. With it enabled, calls on the same
-client with the same physical key, generic type and millisecond TTL share the first factory.
-Different callbacks with that identity must be interchangeable. Prefix views share their root's
-coordinator; different clients do not. Invalidation retires joining, so a later caller can start
-another factory while an earlier one is still running. With coalescing disabled, each missed call
-can run its own factory. A factory must not recursively await the same shared identity.
+client with the same physical key, generic type, and millisecond TTL share the first factory, so
+different callbacks with that identity must be interchangeable. Prefix views share their root
+client's factories; different clients do not. An invalidation stops new callers from joining, so a
+later caller can start another factory while an earlier one is still running. With coalescing
+disabled, each missed call runs its own factory. A factory must not await `GetOrSetAsync` for the
+same key, type, and TTL.
 
-Each cancellation token bounds that caller's wait. With sharing enabled, one cancellation
-does not stop remaining callers; the last caller leaving or client disposal cancels the factory
-token cooperatively. Exceptions from shared-token cancellation callbacks can fault remaining
-waiters but do not interrupt client cleanup. Without sharing, the factory receives the caller's
-token. Factories must observe cancellation to stop promptly. A late result after cancellation or client disposal is
-not sent as a new write, but a write already accepted by Redis may still execute. `CommandTimeout`
-bounds Redis operations, not application factory work; supply a caller timeout when needed.
-Factory, serialization and Redis errors propagate without automatically retrying a factory or
-replaying an accepted write.
+Each cancellation token bounds that caller's wait. With sharing enabled, the factory's token is
+canceled only when the last caller leaves or the client is disposed. Without sharing, the factory
+receives the caller's token. A result that arrives after cancellation is not written, but a write
+Redis has already accepted may still execute. `CommandTimeout` bounds Redis operations, not your
+factory; pass a cancellation token with a timeout when you need one. Factory, serialization, and
+Redis errors propagate without retrying the factory or replaying the write.
 
-Writes use the ordinary invalidation fences and invalidate other tracking clients. The SET
-result is deliberately not inserted directly into the local cache: it is not a tracked read.
-The next GET registers tracking and populates the cache. This also avoids caching a losing
-factory's value or a response made stale by a subsequent write.
-
-The cache-aside benchmark compares a hot hit and complete miss bursts against manual
-GET/SET NX GET composition on the same baseline/candidate/baseline runner. It measures default
-single callers, opted-in single callers and 32 callers with a simulated asynchronous loader.
-Reports retain allocations, factory invocation counts, latency and diagnostic process CPU;
-loader latency means these results are not raw Redis throughput measurements.
+The write invalidates other tracking clients as usual. Its result is not inserted into the local
+cache, because it is not a tracked read; the next `GET` registers tracking and populates the
+cache.
 
 ## Why this is different
 
-StackExchange.Redis 3.1.13 supports RESP3 and exposes keyspace notifications, but it does not
-provide an equivalent built-in server-assisted local response cache. Its
+StackExchange.Redis 3.x supports RESP3 and exposes keyspace notifications, but it has no built-in
+server-assisted local response cache (its 4.0 previews add an opt-in one). Its
 [keyspace-notification documentation](https://stackexchange.github.io/StackExchange.Redis/KeyspaceNotifications.html)
 presents notifications as a building block for an application-defined invalidation strategy.
 That approach requires Redis server configuration plus application-owned storage, subscription,
@@ -408,9 +310,9 @@ the same as implementing a client cache.
 ## Measured impact
 
 These results compare a local Respire cache hit with an ordinary StackExchange.Redis server read.
-They demonstrate the value of avoiding a network round trip—not a claim that Respire's uncached
-wire path is hundreds of times faster. Uncached Respire and StackExchange.Redis reads were
-statistically equivalent in the same net10 run.
+They show the value of avoiding a network round trip. They do not mean Respire's uncached path is
+hundreds of times faster: uncached Respire and StackExchange.Redis reads were statistically
+equivalent in the same net10 run.
 
 | net10 operation | StackExchange.Redis server read | Respire client-cache hit | Hit latency |
 | --- | ---: | ---: | ---: |
@@ -432,15 +334,14 @@ key changes → RESP3 invalidation push → local eviction
 next read → Redis response → refreshed local entry
 ```
 
-With `OPTIN`, Redis tracks only misses Respire deliberately sends with `CLIENT CACHING YES`.
-Local mutations evict before execution and fence overlapping reads through native retirement.
-Conservative mutations also evict at retirement. If tracking continuity is lost, Respire
-clears affected cache state instead of trusting entries whose invalidations may have been missed.
+In `OptIn` mode, Redis tracks only the misses Respire sends with `CLIENT CACHING YES`. Local writes
+evict before they are sent. If tracking continuity is lost, Respire clears the affected cache state
+instead of trusting entries whose invalidations may have been missed.
 
 ## Broadcast tracking
 
-`OptIn` remains the default. Choose `Broadcast` when invalidations for a known keyspace are
-preferable to Redis registering each read key:
+`OptIn` is the default. Choose `Broadcast` when you would rather receive invalidations for a known
+keyspace than have Redis register each key you read:
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
@@ -454,29 +355,23 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 });
 ```
 
-Each cache-bearing connection sends `CLIENT TRACKING ON BCAST PREFIX ...` with the configured
-`KeyPrefixes` during setup and repeats it on reconnect; empty `KeyPrefixes` sends plain `BCAST`,
+Each caching connection sends `CLIENT TRACKING ON BCAST PREFIX ...` with the configured
+`KeyPrefixes` during setup and again on reconnect. Empty `KeyPrefixes` sends plain `BCAST`,
 covering every key. Broadcast reads omit `CLIENT CACHING YES`. Coverage rules are the same as in
-[Choose what gets cached](#choose-what-gets-cached). Local writes, in-flight invalidations, and
-reconnect continuity use the same eviction and stale-insertion checks as `OptIn`.
+[Choose what gets cached](#choose-what-gets-cached).
 
-RESP3 remains required. Standalone, discovered Sentinel data connections, and Redis/Valkey
-Cluster data nodes retain the selected configuration; Cluster slot and database restrictions
-still apply. Blocking/dedicated commands, batches, and transactions continue to bypass caching.
-Changing mode or prefixes requires creating a new client. `MaxInflightCommands` must allow the
-atomic prefix frames: one for non-Cluster `Broadcast`, two for non-Cluster `OptIn`
-(`CLIENT CACHING YES` plus the read) or Cluster `Broadcast` (`ASKING` plus the read), and three
-for Cluster `OptIn` (`ASKING`, `CLIENT CACHING YES`, and the read).
+RESP3 is still required. Standalone, Sentinel-discovered, and Redis/Valkey Cluster data
+connections all use the selected mode. Blocking commands, batches, and transactions still bypass
+the cache. To change the mode or prefixes, create a new client. `MaxInflightCommands` must allow
+the commands Respire sends together for one cached read: one for non-Cluster `Broadcast`; two for
+non-Cluster `OptIn` (`CLIENT CACHING YES` plus the read) or Cluster `Broadcast` (`ASKING` plus the
+read); three for Cluster `OptIn`.
 
-Redis documents that BCAST trades per-read tracking entries for invalidations on all matching
-writes, even when this client never read those keys. More prefixes add server work, and broad
-prefixes can increase network and eviction traffic. See [CLIENT TRACKING](https://redis.io/docs/latest/commands/client-tracking/)
-and the [broadcast reference](https://redis.io/docs/latest/develop/reference/client-side-caching/#broadcasting-mode).
-The cache-tracking CI benchmark compares local hits and an external write/invalidation/read
-cycle for OPTIN, BCAST-all, and BCAST with one or 256 prefixes, plus OPTIN against two pinned
-baseline controls. The invalidation cycle includes cooperative polling until the application
-observes eviction; its CPU totals include that work. Process totals also include warmup and
-background work; no universal performance win is implied.
+Broadcast mode avoids per-key tracking state on the server, but this client receives invalidations
+for every matching write, even for keys it never read. More prefixes add server work, and broad
+prefixes can increase network and eviction traffic. See
+[CLIENT TRACKING](https://redis.io/docs/latest/commands/client-tracking/) and the
+[broadcast reference](https://redis.io/docs/latest/develop/reference/client-side-caching/#broadcasting-mode).
 
 ## Observe invalidations
 
@@ -498,58 +393,47 @@ while (!cancellationToken.IsCancellationRequested)
 }
 ```
 
-The owned `RespireClientCacheInvalidation.Key` identifies the physical wire key. Binary keys,
-including empty keys, retain byte identity after registration even if the caller changes the
-original buffer. Prefix views share the same cache: a view with `WithKeyPrefix("tenant:")`
-must subscribe to `tenant:jobs:ready`, not `jobs:ready`.
+The callback receives a `RespireClientCacheInvalidation` whose `Key` is the physical wire key. The
+subscription copies binary keys, so later changes to the caller's buffer do not affect it. Prefix
+views share the same cache: a view with `WithKeyPrefix("tenant:")` must subscribe to
+`tenant:jobs:ready`, not `jobs:ready`.
 
-Registration does not issue a command, warm an entry, or register server tracking. OPTIN
-requires an eligible cached read; read again after each wake-up to rearm tracking. BCAST
-requires a key inside the configured physical prefixes; uncovered subscriptions throw
-`ArgumentException`. The subscription remains registered across reconnects, but cannot
-recover events lost during a disconnect. No server notification is promised for untracked keys.
+Registration does not send a command, warm an entry, or register server tracking. In `OptIn` mode
+you receive notifications only after an eligible cached read, so read again after each wake-up to
+rearm tracking. A key outside the configured `KeyPrefixes` throws `ArgumentException`. The
+subscription survives reconnects but cannot recover events lost during a disconnect.
 
-`Reasons` combines `ServerInvalidation`, `LocalMutation`, `ExplicitClear`, and `ContinuityLost`
-flags. Local mutations can invalidate before dispatch and after completion, including when
-the value did not change. Redis-wide invalidations, `Clear()`, unknown mutations, and continuity
-loss wake every subscription. TTL expiry and capacity eviction do not produce notifications.
-`LocalMutation` also covers conservative whole-cache flushes for unknown commands; it does
-not identify which observed key, if any, changed on the server.
-Cache eviction and stale-read rejection happen before notifications are scheduled.
+`Reasons` is a `RespireClientCacheInvalidationReason` flags value combining `ServerInvalidation`,
+`LocalMutation`, `ExplicitClear`, and `ContinuityLost`. Local writes can notify before they are
+sent and again after they complete, even when the value did not change. Redis-wide invalidations,
+`Clear()`, writes with unknown keys, and continuity loss wake every subscription. TTL expiry and
+capacity eviction do not notify.
 
-Each subscription serializes callbacks on the ThreadPool without flowing the registration's
-`ExecutionContext`. Callbacks never run inline on the socket parser or invalidating thread.
-A slow observer has at most one pending wake-up: its reason flags are combined, preserving
-continuity loss. Intermediate events, event counts, and cross-subscription ordering are not
-preserved. Keep callbacks short, as in the bounded channel example. A throwing callback cannot
-interrupt eviction or other observers; `LastObserverException` retains its latest exception
-and later callbacks continue. Use synchronous callbacks; `async void` exceptions cannot be
-captured by this API.
+Delivery rules:
 
-Dispatch cost scales with the number of subscriptions: a global flush can schedule one worker
-per subscription. Registration and disposal copy the observer dictionary and the affected key's
-subscriber array, then publish an immutable snapshot. Per-key invalidation and global flushes read
-that snapshot without taking the registration gate or allocating a lookup snapshot. Registering
-or removing an observer costs O(observed keys + subscribers for that key); use long-lived
-subscriptions rather than registering on every request. A global flush
-still does work proportional to the subscriber count on its caller, which can hold other cache gates.
-Client disposal detaches the entire registry once and stops subscriptions without copying it
-or reacquiring the registration gate for each subscription.
-There is no additional global subscription limit. Bound the number of live subscriptions in
-your application; the one-pending limit applies separately to each subscription. Only the most
-recent callback exception is retained. Catch and log inside your callback if every failure must
-be recorded. Third-party implementations of `IRespireClientSideCache` remain source-compatible;
-the default observation method throws `NotSupportedException` unless implemented. Implementations
-that support observation can return their own public `IRespireClientCacheInvalidationSubscription`.
+- Callbacks run on the ThreadPool, one at a time per subscription, never inline on the socket
+  reader. The registration's `ExecutionContext` does not flow.
+- A slow observer has at most one pending notification; reason flags are combined. Intermediate
+  events, event counts, and ordering across subscriptions are not preserved.
+- A throwing callback does not stop eviction or other observers. The subscription's
+  `LastObserverException` keeps the most recent exception, and later callbacks still run. Catch and
+  log inside the callback if you need every failure. Use synchronous callbacks; `async void`
+  exceptions cannot be captured.
+- A global flush schedules one callback per subscription, and registering or removing a
+  subscription costs time proportional to the number of observed keys. Use long-lived
+  subscriptions rather than registering per request, and bound how many you keep.
 
-Dispose the returned subscription or cancel its token to discard pending delivery. Client
-disposal also stops every subscription. Disposal does not wait for a callback already selected
-for execution, so that callback may finish afterward and may safely dispose itself or its client.
+Dispose the returned `IRespireClientCacheInvalidationSubscription` or cancel its token to stop
+delivery. Client disposal also stops every subscription. Disposal does not wait for a callback
+that is already running, so a callback may safely dispose its subscription or client.
 
-These signals mean **recheck current state**, not “a write occurred.” They are unsuitable as a
-durable event log, distributed lock, or correctness guarantee for cross-process coordination.
-For correctness-critical coordination, combine authoritative Redis commands with cancellation
-and periodic reconciliation; an undetected partition can delay notifications indefinitely.
+These signals mean **recheck current state**, not "a write occurred." Do not use them as a durable
+event log, distributed lock, or correctness guarantee for cross-process coordination. For
+correctness-critical coordination, combine authoritative Redis commands with cancellation and
+periodic reconciliation; an undetected network partition can delay notifications indefinitely.
+
+Custom `IRespireClientSideCache` implementations that do not override `SubscribeInvalidations`
+throw `NotSupportedException`.
 
 ## Bounds
 
@@ -565,15 +449,15 @@ ClientSideCache = new RespireClientSideCacheOptions
 },
 ```
 
-Both limits are hard: whichever is exceeded first triggers eviction. The size estimate covers reply
+Both limits are hard: whichever is reached first triggers eviction. The size estimate covers reply
 payloads, command arguments, dependency keys, and a fixed per-entry overhead. An oversized response
-is returned without being cached. `GetLeaseAsync` participates without sharing lease ownership.
-`LocalExpiration` is checked lazily on lookup; no timer runs. See [Cached commands](#cached-commands)
-for what bypasses the cache.
+is returned without being cached. `LocalExpiration` is checked lazily on lookup; no timer runs.
+See [Cached commands](#cached-commands) for what bypasses the cache.
 
 ## ASP.NET Core registration
 
-`Respire.DependencyInjection` provides a helper on its mutable options builder:
+`Respire.DependencyInjection` adds `UseClientSideCaching` to its options builder. Pass a
+`RespireClientSideCacheOptions` to override the defaults:
 
 ```csharp
 builder.Services.AddRespire(options =>
@@ -584,10 +468,10 @@ builder.Services.AddRespire(options =>
 ```
 
 `RespireDistributedCache` reads through Lua scripts to preserve Microsoft-compatible sliding
-expiration, so its operations never use this command cache. Enable client-side caching on a
-separately registered `IRespireClient` used for direct deterministic reads. `HybridCache` remains
-the better fit for an application-level object L1; Respire's cache stores protocol replies and
-follows Redis invalidations.
+expiration, so its operations never use this cache. Enable client-side caching on a separately
+registered `IRespireClient` used for direct reads. `HybridCache` remains the better fit for an
+application-level object cache; Respire's cache stores Redis replies and follows Redis
+invalidations.
 
 ## Diagnostics
 
@@ -599,9 +483,10 @@ Console.WriteLine($"{statistics.Hits} hits; {statistics.SizeBytes} bytes");
 cache.Clear();
 ```
 
-`GetStatistics()` returns a cheap point-in-time snapshot of hits, misses, invalidations, evictions,
-continuity flushes, resident entries, and approximate bytes. `Clear()` also rejects older reads
-still in flight, so they cannot refill the cache.
+`GetStatistics()` returns a point-in-time `RespireClientSideCacheStatistics` with hits, misses,
+invalidations, evictions, continuity flushes, resident entries (`Count`), and approximate bytes
+(`SizeBytes`). `Clear()` also rejects older reads still in flight, so they cannot refill the cache.
+`ClientSideCache` is `null` when caching is disabled.
 
 The `Respire` OpenTelemetry meter emits:
 
@@ -611,47 +496,29 @@ The `Respire` OpenTelemetry meter emits:
 | `redis.client.csc.evictions` | Responses removed; `redis.client.csc.reason` is `full`, `ttl`, or `invalidation`. |
 | `respire.client_cache.invalidations` | Key or broadcast invalidations received. |
 | `respire.client_cache.continuity_flushes` | Flushes caused by connection or topology uncertainty. |
+| `respire.client_cache.shared_read.retirements` | Shared misses new callers could no longer join (see [Concurrent misses](#concurrent-misses)). |
 
 The `redis.client.csc.*` counters are recorded only when the `RespireMetricGroups.ClientSideCaching`
-metric group is enabled, and carry `db.system.name=redis` and
+group is enabled with `RespireMetrics.Configure` (it is not in `RespireMetricGroups.Default`); see
+[Observability](../integrations/observability.md). They carry `db.system.name=redis` and
 `redis.client.library=Respire:<version>`. One invalidated key can remove several cached responses
 or none. Local writes, `Clear()`, and continuity flushes do not increment
-`redis.client.csc.evictions`, although `GetStatistics().Evictions` counts flushes.
+`redis.client.csc.evictions`, although `GetStatistics().Evictions` counts entries removed by
+flushes.
 
 ## Consistency boundary
 
-Pending deterministic queries fence publication against every physical dependency key.
-An invalidation of a hash rejects all pending projections of that hash; a multi-key query
-is rejected if any dependency changes. A write to an unrelated key does not prevent a
-valid query reply from entering the cache. Local mutations invalidate before dispatch and
-retain a publication fence until both the caller and every accepted native attempt retire.
-Reads starting during that lifetime remain uncached even if their replies arrive afterward.
-Affected misses also remain independent rather than joining an older shared producer.
-Clears and continuity flushes do not remove active mutation ownership.
+Respire rejects a stale reply when an invalidation races its insertion into the cache. A read
+that depends on several keys, or on several fields of one hash, is rejected if any of them changes
+while it is in flight; a write to an unrelated key does not affect it. Reads that start while a
+local write is in flight are not cached, even if their replies arrive after the write completes.
 
-Successful known-key mutations can then omit the second projection invalidation and shared-read
-retirement. Their local invalidation notifications and counter increments still occur at caller
-completion. Failed, cancelled, unbound, and unknown-effect mutations keep conservative completion
-invalidation. Unknown effects, batches, transactions, streamed uploads, and native lock mutations
-retain their completion fencing; a cancelled caller cannot release accepted native ownership.
-Native reply ownership retires when the final FIFO reply is parsed, before delivery can run
-inline caller continuations. Connection teardown retains the fence until native owners release.
-Blocking `XREADGROUP` flushes at admission and completion without suppressing unrelated cache
-publication or shared misses during an indefinite wait.
+Respire also flushes the cache after writes with unknown keys and on detected connection loss,
+reconnect, Cluster `MOVED`/`ASK` redirects, and topology changes. In `OptIn` mode an `ASK` retry
+sends `ASKING`, `CLIENT CACHING YES`, and the read together, so the migration target tracks the
+key.
 
-Dependency generations exist only while queries are pending. Completion, cancellation,
-failed replies, and redirect rebasing release those registrations. This state scales with
-concurrent dependencies, rather than every key invalidated over the client's lifetime.
-The client can retain up to 64 cleared query leases and 256 cleared dependency states for
-reuse. Leases with more than 16 dependencies are not retained. This bounded idle storage
-holds no key or reply references and is separate from the resident-entry `SizeBytes` estimate.
-Whole-cache clears, continuity loss, and conservative flushes retain their global barrier
-and reject every older query. Queries outside the configured key prefixes remain uncached.
-
-Respire rejects a stale read response when an invalidation races cache insertion. It also flushes
-after conservative local mutations and on detected connection loss, reconnect, redirect, and cluster
-topology retirement. In `OptIn` mode an `ASK` retry sends `ASKING`, `CLIENT CACHING YES`, and the
-read as one uninterrupted sequence, so the migration target tracks the key. Local TTL is an
-additional staleness bound, not a substitute for tracking. Like every server-assisted client cache, it
-cannot observe invalidations across an undetected network partition. Configure TCP keepalive or
-`ConnectionIdleReadTimeout`, and keep a finite local TTL, when bounded failure detection matters.
+`LocalExpiration` is an additional staleness bound, not a substitute for tracking. Like every
+server-assisted client cache, Respire cannot observe invalidations across an undetected network
+partition. When bounded failure detection matters, configure TCP keepalive (`TcpKeepAliveTime`)
+or `ConnectionIdleReadTimeout`, and keep a finite `LocalExpiration`.

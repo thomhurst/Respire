@@ -10,20 +10,20 @@ Connect to a local RESP server and send typed commands in a few lines.
 
 ## Prerequisites
 
-- .NET 10 SDK or later (Respire targets both `net8.0` and `net10.0`)
+- An application targeting .NET 8 or later (Respire ships `net8.0` and `net10.0` builds)
 - Redis, Valkey, KeyDB, or another RESP2-compatible server
 
 ## Install Respire
 
-Respire is available on [NuGet](https://www.nuget.org/packages/Respire). It is still pre-release, so its public APIs may change. Install the package with prerelease versions included:
+Respire is available on [NuGet](https://www.nuget.org/packages/Respire). Its public API may still change before 1.0.
 
 ```bash
-dotnet add package Respire --prerelease
+dotnet add package Respire
 ```
 
-## Start a server
+Optional Redis features and .NET integrations ship as separate packages. See [Packages and namespaces](./packages).
 
-See [Packages and namespaces](./packages) for optional Redis features, .NET integrations, and the naming convention.
+## Start a server
 
 If you do not have a server running locally, Docker is the quickest option:
 
@@ -47,7 +47,7 @@ string? state = await redis.GetStringAsync("session:42");
 Console.WriteLine(state);
 ```
 
-`ConnectAsync` connects immediately and fails fast when the endpoint is unavailable. The client is `IAsyncDisposable`; use `await using` or dispose it during application shutdown.
+`ConnectAsync` connects immediately and fails fast when the endpoint is unavailable. The client is `IAsyncDisposable`; use `await using` or dispose it during application shutdown. Create one client and share it: a single client multiplexes concurrent callers over one connection.
 
 ## Store a typed object
 
@@ -73,7 +73,7 @@ await redis.Sets.AddAsync("online", "ada", "grace");
 bool online = await redis.Sets.ContainsAsync("online", "ada");
 ```
 
-Root shortcuts cover frequent operations. Facets—`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Scripts`, `Functions`, and `Server`—keep IntelliSense focused.
+Root shortcuts cover frequent operations. Facets keep IntelliSense focused: `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Bitmaps`, `HyperLogLog`, `Geo`, `VectorSets`, `Arrays`, `Locks`, `Scripts`, `Functions`, and `Server`.
 
 ## Connection URI
 
@@ -82,6 +82,8 @@ The common form is:
 ```text
 redis://[username:password@]host[:port][/database]
 ```
+
+Use `rediss://` for TLS. The port defaults to `6379`. Query parameters such as `?clientName=api&commandTimeoutMs=2000` set common options; see [URI query options](./fundamentals/connections#uri-query-options).
 
 For connection timeouts, protocol selection, serialization, or logging, use [RespireOptions](./fundamentals/connections).
 

@@ -12,7 +12,7 @@ description: Register lazy Respire clients in ASP.NET Core and worker services.
 Install [Respire.DependencyInjection from NuGet](https://www.nuget.org/packages/Respire.DependencyInjection), including prerelease versions. The package also brings in `Respire` as a dependency:
 
 ```bash
-dotnet add package Respire.DependencyInjection --prerelease
+dotnet add package Respire.DependencyInjection
 ```
 
 Register a connection string:
@@ -66,19 +66,24 @@ builder.Services.AddRespire(options =>
 });
 ```
 
-Default registrations and each service key may be added only once. A duplicate registration
-throws immediately instead of silently retaining the first configuration.
+To build options from other services, pass a `Func<IServiceProvider, RespireOptions>` instead.
+Both forms exist for `AddKeyedRespire` too. If the options do not set a `LoggerFactory`, the
+client uses the container's `ILoggerFactory`.
 
-For these lazy DI registrations, multiple `Endpoints` require `UseCluster = true`.
-A standalone client with several endpoints throws `RespireConfigurationException` when the
-container first resolves it. Register separate named clients for independent deployments;
-endpoint order does not imply automatic failover.
+Register the default client, and each service key, only once. A duplicate registration
+throws `InvalidOperationException` immediately instead of silently keeping the first
+configuration.
+
+Several `Endpoints` require `UseCluster = true` or `SentinelPrimaryName`. A standalone
+client with several endpoints throws `RespireConfigurationException` when the container
+first resolves it. Endpoint order does not imply automatic failover; register separate named
+clients for independent deployments.
 
 `AddRespire` and `AddKeyedRespire` support Sentinel through their lazy clients. Set
-`SentinelPrimaryName` and configure Sentinel endpoints; discovery occurs on the first network
+`SentinelPrimaryName` and configure Sentinel endpoints; discovery happens on the first network
 operation. Use `await RespireClient.ConnectAsync(options)` when startup must validate the
-primary eagerly. Prefixed views and DI consumers retain the same client across reactive
-Sentinel primary changes.
+primary eagerly. Prefixed views and DI consumers keep the same client when Sentinel reports a
+new primary.
 
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).
 For readiness endpoints, see [health checks](./health-checks).

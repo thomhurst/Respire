@@ -42,12 +42,12 @@ User? user = await redis.GetAsync<User>("user:1");
 | [A shared rate limit](https://thomhurst.github.io/Respire/docs/guides/coordination#redis-backed-rate-limits) | `redis.Coordination.RateLimiters.SlidingWindow(...)` |
 | [A cross-process semaphore](https://thomhurst.github.io/Respire/docs/guides/coordination#distributed-semaphores) | `redis.Coordination.CreateSemaphore(key, capacity)` |
 | [A work queue](https://thomhurst.github.io/Respire/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
-| [Pub/sub](https://thomhurst.github.io/Respire/docs/guides/pub-sub) | `await foreach` over `redis.SubscribeAsync(channel)` |
-| [Unix domain sockets](docs/UNIX_SOCKETS.md) | `RespireClient.ConnectAsync("unix:///run/redis/redis.sock")` |
+| [Pub/sub](https://thomhurst.github.io/Respire/docs/guides/pub-sub) | `await foreach` over `await redis.SubscribeAsync(channel)` |
+| [Unix domain sockets](https://thomhurst.github.io/Respire/docs/guides/unix-sockets) | `RespireClient.ConnectAsync("unix:///run/redis/redis.sock")` |
 | [Stream consumer groups](https://thomhurst.github.io/Respire/docs/commands/collections#consumer-groups) | `await foreach` over `redis.Streams.ReadGroupAsync(...)` |
 | [Hot reads without a round trip](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching) | `ClientSideCache = new()` |
 | [`IDistributedCache` and `HybridCache`](https://thomhurst.github.io/Respire/docs/integrations/caching) | `services.AddRespireHybridCache(connectionString)` |
-| [.NET Aspire](docs/ASPIRE.md) | `builder.AddRespireClient("cache")` |
+| [.NET Aspire](https://thomhurst.github.io/Respire/docs/integrations/aspire) | `builder.AddRespireClient("cache")` |
 | [Tests without Docker](https://thomhurst.github.io/Respire/docs/guides/in-memory-testing) | `new RespireFakeServer()` |
 
 ### Distributed locks
@@ -152,16 +152,17 @@ For Redis Cluster, add `?cluster=true` to the connection string. Respire handles
 and redirects. See [transactions](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
 and [connections](https://thomhurst.github.io/Respire/docs/fundamentals/connections).
 
-For explicit-node slot and topology operations, see [Cluster administration](docs/CLUSTER_ADMINISTRATION.md).
+For explicit-node slot and topology operations, see [Cluster administration](https://thomhurst.github.io/Respire/docs/guides/cluster-administration).
 
 ### ASP.NET Core
 
 ```csharp
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
-builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp:");
+builder.Services.AddRespireHybridCache(cache => cache.InstanceName = "myapp:");
 ```
 
-The client connects lazily, so startup never waits for Redis. The cache uses the same layout as
+The client connects lazily, so startup never waits for Redis. Without its own connection string,
+the cache reuses the registered client. Its Redis entries use the same layout as
 `Microsoft.Extensions.Caching.StackExchangeRedis`, so existing entries keep working.
 
 ## Packages
@@ -175,8 +176,8 @@ The client connects lazily, so startup never waits for Redis. The cache uses the
 | `Respire.Caching`, `Respire.Caching.Hybrid` | `IDistributedCache` and `HybridCache` |
 | `Respire.FusionCache` | FusionCache backplane on a shared Respire client |
 | `Respire.SignalR` | SignalR scale-out, Microsoft backplane interoperability, and opt-in sharded pub/sub |
-| [`Respire.DataProtection`](docs/DATA_PROTECTION.md) | ASP.NET Core DataProtection keys in a Redis list |
-| `Respire.OutputCaching` | [ASP.NET Core output caching](docs/OUTPUT_CACHING.md), including buffer APIs and tag eviction |
+| [`Respire.DataProtection`](https://thomhurst.github.io/Respire/docs/integrations/data-protection) | ASP.NET Core DataProtection keys in a Redis list |
+| `Respire.OutputCaching` | [ASP.NET Core output caching](https://thomhurst.github.io/Respire/docs/integrations/output-caching), including buffer APIs and tag eviction |
 | `Respire.Json`, `.Search`, `.TimeSeries`, `.Probabilistic` | Typed module APIs such as `redis.Json` |
 | `Respire.Testing`, `Respire.Testing.Containers` | An in-memory server, or Redis in a container |
 
@@ -191,4 +192,4 @@ See [all packages](https://thomhurst.github.io/Respire/docs/packages).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/thomhurst/Respire/blob/main/LICENSE)

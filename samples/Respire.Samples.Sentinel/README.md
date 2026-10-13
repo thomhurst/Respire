@@ -23,8 +23,14 @@ docker compose -p respire-sentinel-sample -f samples/Respire.Samples.Sentinel/co
 dotnet run --project samples/Respire.Samples.Sentinel -c Release -f net10.0
 ```
 
-Use `-f net8.0` for .NET 8. Expected output includes `PASS 1: primary 127.0.0.1:7100`
-and one successful round trip. A later run after promotion may report port 7101.
+Use `-f net8.0` for .NET 8. Expected output:
+
+```text
+PASS 1: primary 127.0.0.1:7100
+Sentinel sample completed: 1 successful round trips.
+```
+
+A later run after promotion may report port 7101.
 The key `respire:sentinel-sample:value` expires after two minutes. The default
 single-iteration run fails on any command error or mismatched value.
 

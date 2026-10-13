@@ -11,6 +11,8 @@ public `Aspire.Respire` integration and its HybridCache/output-cache companions.
 references use the repository versions of those packages; no integration logic is copied
 into the sample.
 
+For the integration's configuration reference, see [Aspire integration](aspire.md).
+
 `WithReference` injects both named connection strings, including generated credentials.
 `WaitFor` starts the service after both servers are healthy. No server ports, passwords,
 or dashboard ports belong in application configuration.
@@ -96,8 +98,9 @@ After making requests, select `api` in the dashboard:
   enables OpenTelemetry logging with formatted messages.
 - **Traces** show spans from the `Respire` activity source, including PING and cache
   commands. The client integration registers that source automatically.
-- **Metrics** expose the `Respire` meter. The sample enables the command metric group,
-  including command duration, before creating clients. Select an instrument and generate
+- **Metrics** expose the `Respire` meter. Before creating clients, the sample calls
+  `RespireMetrics.Configure` to add `RespireMetricGroups.Command` (command duration) to the
+  default groups. Select an instrument and generate
   more requests to inspect new measurements.
 
 The service exports telemetry to the AppHost-provided OTLP endpoint. Export runs in
@@ -137,10 +140,10 @@ aspire stop --non-interactive
 
 This stops this AppHost, its service, dashboard, and its session-owned Redis/Valkey
 containers. The sample does not request persistent volumes or persistent container
-lifetimes; cache data is disposable. Do not stop unrelated AppHosts, shared lock Redis,
-or other containers. If startup fails, inspect `aspire logs api --non-interactive` and
+lifetimes; cache data is disposable. It does not stop other AppHosts or unrelated
+containers. If startup fails, inspect `aspire logs api --non-interactive` and
 `aspire describe --non-interactive`, then stop this sample before rebuilding.
 
-The [ASP.NET Core sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AspNetCore)
-and [Cluster/Sentinel samples](https://github.com/thomhurst/Respire/tree/main/samples)
-are separate sample families tracked by [#898](https://github.com/thomhurst/Respire/issues/898).
+For other hosting models, see the
+[ASP.NET Core sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AspNetCore)
+and the [Cluster and Sentinel samples](https://github.com/thomhurst/Respire/tree/main/samples).

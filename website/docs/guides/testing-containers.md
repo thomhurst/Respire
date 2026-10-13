@@ -9,8 +9,8 @@ Install `Respire.Testing.Containers` in a test project. It uses Testcontainers a
 a working Docker engine with Linux containers. The fixture has no dependency on a test
 framework; use it with TUnit, xUnit, NUnit, or your own executable.
 
-The package brings Testcontainers 4.15.0 as a transitive dependency and does not claim
-Native AOT compatibility. Keep it in test projects that run on the normal .NET runtime.
+The package brings Testcontainers as a transitive dependency and is not Native AOT
+compatible. Keep it in test projects that run on the normal .NET runtime.
 
 ```csharp
 using Respire.Testing.Containers;
@@ -63,6 +63,11 @@ connections. In Sentinel mode, the first data endpoint identifies the **initial*
 it is not updated after failover. Native Sentinel discovery selects the current primary at
 connection time. This fixture does not add automatic Sentinel failover to the client.
 
+Sentinel fixtures also expose `StopDataNodeAsync(index)`, `StartDataNodeAsync(index)`, and
+`WaitForDataNodeReplicaAsync(index)` to stop a data node, restart it, and wait until it
+reports itself as a replica. Index `0` is the initial primary and `1` the initial replica.
+On Standalone and Cluster fixtures they throw `InvalidOperationException`.
+
 The Sentinel fixture uses a 5-second down detection interval and a 10-second failover timeout
 so a failed election can retry within bounded test deadlines instead of waiting six minutes.
 Failover tests can shorten both with `SentinelDownAfter` and `SentinelFailoverTimeout`. Sentinels
@@ -85,42 +90,30 @@ await using var fixture = await RespireContainerFixture.StartAsync(new()
 All fixtures require a **local Docker engine** and publish every data and Sentinel port only
 on `127.0.0.1`. Remote engines are unsupported, including for standalone fixtures. Standalone
 fixtures use Docker-assigned random host ports. Cluster and Sentinel discovery advertises
-loopback addresses, and each client port is the same inside and outside the container.
-Cluster bus ports remain inside the container and are not published. Ports are chosen from the operating
-system's ephemeral range rather than fixed service ports. A small race exists between releasing
-the temporary port reservations and Docker binding them. Docker-assigned standalone ports
-can also lose a bind race. All topologies retry recognized Docker host-port collisions at
-most twice (three container attempts total). Each failed owned container is fully removed
-before a fresh container starts. Cluster and Sentinel exclude previously selected ports;
-standalone asks Docker for another random host port while retaining container port 6379.
-Other fixtures and existing services are never stopped.
+loopback addresses, and each client port is the same inside and outside the container. This
+preserves the endpoint identity needed by
+[Sentinel discovery behind NAT](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-docker-nat-and-possible-issues).
+Cluster bus ports remain inside the container and are not published. Ports are chosen from the
+operating system's ephemeral range rather than fixed service ports. Other fixtures and existing
+services are never stopped.
 
-Retry requires a Docker API HTTP 500 response with a known port-allocation or TCP
-address-in-use bind message naming one of the selected `127.0.0.1` ports, or the recognized
-Linux TCP socket bind format that omits the address. Standalone recognizes the specific
-Linux networking error with an empty loopback host port and an IPv4 container destination
-on port 6379 (`127.0.0.1::<container-address>:6379/tcp: address already in use`). It also recognizes
-the complete Linux networking error ending in
-`failed to listen on TCP socket: address already in use`, which omits both addresses and ports.
-The recognized selected-port formats also include the complete Linux networking error ending in
-`failed to bind host port 127.0.0.1:<selected-port>/tcp: address already in use`, without `for`
-or a container destination. The selected host port must match exactly.
-Recognized formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
-Windows and macOS. Unknown formats, permission/reserved-port errors, image/authentication
-errors, and readiness failures are returned without retry. The same message from container
-creation or post-start initialization does not trigger a retry.
-This conservative recognition cannot guarantee recovery for every Docker version or network
-backend. The [Moby bind implementation](https://github.com/moby/moby/blob/v28.5.2/libnetwork/drivers/bridge/port_mapping_linux.go),
+A small race exists between choosing a free port and Docker binding it. All topologies retry a
+recognized Docker host-port collision at most twice (three container attempts in total). Each
+failed container is fully removed before a fresh one starts. Cluster and Sentinel exclude
+previously selected ports; standalone asks Docker for another random host port.
+
+Only bind failures reported by the Docker API with a known "port already allocated" or
+"address already in use" message for a selected loopback port are retried. The recognized
+formats cover Moby on Linux and Docker Desktop on Windows and macOS
+([Moby bind implementation](https://github.com/moby/moby/blob/v28.5.2/libnetwork/drivers/bridge/port_mapping_linux.go),
 [Moby port allocator](https://github.com/moby/moby/blob/v28.5.2/libnetwork/portallocator/portallocator.go),
-and [Docker Desktop bind report](https://github.com/docker/for-win/issues/13686)
-document the error forms used by the regression tests.
+[Docker Desktop bind report](https://github.com/docker/for-win/issues/13686)). Unknown formats,
+permission or reserved-port errors, image and authentication errors, and readiness failures
+are returned without retry. Recovery is not guaranteed for every Docker version or network backend.
 
-Local-host validation uses the host reported by Testcontainers after startup, so an
-unsupported remote engine can pull and start the container before rejection and owned
-cleanup. This can take as long as image pull/startup within `StartupTimeout`; checking
-`DOCKER_HOST` alone would not cover all Testcontainers endpoint configuration sources.
-
-This preserves the endpoint identity needed by [Sentinel discovery behind NAT](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-docker-nat-and-possible-issues).
+The fixture checks for a local engine using the host Testcontainers reports after startup.
+An unsupported remote engine can therefore pull and start the container, within
+`StartupTimeout`, before the fixture rejects it and removes the container.
 
 All topology processes share one container. Use separate deployments for machine-level failure,
 network-partition, durability, or realistic high-availability testing. The Cluster fixture has

@@ -34,8 +34,8 @@ replies confirm that the attempted operation did not execute. Missing scripts us
 Unsupported capabilities are remembered per physical connection. Each new connection discovers
 capabilities independently, including reconnects, failover destinations, and Cluster redirects.
 A mixed-version Cluster can therefore use native commands on some nodes and Lua on others.
-No `INFO` or `COMMAND` permission is needed for discovery. Managed renewal retains its existing
-`CLIENT ID` / `CLIENT KILL` permissions and cancellation fence on the connection that executed it.
+No `INFO` or `COMMAND` permission is needed for discovery. Managed renewal still needs
+`CLIENT ID` / `CLIENT KILL` permissions for its cancellation fence on the connection that executed it.
 
 ACLs must permit the commands selected for the server: `SET` for acquisition and native renewal,
 `DELEX` for native release on Redis 8.4+, or `DELIFEQ` for native release on Valkey 9.0+.
@@ -47,8 +47,8 @@ not select a different implementation. There is no native-command opt-out settin
 An ownership mismatch returns `false` without fallback. Timeouts, cancellation, connection loss,
 ACL denial, and other server errors do not trigger a Lua retry. A write with an uncertain outcome
 is never replayed for capability discovery. Token equality uses the original bytes; renewing a
-missing, expired, or replaced lock cannot recreate it or change another owner's TTL. As before,
-use a fresh token for each acquisition, and treat expiry estimates as local estimates.
+missing, expired, or replaced lock cannot recreate it or change another owner's TTL. Use a
+fresh token for each acquisition, and treat expiry estimates as local estimates.
 
 ## Acquire a lock
 
@@ -101,7 +101,8 @@ await RunReportAsync(attempt.Lock.KeepAliveCancellationToken);
 
 ## Wait for contention
 
-Both acquisition styles have an overload that polls until a wait budget expires:
+Both acquisition styles have overloads that poll until a wait budget expires. `retryEvery`
+is optional and defaults to 50 ms:
 
 ```csharp
 await using var mutex = await redis.Locks.AcquireOrThrowAsync(
@@ -119,11 +120,11 @@ lock without returning its handle or generated owner token; the lock then remain
 
 ## Treat the lock as a lease
 
-The lock disappears when `Duration` elapses, even if protected work is still running. Keep work
-shorter than the lease or extend it before expiry:
-
+The lock disappears when `Duration` elapses, even if protected work is still running.
 `RemainingEstimate` and `ExpiresAtEstimate` are approximate timing values, not ownership checks.
 Use `VerifyStillHeldAsync` when current ownership must be checked against Redis.
+
+Keep work shorter than the lease or extend it before expiry:
 
 ```csharp
 if (!await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(30), cancellationToken))
@@ -208,9 +209,10 @@ RespireLockToken? owner = await redis.Locks.GetOwnerTokenAsync("locks:report", c
 bool sameOwner = owner == token;
 ```
 
-Migration: replace explicitly typed `RespireValue` lock-token variables and custom interface
-parameters with `RespireLockToken`. Owner queries now return `RespireLockToken?` instead of
-`byte[]?`; access `owner.Value.Bytes` after checking for `null`. Managed handles expose bytes as
-`mutex.Token.Bytes` instead of `mutex.Token`. String command arguments still convert implicitly;
-wrap byte-array or memory arguments in `new RespireLockToken(...)`. Reuse a constructed token
-across operations to avoid repeated encoding or copying.
+### Upgrading from `RespireValue` tokens
+
+Earlier previews typed lock tokens as `RespireValue` and returned owners as `byte[]?`. Replace
+explicitly typed token variables and custom interface parameters with `RespireLockToken`. Read
+owner bytes with `owner.Value.Bytes` after checking for `null`, and handle bytes with
+`mutex.Token.Bytes`. String arguments still convert implicitly; wrap byte-array or memory
+arguments in `new RespireLockToken(...)`.

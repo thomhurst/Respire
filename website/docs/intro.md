@@ -18,9 +18,7 @@ string? greeting = await redis.GetStringAsync("greeting");
 
 :::warning Pre-release
 
-Respire's public API may change. Cluster routing, Sentinel primary discovery, event-driven primary
-handoff, and bounded RESP3 client-side caching for eligible Redis reads are available. See the
-[roadmap](./roadmap).
+Respire's public API may change before 1.0. See the [roadmap](./roadmap) for feature status.
 
 :::
 
@@ -37,7 +35,7 @@ Respire combines a performance-focused wire layer with an API designed for curre
 - **Discoverable commands.** Data types live behind facets such as `redis.Hashes` and `redis.Streams`.
 - **Automatic pipelining.** Concurrent callers coalesce into fewer socket writes without a batching switch.
 - **First-class blocking commands.** `BLPOP` and blocking stream reads use dedicated pooled connections.
-- **Production integrations.** Dependency injection, Microsoft caching abstractions, typed serialization, and OpenTelemetry are built in.
+- **Production integrations.** OpenTelemetry and typed serialization are built in. Dependency injection, Microsoft caching abstractions, and other integrations ship as [separate packages](./packages).
 
 ## Design bets
 

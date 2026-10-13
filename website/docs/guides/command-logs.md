@@ -2,8 +2,8 @@
 
 Valkey 8.1+ exposes three independent node-local command logs. Respire's Server facet
 provides `CommandLogAsync`, `CommandLogLengthAsync`, and `ResetCommandLogAsync`, plus
-explicit `OnAllNodesAsync` counterparts. Existing Redis `SlowLogAsync` behavior is unchanged.
-Redis servers without COMMANDLOG return their command errors; there is no fallback.
+explicit `OnAllNodesAsync` counterparts. On Redis, use `SlowLogAsync` instead; Redis servers
+without COMMANDLOG return their command errors, and there is no fallback.
 
 | `RespireCommandLogType` | Measurement | Threshold configuration | Retention configuration |
 | --- | --- | --- | --- |
@@ -33,7 +33,7 @@ Replies remain usable after the client is disposed.
 
 Count defaults to 10; `-1` requests all retained entries and `0` returns none. Values
 below `-1` and undefined log types fail before I/O. Results preserve server order.
-Pinned Valkey 8.1.3 returns newest first, verified against its
+Valkey 8.1.3 returns newest first, verified against its
 [implementation](https://github.com/valkey-io/valkey/blob/8.1.3/src/commandlog.c).
 IDs are scoped to a node and log type; resetting a log does not reset its ID sequence.
 
@@ -66,7 +66,7 @@ see [COMMANDLOG RESET](https://valkey.io/commands/commandlog-reset/).
 
 Pre-cancelled calls send nothing. Discovery cancellation throws; cancellation after
 discovery is reported per affected node. Cancellation after RESET dispatch cannot undo
-the operation. No write retry is added by this API.
+the operation. Respire does not retry a RESET.
 
-These six methods extend `IServerCommands`. External implementations, decorators, and
+These six methods are `IServerCommands` members. External implementations, decorators, and
 mocks must implement or forward them. No batch/transaction methods are added.

@@ -45,8 +45,7 @@ Successful results remain readable even when another command fails.
 
 Use `TryExecuteAsync` when the application needs to inspect all failures instead of catching the
 first one. It returns the same summary without rethrowing execution failures; invalid lifecycle
-use (disposed or already-sent batches) still throws. Pre-release code that inspects failed
-`ExecuteAsync` summaries must switch to `TryExecuteAsync`:
+use (disposed or already-sent batches) still throws:
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -71,7 +70,7 @@ Batch completion reuses pooled response awaitables instead of allocating a task 
 
 ## The same facets as the client
 
-Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, `Functions`, and the non-blocking `Streams` subset. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
+Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Arrays`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `VectorSets`, `Scripts`, `Functions`, the non-blocking `Streams` subset, and a small `Server` subset. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -89,10 +88,6 @@ return `ValueTask<bool>`, matching the `RespirePending<bool>` result of their ba
 counterparts. Each returns `true` only after an `OK` confirmation; an unexpected reply or Redis
 error faults the operation rather than returning `false`.
 
-Migration: calls that simply await and ignore the result need no changes. Update custom facet
-implementations, wrappers, delegates, and variables that explicitly use the previous non-generic
-`ValueTask` return type to `ValueTask<bool>`.
-
 Typed overloads follow the immediate facets too: hash `Set<T>` and `TryGet<T>`, set
 `Contains<T>`, sorted-set `Add<T>`, and list `LeftPop<T>` / `RightPop<T>`. Typed values are
 serialized when queued, but byte-backed arguments borrow their storage, including typed
@@ -103,16 +98,15 @@ execution. Hash `TryGet<T>` preserves the
 the default value when the list is empty. Typed set membership and sorted-set additions preserve
 Redis's `1`/`0` representation for boolean members, matching the immediate methods.
 
-The new hash writes, set membership checks, and sorted-set additions preserve existing raw
-`RespireValue` conversions when the type argument is omitted (C# 13 or later, as with the
-library's `params` span APIs). This includes GUIDs, timestamps,
-durations, and byte buffers. Specify the type argument explicitly, such as
-`batch.Hashes.Set<Guid>(key, field, id)`, to use typed serialization instead. When moving an
-inferred immediate call such as `client.Hashes.SetAsync(key, field, id)` into a deferred queue,
-use `Set<Guid>` to retain that immediate call's typed encoding. The pre-existing inferred
-batch call `Set(key, field, id)` retains raw GUID text for compatibility. Older C# compilers
-ignore overload priority and may select a different encoding; use C# 13 or later, or specify
-the type argument or `RespireValue` conversion explicitly.
+When the type argument is omitted, deferred hash writes, set membership checks, and
+sorted-set additions use the raw `RespireValue` conversion (C# 13 or later, as with the
+library's `params` span APIs). This includes GUIDs, timestamps, durations, and byte buffers.
+Specify the type argument, such as `batch.Hashes.Set<Guid>(key, field, id)`, to use typed
+serialization instead. This differs from the immediate facet: when moving
+`client.Hashes.SetAsync(key, field, id)` into a queue, write `Set<Guid>` to keep the same
+typed encoding, because the inferred `batch.Hashes.Set(key, field, id)` sends raw GUID text.
+Older C# compilers ignore overload priority and may select a different encoding; use C# 13 or
+later, or specify the type argument or `RespireValue` conversion explicitly.
 
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
@@ -137,7 +131,7 @@ await transaction.CommitAsync();
 Execution remains specific to the concrete type: batches call `ExecuteAsync`; transactions call
 `CommitAsync`.
 
-Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Locks` and server administration other than flushes and filtered CLIENT LIST/KILL remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
+Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Locks` and server administration other than flushes and filtered CLIENT LIST/KILL remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, claims, and group administration remain immediate operations.
 
 ## Deferred server flushes
 
@@ -164,13 +158,27 @@ scope, snapshots, and Redis/Valkey version requirements.
 
 ## Deferred Streams
 
-Both queues also expose nonblocking `Streams.Read` for one or multiple same-slot streams,
-with owned results and optional per-stream count. Blocking waits and continuous enumeration
+Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or multiple
+same-slot streams, with owned results. Both accept `StreamReadOptions` for count and reply
+limits; a `WaitFor` value is rejected when queued. Blocking waits and continuous enumeration
 remain immediate-client operations. See [stream reads](../commands/collections.md#reading-without-consumer-groups).
 
-Both queues expose `Streams.Add`, `Count`, `Range`, `Remove`, `Trim`, `TrimByMaxLength`, and
-`Acknowledge`, corresponding to XADD, XLEN, XRANGE/XREVRANGE, XDEL, XTRIM, and
-XACK. Parameters mirror the immediate methods without cancellation tokens. `Add`
+The queued stream methods and their commands are:
+
+| Method | Command |
+| --- | --- |
+| `Add` | XADD |
+| `Count` | XLEN |
+| `Range` | XRANGE / XREVRANGE |
+| `Remove` | XDEL, or XDELEX with a `StreamReferencePolicy` |
+| `Trim`, `TrimByMaxLength` | XTRIM |
+| `Acknowledge` | XACK |
+| `AcknowledgeAndRemove` | XACKDEL |
+| `NegativeAcknowledge` | XNACK |
+| `Configure` | XCFGSET |
+| `Read`, `ReadGroup` | XREAD, XREADGROUP (nonblocking) |
+
+Parameters mirror the immediate methods without cancellation tokens. `Add`
 accepts `StreamAddOptions`; that overload returns a nullable id when NOMKSTREAM skips
 an absent stream. `Range` supports inclusive bounds, count, and descending order.
 `Trim` accepts `StreamTrimOptions` for MAXLEN/MINID and approximate LIMIT; see
@@ -194,9 +202,8 @@ results own their field bytes and remain readable after queue disposal.
 
 Stream keys receive the client prefix exactly once. Cluster batches route each
 command by its stream key; Cluster transactions require every queued key to share
-one hash slot, including commands on other facets. Group setup and reading remain
-immediate operations; `Acknowledge` only acknowledges existing pending entries.
-`IRespireCommandQueue` implementers must add the new `Streams` property.
+one hash slot, including commands on other facets. Group setup remains an immediate
+operation; `Acknowledge` only acknowledges existing pending entries.
 
 ## Deferred script result ownership
 
@@ -247,8 +254,8 @@ The client never resends only the failed members.
   [automatic watched transaction retries](#automatic-watched-transaction-retries). Hash import sessions
   and units that continue a server-local cursor never retry.
 
-The [command retries guide](./command-retries#batches) describes the full rules, the telemetry,
-and the current acceptance status, including the open items.
+The [command retries guide](./command-retries.md#batches) describes the full rules and the
+telemetry.
 
 ## Optimistic concurrency
 
@@ -311,23 +318,24 @@ long updated = await redis.RunTransactionWithReadsAsync(
     cancellationToken);
 ```
 
-Read again inside every callback using the primary and bypassing local caches. Do not commit
-or dispose the supplied transaction. A callback may run multiple times, so keep external
-side effects outside it. The generic overload returns only the successful attempt's result;
-queued pending values cannot be inspected until after commit. The non-generic overload
+Each attempt passes the callback a read view (`reads` above) that routes to the primary,
+bypasses the local cache, and keeps the client's key prefix, database, and serializer. Read
+every input through it inside the callback. The view shares the caller's connections; the
+helper does not dispose the client. Custom clients must support `WithReadFrom` and
+`WithoutClientCache`; unsupported views fail without retrying.
+
+Do not commit or dispose the supplied transaction. A callback may run multiple times, so keep
+external side effects outside it. The generic overload returns only the successful attempt's
+result; queued pending values cannot be inspected until after commit. The non-generic overload
 accepts a callback without a result. WATCH key arrays and binary key storage are copied before
 the first await, so later caller changes cannot change the keys being watched on a retry.
 Callbacks that queue no commands still validate WATCH through an empty MULTI/EXEC before
-returning a decision. Each attempt supplies a primary-routed view that bypasses the local cache
-and preserves the client's key prefix, database, and serializer. Views share the caller's
-connections; the helper does not dispose the client. Custom clients must support `WithReadFrom`
-and `WithoutClientCache`; unsupported views fail without retrying.
+returning a decision.
 
-The original `RunTransactionAsync` overloads remain available for callbacks that manage their
-own reads. The separate method name preserves existing calls, including untyped `null` callback
-validation. Neither helper can enforce routing or caching settings on clients captured by the
-callback, or prevent writes through a read view. Read every optimistic input through the supplied
-view, include those keys in WATCH, and queue writes on the transaction.
+Use `RunTransactionAsync` instead when the callback manages its own reads; its callback receives
+only the transaction and token. Neither helper can enforce routing or caching settings on
+clients captured by the callback, or prevent writes through a read view. Read every optimistic
+input through the supplied view, include those keys in WATCH, and queue writes on the transaction.
 
 Backoff receives the one-based failed attempt number and returns a nonnegative delay of at
 most 2,147,483,647 milliseconds. The failed transaction is disposed before the delay; caller

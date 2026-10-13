@@ -2,59 +2,21 @@
 title: Failover groups
 ---
 
-:::note Endpoint circuit breaker foundation
-
-[Endpoint command circuit breaking](circuit-breakers.md) is available for standalone,
-Sentinel and Cluster data endpoints through `RespireOptions.CircuitBreaker`. Remaining
-resilience work stays tracked by [#863](https://github.com/thomhurst/Respire/issues/863).
-Failover-group configuration below controls health-checked switching across deployments
-independently of application command admission.
-
-The endpoint foundation retains the most recent `MaximumSampleCount` completed
-outcomes whose age is less than `SamplingWindow`: 1024 outcomes and 30 seconds by
-default. Both the failure-rate threshold and minimum failure count must be reached
-before opening. Recovery waits for the monotonic `OpenDuration` and admits at most
-`HalfOpenProbeCount` concurrent probes. All required probes must succeed; any
-failed probe reopens the circuit. Canceled or ignored probes release capacity
-without counting as successes or failures.
-
-Every admitted operation must complete its internal permit, including cancellation,
-exceptions, and operations that never dispatch. Permits have no lease or automatic
-expiry: abandoning a half-open permit retains its slot indefinitely and can prevent
-recovery. The dispatch integration in [#1255](https://github.com/thomhurst/Respire/issues/1255)
-must guard every admission with `finally` or a `using`-style completion guard, and
-complete canceled or undispatched operations with the ignored outcome. Operation
-timeouts and cancellation belong to that integration; `OpenDuration` only controls
-the delay before recovery starts, not the lifetime of an admitted probe.
-
-The rejection contract identifies the endpoint and remaining `RetryAfter` delay.
-`RetryAfter` is null when recovery probes fill the slots and their completion
-determines the next admission. This delay is informational; a retry must reacquire
-endpoint admission. Remaining topology, telemetry, and safe retry composition work
-stays tracked by the native children of #863.
-
-:::
-
 `RespireFailoverGroup` monitors independent standalone Redis, Sentinel, or Redis Cluster deployments and selects a healthy
 deployment for new operations. Lower candidate priorities win. The group uses bounded health
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
-Failover health probes use the shared endpoint circuit core for the open delay and
-a single recovery admission per candidate. `RespireFailoverGroupOptions` still
-controls consecutive failures, probe timeout, open duration, and failback grace;
-`RespireCircuitBreakerOptions` does not configure failover probes. Consecutive
-failure thresholds have no rolling-history count limit. Application commands are
-not gated or replayed by this probe circuit.
+Each candidate has its own probe circuit. After `FailureThreshold` consecutive failed probes
+(timeouts included), the circuit opens for `CircuitOpenDuration`. The group then sends one
+recovery probe; if it fails or times out, the circuit reopens for another `CircuitOpenDuration`.
+The open delay uses monotonic time. `RespireFailoverEndpointStatus.CircuitOpenUntil` is a UTC
+snapshot of that deadline and saturates at `DateTimeOffset.MaxValue` for very long durations.
 
-Each admitted probe completes its permit with a `finally` fallback. Failed probes
-complete before metrics or logging callbacks, so observer delays do not extend the
-circuit's open period. Parent cancellation is
-ignored for health and releases recovery capacity, including cancellation before
-dispatch. A failed or timed-out recovery probe reopens the circuit for the
-configured duration. Ordinary probe timeouts count toward `FailureThreshold`.
-Open delays use monotonic time; the public UTC deadline is a
-status snapshot and saturates at `DateTimeOffset.MaxValue` for very long durations.
+This probe circuit is separate from the [endpoint command circuit breaker](circuit-breakers.md).
+`RespireCircuitBreakerOptions` does not configure failover probes, and the probe circuit does not
+gate or replay application commands. Slow metrics listeners or loggers do not extend the open
+period.
 
 Standalone health probes use `PING`. Cluster probes use `CLUSTER INFO`. Sentinel probes check
 the discovered primary with `ROLE` and then send `PING`. The group does not
@@ -103,6 +65,15 @@ new RespireFailoverGroupOptions
 // Read ActiveClient for every new operation so each call uses the current selection.
 await group.ActiveClient.Strings.SetAsync("service:health", "ready");
 ```
+
+The values in this example are the defaults. `ActiveClient` throws `RespireConnectionException`
+when no candidate is healthy; check `IsConnected` first to avoid the exception.
+`GetEndpointStatuses()` returns each candidate's health, consecutive failures, circuit deadline
+and last error type.
+
+To retry an operation on whichever member is active when the retry starts, set
+`RespireFailoverGroupOptions.RetryPolicy` and call `group.ExecuteAsync`. See
+[failover-group retries](command-retries.md#failover-groups).
 
 Subscribe to `EndpointSwitched` for application-level resubscription or diagnostics. The
 `Reason` value is one of the `RespireFailoverSwitchReasons` constants. The initial selection
@@ -232,8 +203,9 @@ The group records these instruments on the `Respire` meter:
 | `respire.failover.probe.duration` | Same as above | Probe duration in seconds. |
 | `respire.failover.endpoint.switches` | `respire.failover.switch.reason`, `respire.failover.endpoint.previous`, `respire.failover.endpoint.current` | Selected endpoint changes. The reason is a `RespireFailoverSwitchReasons` value; a missing endpoint is reported as `none`. |
 | `respire.failover.monitor.errors` | `respire.failover.error.source`, `error.type` | Unexpected monitor failures (`monitor`) and exceptions thrown by `EndpointSwitched` handlers (`handler`). The monitor continues after either. |
+| `redis.client.geofailover.failovers` | `db.client.geofailover.reason` (`automatic`), `db.client.geofailover.fail_from`, `db.client.geofailover.fail_to` | Switches between two different known endpoints. Recorded only when `RespireMetricGroups.Resiliency` is selected (it is in the default groups). |
 
-When Resiliency metrics are enabled, failed health probes also report
+When `RespireMetricGroups.Resiliency` is selected, failed health probes also report
 `redis.client.errors` with `redis.client.errors.internal = true`. This includes rejected
 PINGs, failed or malformed CLUSTER INFO replies, an unhealthy cluster state and deployment
 conflicts. Probe failures update endpoint health; they are not final application command

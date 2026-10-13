@@ -24,6 +24,8 @@ runs first as the baseline, then Respire, each on a fresh connection.
 
 ## Running locally
 
+Run these commands from `tools/Respire.StressTests`:
+
 ```bash
 # Full run: all scenarios, both clients, 5 minutes measured per pass
 dotnet run -c Release -f net10.0 -- --duration 5
@@ -35,9 +37,10 @@ dotnet run -c Release -f net10.0 -- --duration-seconds 5 --warmup 2
 dotnet run -c Release -f net10.0 -- --scenario get --client respire --duration 2
 ```
 
-Uses `REDIS_HOST` / `REDIS_PORT` when set; otherwise starts a throwaway Redis
-Testcontainer (requires Docker). Run `dotnet run -- --help` for all options — any
-unknown option prints usage.
+Uses `REDIS_HOST` / `REDIS_PORT` when set (port defaults to 6379); otherwise starts a
+throwaway `redis:8.10` Testcontainer (requires Docker). Each pass has a 10-second warmup
+by default, so the full run takes about 14 × 5 min 10 s. Run `dotnet run -- --help` for
+all options; any unknown option prints usage.
 
 Results land in `./results`: one JSON file per scenario/client pass plus
 `stress-report.md`, a markdown comparison report.
@@ -81,7 +84,9 @@ noisy for that to be a reliable signal.
 
 ## CI
 
-`.github/workflows/stress-tests.yml` runs weekly (all scenarios, both clients) and on
-manual dispatch with scenario/client/duration/concurrency/value-size/framework inputs,
-against a Redis 8.0 service container on `ubuntu-latest`. The report is published to
-the job summary and the full results are uploaded as an artifact.
+`.github/workflows/stress-tests.yml` runs weekly (all scenarios, both clients, 3 minutes
+per pass) and on manual dispatch with scenario/client/duration/concurrency/value-size/framework
+inputs, against a Redis 8.10 service container on `ubuntu-latest`. The report is published to
+the job summary and the full results are uploaded as an artifact. Scheduled runs, and manual
+runs on `main` with `full_run`, also regenerate
+[`website/docs/stress-tests.md`](../../website/docs/stress-tests.md).

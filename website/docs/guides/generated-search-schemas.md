@@ -29,13 +29,13 @@ public partial record Product(string Id,
 
 Create the index explicitly with
 `await client.Search.CreateIndexAsync(ProductSearchSchema.IndexName, ProductSearchSchema.Definition)`.
-Then write documents with `ProductJsonMapper.SetAsync(new RespireJsonClient(client), product)`.
-The schema does not create indexes during model writes. Use `ProductSearchSchema.Fields.Name.Alias`
+Then write documents with `await ProductJsonMapper.SetAsync(client.Json, product)`.
+Model writes never create the index for you. Use `ProductSearchSchema.Fields.Name.Alias`
 in typed queries; its storage identifier is `$["display.name"]`, including escaping for JSON names
 with quotes and backslashes. Hash identifiers use the mapped CLR property names.
 
-Only attributed properties enter the schema. A non-empty index name and at least one explicit key
-prefix are required. Prefixes are independent of the model key template; make sure the prefixes
+Only attributed properties enter the schema. A non-empty index name, at least one indexed property
+and at least one explicit key prefix are required. Prefixes are independent of the model key template; make sure the prefixes
 include the keys you write. `Definition with { Prefixes = ... }` supports deployment-specific prefixes.
 Generated field and prefix collections are read-only.
 
@@ -103,5 +103,4 @@ switch an alias with the [Search alias API](search.md). Coordinate document repr
 with the application and rebuild; never silently reuse an incompatible index. Dropping an index
 with `deleteDocuments: true` also deletes its documents.
 
-Search schemas and vector codecs are available on .NET 8 and .NET 10. Final Native AOT sample
-execution and performance acceptance remain tracked by [#895](https://github.com/thomhurst/Respire/issues/895).
+Search schemas and vector codecs are available on .NET 8 and .NET 10.

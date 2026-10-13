@@ -62,14 +62,14 @@ var options = new RespireOptions
 
 Custom serializers must implement all four `IRespireSerializer` methods: generic
 `Serialize<T>` / `Deserialize<T>` and runtime-type `Serialize(..., Type, object?)` /
-`Deserialize(Type, ...)`. Runtime-type methods use the supplied declared type. They have no
-default throwing implementation, so a missing method is reported at compile time.
+`Deserialize(Type, ...)`. The interface has no default implementations, so a missing method is a
+compile-time error. See [NativeAOT and trimming](#nativeaot-and-trimming) for a forwarding example.
 
 Typed `string`, `byte[]`, `char`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Boolean writes use Redis-native `1`/`0`; reads also accept `true`/`false` for interoperability with existing data. Nullable forms use the same fast path when they contain a value.
 
 Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
 
-Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, textual characters, and non-finite floating-point arguments because those previously bound to `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
+Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. On the generic overloads, `ReadOnlyMemory<byte>` payloads, `char` values, and non-finite floating-point values keep the encoding they have as `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
 
 ## NativeAOT and trimming
 
@@ -104,10 +104,11 @@ internal partial class AppJsonContext : JsonSerializerContext
 ```
 
 Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Boolean values,
-and numeric values use Respire's built-in codecs and do not need generated JSON metadata. Custom
-serializers must implement all four `IRespireSerializer` members, including both `Type`-based
-methods. Forward the supplied declared type instead of substituting `object` or `value.GetType()`.
-For example, a serializer decorator preserves each overload:
+and numeric values use Respire's built-in codecs and do not need generated JSON metadata.
+
+A custom serializer or decorator must forward the supplied declared type in the `Type`-based
+methods instead of substituting `object` or `value.GetType()`. For example, a forwarding decorator
+implements each overload:
 
 <!-- doc-test-declaration -->
 ```csharp
@@ -177,10 +178,14 @@ later command replies on that connection wait until the streamed value is consum
 Always dispose the stream, including when you stop early; Respire drains the remaining bulk frame
 before reading the next reply. A stream that is neither read nor disposed stalls every later reply
 on its connection. Time spent waiting for you to read does not count toward the connection's
-idle-read timeout, and graceful connection retirement waits for the streamed frame to finish. Use another client connection for long-running reads that must not delay ordinary
-commands. Streaming reads bypass the client-side value cache. The cancellation token passed to
-`GetStreamAsync` applies while waiting for the reply header; pass a token to stream read/copy calls
-to cancel payload consumption.
+idle-read timeout, and graceful connection retirement waits for the streamed frame to finish. Use
+another client connection for long-running reads that must not delay ordinary commands. Streaming
+reads bypass the [client-side cache](client-side-caching.md).
+
+The cancellation token passed to `GetStreamAsync` stays active for the life of the stream.
+Canceling it after the stream is returned makes pending reads fail and abandons the rest of the
+payload; Respire still drains the frame to keep replies in order. You can also pass a token to
+individual read or copy calls.
 
 ## Expiry without sentinels
 

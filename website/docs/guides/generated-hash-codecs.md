@@ -1,5 +1,6 @@
 ---
 title: Generated hash codecs
+description: Generate reflection-free Redis hash codecs, key templates, field TTLs, and change tracking with [RespireHash].
 ---
 
 `[RespireHash]` generates a companion codec for a partial class or record class. The generator ships with the `Respire` package and emits direct property access, constructor calls and scalar parsing. It does not use reflection or dynamic serialization.
@@ -98,7 +99,7 @@ Templates substitute non-nullable mapped properties by their exact name. Repeate
 
 Models must be top-level, non-generic, public or internal partial classes or record classes, with no base class other than `object`. Every public instance property needs public `get` and `set`/`init` accessors. Property names must be distinct ignoring case. Public instance fields, indexers, unsupported property types, abstract classes, record structs and nested models produce diagnostic `RESP004`.
 
-There is no property opt-out attribute in this initial codec. A computed get-only property, collection or nested object therefore prevents generation; use a separate scalar model when those properties are needed elsewhere. Indexed `byte[]` vector properties in [generated Search schemas](generated-search-schemas.md) are the supported collection exception.
+There is no property opt-out attribute. A computed get-only property, collection or nested object therefore prevents generation; use a separate scalar model when those properties are needed elsewhere. Indexed `byte[]` vector properties in [generated Search schemas](generated-search-schemas.md) are the supported collection exception.
 
 Constructors may be `public`, `internal` or `protected internal`, because the mapper lives in the same assembly. An accessible parameterless constructor is preferred. Otherwise, constructor parameters must match public properties by name (ignoring case) and exact type, including nullability; the matching constructor with the fewest parameters is selected. Positional records satisfy this rule. The codec passes decoded values to that constructor and assigns remaining properties in an object initializer. Constructor-bound properties are also assigned when C# required-member rules demand it; a constructor marked `[SetsRequiredMembers]` avoids that additional assignment. Custom constructors and accessors execute normally; their behavior remains the model author's responsibility. Private members and static properties are not mapped. A pre-existing `ModelNameHashMapper` type is rejected.
 
@@ -124,7 +125,7 @@ public partial record ExpiringUser(string Id, string Name,
 
 The default `HSetEx` mode groups present expiring fields by duration and sends `HSETEX key PX milliseconds FIELDS count field value ...`, then ordinary `HSET` and nullable `HDEL` groups. Each expiry group is atomic, but the complete write is not. [HSETEX requires Redis 8.0+](https://redis.io/docs/latest/commands/hsetex/). Before any write, the mapper checks `COMMAND INFO HSETEX` on every discovered node, including replicas. Missing support causes `NotSupportedException` without writing or retaining the attempted changes for tracker retry. Allow COMMAND INFO for this mode; metadata and other ACL/server errors propagate unchanged. There is no automatic downgrade, capability cache or silent write without expiry. Topology changes after the check can still cause a server failure.
 
-`SetWithExpiryAsync(client, expiryMode, model)` selects an explicit expiry mode at the generated key. Its explicit-key overload is `SetWithExpiryAsync(client, key, expiryMode, model)`. The original `SetAsync` signatures remain unchanged, including default-key calls and delegate assignments.
+`SetWithExpiryAsync(client, expiryMode, model)` selects an explicit expiry mode at the generated key. Its explicit-key overload is `SetWithExpiryAsync(client, key, expiryMode, model)`. `SetAsync` always uses the default `HSetEx` mode.
 
 `HSetThenExpire` explicitly opts in to `HSET` followed by [HPEXPIRE (Redis 7.4+)](https://redis.io/docs/latest/commands/hpexpire/) for each expiry group. Before writing, the mapper checks `COMMAND INFO HPEXPIRE` on every discovered node, including replicas. Missing support causes `NotSupportedException` without writing. Metadata failures, including ACL denials, propagate; allow COMMAND INFO for this mode. The check runs on every operation that writes expiring fields, avoiding cached capabilities after failover. Topology changes after the check can still cause a server failure. This mode is **not atomic**: cancellation, expiry failure or concurrent deletion can leave a value written without its requested TTL. A field written by `HSET` remains persistent if the following `HPEXPIRE` fails to apply its TTL. A non-success integer status throws `InvalidOperationException` naming the field and status; `-2` means the field disappeared before expiry was applied. Malformed status replies throw `RespireProtocolException`. Coordinate writers externally and retry the whole operation after failure.
 
@@ -168,7 +169,7 @@ A command timeout abandons the response wait while an accepted command may still
 
 One tracker rejects overlapping `UpdateAsync` calls with `InvalidOperationException`, including while encoding or awaiting Redis. After success or a failure other than an uncertain command timeout, the tracker accepts another update. Keep properties stable while encoding; custom accessors still run normally. Separate trackers, clients and external writers are not synchronized. The snapshot is a caller-owned assumption about persisted values, not a server-side concurrency token. External mutations or field expiration do not update it; recreate a tracker from a fresh full model when resynchronization is needed.
 
-Scalar codecs, key templates, generated Redis hash I/O, field TTL and change tracking are delivered for [the completed object mapper work](https://github.com/thomhurst/Respire/issues/895). [JSON mapping](generated-json-mappers.md) and [Search schemas](generated-search-schemas.md), including binary hash vector properties with field expiry and change tracking, are also available.
+For JSON documents, see [generated JSON mappers](generated-json-mappers.md). [Generated Search schemas](generated-search-schemas.md) build on hash models, including binary vector properties with field expiry and change tracking.
 
 ## Native AOT conformance sample
 

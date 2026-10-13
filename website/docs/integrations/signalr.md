@@ -56,9 +56,9 @@ literal; the adapter does not add a separator. If the client has a `PubSubPrefix
 bytes precede the adapter prefix and must be included in Microsoft's physical prefix.
 Key prefixes and Redis database numbers do not isolate pub/sub channels.
 
-The integration suite exercises mixed providers in both directions against Microsoft's
-.NET 8 and .NET 10 packages, including remote client results. Compatibility with a future
-Microsoft backplane envelope change requires verification before upgrading a mixed deployment.
+Mixed deployments are tested in both directions against Microsoft's .NET 8 and .NET 10
+packages, including remote client results. If a future Microsoft release changes the
+backplane envelope, verify compatibility before upgrading a mixed deployment.
 
 Follow Microsoft's [Redis backplane deployment guidance](https://learn.microsoft.com/en-us/aspnet/core/signalr/redis-backplane?view=aspnetcore-10.0),
 including its Redis placement recommendations. Configure session affinity where required
@@ -135,5 +135,4 @@ Manager disposal settles pending local waits and stops subscription consumers.
 The channel conventions and lifecycle helpers are adapted from the MIT-licensed
 [ASP.NET Core Redis backplane at v8.0.31](https://github.com/dotnet/aspnetcore/tree/v8.0.31/src/SignalR/server/StackExchangeRedis).
 The package includes Microsoft's copyright and license notice in
-`licenses/LICENSE-Microsoft.txt`. Functional controls cover routing, membership, results,
-mixed providers, Cluster, cancellation, disposal, reconnects, and buffer overflow.
+`licenses/LICENSE-Microsoft.txt`.

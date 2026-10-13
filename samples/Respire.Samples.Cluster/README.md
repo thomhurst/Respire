@@ -21,8 +21,16 @@ docker compose -p respire-cluster-sample -f samples/Respire.Samples.Cluster/comp
 dotnet run --project samples/Respire.Samples.Cluster -c Release -f net10.0
 ```
 
-Use `-f net8.0` for .NET 8. Expected output: three discovered shards and three
-`PASS` rows with different slots, followed by `Cluster sample completed`.
+Use `-f net8.0` for .NET 8. Expected output:
+
+```text
+Discovered 3 shards from one seed.
+PASS: respire:cluster-sample:{a}, slot 15495
+PASS: respire:cluster-sample:{b}, slot 3300
+PASS: respire:cluster-sample:{c}, slot 7365
+Cluster sample completed; all three values round-tripped.
+```
+
 The sample throws on a mismatched reply and bounds its entire run to 20 seconds.
 Keys start with `respire:cluster-sample:` and expire after two minutes.
 

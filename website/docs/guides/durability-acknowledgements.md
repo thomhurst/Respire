@@ -43,7 +43,7 @@ The server can reject the acknowledgement after the batch's writes have succeede
 
 ## Connection and execution contract
 
-Each execution creates one fresh exclusive connection tracked by the dedicated pool, pipelines all
+Each execution opens one fresh exclusive connection, pipelines all
 queued commands on it, and waits for every command reply. Only when every command has
 succeeded does it send WAIT or WAITAOF on that same connection. Other client operations
 continue on multiplexed connections while the acknowledgement blocks. Every execution closes
@@ -53,10 +53,10 @@ from blocking another borrower. Connection setup is therefore part of every dura
 
 This is a single-shot, non-atomic pipeline. It supports the same typed command facets
 and key prefixes as a normal batch. It acknowledges the writes queued in this batch,
-not earlier calls made through the client. Queue helper code can still use
-`IRespireCommandQueue`; execution remains on the concrete `RespireBatch`. No new client
-or queue interface members are required. Empty batches are rejected before sending and remain
-unsent: add commands to the same batch and execute it again.
+not earlier calls made through the client. Helper code that queues commands can still
+take `IRespireCommandQueue`; the two execution methods are on the concrete `RespireBatch`.
+Empty batches are rejected before sending and remain unsent: add commands to the same
+batch and execute it again.
 
 If any queued command fails, all command pendings finish and the earliest failure in
 queue order is rethrown. The acknowledgement is not sent. Other commands may already
@@ -87,8 +87,8 @@ accidentally becomes an infinite server wait.
 Connection acquisition and each queued command retain their existing timeouts.
 `RespireOptions.CommandTimeout` and `ConnectionIdleReadTimeout` do not end WAIT or
 WAITAOF early. The execution cancellation token applies to acquisition, the writes,
-and the acknowledgement. Cancellation closes an outstanding lease; it does not undo
-writes or prove they did not execute. Disposing the owning client aborts leased waits.
+and the acknowledgement. Cancellation closes the execution's connection; it does not undo
+writes or prove they did not execute. Disposing the owning client aborts outstanding waits.
 
 ## Cluster and transaction restrictions
 

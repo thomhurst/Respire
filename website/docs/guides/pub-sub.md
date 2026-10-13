@@ -76,8 +76,8 @@ await using var multiple = await redis.SubscribeAsync(targets, stoppingToken);
 The metadata-aware `SubscribeAsync` uses `Kind` to select SUBSCRIBE, PSUBSCRIBE, or SSUBSCRIBE.
 Multi-target subscriptions require one kind; use separate subscriptions for mixed kinds. Named
 `SubscribePatternAsync` and `SubscribeShardedAsync` also accept binary targets and explicitly select
-their command family. Patterns cannot be published. Existing string subscription and publication
-overloads remain available, including sharded subscriptions across Redis Cluster primaries.
+their command family. Patterns cannot be published. The string overloads shown earlier remain
+available alongside these, including sharded subscriptions across Redis Cluster primaries.
 
 Equality and hashing compare only bytes, independently of kind. Equivalent text and UTF-8 byte
 targets deduplicate within a subscription. `ClusterSlot` uses raw bytes and Redis hash-tag rules.
@@ -85,9 +85,8 @@ Empty channels, including `default(RespireChannel)`, are valid. Unpaired UTF-16 
 `ArgumentException` before subscription work begins; arbitrary binary values are accepted.
 Names such as `__keyspace@0__:key` remain ordinary channels, with no inferred notification routing.
 
-**Pre-release API change:** `RespireMessage.Channel`, nullable `Pattern`, and subscription `Targets`
-now contain `RespireChannel` values. Use `.Bytes` for lossless identity and `.ToString()` for UTF-8
-display. Display replaces invalid UTF-8 and can make distinct channels look identical. For exact
+`RespireMessage.Channel`, nullable `Pattern`, and subscription `Targets` contain `RespireChannel`
+values. Use `.Bytes` for lossless identity and `.ToString()` for UTF-8 display. Display replaces invalid UTF-8 and can make distinct channels look identical. For exact
 diagnostics use `Convert.ToHexString(channel.Bytes.Span)`; channel bytes are not telemetry tags.
 
 ## Explicit pub/sub prefixes
@@ -199,15 +198,18 @@ explicit and can allocate; do not mutate the exposed read-only storage through u
 `RespireOptions.ReconnectPolicy` can bound and delay automatic reconnection and
 resubscription. Its budget resets only after all live routes are acknowledged. Exhaustion
 ends live subscriptions; recreate the client to subscribe again. New subscriptions during
-configured recovery fail rather than bypassing its delay. Null preserves the existing
-immediate attempt followed by 250 ms exponential waits capped at five seconds. See
+configured recovery fail rather than bypassing its delay. With no policy (the default, `null`),
+recovery makes an immediate attempt followed by exponential waits that start at 250 ms and are
+capped at five seconds. See
 [connection recovery](reconnect-policy.md#pubsub-reconnection-and-resubscription) for
 attempt semantics, cancellation, lifecycle events, and telemetry.
 
-Subscriptions resubscribe after reconnection. The subscription buffer is bounded; configure
-`SubscriptionOverflow` in `RespireOptions` to drop either the oldest buffered message or the
-newest incoming message when a consumer falls behind. Override those defaults for one
-subscription with `RespireSubscriptionOptions`:
+Subscriptions resubscribe after reconnection. The subscription buffer is bounded:
+`RespireOptions.SubscriptionBufferSize` defaults to 1,024 messages, and
+`RespireOptions.SubscriptionOverflow` chooses whether to drop the oldest buffered message
+(`DropOldest`, the default) or the newest incoming message (`DropNewest`) when a consumer falls
+behind. Override those defaults for one subscription with `RespireSubscriptionOptions`; a `null`
+argument inherits the client setting:
 
 ```csharp
 var options = new RespireSubscriptionOptions(
@@ -235,7 +237,7 @@ Pub/sub is transient: Redis does not retain messages for disconnected subscriber
 
 ## Detecting delivery gaps
 
-**Pre-release behavior change:** subscription streams now include `RespireMessageKind.Gap` items.
+Subscription streams include `RespireMessageKind.Gap` items as well as published messages.
 Check `Kind` before reading or deserializing a published payload. A gap has empty channel/payload
 fields, and `As<T>()` throws because there is no published value.
 

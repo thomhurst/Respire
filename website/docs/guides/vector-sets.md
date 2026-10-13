@@ -1,16 +1,16 @@
 # Vector sets
 
-`redis.VectorSets` exposes Redis vector-set commands through typed methods. The wire
-contracts and integration tests are pinned to Redis 8.6.0, including RESP2 and RESP3.
-Servers without the requested command return their original `RespireServerException`;
-Respire does not substitute a search module or another data type.
+`VectorSets` on `IRespireClient` exposes Redis vector-set commands (`VADD`, `VSIM`, and
+related commands) through typed methods. The wire format follows Redis 8.6.0 over RESP2 and
+RESP3. Servers without the requested command return their original `RespireServerException`;
+Respire does not substitute a search module or another data type. The examples below use
+`redis` for a connected `RespireClient`.
 
 Replacing an existing member returns `false` from `AddAsync`: this means no new member
 was inserted, not that replacement failed. However, on evaluated Redis **8.6.0** and
 **8.10.2**, acknowledged `VADD` replacements lose their new vector and attributes after
 an AOF crash/reload. Lua-wrapped `VADD` has the same limitation. See the
-[VectorData backend decision](vector-data.md#vector-set-backend-decision) and
-[evaluation evidence](https://github.com/thomhurst/Respire/issues/1261) before relying
+[VectorData backend decision](vector-data.md#vector-set-backend-decision) before relying
 on durable replacement. Respire forwards native commands without adding a replacement protocol.
 
 ```csharp
@@ -124,14 +124,15 @@ Console.WriteLine(count.Result);
 
 Every immediate method has a batch/transaction mirror without `Async` or a per-command
 cancellation token. Execute/commit controls cancellation. Pre-cancelled immediate calls
-send no command; cancellation after dispatch cannot undo a write. Existing Cluster
-routing and redirection behavior applies. Read-only vector commands preserve cached
-keyspace values; mutations use the existing invalidation fences. Ordinary metadata
-and member-based reads participate in the existing opt-in query cache. Vector-input
+send no command; cancellation after dispatch cannot undo a write. Normal Cluster
+routing and redirection apply. Read-only vector commands preserve cached keyspace
+values; mutations invalidate the written key in the client-side cache. Metadata and
+member-based reads participate in the opt-in query cache. Vector-input
 searches do not construct cache identities and therefore execute against the server.
 
-**Interface compatibility:** `IRespireClient` and `IRespireCommandQueue` gain a required
-`VectorSets` property. External implementations and decorators must implement/forward it.
+**Interface implementers:** `IRespireClient` and `IRespireCommandQueue` declare a
+`VectorSets` property with no default implementation. Custom implementations and
+decorators must implement or forward it.
 The generated raw catalog remains available, including specialized options not exposed
 by this facet, such as `VEMB RAW`.
 
@@ -139,13 +140,11 @@ Protocol reference: [Redis 8.6 vector-set implementation](https://github.com/red
 
 ## Encoding measurements
 
-[CI run 36700806149](https://github.com/thomhurst/Respire/actions/runs/36700806149)
-measured candidate `a98b4750a968ccd5371f0a4d9583a17642b17dfb` between two runs of
-baseline `09926d2c50e73986d09f8438fec24a1e854fc87b` on one GitHub-hosted runner.
-These point-in-time measurements from September 30, 2026 use the earlier harness revision named above, before
-report-gate and documentation fixes. Timed methods and production encoding are unchanged
-in those follow-ups. The same benchmark source was copied into the baseline checkout. This compares encoding
-alternatives; differences between revisions are runner variation, not a shipped speedup.
+These point-in-time BenchmarkDotNet measurements, taken on September 30, 2026 on one
+GitHub-hosted runner, compare encoding alternatives within one build. They are not a
+comparison between releases. The same benchmark source ran three times in an A/B/A
+sequence (baseline, candidate, baseline revisions); production encoding was identical,
+so differences between phases are runner variation. The table shows the candidate phase.
 
 Environment: BenchmarkDotNet 0.15.8, Ubuntu 24.04.5, Intel Xeon 6973P-C 2.60 GHz
 (2 physical / 4 logical cores exposed), .NET SDK 10.0.401, .NET 10.0.12 X64 RyuJIT,
@@ -184,9 +183,5 @@ Immediate calls still require caller-owned memory to remain unchanged until comp
 batch and transaction calls still allocate owned snapshots at enqueue time. The output
 copy remains unavoidable here. No zero-copy networking claim follows from 0 B/op.
 
-The run's `vector-encoding-comparison` artifact retains full BDN JSON, Markdown, and
-logs for every phase, including encoded-size evidence and exact revisions. Reproduce
-with `benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs` through the focused
-`.github/workflows/benchmark-vector.yml` workflow. Evidence is tracked in
-[#534](https://github.com/thomhurst/Respire/issues/534) under
-[#414](https://github.com/thomhurst/Respire/issues/414).
+Reproduce the measurements with `benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs`
+through the `.github/workflows/benchmark-vector.yml` workflow.

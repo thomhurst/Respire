@@ -126,7 +126,7 @@ rows between 1.019 and 1.127. No pair of rows showed a consistent improvement.
 
 A future proposal needs a method whose removable zeroing is large compared with its work. An
 example is a large `stackalloc` buffer or a big non-GC struct local that is always overwritten
-before it is read. The 39 audited sites are not such cases. A proposal adds its scope to
+before it is read. None of the `stackalloc` sites audited for #1065 were such cases. A proposal adds its scope to
 `ReviewedSkipLocalsInitScopes` and extends `benchmark-local-initialization.yml` with
 benchmarks that cover every method in the scope. It must show a benefit larger than the
 process-to-process spread above, measured across several processes.

@@ -11,12 +11,17 @@ dotnet add package Respire.Search
 With C# 14 or later, import the namespace shown below and use `client.Search` on
 `RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
 performs no network I/O, and leaves ownership of the underlying client with you.
-Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
-The existing `new RespireSearchClient(client)` constructor remains available.
+On earlier C# versions, create the wrapper with `new RespireSearchClient(client)`.
+
+Index and alias names are not keys, so a key-prefixed view from `WithKeyPrefix` rejects Search
+commands. Include the prefix in the index definition's `Prefixes` instead. On a cluster, each command
+goes to the node that owns the index (or alias, or dictionary) name's hash slot. Respire does not fan
+out queries or merge shard results; cross-shard search relies on the server's Search coordinator.
 
 The package, assembly, and root namespace are all `Respire.Search`. Search is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RediSearch module. Installing the client package does not add server capabilities.
 
 ```csharp
+using Respire;
 using Respire.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
@@ -84,7 +89,7 @@ See [FT.CREATE](https://redis.io/docs/latest/commands/ft.create/).
 ## Query options and returned text
 
 `RespireSearchQueryOptions` accepts binary-safe `InKeys`, text `InFields`, `Slop`,
-`InOrder`, `Language`, `Scorer`, `Verbatim`, and `NoStopWords`, alongside the existing
+`InOrder`, `Language`, `Scorer`, `Verbatim`, and `NoStopWords`, alongside the
 projection, sorting, paging, timeout, dialect, and parameter options. Empty key and
 field lists leave the search unrestricted. A scorer name can identify a built-in
 or server-registered scorer; the server validates supported languages and scorers.
@@ -129,8 +134,6 @@ Collected entries are nested values in `StructuredRows[row][alias].Items`.
 RESP2 entries are field/value arrays; RESP3 entries are maps whose `Items`
 alternate keys and values. `StructuredRows` retains their owned values after
 later commands. See [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/).
-Native `FT.HYBRID` remains supported with typed text/vector queries, projections,
-parameters, and reciprocal-rank fusion; integration tests cover both protocols.
 
 ## Spelling dictionaries and corrections
 
@@ -164,7 +167,7 @@ await search.DeleteDictionaryTermsAsync("book-vocabulary", terms);
 ```
 
 These commands require Search 1.4 or later; `DIALECT` requires Search 2.4.3 or later.
-Redis 8.10 integration tests cover RESP2 and RESP3. `Distance` accepts 1–4, and
+They work over RESP2 and RESP3. `Distance` accepts 1–4, and
 `Dialect` accepts 1–4; omitted values use server defaults. Include and exclude lists
 emit repeated `TERMS INCLUDE` / `TERMS EXCLUDE` clauses. Options copy these lists
 during initialization and expose read-only snapshots. Later changes to the input
@@ -191,6 +194,7 @@ with `AddSuggestionAsync` (`FT.SUGADD`), `DeleteSuggestionAsync` (`FT.SUGDEL`),
 `GetSuggestionCountAsync` (`FT.SUGLEN`), and `GetSuggestionsAsync` (`FT.SUGGET`):
 
 ```csharp
+using Respire;
 using Respire.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
@@ -236,6 +240,7 @@ after the update. Background reindexing may still be running when the command
 returns.
 
 ```csharp
+using Respire;
 using Respire.Search;
 
 await using var client = await RespireClient.ConnectAsync("localhost:6379");
@@ -331,6 +336,7 @@ For large results, `AggregatePagesAsync` runs the aggregation with `WITHCURSOR` 
 `GetConfigurationAsync(option)` returns an owned, read-only dictionary of option names and nullable string values. Its default option is `*`; individual names and wildcard support are server-defined. `SetConfigurationAsync(option, value)` changes one option and requires `RespireOptions.AllowAdmin = true`, like the standard server configuration API. Both methods preserve server errors, including invalid values, immutable options, and ACL denials.
 
 ```csharp
+using Respire;
 using Respire.Search;
 
 await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -357,7 +363,7 @@ query result in `Result`, together with an owned profile tree in `Profile`. They
 same query options and encoders as the corresponding unprofiled methods. Profiling
 aggregation does not create a cursor. Search and Aggregate profiling require Search
 2.2 or later; Hybrid profiling requires [Redis 8.8 or later](https://redis.io/docs/latest/develop/whats-new/8-8/#ftprofile-hybrid) with Search. All three forms
-are tested against Redis 8.10 over RESP2 and RESP3. Server errors pass through unchanged,
+work over RESP2 and RESP3. Server errors pass through unchanged,
 including errors from older servers that do not support the selected profile form.
 The typed profile reader targets the Redis 8.10 field/value layouts; incompatible
 older profile layouts raise `InvalidOperationException` rather than dropping fields.
@@ -365,11 +371,14 @@ Profiles allow at most 64 nested collection levels, counting the profile root an
 unknown fields. Deeper replies raise `InvalidOperationException` before the tree is copied.
 
 ```csharp
-await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
-var expression = Respire.Search.RespireSearchExpression.FromRaw("hello");
-var query = new Respire.Search.RespireSearchQuery(expression,
+using Respire;
+using Respire.Search;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var expression = RespireSearchExpression.FromRaw("hello");
+var query = new RespireSearchQuery(expression,
     new() { ReturnFields = ["title"], WithScores = true });
-var search = new Respire.Search.RespireSearchClient(client);
+var search = client.Search;
 var profiled = await search.ProfileSearchAsync("documents", query, limited: true);
 Console.WriteLine($"Matches: {profiled.Result.Total}");
 foreach (var shard in profiled.Profile.Children)

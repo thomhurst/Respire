@@ -12,15 +12,14 @@ This page compares the two and maps common StackExchange.Redis code to Respire.
 
 For call sites that still pass `RedisKey`/`RedisValue` or consume `RedisResult`,
 use the [incremental migration boundary](./guides/stackexchange-interop).
-The boundary also includes a limited database adapter for the official distributed cache
-and DataProtection integrations, with [pinned Hangfire acceptance](./guides/hangfire-acceptance).
-General interface parity and combined Microsoft/Hangfire acceptance remain
-pending under [#889](https://github.com/thomhurst/Respire/issues/889). Microsoft's
-SignalR backplane is not supported on the adapter; use [`Respire.SignalR`](./integrations/signalr).
+The boundary also includes a limited `IConnectionMultiplexer` adapter for the official
+distributed cache and DataProtection integrations, and for
+[Hangfire](./guides/hangfire-acceptance). It does not provide general StackExchange.Redis
+interface parity. Microsoft's SignalR backplane is not supported on the adapter; use
+[`Respire.SignalR`](./integrations/signalr).
 
 The feature table below describes StackExchange.Redis 3.4.5. The published comparison
-benchmarks were measured against 3.3.1; a rerun against 3.4 and the 4.0 previews is tracked in
-[#1575](https://github.com/thomhurst/Respire/issues/1575).
+benchmarks were measured against 3.3.1.
 Recheck these claims against the version used by your application.
 The upstream [configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Configuration.md),
 [failover/retry](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Failover.md)
@@ -68,7 +67,7 @@ Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
 | Smart client handoffs | Maintenance notifications and endpoint handoff; on by default for Redis Enterprise and Azure Managed Redis since 3.4, opt-in elsewhere | Opt-in [maintenance notifications and handoff](./fundamentals/connections#maintenance-notifications), including [failover group candidates](./guides/failover-groups#maintenance-notifications) |
 | Command retry policy | Async `WithRetry(...)` wrapper with `RetryPolicy` and `CommandRetry*` categories | [`RetryPolicy`](./guides/command-retries) option with `RespireCommandRetryCategory` limits, plus whole-unit batch and transaction retries |
 | Diagnostics | `RegisterProfiler` profiling sessions | OpenTelemetry `ActivitySource` and `Meter` |
-| Analyzers | Transaction and sync-over-async diagnostics (`SER305`–`SER308`) | Pooled-result and batch-read diagnostics (`RESP001`, `RESP002`) |
+| Analyzers | Transaction and sync-over-async diagnostics (`SER305`–`SER308`) | Pooled-result and batch-read diagnostics (`RESP001`, `RESP002`), plus source-generator input checks (`RESP003`–`RESP006`) |
 | `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching); entries are interchangeable while `ValueCodec` is unset |
 | Module commands | Raw `Execute` | Typed `Json`, `Search`, `TimeSeries`, and `Probabilistic` packages |
 | Test double | None built in | [`Respire.Testing`](./guides/in-memory-testing) in-memory server |
@@ -133,7 +132,7 @@ also work.
 | `multiplexer.GetDatabase()` | The client itself (`IRespireClient`) |
 | `multiplexer.GetDatabase(2)` | A separate client with `Database = 2` |
 | `multiplexer.GetSubscriber()` | `redis.SubscribeAsync` and `redis.PublishAsync` on the client |
-| `multiplexer.GetServer(endpoint)` | No per-endpoint selection. `redis.Server` uses normal routing; `*OnAllNodesAsync` methods run on every node |
+| `multiplexer.GetServer(endpoint)` | `redis.Server.OnNode(endpoint)` for [one explicit node](./guides/server-node-lifecycle). `redis.Server` otherwise uses normal routing; `*OnAllNodesAsync` methods run on every node |
 | `ConnectionFailed`, `ConnectionRestored` | `ConnectionStateChanged` |
 | `multiplexer.IsConnected` | `redis.IsConnected` |
 | `services.AddSingleton<IConnectionMultiplexer>(...)` | [`services.AddRespire(...)`](./integrations/dependency-injection) |
@@ -295,7 +294,7 @@ binding. Rewrite each `@key` reference as `KEYS[n]` and each `@value` reference 
 pass the keys and arguments as arrays in the same order.
 
 See [distributed locks](./guides/distributed-locks) and
-[Lua scripting](https://github.com/thomhurst/Respire/blob/main/docs/SCRIPTING.md).
+[Lua scripting](guides/scripting.md).
 
 ## Replicas, Cluster, and Sentinel
 

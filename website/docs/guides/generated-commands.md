@@ -48,7 +48,7 @@ Typed methods copy strings/bytes as needed and dispose the pooled root reply, in
 
 ## Execution policies
 
-Generated methods use `IRespireClient.ExecuteAsync` with a static descriptor. This preserves command safety, cancellation, routing, redirection flags, and client-side cache invalidation. An already-canceled token is rejected before argument encoding or sending; cancellation after admission does not guarantee the server did not execute the command. Connection-affine operations such as `AUTH` remain rejected.
+Generated methods use `IRespireClient.ExecuteAsync` with a static descriptor. This preserves command safety, cancellation, routing, redirection flags, and client-side cache invalidation. An already-canceled token is rejected before argument encoding or sending; cancellation after admission does not guarantee the server did not execute the command. Connection-affine operations such as `AUTH` remain rejected. Single-token generated commands have retry category `Never`, so `RespireOptions.RetryPolicy` does not resend them.
 
 Use `Mutation = RespireCacheMutation.ReadOnly` only when a command does not change keyspace values, as in the JSON reads above. This declares its cache mutation effect; it does not make an unknown command cacheable, register its key layout, or grant replica-read eligibility. Without explicit metadata, unknown commands conservatively invalidate the full local cache. For writes, set `Mutation = RespireCacheMutation.SingleKey`, `Mutation = RespireCacheMutation.MultiKey`, or `Mutation = RespireCacheMutation.Mutation` as appropriate for the supported key-layout contract; the generator does not infer affected keys from parameter names or types.
 
@@ -56,7 +56,7 @@ Argument, cancellation, and safety failures are reported through the returned ta
 
 Unknown module commands are treated as non-blocking and run on the shared multiplexed connections. Do not declare module commands that wait server-side for data (for example, blocking pops); they would stall every command queued behind them on that connection.
 
-Key-prefixed views reject generated commands whose layouts are not registered as prefixable, because arbitrary module key layouts are unknown. Commands with prefixable layouts, such as `TS.GET` and `BF.ADD`, have their keys prefixed. TimeSeries label-filter commands `TS.MGET`, `TS.MRANGE`, `TS.MREVRANGE`, and `TS.QUERYINDEX` have registered layouts but no explicit keys to prefix, so key-prefixed views reject them. A `RespireKey` parameter alone does not declare routing metadata. Known cluster layouts retain slot validation; unknown layouts use existing raw routing heuristics and server validation. Use unprefixed clients and explicitly formed keys for unknown layouts, and verify your module's routing requirements.
+Key-prefixed views reject generated commands whose layouts are not registered as prefixable, because arbitrary module key layouts are unknown. Commands with prefixable layouts, such as `TS.GET` and `BF.ADD`, have their keys prefixed. TimeSeries label-filter commands `TS.MGET`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.QUERYINDEX`, and `TS.QUERYLABELS` have registered layouts but no explicit keys to prefix, so key-prefixed views reject them. A `RespireKey` parameter alone does not declare routing metadata. Known cluster layouts retain slot validation; unknown layouts use existing raw routing heuristics and server validation. Use unprefixed clients and explicitly formed keys for unknown layouts, and verify your module's routing requirements.
 
 ## Built-in Redis feature packages
 
@@ -69,8 +69,10 @@ The same generator backs the typed Redis feature packages. Use their APIs when y
 
 Each package has real Redis integration coverage for RESP2 and RESP3. The server must provide the relevant commands; hybrid search requires Redis 8.4 or a compatible server.
 
-For direct repeated raw execution, retain a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor. Its `Sources` remains `None`; pre-encoding does not claim an official command reference. String-to-command conversion retains its existing parsing behavior.
+To run a module command without declaring an interface, keep a static `RespireCommand.Create("MYMODULE.COMMAND")` descriptor and pass it to `ExecuteAsync`. Its `Sources` is `None`, because it does not come from an official command reference. See the [complete command catalog](raw-commands.md#dynamic-commands).
 
 ## Native AOT
 
-Generated code calls concrete APIs and does not use reflection, `RespireResult.As<T>()`, or runtime code generation. CI packs `Respire` and all four feature packages, consumes them in `tests/Respire.GeneratedCommands.Smoke`, publishes that consumer with Native AOT warnings treated as errors, and executes both RESP2 and RESP3 command paths against Redis 8.10. The smoke application covers an externally declared command interface alongside the typed feature APIs. Project-reference consumers inside a repository must also reference `Respire.Analyzers` with `OutputItemType="Analyzer"` and `ReferenceOutputAssembly="false"`; NuGet consumers receive the generator automatically.
+Generated code calls concrete APIs and does not use reflection, `RespireResult.As<T>()`, or runtime code generation. CI publishes a consumer of the packed packages (`tests/Respire.GeneratedCommands.Smoke`) with Native AOT warnings treated as errors and runs it against Redis 8.10 over RESP2 and RESP3.
+
+NuGet consumers receive the generator automatically. A project that references the Respire source projects directly must also reference `Respire.Analyzers` with `OutputItemType="Analyzer"` and `ReferenceOutputAssembly="false"`.

@@ -338,9 +338,6 @@ string?[] values = await redis.Strings.GetManyAsync("feature:a", "feature:b");
 long removed = await redis.DeleteAsync("feature:a", "feature:b");
 ```
 
-Respire deliberately retains bare-varargs calls such as `DeleteAsync("a", "b")`, so multi-item
-commands use a uniform pair of overloads rather than a single optional-token span overload.
-
 `SetManyIfNotExistsAsync(pairs, cancellationToken)` uses atomic
 [MSETNX](https://redis.io/docs/latest/commands/msetnx/), also supported by
 [Valkey](https://valkey.io/commands/msetnx/). It returns `false` without changing any key when
@@ -419,6 +416,8 @@ Use `ScanAsync("session:*", RespireKeyType.Hash)` to filter by type with the def
 
 `countHint` maps to Redis `COUNT`; it guides work per iteration but does not guarantee page size.
 Prefer `SCAN` over `KEYS` in production; each page yields control and avoids a single server-blocking sweep.
+In Cluster mode, see [resumable Cluster scans](#resumable-cluster-scans) for checkpoints and
+[Valkey 9.1 server cursors](#valkey-91-server-cursors) for `CLUSTERSCAN`.
 
 ## Key-prefixed views
 
@@ -465,8 +464,8 @@ removed. Binary prefixes are filtered and stripped before decoding the suffix, s
 invalid UTF-8 prefixes cannot collapse into the same namespace. `ScanAsync` and
 `ScanClusterPageAsync` still return strings: invalid UTF-8 suffixes retain replacement
 decoding and cannot be round-tripped losslessly through those string APIs. Resume a Cluster
-checkpoint with the same prefix representation and filter. Existing text checkpoints keep
-their format; binary-prefix checkpoints use a new format that older clients cannot read.
+checkpoint with the same prefix representation and filter; see
+[resumable Cluster scans](#resumable-cluster-scans) for checkpoint compatibility between client versions.
 
 ### Default root namespace
 
@@ -512,8 +511,8 @@ options rather than a textual connection string.
 The command-layout, scan, Cluster, cache and authorization limits above apply equally to
 root namespaces. Cache tracking prefixes and invalidation observers still use physical
 keys, including the root prefix; configuration does not rewrite these filters.
-Regular pub/sub channels remain literal. Explicit pub/sub prefixing is tracked separately
-in [#1120](https://github.com/thomhurst/Respire/issues/1120).
+`KeyPrefix` does not change pub/sub channels. Set `RespireOptions.PubSubPrefix` or use
+[WithPubSubPrefix](../guides/pub-sub.md#explicit-pubsub-prefixes) to namespace channels.
 
 ## Absolute expiration and object metadata
 
@@ -551,8 +550,7 @@ See Redis's [EXPIRETIME](https://redis.io/docs/latest/commands/expiretime/),
 [OBJECT IDLETIME](https://redis.io/docs/latest/commands/object-idletime/), and
 [OBJECT FREQ](https://redis.io/docs/latest/commands/object-freq/) command references.
 
-
-### Resumable Cluster scans
+## Resumable Cluster scans
 
 In Cluster mode, `Keys.ScanAsync` uses the same slot-aware page engine as
 `Keys.ScanClusterPageAsync`. Use the page API when work needs a durable checkpoint:
@@ -671,7 +669,7 @@ trust boundary, and enforce storage/request size limits. Tokens can be several k
 the encoded ceiling is 6 MiB and fragmented slot layouts increase their size. Start a new scan
 with `Start` after completion.
 
-### Valkey 9.1 server cursors
+## Valkey 9.1 server cursors
 
 `Keys.ScanValkeyClusterPageAsync` explicitly uses Valkey 9.1+ `CLUSTERSCAN` in Cluster mode.
 It returns an owned `RespireValkeyClusterScanPage` containing an opaque string cursor and
@@ -742,7 +740,7 @@ Its raw server cursor is distinct from `ScanClusterPageAsync`'s immutable
 `RespireClusterScanCursor` checkpoint. Do not pass one format to the other API. See Valkey's
 [CLUSTERSCAN reference](https://valkey.io/commands/clusterscan/) for server scan guarantees.
 
-#### Database ACLs
+### Database ACLs
 
 Valkey 9.1 adds database ACL rules. For example, this rule limits an existing user's
 database access to databases 0 and 1 while retaining its other command and key rules:

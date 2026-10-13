@@ -16,11 +16,13 @@ From a repository checkout with its required .NET SDK installed:
 dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/FakeTests/*'
 ```
 
-This runs eight cases without Docker. Additional fake tests advance an expiry clock, pause
-an accepted write before its reply, and remove a scoped server rejection. Gates and observed
+This runs eight cases without Docker: the shared scenarios plus three fake-only tests, each
+on RESP2 and RESP3. The fake-only tests advance an expiry clock, pause an accepted write
+before its reply, and remove a scoped server rejection. Gates and observed
 fault boundaries synchronize the tests; arbitrary sleeps are unnecessary.
 
-For four real-server cases, start a local Docker engine with Linux containers and run:
+For the four real-server cases (Redis and Valkey, each on RESP2 and RESP3), start a local
+Docker engine with Linux containers and run:
 
 ```sh
 dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/ContainerTests/*'

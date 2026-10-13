@@ -95,10 +95,9 @@ string? name = await redis.Hashes.GetStringAsync("user:42", "name");
 Dictionary<string, string> profile = await redis.Hashes.GetAllAsync("user:42");
 ```
 
-Pre-release migration: replace `Hashes.DeleteAsync` and `Streams.DeleteAsync` with
-`RemoveAsync`, and `Hashes.GetAndDeleteAsync` with `GetAndRemoveAsync`. Deferred hash commands
-use `Remove` and `GetAndRemove`. Whole-key deletion and stream group/consumer lifecycle methods
-keep their `Delete` names.
+Methods that remove hash fields or stream entries are named `RemoveAsync` (and
+`Hashes.GetAndRemoveAsync`); deferred forms are `Remove` and `GetAndRemove`. `Delete` names are
+reserved for whole-key deletion and stream group/consumer lifecycle methods.
 
 `LengthAsync(key, field)` returns the value's byte length (`HSTRLEN`), including zero for
 an empty or missing field. `RandomFieldAsync` returns one field or null for a missing hash.
@@ -225,7 +224,7 @@ The existing single-element `MoveAsync` and `Move` behavior is unchanged.
 See the [LMOVEM reference](https://redis.io/docs/latest/commands/lmovem/) and
 [BLMOVEM reference](https://redis.io/docs/latest/commands/blmovem/) for server requirements.
 
-Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues).
+Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues.md).
 
 ## Sets
 
@@ -262,8 +261,7 @@ intersection to share a hash slot. Key prefixes apply to every source and destin
 
 Count-based pops use `PopManyAsync` and return an empty array when the key is missing.
 Single-member `PopAsync` returns null when missing. Batch and transaction facets use
-`PopMany` for arrays and `Pop` for scalars. Pre-release count-based `PopAsync`/`Pop` overloads
-are removed; rename those calls without changing their arguments.
+`PopMany` for arrays and `Pop` for scalars.
 
 `DifferenceCountAsync` and `UnionCountAsync` use Redis 8.10+
 [SDIFFCARD](https://redis.io/docs/latest/commands/sdiffcard/) and
@@ -285,9 +283,8 @@ count is required. The deterministic fake server computes exact counts even with
 Batch and transaction facets expose `DifferenceCount` and `UnionCount` with the same options.
 Immediate overloads accept a key span and cancellation token. Every key receives the view's
 prefix; Cluster keys must share a slot. Deferred methods snapshot the key sequence while
-borrowing byte-backed key storage until execution completes. Reads use the existing cache
-invalidation metadata for every input key. External set-facet implementations must add these
-new interface members. Older servers preserve their unknown-command errors.
+borrowing byte-backed key storage until execution completes. Older servers return their
+unknown-command errors.
 
 ## Sorted sets
 
@@ -412,9 +409,8 @@ have read and `Store` forms. Typed rank ranges, score ranges, and pops deseriali
 preserving their scores in `SortedSetEntry<T>`.
 
 Bulk adds accept `(RespireValue Member, double Score)` tuples. Members can be text, numbers,
-or raw bytes, just like single-member adds. `SortedSetEntry` is a read result; replace
-`new SortedSetEntry(member, score)` write inputs with `(member, score)`. Batches and transactions
-accept the same tuples through `SortedSets.Add`.
+or raw bytes, just like single-member adds. `SortedSetEntry` is a read result, not a write
+input. Batches and transactions accept the same tuples through `SortedSets.Add`.
 
 Byte-backed members borrow the caller's memory. For batches and transactions, keep those bytes
 unchanged until `ExecuteAsync` or `CommitAsync` completes. If you must reuse a buffer earlier,
@@ -462,7 +458,7 @@ errors for explicit idempotency. An XADD with explicit idempotency is audited as
 `WriteChecked`, because a resend returns the original entry instead of appending again.
 Cancellation after dispatch cannot prove that a write did not execute.
 
-When a [retry policy](../guides/command-retries#idempotent-stream-appends) can resend a
+When a [retry policy](../guides/command-retries.md#idempotent-stream-appends) can resend a
 possibly executed checked write, typed `Streams.AddAsync` attaches a producer and message
 identity automatically. Set `RespireOptions.StreamProducerId` to choose the producer.
 
@@ -521,8 +517,6 @@ IDs must be numeric. Group names accept raw binary arguments and are copied; onl
 the stream key is prefixed and routed. Deferred calls snapshot inputs when enqueued.
 Pre-cancelled calls send nothing; later cancellation cannot undo a write. Unsupported
 servers and missing groups surface server errors without fallback or write replay.
-External `IStreamCommands` implementations must add four overloads;
-`IBatchStreamCommands` implementations must add two.
 
 ### Trimming
 
@@ -561,8 +555,6 @@ Batches and transactions expose the same options through `Streams.Add` and `Stre
 They validate at enqueue time and copy or serialize supplied keys and values then. Immediate
 calls borrow binary keys and field values until their returned operation completes. Stream IDs
 are immutable strings. Prefixing and Cluster slot routing apply to the stream key only.
-Custom `IStreamCommands` and `IBatchStreamCommands` implementations must add `TrimAsync` and
-`Trim`, respectively; `StreamAddOptions` equality includes `MinId`, `Limit`, and `ReferencePolicy`.
 
 ### Reference-aware removal (Redis 8.2+)
 
@@ -614,8 +606,6 @@ malformed numeric IDs fail before I/O or enqueue. Only the stream key is prefixe
 group names remain unchanged. Batches and transactions expose `Remove(key, policy, ids)` and
 `AcknowledgeAndRemove` with the same owned outcomes and argument snapshots. Unsupported
 commands/options surface server errors without emulation or replay through older write commands.
-External `IStreamCommands` and `IBatchStreamCommands` implementations, decorators, and mocks
-must implement the new overloads and `AcknowledgeAndRemoveAsync`/`AcknowledgeAndRemove` members.
 
 ### Reading without consumer groups
 
@@ -784,9 +774,9 @@ var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
     count: 100, cancellationToken: stoppingToken);
 ```
 
-The options-based `PendingAsync`, `ClaimAsync`, and `ClaimIdsAsync` overloads put
-options before the key deliberately, preserving existing key-first call shapes
-and avoiding ambiguity with their optional parameters.
+The options-based `PendingAsync`, `ClaimAsync`, and `ClaimIdsAsync` overloads take the
+options first, before the key, so they cannot be confused with the key-first overloads and
+their optional parameters.
 
 `StreamClaimOptions` works with both `ClaimAsync` and `ClaimIdsAsync`. `IdleTime` sends
 `IDLE`; `DeliveryTime` sends an absolute Unix-millisecond `TIME`. Choose only one.
@@ -865,5 +855,5 @@ GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
 
 BITFIELD operations use `BitFieldEncoding.Signed(width)` (1–64 bits) or `Unsigned(width)` (1–63 bits). `BitFieldOffset.Bits(n)` is an absolute bit offset; `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both offset factories reject negative values. The default offset is bit zero. `Get`, `Set`, and `Increment` all accept these types; `FieldReadOnlyAsync` accepts only `Get` operations.
 
-For Redis vector similarity, use the typed [VectorSets facet](../guides/vector-sets).
-For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands).
+For Redis vector similarity, use the typed [VectorSets facet](../guides/vector-sets.md).
+For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands.md).

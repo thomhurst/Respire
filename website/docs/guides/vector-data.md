@@ -5,37 +5,19 @@ description: Store typed vector records in Redis hashes or JSON through explicit
 
 # Microsoft.Extensions.VectorData
 
-`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes or RedisJSON documents. Both storage kinds support collection lifecycle, record CRUD, sequential batch operations, expression filters, filtered retrieval, FLOAT32 KNN search and hybrid text/vector search. Use an unprefixed Respire client; Search commands reject client key prefixes. This connector supports standalone Redis Query Engine, included in standalone Redis 8; hybrid search requires the `FT.HYBRID` capability introduced in Redis 8.4. Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed records across all shards, even when a search coordinator is available.
+`Respire.VectorData` implements `VectorStore` and string-keyed `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0 using Redis Query Engine hashes or RedisJSON documents. Both storage kinds support collection lifecycle, record CRUD, sequential batch operations, expression filters, filtered retrieval, FLOAT32 KNN search and hybrid text/vector search.
+
+Requirements:
+
+- Standalone Redis with Query Engine, plus RedisJSON for JSON collections. Redis 8 includes both.
+- Redis 8.4 or later for hybrid search, which uses `FT.HYBRID`.
+- An unprefixed Respire client. Search commands reject client key prefixes; the store applies its own key namespace.
+
+Redis Cluster is unsupported: collection deletion scans one node and cannot remove unindexed records across all shards, even when a search coordinator is available.
 
 ```bash
 dotnet add package Respire.VectorData
 ```
-
-## Vector-set backend decision
-
-`Respire.VectorData` uses Query Engine hash and JSON collections. It does not expose
-a `VADD`/`VSIM` collection backend. The [vector-set evaluation](https://github.com/thomhurst/Respire/issues/1261)
-found that acknowledged replacements lose both their new vector and attributes after
-an AOF crash/reload on Redis **8.6.0** and **8.10.2**, even with `appendfsync always`.
-Wrapping `VADD` in Lua does not fix this. This blocks a direct native-upsert adapter.
-
-Lua `VREM` followed by `VADD` survives that reload with compatible inputs, but a failed
-add can leave the previous record deleted. Lua isolation provides no rollback. A
-backend using this approach needs validation before removal and a defined recovery
-protocol, with AOF, replica, concurrent-operation and failure-path tests before release.
-These results apply to the evaluated server versions; run the disposable
-[durability probe](https://github.com/thomhurst/Respire/blob/main/scripts/Test-VectorSetDurability.ps1)
-against another version rather than assuming its behavior.
-
-Native vector sets offer one vector per member and JSON attributes, with cosine
-similarity scores. Their score `s` maps to cosine similarity `2*s-1` or cosine distance
-`2*(1-s)`; relabeling it cannot supply dot-product or L2 ranking. A VectorData backend
-also needs independent empty-collection metadata, an authoritative record codec,
-schema validation, and a translator for the distinct vector-set filter language.
-Optional capabilities can be restricted honestly, but successful writes must persist.
-The evaluation does not establish VectorData conformance for a vector-set backend.
-Use [native vector-set commands](vector-sets.md) only with their server semantics and
-these durability limits understood.
 
 ## Explicit mapping
 
@@ -102,88 +84,7 @@ JSON upsert uses a single script that replaces the entire root with `JSON.SET` a
 
 Search accepts `float[]`, `Memory<float>` or `ReadOnlyMemory<float>`. Lower scores are better. COSINE returns cosine distance and L2 returns squared Euclidean distance. IP returns negative dot product: the connector subtracts 1 from Redis's `1 - dot(a,b)` score before applying `ScoreThreshold`. `Skip` and `top` select a page from the nearest `Skip + top` candidates. `ScoreThreshold` is a maximum distance applied after that page is selected; filtered hits are not replaced, so fewer than `top` records can be returned. Set `VectorProperty` to a mapped property expression when multiple vectors are declared; JSON mappings also accept nested member paths. Records deleted between search and retrieval are omitted without refilling the page; this is not a transactional snapshot. Search indexing can lag writes. Malformed search scores or documents outside the collection become `VectorStoreException` with an `InvalidOperationException` cause and collection/operation metadata.
 
-This connector supports hashes, JSON, explicit typed mappings, expression filters and capability-aware hybrid search. Embedding generation, dynamic dictionaries and non-string keys are unsupported. Unsupported filters and inputs are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`. The applicable [upstream contracts](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests) run on RESP2 and RESP3 with the explicit capability boundaries below. This is conformance for the advertised API surface, not support for every optional upstream capability.
-
-The separate `Respire.VectorData.Conformance.Tests` project references the official, MIT-licensed `Microsoft.Extensions.VectorData.ConformanceTests` **10.10.0** package, matching the abstractions. Its package metadata pins source revision `02107c65bab30aad9e35b5133ed643eaa77bccd8`. CI runs **493** cases: **260 hash cases**, **222 JSON lifecycle/backend/error cases**, **2 supplemental JSON cancellation cases** and **9 completeness checks**. The official runner targets `net10.0`, because this upstream package ships `net10.0` and `net472` assets. Connector correctness, cancellation/error tests and trimmed NativeAOT checks continue on both `net8.0` and `net10.0`.
-
-### API, backend and server capability matrix
-
-Every supported row runs on RESP2 and RESP3. CI uses pinned standalone Redis 8.10 with Query Engine, RedisJSON and `FT.HYBRID`; the fixture checks the required commands on both protocols and fails when a capability is absent. Supplemental hybrid tests also cover Redis 8.4 and reject missing `FT.HYBRID` on Redis 8.2. Redis Cluster and native vector-set collections are outside this connector's supported surface.
-
-| API or capability | Hash | JSON | Validation and requirement |
-| --- | --- | --- | --- |
-| Collection creation, existence, listing, deletion and metadata | Supported | Supported | All six official lifecycle facts per backend/protocol; Query Engine `FT.CREATE`, `FT._LIST`, `FT.DROPINDEX` and record cleanup |
-| Typed record CRUD, missing records, sequential batch CRUD and vector inclusion | Explicit field codecs | Generated JSON metadata | Official model facts, including empty/missing batch facts on both backends |
-| FLOAT32 KNN, paging, score thresholds, multiple vectors and selection errors | Supported | Supported, including nested vector paths | Official basic/no-data/multivector suites; `FT.SEARCH`; arrays, `Memory<float>` and `ReadOnlyMemory<float>` as query inputs |
-| FLAT and HNSW; cosine distance, negative dot product, squared Euclidean distance | Supported | Supported | Official distance scores/thresholds and index contracts; no similarity, Hamming or Manhattan metric |
-| Expression filters and filtered retrieval | Supported types and expressions listed below; no ordering | Same supported operators and null semantics; nested CLR paths; no ordering | Official typed filter suite on both backends; unsupported expressions fail before I/O |
-| Hybrid text/vector search and text/vector property selection | Supported, including filters | Supported, including filters | All applicable official hybrid facts; `FT.HYBRID` requires Redis 8.4+ |
-| Key, vector and data mapping | Explicit string keys; raw FLOAT32 memory/arrays; custom scalar codecs | Explicit string keys; generated serializer metadata for supported model properties | Hash pinned typed contracts; JSON official model contracts; dynamic dictionaries, generated keys and embedding generators are unsupported |
-| Cancellation, server/transport errors and unsupported inputs | Supported | Supported | Connector contracts on .NET 8/10; original official no-generator diagnostic on both backends; cancellation is not wrapped |
-| Trimming and NativeAOT entry point | `GetHashCollection<TRecord>` | `GetJsonCollection<TRecord>` | Native sample on .NET 8/10 with warnings as errors; see the mapping matrix below |
-| Upstream `GetCollection<TKey,TRecord>` | String keys and registered mapper only | String keys and registered mapper only | Preserves upstream dynamic-code/trimming annotations; use the concrete entry points for NativeAOT |
-
-### Completeness gate
-
-`ConformanceCoverageTests` inherits the official [TestSuiteImplementationTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TestSuiteImplementationTests.cs) and runs its `All_test_bases_must_be_implemented` assertion unchanged. The upstream gate validates provider implementations. Its ignored bases have explicit production reasons: dynamic models, vectorless models, both DI bases, mandatory generator contracts, and the key/data/vector helpers that combine supported typed operations with unsupported dynamic or generated operations. The applicable no-generator error still runs on both backends, and the hash typed helpers retain the supported assertions as explained below. JSON's additional unsupported bases/capabilities are dispositioned in its exclusion table.
-
-Independent checks compare the complete upstream base inventory with the reviewed inventory, verify every applicable hash fact remains discoverable on both protocols, and verify every applicable JSON method has all its theory rows. Hash exclusion traits and JSON exclusions must match the reviewed method names; nonexistent exclusions fail. Positive controls prove a missing supported fact or unreviewed base fails the gate. CI runs these nine checks separately without the capability exclusion filter, then requires every selected backend case to pass with zero skips. A package upgrade or adapter omission cannot be accepted solely because a minimum case count still passes.
-
-### Hash coverage
-
-| Official contract | Hash cases per protocol |
-| --- | ---: |
-| Collection lifecycle and metadata | 6 |
-| Basic model CRUD, null/empty batches, filtered retrieval, vector search and paging | 28 |
-| Model without data fields | 4 |
-| Multiple vectors and ambiguous selection errors | 6 |
-| Typed filters, Boolean logic, nullable constants, arrays/lists and captured fields | 54 |
-| Cosine distance, negative dot product and squared Euclidean distance, including exact scores and thresholds | 3 |
-| FLAT and HNSW index search | 2 |
-| Hybrid search, filters, paging, multiple keywords/text fields and selection errors | 7 |
-| Data type CRUD/null values, with supported equality filters | 16 |
-| Raw FLOAT32 memory and array vectors | 2 |
-| Explicit string keys | 1 |
-| Unsupported string input without an embedding generator | 1 |
-
-Lifecycle, model, filter, distance, index and hybrid assertions are inherited from the package unchanged. HNSW uses the upstream index test helper with `IndexKind.Hnsw`. The no-generator error case invokes the original official fact and checks its exact diagnostic prefix. The pinned upstream key/data/vector type methods combine typed, dynamic and embedding-generation steps without a typed-only fixture switch. Their sources in `tests/Respire.VectorData.Conformance.Tests/PinnedTyped` retain the original typed steps and assertions verbatim, with the mandatory unsupported dynamic/generation sections removed and the source revision recorded. The string-key case calls the upstream typed key helper. Data cases use the upstream `isFilterable` hook to keep every typed CRUD/null assertion while excluding only unsupported equality filtering. They cover byte, short, int, long, float, double, decimal, string, Boolean, Guid, DateTime, DateTimeOffset, DateOnly, TimeOnly, string arrays and nullable int. Fixture mappers use reflection only to adapt the upstream test records into explicit production hash mappings; this adds no reflection fallback to the shipped connector. JSON lifecycle fixtures continue to use source-generated metadata with reflection serialization disabled.
-
-Run locally with `dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 -- --filter-not-trait 'Unsupported=*' --minimum-expected-tests 493 --fail-skips on`. Run just the completeness gate without Redis using `--filter-class '*ConformanceCoverageTests' --minimum-expected-tests 9 --fail-skips on`. The exclusion trait marks unsupported contracts rather than skipped failures; every selected case must pass and zero skips are allowed. The fixture starts and disposes its own pinned Redis 8.10 container, including the `FT.HYBRID` capability. To use an existing standalone Redis Query Engine instance, set `RESPIRE_VECTOR_CONFORMANCE_CONNECTION` to its `redis://` connection string; the fixture does not stop that server. Each fixture isolates its namespace, deletes indexed and unindexed records, and disposes its collections, stores and client.
-
-### Hash exclusions
-
-These are capability exclusions, not claims of full upstream conformance. The source links below refer to the same pinned upstream revision; production guards are in the [store](https://github.com/thomhurst/Respire/blob/main/src/Respire.VectorData/RespireVectorStore.cs), [collection](https://github.com/thomhurst/Respire/blob/main/src/Respire.VectorData/RespireVectorStoreCollection.cs), [filter translator](https://github.com/thomhurst/Respire/blob/main/src/Respire.VectorData/RespireVectorDataFilter.cs) and [Search metric schema](https://github.com/thomhurst/Respire/blob/main/src/Respire.Search/RespireSearchSchema.cs).
-
-| Excluded capability and exact upstream cases | Production and upstream evidence |
-| --- | --- |
-| Dynamic dictionaries: `DynamicModelTests`, dynamic sections of key/data/vector types and `FilterTests.Equal_with_string_sql_injection_in_name` | `RespireVectorStore.GetDynamicCollection` throws. [FilterTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/FilterTests.cs) supports `TestDynamic=false`; the injection-in-name fact contains only a dynamic branch. The typed assertions still run. |
-| Non-string keys, generated keys and `KeyTypeTests.MismatchedKeyTypeThrows` | `GetCollection` rejects every non-string `TKey`; keys come from the explicit mapper without generation. [KeyTypeTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TypeTests/KeyTypeTests.cs) uses Guid for both its Guid fact and its mismatched-key fact. String CRUD/delete assertions from its protected helper still run. |
-| Models without vectors: `NoVectorModelTests` | The collection constructor requires at least one vector. [NoVectorModelTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/ModelTests/NoVectorModelTests.cs) explicitly applies only to databases supporting vectorless models. |
-| Filtered ordering: the three `BasicModelTests.GetAsync_with_filter_and_*OrderBy*` facts | Filtered `GetAsync` rejects `OrderBy`. [BasicModelTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/ModelTests/BasicModelTests.cs) requests ordering in these facts; unordered filtered retrieval still runs. |
-| Captured property getters: `FilterTests.Equal_with_string_containing_special_characters` | The filter translator's `Value` accepts captured fields and rejects getters/method execution. This [upstream fact](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/FilterTests.cs#L58) captures `fixture.SpecialCharactersText` as a property getter. Existing local tests cover special-character literals/captured fields and prove getters never execute. |
-| Equality filters for long, decimal, Guid, date/time data, and whole string arrays | `NumericType` supports byte/sbyte/short/ushort/int/uint/float/double; string collections support membership only. [DataTypeTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TypeTests/DataTypeTests.cs) exposes `isFilterable`; all 16 data CRUD cases still run, and supported types retain equality/null filtering assertions. |
-| `EmbeddingTypeTests.Embedding_of_float`, non-FLOAT32 inputs and all generated-embedding steps | `SearchAsync` accepts only raw FLOAT32 array/memory input. [EmbeddingTypeTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TypeTests/EmbeddingTypeTests.cs) combines raw vectors with mandatory dynamic/generated steps; only those sections are removed for raw FLOAT32 tests. |
-| Generator/DI contracts in `EmbeddingGenerationTests`, except `SearchAsync_string_without_generator_throws`; `DependencyInjectionTests` | The connector has no generator option or VectorData DI registration API. [EmbeddingGenerationTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/EmbeddingGenerationTests.cs) requires these APIs for generator tests; its applicable no-generator error assertion runs unchanged. [DependencyInjectionTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/DependencyInjectionTests.cs) requires registration delegates. |
-| `DistanceFunctionTests.CosineSimilarity`, `DotProductSimilarity`, `EuclideanDistance`, `HammingDistance`, `ManhattanDistance` | COSINE is cosine distance and L2 is squared Euclidean distance; the connector subtracts 1 from Redis's IP score to return negative dot product. [DistanceFunctionTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/DistanceFunctionTests.cs) expects different scores for these five functions. Supported distance assertions retain `AssertScores=true` and score-threshold checks. |
-
-This pinned revision has no provider cancellation facts; existing hash/filter/hybrid cancellation and server-error contracts run in `Respire.VectorData.Tests` on both frameworks. The acceptance gate requires the official backend suites, completeness checks and trimmed NativeAOT smoke to pass; a partial local subset or an undispositioned supported failure cannot complete [the conformance parent](https://github.com/thomhurst/Respire/issues/1262) or [connector epic](https://github.com/thomhurst/Respire/issues/887).
-
-### JSON coverage
-
-The JSON backend executes **208** cases directly from the official package: applicable basic-model CRUD, null/empty batches, missing records, vector inclusion, filtered retrieval/search and paging; all no-data and multivector model contracts; 54 supported typed filter facts per protocol; cosine distance, negative dot product and squared Euclidean scores with score thresholds; Flat and the upstream index helper with HNSW; and all seven hybrid contracts, including filters, multiple text properties and the missing-property error. The adapter invokes the packaged methods and their assertions unchanged. Every case gets a fresh fixture seeded by upstream model definitions. The runner uses reflection only to discover and invoke test methods; production JSON serialization uses explicit generated metadata. Twelve additional official cases cover JSON collection lifecycle and two cover the original no-generator diagnostic. Two supplemental connector cases cover pre-cancellation on 14 collection/store operations and verify that records remain intact. Upstream 10.10.0 contains no collection cancellation facts. CI rejects skips in every selected case.
-
-JSON exclusions are explicit in `JsonBackendTests.Cases` and its `BasicExclusions` list. The following boundaries link production behavior to the pinned upstream contracts:
-
-| Excluded upstream contract | Production boundary and upstream evidence |
-| --- | --- |
-| Filtered ordering: the three `BasicModelTests.GetAsync_with_filter_and_*OrderBy*` facts | Filtered `GetAsync` rejects `OrderBy` on both backends. [BasicModelTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/ModelTests/BasicModelTests.cs) requires ordering in these facts. Unordered filtered retrieval/search and count-based empty/missing batch facts run unchanged. |
-| `FilterTests.Equal_with_string_sql_injection_in_name` and `Equal_with_string_containing_special_characters` | The first [upstream fact](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/FilterTests.cs) contains only a dynamic branch; the store rejects dynamic collections. The second captures `fixture.SpecialCharactersText` through a getter; the translator rejects captured getters before I/O. Local JSON tests cover special-character values and prove getters never execute. These are the same exclusions as hashes. |
-| `KeyTypeTests`, `EmbeddingTypeTests`, `DataTypeTests` | Their complete test helpers require dynamic dictionary collections in addition to typed CRUD; embedding tests also require embedding generators. `RespireVectorStore.GetDynamicCollection` rejects dynamic collections, `GetCollection<TKey,TRecord>` supports only string keys, and `SearchAsync` accepts FLOAT32 arrays/memory rather than embedding generators. No helper is truncated and no unsupported fact is reported as passing. String keys, `ReadOnlyMemory<float>` and integer/string/Boolean/collection data run through the official model/filter suites; broader JSON serializer and array-vector behavior remains connector-specific coverage. |
-| `DynamicModelTests`, `NoVectorModelTests`, `EmbeddingGenerationTests` except `SearchAsync_string_without_generator_throws` | The store rejects dynamic collections; the collection constructor requires at least one vector; search rejects automatic embedding generation. These upstream suites require those capabilities. The applicable no-generator error assertion runs unchanged on JSON as well as hashes. |
-| Similarity scores, nonsquared Euclidean distance, Hamming and Manhattan distance | `RespireVectorDataVectorField.DistanceMetric` exposes Redis COSINE, IP and L2 only. Applicable official score contracts are cosine distance, negative dot product and squared Euclidean distance; assertions and score thresholds run for all three. Similarity transforms, square-root conversion, Hamming and Manhattan are not exposed. |
-| `DependencyInjectionTests<TKey>` and `DependencyInjectionTests<TVectorStore,TCollection,TKey,TRecord>` | The connector exposes explicit store construction and mapper registration, without upstream DI registration delegates. The official provider completeness assertion is implemented separately, not excluded. |
-
-The [pinned upstream source](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests) contains the complete methods and helpers named above. The completeness gate covers the applicable JSON surface and records these unsupported capabilities; it does not advertise the excluded APIs as supported.
+This connector supports hashes, JSON, explicit typed mappings, expression filters and capability-aware hybrid search. Embedding generation, dynamic dictionaries and non-string keys are unsupported. Unsupported filters and inputs are never silently ignored. Server and transport failures become `VectorStoreException` with the original Respire exception as their cause and collection/operation metadata. Cancellation stays `OperationCanceledException`.
 
 ## Expression filters
 
@@ -282,7 +183,7 @@ await foreach (var hit in hybrid.HybridSearchAsync(
 
 Redis fuses the text and vector rankings using reciprocal rank fusion (RRF), with constant 60 and a window of `Math.Max(20, Skip + top)`. The vector candidate count uses the same window. Returned scores are the unmodified server fusion scores, where higher is better. `ScoreThreshold` is a minimum fusion score applied after selecting the `Skip`/`top` page; it does not refill the page. These scores differ from KNN vector distances, where lower is better. Increasing the requested window can change fusion ranking. Text matches and vector matches form a union, so a vector-only match can still appear when no keyword matches.
 
-`IncludeVectors`, cancellation, batched retrieval and records removed between search and retrieval behave as for KNN search. Tests cover the applicable pinned upstream hybrid contracts, text selection, multi-keyword ranking, hash filters, JSON nested text and selected vectors, scores and paging on real Redis 8.4 and 8.10 using RESP2 and RESP3, plus the missing capability on Redis 8.2.
+`IncludeVectors`, cancellation, batched retrieval and records removed between search and retrieval behave as for KNN search.
 
 ## Exception behavior
 
@@ -308,3 +209,116 @@ dotnet publish samples/Respire.Samples.VectorData -c Release -f net10.0 -r linux
 ```
 
 The sample also supports .NET 8. A runtime identifier enables its NativeAOT property only on the executable; passing a global `PublishAot` property would incorrectly apply it to the repository's netstandard analyzer project. Install the platform prerequisites from [Microsoft's NativeAOT guide](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/). CI publishes and runs the native sample against Redis for both frameworks.
+
+## Vector-set backend decision
+
+`Respire.VectorData` uses Query Engine hash and JSON collections. It does not expose
+a `VADD`/`VSIM` collection backend. An evaluation of native vector sets
+found that acknowledged replacements lose both their new vector and attributes after
+an AOF crash/reload on Redis **8.6.0** and **8.10.2**, even with `appendfsync always`.
+Wrapping `VADD` in Lua does not fix this. This blocks a direct native-upsert adapter.
+
+Lua `VREM` followed by `VADD` survives that reload with compatible inputs, but a failed
+add can leave the previous record deleted. Lua isolation provides no rollback. A
+backend using this approach needs validation before removal and a defined recovery
+protocol, with AOF, replica, concurrent-operation and failure-path tests before release.
+These results apply to the evaluated server versions; run the disposable
+[durability probe](https://github.com/thomhurst/Respire/blob/main/scripts/Test-VectorSetDurability.ps1)
+against another version rather than assuming its behavior.
+
+Native vector sets offer one vector per member and JSON attributes, with cosine
+similarity scores. Their score `s` maps to cosine similarity `2*s-1` or cosine distance
+`2*(1-s)`; relabeling it cannot supply dot-product or L2 ranking. A VectorData backend
+also needs independent empty-collection metadata, an authoritative record codec,
+schema validation, and a translator for the distinct vector-set filter language.
+Optional capabilities can be restricted honestly, but successful writes must persist.
+The evaluation does not establish VectorData conformance for a vector-set backend.
+Use [native vector-set commands](vector-sets.md) only with their server semantics and
+these durability limits understood.
+
+## Conformance testing
+
+This section describes how the connector is tested against the official VectorData contracts and which upstream capabilities are excluded. The applicable [upstream contracts](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests) run on RESP2 and RESP3 with the explicit capability boundaries below. This is conformance for the advertised API surface, not support for every optional upstream capability.
+
+The separate `Respire.VectorData.Conformance.Tests` project references the official, MIT-licensed `Microsoft.Extensions.VectorData.ConformanceTests` **10.10.0** package, matching the abstractions. Its package metadata pins source revision `02107c65bab30aad9e35b5133ed643eaa77bccd8`. CI runs **493** cases: **260 hash cases**, **222 JSON lifecycle/backend/error cases**, **2 supplemental JSON cancellation cases** and **9 completeness checks**. The official runner targets `net10.0`, because this upstream package ships `net10.0` and `net472` assets. Connector correctness, cancellation/error tests and trimmed NativeAOT checks continue on both `net8.0` and `net10.0`.
+
+Tests cover the applicable pinned upstream hybrid contracts, text selection, multi-keyword ranking, hash filters, JSON nested text and selected vectors, scores and paging on real Redis 8.4 and 8.10 using RESP2 and RESP3, plus the missing capability on Redis 8.2.
+
+### API, backend and server capability matrix
+
+Every supported row runs on RESP2 and RESP3. CI uses pinned standalone Redis 8.10 with Query Engine, RedisJSON and `FT.HYBRID`; the fixture checks the required commands on both protocols and fails when a capability is absent. Supplemental hybrid tests also cover Redis 8.4 and reject missing `FT.HYBRID` on Redis 8.2. Redis Cluster and native vector-set collections are outside this connector's supported surface.
+
+| API or capability | Hash | JSON | Validation and requirement |
+| --- | --- | --- | --- |
+| Collection creation, existence, listing, deletion and metadata | Supported | Supported | All six official lifecycle facts per backend/protocol; Query Engine `FT.CREATE`, `FT._LIST`, `FT.DROPINDEX` and record cleanup |
+| Typed record CRUD, missing records, sequential batch CRUD and vector inclusion | Explicit field codecs | Generated JSON metadata | Official model facts, including empty/missing batch facts on both backends |
+| FLOAT32 KNN, paging, score thresholds, multiple vectors and selection errors | Supported | Supported, including nested vector paths | Official basic/no-data/multivector suites; `FT.SEARCH`; arrays, `Memory<float>` and `ReadOnlyMemory<float>` as query inputs |
+| FLAT and HNSW; cosine distance, negative dot product, squared Euclidean distance | Supported | Supported | Official distance scores/thresholds and index contracts; no similarity, Hamming or Manhattan metric |
+| Expression filters and filtered retrieval | Supported types and expressions listed below; no ordering | Same supported operators and null semantics; nested CLR paths; no ordering | Official typed filter suite on both backends; unsupported expressions fail before I/O |
+| Hybrid text/vector search and text/vector property selection | Supported, including filters | Supported, including filters | All applicable official hybrid facts; `FT.HYBRID` requires Redis 8.4+ |
+| Key, vector and data mapping | Explicit string keys; raw FLOAT32 memory/arrays; custom scalar codecs | Explicit string keys; generated serializer metadata for supported model properties | Hash pinned typed contracts; JSON official model contracts; dynamic dictionaries, generated keys and embedding generators are unsupported |
+| Cancellation, server/transport errors and unsupported inputs | Supported | Supported | Connector contracts on .NET 8/10; original official no-generator diagnostic on both backends; cancellation is not wrapped |
+| Trimming and NativeAOT entry point | `GetHashCollection<TRecord>` | `GetJsonCollection<TRecord>` | Native sample on .NET 8/10 with warnings as errors; see the mapping matrix below |
+| Upstream `GetCollection<TKey,TRecord>` | String keys and registered mapper only | String keys and registered mapper only | Preserves upstream dynamic-code/trimming annotations; use the concrete entry points for NativeAOT |
+
+### Completeness gate
+
+`ConformanceCoverageTests` inherits the official [TestSuiteImplementationTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TestSuiteImplementationTests.cs) and runs its `All_test_bases_must_be_implemented` assertion unchanged. The upstream gate validates provider implementations. Its ignored bases have explicit production reasons: dynamic models, vectorless models, both DI bases, mandatory generator contracts, and the key/data/vector helpers that combine supported typed operations with unsupported dynamic or generated operations. The applicable no-generator error still runs on both backends, and the hash typed helpers retain the supported assertions as explained below. JSON's additional unsupported bases/capabilities are dispositioned in its exclusion table.
+
+Independent checks compare the complete upstream base inventory with the reviewed inventory, verify every applicable hash fact remains discoverable on both protocols, and verify every applicable JSON method has all its theory rows. Hash exclusion traits and JSON exclusions must match the reviewed method names; nonexistent exclusions fail. Positive controls prove a missing supported fact or unreviewed base fails the gate. CI runs these nine checks separately without the capability exclusion filter, then requires every selected backend case to pass with zero skips. A package upgrade or adapter omission cannot be accepted solely because a minimum case count still passes.
+
+### Hash coverage
+
+| Official contract | Hash cases per protocol |
+| --- | ---: |
+| Collection lifecycle and metadata | 6 |
+| Basic model CRUD, null/empty batches, filtered retrieval, vector search and paging | 28 |
+| Model without data fields | 4 |
+| Multiple vectors and ambiguous selection errors | 6 |
+| Typed filters, Boolean logic, nullable constants, arrays/lists and captured fields | 54 |
+| Cosine distance, negative dot product and squared Euclidean distance, including exact scores and thresholds | 3 |
+| FLAT and HNSW index search | 2 |
+| Hybrid search, filters, paging, multiple keywords/text fields and selection errors | 7 |
+| Data type CRUD/null values, with supported equality filters | 16 |
+| Raw FLOAT32 memory and array vectors | 2 |
+| Explicit string keys | 1 |
+| Unsupported string input without an embedding generator | 1 |
+
+Lifecycle, model, filter, distance, index and hybrid assertions are inherited from the package unchanged. HNSW uses the upstream index test helper with `IndexKind.Hnsw`. The no-generator error case invokes the original official fact and checks its exact diagnostic prefix. The pinned upstream key/data/vector type methods combine typed, dynamic and embedding-generation steps without a typed-only fixture switch. Their sources in `tests/Respire.VectorData.Conformance.Tests/PinnedTyped` retain the original typed steps and assertions verbatim, with the mandatory unsupported dynamic/generation sections removed and the source revision recorded. The string-key case calls the upstream typed key helper. Data cases use the upstream `isFilterable` hook to keep every typed CRUD/null assertion while excluding only unsupported equality filtering. They cover byte, short, int, long, float, double, decimal, string, Boolean, Guid, DateTime, DateTimeOffset, DateOnly, TimeOnly, string arrays and nullable int. Fixture mappers use reflection only to adapt the upstream test records into explicit production hash mappings; this adds no reflection fallback to the shipped connector. JSON lifecycle fixtures continue to use source-generated metadata with reflection serialization disabled.
+
+Run locally with `dotnet run --project tests/Respire.VectorData.Conformance.Tests -c Release -f net10.0 -- --filter-not-trait 'Unsupported=*' --minimum-expected-tests 493 --fail-skips on`. Run just the completeness gate without Redis using `--filter-class '*ConformanceCoverageTests' --minimum-expected-tests 9 --fail-skips on`. The exclusion trait marks unsupported contracts rather than skipped failures; every selected case must pass and zero skips are allowed. The fixture starts and disposes its own pinned Redis 8.10 container, including the `FT.HYBRID` capability. To use an existing standalone Redis Query Engine instance, set `RESPIRE_VECTOR_CONFORMANCE_CONNECTION` to its `redis://` connection string; the fixture does not stop that server. Each fixture isolates its namespace, deletes indexed and unindexed records, and disposes its collections, stores and client.
+
+### Hash exclusions
+
+These are capability exclusions, not claims of full upstream conformance. The source links below refer to the same pinned upstream revision; production guards are in the [store](https://github.com/thomhurst/Respire/blob/main/src/Respire.VectorData/RespireVectorStore.cs), [collection](https://github.com/thomhurst/Respire/blob/main/src/Respire.VectorData/RespireVectorStoreCollection.cs), [filter translator](https://github.com/thomhurst/Respire/blob/main/src/Respire.VectorData/RespireVectorDataFilter.cs) and [Search metric schema](https://github.com/thomhurst/Respire/blob/main/src/Respire.Search/RespireSearchSchema.cs).
+
+| Excluded capability and exact upstream cases | Production and upstream evidence |
+| --- | --- |
+| Dynamic dictionaries: `DynamicModelTests`, dynamic sections of key/data/vector types and `FilterTests.Equal_with_string_sql_injection_in_name` | `RespireVectorStore.GetDynamicCollection` throws. [FilterTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/FilterTests.cs) supports `TestDynamic=false`; the injection-in-name fact contains only a dynamic branch. The typed assertions still run. |
+| Non-string keys, generated keys and `KeyTypeTests.MismatchedKeyTypeThrows` | `GetCollection` rejects every non-string `TKey`; keys come from the explicit mapper without generation. [KeyTypeTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TypeTests/KeyTypeTests.cs) uses Guid for both its Guid fact and its mismatched-key fact. String CRUD/delete assertions from its protected helper still run. |
+| Models without vectors: `NoVectorModelTests` | The collection constructor requires at least one vector. [NoVectorModelTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/ModelTests/NoVectorModelTests.cs) explicitly applies only to databases supporting vectorless models. |
+| Filtered ordering: the three `BasicModelTests.GetAsync_with_filter_and_*OrderBy*` facts | Filtered `GetAsync` rejects `OrderBy`. [BasicModelTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/ModelTests/BasicModelTests.cs) requests ordering in these facts; unordered filtered retrieval still runs. |
+| Captured property getters: `FilterTests.Equal_with_string_containing_special_characters` | The filter translator's `Value` accepts captured fields and rejects getters/method execution. This [upstream fact](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/FilterTests.cs#L58) captures `fixture.SpecialCharactersText` as a property getter. Existing local tests cover special-character literals/captured fields and prove getters never execute. |
+| Equality filters for long, decimal, Guid, date/time data, and whole string arrays | `RespireVectorDataFilterKind.Numeric` supports byte/sbyte/short/ushort/int/uint/float/double; string collections support membership only. [DataTypeTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TypeTests/DataTypeTests.cs) exposes `isFilterable`; all 16 data CRUD cases still run, and supported types retain equality/null filtering assertions. |
+| `EmbeddingTypeTests.Embedding_of_float`, non-FLOAT32 inputs and all generated-embedding steps | `SearchAsync` accepts only raw FLOAT32 array/memory input. [EmbeddingTypeTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/TypeTests/EmbeddingTypeTests.cs) combines raw vectors with mandatory dynamic/generated steps; only those sections are removed for raw FLOAT32 tests. |
+| Generator/DI contracts in `EmbeddingGenerationTests`, except `SearchAsync_string_without_generator_throws`; `DependencyInjectionTests` | The connector has no generator option or VectorData DI registration API. [EmbeddingGenerationTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/EmbeddingGenerationTests.cs) requires these APIs for generator tests; its applicable no-generator error assertion runs unchanged. [DependencyInjectionTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/DependencyInjectionTests.cs) requires registration delegates. |
+| `DistanceFunctionTests.CosineSimilarity`, `DotProductSimilarity`, `EuclideanDistance`, `HammingDistance`, `ManhattanDistance` | COSINE is cosine distance and L2 is squared Euclidean distance; the connector subtracts 1 from Redis's IP score to return negative dot product. [DistanceFunctionTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/DistanceFunctionTests.cs) expects different scores for these five functions. Supported distance assertions retain `AssertScores=true` and score-threshold checks. |
+
+This pinned revision has no provider cancellation facts; existing hash/filter/hybrid cancellation and server-error contracts run in `Respire.VectorData.Tests` on both frameworks. The acceptance gate requires the official backend suites, completeness checks and trimmed NativeAOT smoke to pass; a partial local subset or an unexplained failure of a supported case does not pass.
+
+### JSON coverage
+
+The JSON backend executes **208** cases directly from the official package: applicable basic-model CRUD, null/empty batches, missing records, vector inclusion, filtered retrieval/search and paging; all no-data and multivector model contracts; 54 supported typed filter facts per protocol; cosine distance, negative dot product and squared Euclidean scores with score thresholds; Flat and the upstream index helper with HNSW; and all seven hybrid contracts, including filters, multiple text properties and the missing-property error. The adapter invokes the packaged methods and their assertions unchanged. Every case gets a fresh fixture seeded by upstream model definitions. The runner uses reflection only to discover and invoke test methods; production JSON serialization uses explicit generated metadata. Twelve additional official cases cover JSON collection lifecycle and two cover the original no-generator diagnostic. Two supplemental connector cases cover pre-cancellation on 14 collection/store operations and verify that records remain intact. Upstream 10.10.0 contains no collection cancellation facts. CI rejects skips in every selected case.
+
+JSON exclusions are explicit in `JsonBackendTests.Cases` and its `BasicExclusions` list. The following boundaries link production behavior to the pinned upstream contracts:
+
+| Excluded upstream contract | Production boundary and upstream evidence |
+| --- | --- |
+| Filtered ordering: the three `BasicModelTests.GetAsync_with_filter_and_*OrderBy*` facts | Filtered `GetAsync` rejects `OrderBy` on both backends. [BasicModelTests](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/ModelTests/BasicModelTests.cs) requires ordering in these facts. Unordered filtered retrieval/search and count-based empty/missing batch facts run unchanged. |
+| `FilterTests.Equal_with_string_sql_injection_in_name` and `Equal_with_string_containing_special_characters` | The first [upstream fact](https://github.com/dotnet/extensions/blob/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests/FilterTests.cs) contains only a dynamic branch; the store rejects dynamic collections. The second captures `fixture.SpecialCharactersText` through a getter; the translator rejects captured getters before I/O. Local JSON tests cover special-character values and prove getters never execute. These are the same exclusions as hashes. |
+| `KeyTypeTests`, `EmbeddingTypeTests`, `DataTypeTests` | Their complete test helpers require dynamic dictionary collections in addition to typed CRUD; embedding tests also require embedding generators. `RespireVectorStore.GetDynamicCollection` rejects dynamic collections, `GetCollection<TKey,TRecord>` supports only string keys, and `SearchAsync` accepts FLOAT32 arrays/memory rather than embedding generators. No helper is truncated and no unsupported fact is reported as passing. String keys, `ReadOnlyMemory<float>` and integer/string/Boolean/collection data run through the official model/filter suites; broader JSON serializer and array-vector behavior remains connector-specific coverage. |
+| `DynamicModelTests`, `NoVectorModelTests`, `EmbeddingGenerationTests` except `SearchAsync_string_without_generator_throws` | The store rejects dynamic collections; the collection constructor requires at least one vector; search rejects automatic embedding generation. These upstream suites require those capabilities. The applicable no-generator error assertion runs unchanged on JSON as well as hashes. |
+| Similarity scores, nonsquared Euclidean distance, Hamming and Manhattan distance | `RespireVectorDataVectorField.DistanceMetric` exposes Redis COSINE, IP and L2 only. Applicable official score contracts are cosine distance, negative dot product and squared Euclidean distance; assertions and score thresholds run for all three. Similarity transforms, square-root conversion, Hamming and Manhattan are not exposed. |
+| `DependencyInjectionTests<TKey>` and `DependencyInjectionTests<TVectorStore,TCollection,TKey,TRecord>` | The connector exposes explicit store construction and mapper registration, without upstream DI registration delegates. The official provider completeness assertion is implemented separately, not excluded. |
+
+The [pinned upstream source](https://github.com/dotnet/extensions/tree/02107c65bab30aad9e35b5133ed643eaa77bccd8/src/Libraries/Microsoft.Extensions.VectorData.ConformanceTests) contains the complete methods and helpers named above. The completeness gate covers the applicable JSON surface and records these unsupported capabilities; it does not advertise the excluded APIs as supported.

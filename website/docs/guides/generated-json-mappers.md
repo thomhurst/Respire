@@ -36,9 +36,10 @@ Redis I/O requires a server providing `JSON.GET`, `JSON.SET`, and JSONPath (`$`)
 Redis 8 or Redis Stack with RedisJSON 2 or later. A plain server without that module returns an
 unknown-command server error. The local codec methods do not require Redis.
 
-Given a `RespireJsonClient jsonClient`, write a document with
+Pass a `RespireJsonClient` (for example `var jsonClient = client.Json;`, see [Redis JSON](json.md)).
+Write a document with
 `await UserJsonMapper.SetAsync(jsonClient, user)` and read it with
-`await UserJsonMapper.GetAsync(jsonClient, key)`. Update one property with
+`await UserJsonMapper.GetAsync(jsonClient, key)`, which returns a `RespireJsonValue<User>`. Update one property with
 `await UserJsonMapper.SetNameAsync(jsonClient, key, "Grace")` and read it with
 `await UserJsonMapper.GetNameAsync(jsonClient, key)`. Nullable writes such as
 `await UserJsonMapper.SetAgeAsync(jsonClient, key, null)` store JSON null.
@@ -49,13 +50,14 @@ Both overloads accept `RespireJsonSetCondition` (`None`, `Nx`, `Xx`) and return 
 conditional write is rejected. Reads accept explicit keys. The client's key prefix applies to
 all generated operations. An explicit key does not need to match the model template.
 
-Every mapped property has `PropertyNamePath`, `GetPropertyNameAsync`, and `SetPropertyNameAsync`.
+Every mapped property gets a `{Property}Path`, `Get{Property}Async`, and `Set{Property}Async`
+member, for example `NamePath`, `GetNameAsync`, and `SetNameAsync`.
 These operate on one top-level property with generated scalar metadata. Paths use JSONPath bracket
 notation and escape quotes and backslashes in storage names. RedisJSON requires literal Unicode and
 control characters in paths rather than JSON string escape sequences such as `\u` or `\n`; the mapper
-preserves those characters. Dots and apostrophes in a `[JsonPropertyName]` name are also literal characters.
-These generated paths are fixed;
-use `RespireJsonClient` with explicit metadata for arbitrary or nested paths and wildcard reads.
+preserves those characters. Dots and apostrophes in a `[JsonPropertyName]` name are also literal
+characters. These generated paths are fixed; use `RespireJsonClient` with explicit metadata for
+arbitrary or nested paths and wildcard reads.
 
 - Missing keys or JSONPath matches return `Found = false`.
 - Stored JSON null returns `Found = true` and the default value. For nullable properties and reference
@@ -98,8 +100,8 @@ collisions, duplicate storage names, and unsupported serialization attributes. E
 objects, public fields, indexers, custom converters, `[JsonIgnore]`, `[JsonInclude]`, extension data,
 and polymorphic/type serialization attributes are not supported. Invalid models emit no mapper.
 
-Generated hash Redis I/O, field TTL, change tracking and [Search mapping](generated-search-schemas.md)
-are available. The [Native AOT conformance sample](generated-hash-codecs.md#native-aot-conformance-sample)
-executes generated hash, JSON and Search operations on `net8.0` and `net10.0` with reflection-based
-JSON serialization disabled. Final mapper performance acceptance remains tracked by
-[#895](https://github.com/thomhurst/Respire/issues/895).
+For hash storage with field TTL and change tracking, see [generated hash codecs](generated-hash-codecs.md);
+for indexes, see [generated Search schemas](generated-search-schemas.md). The
+[Native AOT conformance sample](generated-hash-codecs.md#native-aot-conformance-sample) runs
+generated hash, JSON and Search operations on `net8.0` and `net10.0` with reflection-based JSON
+serialization disabled.

@@ -116,6 +116,35 @@ Server and protocol requirements vary by feature; each linked guide describes it
   their [topology smoke workflow](https://github.com/thomhurst/Respire/blob/main/samples/TopologySmoke.md)
   verifies Cluster slot routing and Sentinel primary promotion.
 
+### Compatibility adapters
+
+- The [StackExchange.Redis migration adapter](./guides/stackexchange-interop) (`Respire.StackExchangeCompat`)
+  provides binary-safe value conversion, a native raw-command bridge, and the documented subset of
+  `IConnectionMultiplexer`, `IDatabase`, `IBatch`, `ITransaction`, `IServer` and `ISubscriber`.
+  It runs the upstream Microsoft distributed cache and DataProtection tests (52 cases) and
+  [pinned Hangfire acceptance](./guides/hangfire-acceptance) (93 upstream facts and two worker
+  lifecycle cases) on .NET 8 and .NET 10 with RESP2 and RESP3. It does not provide general
+  StackExchange.Redis interface parity.
+- Microsoft's SignalR Redis backplane does not run on the adapter
+  ([#1268](https://github.com/thomhurst/Respire/issues/1268), not planned). Use the native
+  [`Respire.SignalR`](./integrations/signalr) backplane instead.
+- The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) runs the official Orleans
+  Redis clustering, grain storage and reminder providers on the adapter. Full silo integration,
+  Cluster routing and failover remain unvalidated.
+
+### Retries and write outcomes
+
+- [Command retry policies](./guides/command-retries) are opt-in through `RespireOptions.RetryPolicy`.
+  Audited per-command retry categories decide what may be resent after a possible execution.
+  Retries cover immediate commands on standalone, Sentinel and Cluster clients, raw, script and
+  function requests with a caller-declared category, failover-group operations, batches and
+  unwatched transactions as complete units, and
+  [watched transaction helpers](guides/batches-and-transactions.md#automatic-watched-transaction-retries).
+  An enabled policy adds latency and allocation to every eligible command; the guide reports the measurements.
+- Internal transport write outcomes record whether a send attempt is definitely unwritten or may
+  have reached Redis; the retry policy uses them to decide on a resend. The
+  [transport write evidence log](./guides/transport-write-evidence) records their limits and audits.
+
 The [higher-level capabilities epic](https://github.com/thomhurst/Respire/issues/860) is delivered:
 stream workers, idempotent stream producers, maintenance-aware failover groups, coherent
 HybridCache L1 invalidation and generated object mapping are available above. The
@@ -125,80 +154,15 @@ cache consistency contract. No notification-based coherent field cache is offere
 
 ## Planned work
 
-The [StackExchange.Redis migration boundary](./guides/stackexchange-interop)
-provides binary-safe value conversion, a native raw-command bridge, and the limited
-multiplexer/database/batch adapter required by the official distributed cache and
-DataProtection packages. It also supports the hash/list/key/string/set/sorted-set
-command facets inventoried for Hangfire.Redis.StackExchange, including deferred
-batch reads/writes and cursor-based scans. Its transaction adapter supports
-deferred MULTI/EXEC, the inventoried Hangfire notification calls, and documented
-WATCH conditions, including synchronous Execute and repeat execution after aborts.
-The adapter also provides endpoint discovery, physical server INFO/TIME/ROLE,
-atomic token locks, and literal callback subscriptions used by RedisStorage.
-[Pinned Hangfire acceptance](./guides/hangfire-acceptance) exercises 93 upstream
-facts and two real worker lifecycle cases on .NET 8/.NET 10 and RESP2/RESP3,
-with explicit exclusions and limitations. The cache/DataProtection inventory now
-covers 52 upstream cases across all six applicable test classes, excluding only
-the cache's two internal HybridCache detection rows. CI runs both protocols on
-both supported frameworks. General StackExchange.Redis interface
-parity and combined Microsoft/Hangfire acceptance remain planned under
-[#889](https://github.com/thomhurst/Respire/issues/889). Running Microsoft's
-SignalR backplane on the adapter is not planned
-([#1268](https://github.com/thomhurst/Respire/issues/1268)); the native
-[`Respire.SignalR`](./integrations/signalr) backplane covers SignalR scale-out.
+These open epics track the remaining work before 1.0. They are not release commitments; follow
+their linked issues for acceptance criteria and current status.
 
-The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) covers
-clustering membership and gateways, atomic grain persistence, and reminders
-through the existing official providers. The adapter now supports their Lua
-and lexicographic sorted-set calls, including ETag conflicts, binary state,
-expiry, reminder replacement, hash-ring ranges, and storage interoperability.
-This delivers [#890](https://github.com/thomhurst/Respire/issues/890) through
-the compatibility adapter; separate native providers are unnecessary for these
-assessed paths. Full silo integration, Cluster routing, and failover remain unvalidated.
-
-These open epics track remaining work, not release commitments. Follow their linked issues for
-acceptance criteria, dependencies, and current status:
-
-- [Resilience and API parity](https://github.com/thomhurst/Respire/issues/857): command retry policies,
-  circuit breaker integration for topology routing, and further connection/API work.
-  [Command retry policy settings](./guides/command-retries) and conservative safety decisions are
-  implemented for buffered immediate commands on standalone, Sentinel and Cluster clients, caller-declared
-  raw, script and function requests, failover-group operations, and batches as complete units
-  (independently per slot group in Cluster). Watched transaction helpers now
-  [replay complete callbacks](guides/batches-and-transactions.md#automatic-watched-transaction-retries)
-  for permitted transient failures, with independent WATCH-conflict and transient budgets. Unwatched
-  standalone, Sentinel and Cluster transactions retry as complete units. The
-  [whole-unit acceptance audit](./guides/command-retries#whole-unit-acceptance) keeps
-  [#1216](https://github.com/thomhurst/Respire/issues/1216) open: real Redis and lifetime coverage
-  ([#1537](https://github.com/thomhurst/Respire/issues/1537)), a Cluster replica cursor-affinity defect
-  ([#1536](https://github.com/thomhurst/Respire/issues/1536)) and the healthy-path unit comparisons are
-  unmet. Retries [compose with endpoint circuit breakers](guides/circuit-breakers.md#retries).
-  [#1499](https://github.com/thomhurst/Respire/issues/1499) and
-  [#1215](https://github.com/thomhurst/Respire/issues/1215) are closed, but their performance gaps below
-  are still unmet. Public fault tests include discovery,
-  backoff cancellation, deadlines, error ownership, tracked Cluster cache producers and pooled reuse.
-  Real Redis tests check increment effects after Sentinel promotion, group switching and Cluster slot migration.
-  The [completed policy comparison](./guides/command-retries#completed-policy-comparison) and
-  [owner/historical-default comparisons](./guides/command-retries#completed-owner-and-historical-default-comparisons)
-  disclose intervals, allocations, drift and retention. Default/disabled integer paths report zero allocation;
-  completed enabled measurements allocate. The historical Cluster latency signal remains unattributed.
-  Pooled retry frames reduce isolated snapshot allocations; completed end-to-end follow-up assessment
-  and tracked Cluster cache overhead remain unmet. Complete reclamation and every lifetime race are not proven.
-  The retry epic [#862](https://github.com/thomhurst/Respire/issues/862) remains open.
-  No zero-overhead claim is made.
-  [Transport write outcomes](./guides/transport-write-evidence) are implemented.
-  [#1214](https://github.com/thomhurst/Respire/issues/1214) and
-  [#1474](https://github.com/thomhurst/Respire/issues/1474) are closed. Their final audit left
-  aggregate transport performance acceptance unmet, and that result still counts against #862's
-  healthy-path criterion.
-  [Idempotent stream appends](./guides/command-retries#idempotent-stream-appends)
-  ([#892](https://github.com/thomhurst/Respire/issues/892)) are implemented: retry-enabled typed
-  `XADD` calls attach a per-client producer and per-call `IDMP` identity on Redis 8.6+, so a resend
-  after a lost reply leaves one entry. Older servers fall back to ordinary `XADD`.
-- [Error telemetry ownership hardening](https://github.com/thomhurst/Respire/issues/1046): strengthen
-  stale-observation checks, consolidate reporting ownership, and independently audit command coverage.
-- [Ecosystem integrations](https://github.com/thomhurst/Respire/issues/859): Aspire, ASP.NET Core,
-  messaging, caching, and other libraries that currently depend on StackExchange.Redis.
+- [1.0 release gate](https://github.com/thomhurst/Respire/issues/1567): the checks a stable release must pass.
+- [API consistency breaks before 1.0](https://github.com/thomhurst/Respire/issues/1576): public
+  API changes planned before the API is frozen.
+- [Onboarding, docs and developer experience](https://github.com/thomhurst/Respire/issues/1585).
+- [High-level features informed by other Redis clients](https://github.com/thomhurst/Respire/issues/1594),
+  including a [reliable job queue on `Respire.Streaming`](https://github.com/thomhurst/Respire/issues/1595).
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison.
 

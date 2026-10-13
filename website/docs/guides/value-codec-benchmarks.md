@@ -1,3 +1,8 @@
+---
+title: Measuring value codec costs
+description: How the value codec benchmarks work, how to reproduce them, and recorded results.
+---
+
 # Measuring value codec costs
 
 The focused `ValueCodecBenchmarks` fixture compares an unchanged raw payload with
@@ -26,7 +31,7 @@ not a universal distribution of application data. The two compression thresholds
 threshold groups so each group has a measured baseline; raw behavior has no threshold.
 
 Each direction has 60 cases: five implementations, three sizes, two patterns, and two
-thresholds. Encode and decode run in separate jobs on .NET 8 and .NET 10. Codec options
+thresholds. The workflow runs encode and decode as separate .NET 10 jobs. Codec options
 keep the default 8 MiB decoded-size ceiling. All output capacity is allocated during
 setup and reused with `ResetWrittenCount`, which does not clear the previous output.
 This avoids charging raw copies for clearing more bytes than compressed copies.
@@ -43,8 +48,8 @@ They do not describe the separately allocating array-returning codec APIs.
 
 The repository's **Value codec benchmarks** Actions workflow runs only this fixture.
 Run it manually with `workflow_dispatch`, or add the `benchmark-value-codecs` label to
-a pull request that changes the codec or benchmark paths. Full measurements are opt-in
-because all four runtime/direction jobs can take up to 50 minutes each.
+a pull request; it does not run on ordinary pushes. Full measurements are opt-in
+because each of the two direction jobs can take up to 50 minutes.
 Each job first performs a Dry validation, then one representative Brotli case with the
 Default job, then the complete directional matrix with two Default-job launches.
 Warmup and measurement iteration counts remain BenchmarkDotNet's adaptive defaults;
@@ -74,8 +79,10 @@ Neither count includes command/key bytes, Redis object overhead, replication, or
 
 ## Measured trade-offs (2026-09-30)
 
-These historical measurements predate context pooling in the Zstandard codec and
-the addition of 1 KiB cases. They describe the recorded revision, not current costs.
+These historical measurements predate context pooling in the Zstandard codec, the
+addition of 1 KiB cases, direct-to-destination DEFLATE compression and decompression, and
+the move of the workflow to .NET 10 only. They describe the recorded revision, not current
+costs. In particular, the DEFLATE allocation figures may not reflect the current code.
 
 [Run 36702369606](https://github.com/thomhurst/Respire/actions/runs/36702369606) measured revision
 `cbe996aad493afc41357ee78e75380c06a602738`. All four jobs passed: 40 cases each,
@@ -190,5 +197,4 @@ in each parameter group provides context, not a throughput promise for Redis ope
 Evaluate real application payloads and concurrency before changing thresholds or quality.
 
 For framing, ownership, serializer integration, and migration rules, see
-[value codecs](./value-codecs.md). Parent feature work remains tracked in
-[#425](https://github.com/thomhurst/Respire/issues/425).
+[value codecs](./value-codecs.md).

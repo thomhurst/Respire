@@ -56,7 +56,7 @@ ulong[] matches = await redis.Arrays.GrepAsync("log",
 
 `GrepAsync` returns indexes. `GrepEntriesAsync` requests `WITHVALUES` and returns indexes with values. Predicate kinds are exact equality, substring (`MATCH`), Redis glob, and POSIX extended regex (`RE`). Predicates use OR by default; `MatchAll` requests AND. Logical bounds `First` and `Last` encode Redis's `-` and `+` tokens.
 
-Read operations use generated catalog metadata and honor replica read policies. `ARSCAN` retains the catalog's `CursorRead` classification with no standard cursor argument layout. Array enumeration does not invent a Redis cursor or acquire its own cursor-affinity lease; routing retains the existing shared read-policy behavior. Transactions execute on their selected primary.
+Read operations honor replica read policies. `ARSCAN` has no server-side cursor, so `ScanAsync` routes each page independently under the client's read policy rather than pinning the enumeration to one server. Transactions execute on their selected primary.
 
 ## Aggregation and insertion cursors
 

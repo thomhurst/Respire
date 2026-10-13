@@ -1,11 +1,12 @@
 # Connection recovery
 
-`RespireOptions.ReconnectPolicy` configures replacement of failed multiplexed command
-connections, including connections owned by Redis Cluster nodes, dedicated connection acquisitions,
-pub/sub recovery, and Cluster/Sentinel discovery fallback. It is null by default. For command connections,
-replacement starts immediately, and a failed replacement is retried on the next use.
-Setting a policy preserves that demand-driven scheduling while adding backoff and limits.
-It does not create a perpetual command retry loop or replay any accepted Redis command.
+`RespireOptions.ReconnectPolicy` adds backoff and attempt limits to connection recovery:
+replacement of failed command connections (including Redis Cluster node connections),
+dedicated connection acquisitions, pub/sub recovery, and Cluster and Sentinel discovery
+fallback. It is `null` by default. Without a policy, a failed command connection is replaced
+immediately, and a failed replacement is retried the next time a command needs it. A policy
+keeps that on-demand scheduling and adds delays and limits. It never replays an accepted
+Redis command; to resend commands, see the [command retry policy](command-retries.md).
 
 ```csharp
 var options = new RespireOptions
@@ -22,15 +23,26 @@ var options = new RespireOptions
 };
 ```
 
+| Setting | Default | Bounds |
+| --- | --- | --- |
+| `InitialDelay` | 250 milliseconds | Zero or more, at most `MaxDelay`. |
+| `BackoffMultiplier` | `2` | Finite, at least 1. |
+| `MaxDelay` | 5 seconds | At most one day. Caps the delay after jitter. |
+| `JitterRatio` | `0.2` | Finite, from 0 through 1. |
+| `MaxAttempts` | `null` (unlimited) | Positive, or `null`. |
+
 The first replacement waits `InitialDelay`. Later attempts multiply that delay by
 `BackoffMultiplier` for each failed attempt, capped at `MaxDelay`. Symmetric jitter
 scales the capped delay by a random factor from `1 - JitterRatio` through
 `1 + JitterRatio`; the actual delay is capped again. Zero initial delay stays zero.
-Maximum delay cannot exceed one day, the multiplier must be finite and at least one,
-and the jitter ratio must be finite and between zero and one. Invalid policies fail
-before connection I/O. Policies are immutable records and can be shared across clients.
+An invalid policy throws `RespireConfigurationException` before any connection I/O.
+Policies are immutable records and can be shared across clients.
 
-Attempts count separately for each slot in a multiplexer generation. Concurrent callers
+Leave `MaxAttempts` null for long-lived clients that must keep trying after an outage.
+[Failover group](failover-groups.md) candidates require it.
+
+Each endpoint has `RespireOptions.Connections` multiplexed command connections (one by
+default), and attempts count separately for each of these connection slots. Concurrent callers
 share an in-progress replacement; they do not each create another attempt. A successful
 replacement, including its handshake and required connection identity, resets the count.
 The counter tracks consecutive replacement failures, not connections that fail after
@@ -39,26 +51,24 @@ therefore starts a new episode each time, with the initial delay. There is no he
 duration window or first-command condition for reset.
 `MaxAttempts = null` permits unlimited attempts. Exhaustion remains in effect for that
 failed slot; repeatedly submitting commands does not reset it. Recreate the client to
-begin a new episode after exhaustion. A newly discovered Cluster generation has its own
-slots and counters. Healthy slots remain usable when another slot is exhausted.
+begin a new episode after exhaustion. After a Cluster topology change, the new set of
+node connections has its own slots and counters. Healthy slots remain usable when another
+slot is exhausted.
 
-When every slot at an endpoint has exhausted recovery, acquisition throws
+When every slot at an endpoint has exhausted recovery, commands throw
 `RespireReconnectLimitException`, a `RespireConnectionException`. Individual failure
-events retain the original connection error. Identity setup requires every slot, so it
-throws when any required slot is exhausted even if another slot can still serve ordinary
-commands. Failed correction fences retain their server-side identity obligations; a
-terminal recovery error does not mark an unacknowledged fence complete.
-Fences connect directly to the captured physical peer with their own ConnectTimeout;
-they do not acquire or revive an exhausted command slot. A fence may therefore succeed
-after command recovery is exhausted, or report its own connection/permission error
-while retaining the owed identity. The command reconnect limit does not cap attempts
-to discharge that separate correctness obligation.
-A command that notices a failed connection
-can still fail while replacement proceeds, as it did before configuring this policy.
-Each connection attempt retains `ConnectTimeout`; initial multiplexer setup is not retried
-by this policy. Command deadlines and caller cancellation still bound their own waits.
-Cancelling one caller does not cancel recovery shared by other callers. Retiring or
-disposing the multiplexer cancels its scheduled delays and awaits owned recovery work.
+events keep the original connection error. Operations that need every slot's server
+client ID, to order cleanup after an ambiguous outcome, throw when any slot is exhausted,
+even if another slot can still serve ordinary commands. Internal cleanup connections that Respire
+opens after an ambiguous outcome connect directly with their own `ConnectTimeout` and are
+not limited by this policy, so they can still succeed after command recovery is exhausted.
+
+A command that notices a failed connection can still fail while the replacement proceeds,
+with or without a policy. Each connection attempt keeps its `ConnectTimeout`. This policy
+does not retry the client's initial connection setup. Command deadlines and caller
+cancellation still bound their own waits. Cancelling one caller does not cancel recovery
+shared by other callers. Disposing the client cancels scheduled delays and waits for
+recovery work to finish.
 
 Commands accepted by a failed connection are never replayed. A missing reply can leave
 the server outcome uncertain. This policy only creates replacement connections; application
@@ -149,10 +159,10 @@ they describe already scheduled attempts or completed exhaustion. They may arriv
 | Property | Meaning |
 | --- | --- |
 | `ReconnectAttempt` | One-based configured attempt; zero for transitions without policy metadata |
-| `ConnectionSlot` | Source slot within this endpoint's multiplexer generation, including null-policy recovery; null for endpoint-wide transitions |
+| `ConnectionSlot` | Source connection slot at this endpoint, including recovery without a policy; null for endpoint-wide transitions |
 | `NextReconnectDelay` | Actual scheduled delay before this attempt; null when no attempt is scheduled |
 | `ReconnectExhausted` | This slot, dedicated rent, pub/sub episode, or Cluster discovery round reached its configured limit |
-| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a multiplexer event, `PubSub` for subscription recovery, `ClusterDiscovery` for topology/endpoint fallback; `Unspecified` for other paths |
+| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a command connection, `PubSub` for subscription recovery, `ClusterDiscovery` for topology/endpoint fallback, `SentinelMonitor` for a Sentinel event monitor's subscription; `Unspecified` for other paths |
 | `SourceState` | Source connection state before endpoint health aggregation, when supplied |
 | `ReconnectEpisodeId` | Process-local identifier grouping one dedicated rent or Cluster discovery round; null for other paths |
 
@@ -302,8 +312,8 @@ health. Discovery never inserts a synthetic failed command slot. Measurements
 and lifecycle callbacks run on an ordered asynchronous queue; keep observers short. Discovery
 ordering is independent of command-slot and dedicated recovery notification queues; events
 from different sources have no shared ordering guarantee and can arrive after the triggering
-operation completes. Configured-seed fallback skips multiplexer generations already rejected
-by owner or known-master discovery in that round. A replacement generation at the same address
+operation completes. Configured-seed fallback skips node connections already rejected
+by owner or known-master discovery in that round. A replacement connection set at the same address
 remains eligible; skipping a duplicate does not consume another policy attempt.
 A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
 with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
@@ -321,7 +331,7 @@ not the notification queue; handlers should hand off expensive work and return p
 
 ## Periodic Cluster refresh
 
-The policy covers command multiplexers, dedicated pools, pub/sub, Cluster discovery,
+The policy covers command connections, dedicated pools, pub/sub, Cluster discovery,
 Sentinel fallback, and Sentinel event monitors as described above. Background Cluster
 refresh uses the same discovery budget for candidate selection and backoff; it does not
 add a separate nested retry counter.

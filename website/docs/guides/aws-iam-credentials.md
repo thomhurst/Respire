@@ -5,9 +5,9 @@ description: Authenticate Respire connections to Amazon ElastiCache and MemoryDB
 
 # AWS IAM credentials
 
-Install `Respire.Aws` and configure an AWS SDK `AWSCredentials` provider. The package
-uses AWS SDK for .NET's SigV4 signer to create 15 minute tokens; Respire renews live connections
-before token expiry through `IRespireCredentialProvider`.
+Install `Respire.Aws` and pass an AWS SDK `AWSCredentials` instance to one of its credential
+providers. The provider signs a 15-minute IAM token with the AWS SDK for .NET (v4) SigV4 signer,
+and Respire renews live connections before the token expires through `IRespireCredentialProvider`.
 
 ```bash
 dotnet add package Respire.Aws
@@ -15,11 +15,11 @@ dotnet add package Respire.Aws
 
 ```csharp
 using Amazon;
-using Amazon.Runtime;
+using Amazon.Runtime.Credentials;
 using Respire;
 using Respire.Aws;
 
-var awsCredentials = FallbackCredentialsFactory.GetCredentials();
+var awsCredentials = DefaultAWSCredentialsIdentityResolver.GetCredentials();
 
 var elasticache = new RespireOptions
 {

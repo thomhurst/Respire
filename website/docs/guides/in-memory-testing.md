@@ -10,7 +10,7 @@ Your application uses a real `RespireClient`: command serialization, coalescing,
 response dispatch, result leases, serialization settings, prefixing, and batches all run
 through the normal client code. The fake opens no TCP socket and requires no Docker daemon.
 Keep `Respire.Testing` and `Respire` at the same package version: the test transport uses an
-internal core hook. The repository builds and publishes them with one generated version.
+internal core hook, and both packages are published together with one version number.
 
 ```csharp
 using Respire.Testing;
@@ -62,12 +62,12 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
 | Extended counters | `INCREX` with integer/floating increments, bounds, `SATURATE`, expiry, and `ENX`; integer arithmetic preserves the full signed 64-bit range |
 | Sparse arrays | `ARCOUNT`, `ARLEN`, `ARGET`, `ARMGET`, `ARSET`, `ARMSET`, `ARDEL`, `ARDELRANGE`, `ARGETRANGE`, `ARSCAN`, `ARSEEK`, `ARNEXT`, `ARINSERT`, `ARRING`, `ARLASTITEMS`, `ARINFO`, `AROP`, `ARGREP`; see [sparse-array testing limits](../commands/arrays.md#batches-transactions-and-the-fake-server) |
-| Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
-| Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
-| Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
+| Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY`; `HIMPORT PREPARE`, `SET`, `DISCARD`, `DISCARDALL` (see [hash import](hash-import.md)) |
+| Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN`, `LMOVEM`, `BLMOVEM` |
+| Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms; `SINTERCARD`, `SDIFFCARD`, and `SUNIONCARD` with `LIMIT` (`SUNIONCARD APPROX` returns the exact count) |
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
-| Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XINFO GROUPS` |
+| Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XAUTOCLAIM` with `COUNT` and `JUSTID`; `XDEL`; `XINFO GROUPS`; `EVAL`/`EVALSHA` for the built-in [stream worker](stream-workers.md) scripts only |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
@@ -77,8 +77,8 @@ Stream reads support multiple keys, new group entries, pending history, acknowle
 and cumulative Redis 8.10 count/byte budgets. Blocking reads wake after appends, resolve `$`
 once, and release on connection cancellation. Blocking timeouts use wall-clock time rather
 than `RespireFakeClock`. Transactions execute stream reads without blocking, as Redis does.
-The fake does not implement trimming, deletion of individual entries, automatic claiming,
-`NOACK`, `CLAIM`, stream metadata, or other group-administration commands. Unsupported
+The fake does not implement trimming, `XCLAIM`, the `XREADGROUP` `NOACK` and `CLAIM` options, stream metadata, or other
+group-administration commands. Unsupported
 append/read options fail explicitly. Use real Redis tests for those operations.
 
 `GETEX` supports its expiry options and `PERSIST`. Binary keys and values are preserved,
@@ -312,8 +312,8 @@ and the [Redis transaction implementation](https://github.com/redis/redis/blob/7
 ## Remaining limits
 
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking,
-persistence and administrative diagnostics are not simulated. Unsupported handshake features
+Sentinel, general scripts and functions (only the built-in stream worker scripts run),
+client-side tracking, persistence, and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
 and report the size-limit error when the server is disposed.

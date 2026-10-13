@@ -1,5 +1,6 @@
 ---
 title: Redis JSON
+description: Typed RedisJSON commands with System.Text.Json metadata, JSONPath, and projections.
 ---
 
 `Respire.Json` provides typed Redis JSON commands. JSON is built into Redis Open Source 8 and later; older deployments need Redis Stack or the RedisJSON module. The package, assembly, and root namespace are all `Respire.Json`.
@@ -8,11 +9,11 @@ title: Redis JSON
 dotnet add package Respire.Json
 ```
 
-With C# 14 or later, import the namespace shown below and use `client.Json` on
+With C# 14 or later, import `Respire.Json` and use the `client.Json` extension property on
 `RespireClient` or `IRespireClient`. The property reuses one wrapper per client instance,
 performs no network I/O, and leaves ownership of the underlying client with you.
-Key-prefixed views get their own wrapper and retain the module's prefix restrictions.
-The existing `new RespireJsonClient(client)` constructor remains available.
+Key-prefixed views get their own wrapper that keeps the view's key prefix. On earlier C#
+versions, create the wrapper with `new RespireJsonClient(client)`.
 
 `RespireJsonClient` uses `System.Text.Json` metadata supplied by the caller. This avoids reflection and supports Native AOT:
 
@@ -46,7 +47,7 @@ The default `RespireJsonPath` is the legacy root path `.` (also `RespireJsonPath
 
 ## Reading and writing
 
-`GetJsonAsync` returns formatted JSON text. `RespireJsonGetOptions` supports `INDENT`, `NEWLINE`, `SPACE`, `NOESCAPE`, and one or more paths; do not mix legacy and `$` paths. `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` accepts pre-serialized JSON as a string or as UTF-8 bytes. All three return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the write.
+`GetJsonAsync` returns formatted JSON text. `RespireJsonGetOptions` maps `Indent`, `NewLine`, `Space`, and `NoEscape` to the `INDENT`, `NEWLINE`, `SPACE`, and `NOESCAPE` arguments and accepts one or more `Paths`; do not mix legacy and `$` paths. `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` accepts pre-serialized JSON as a string or as UTF-8 bytes. All three return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the write.
 
 `MultiGetAsync` returns one entry per key: `null` when the key does not exist, otherwise the values matched by the path. `MultiSetAsync` writes every entry atomically with `JSON.MSET`; it serializes all entries before sending, so a serialization failure writes nothing. `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
 
@@ -67,8 +68,8 @@ Redis 8.10 scalar projection expressions, including `$.items.sum()`, `sum($.item
 supplied result metadata, just like ordinary JSONPath matches. A projection can yield no
 value; `GetManyAsync` then returns an empty array. See the
 [Redis JSONPath reference](https://redis.io/docs/latest/develop/data-types/json/path/).
-The string constructor retains its original rule: only paths starting with `$` select an
-array-of-matches reply. For other expressions, use `RespireJsonPath.Projection("sum($.items)")`
+The string constructor (and implicit string conversion) treats only paths starting with `$` as
+returning an array of matches. For other expressions, use `RespireJsonPath.Projection("sum($.items)")`
 or `RespireJsonPath.Projection("($.price + 1)")`. `Legacy(path)` explicitly selects one JSON
 value; `JsonPath(path)` and `Projection(path)` explicitly select matched values. None rewrites
 the text sent to Redis or validates that its syntax agrees with the selected response shape.

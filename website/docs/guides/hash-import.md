@@ -59,13 +59,13 @@ Batches pipeline commands in order. Transactions use `MULTI`/`EXEC` on the same 
 the session confirms `MULTI` before sending any imports. A rejected `MULTI` leaves prepared
 fieldsets usable. Queue-time errors, such as a denied HIMPORT subcommand, preserve the session
 and its fieldsets when the drained `EXEC` confirms that Redis discarded the transaction.
-The original queue error still faults the commit and every queued pending. A rejected `EXEC`
+The original queue error still faults the commit and every queued `RespirePending<T>`. A rejected `EXEC`
 closes the session because Redis may still be in transaction mode.
 Transactions require one in-flight slot per queued command plus one for `EXEC`;
 exceeding `MaxInflightCommands` fails before `MULTI` and preserves prepared fieldsets.
 Credential renewal waits outside the complete `MULTI`/`EXEC` sequence. Credential expiry and
 renewal deadlines still apply; a transaction cannot extend the connection's authentication lifetime.
-Execution errors fault the affected pending and do not roll back other commands. Session
+Execution errors fault the affected `RespirePending<T>` and do not roll back other commands. Session
 transactions do not provide WATCH. `ExecuteAndWaitForReplicationAsync` and
 `ExecuteAndWaitForAofAsync` reject session batches because their execution contract creates a
 fresh connection. Await each operation or queue execution before starting another operation.
@@ -75,8 +75,8 @@ fresh connection. Await each operation or queue execution before starting anothe
 Names, fields, keys, and values support binary arguments. The session snapshots their bytes
 before an asynchronous send or enqueue, so callers can reuse their buffers after the call.
 Key prefixes apply only to imported keys; fieldset names and fields remain unchanged.
-Imports invalidate cached results for the affected key. Batch and transaction execution also
-uses the existing conservative cache fences.
+With [client-side caching](../fundamentals/client-side-caching.md) enabled, imports invalidate
+cached results for the affected key, and batch or transaction execution flushes the local cache.
 
 For Redis Cluster, supply a routing key when opening the session:
 
@@ -100,10 +100,10 @@ operation to fail without replay.
 Ordinary command errors leave the session usable. Routing errors, `READONLY`, and errors
 that leave transaction state uncertain invalidate it. Cancellation proven to occur before
 admission leaves its fieldsets intact, including a batch waiting for credential renewal.
-Cancellation of an admitted command still expires the session. After an uncertain send, some imports may have
-executed; inspect application data before retrying. Disposing a queue before execution does
+Cancellation of an admitted command invalidates the session. After an uncertain send, some
+imports may have executed; inspect application data before retrying. Disposing a queue before execution does
 not dispose the session or discard fieldsets prepared earlier.
 
-`RespireFakeServer` supports all four operations with the same per-connection isolation,
+`RespireFakeServer` from `Respire.Testing` (see [in-memory testing](in-memory-testing.md)) supports all four operations with the same per-connection isolation,
 overwrite behavior, validation, and WATCH invalidation. Other server versions must support
 HIMPORT themselves; opening a session does not negotiate this feature.

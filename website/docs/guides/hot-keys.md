@@ -36,7 +36,8 @@ bool stopped = await tracker.StopAsync();
 await tracker.ResetAsync();
 ```
 
-START, STOP, and RESET require `AllowAdmin` before command I/O. GET does not require
+START, STOP, and RESET require `AllowAdmin`; without it they throw
+`NotSupportedException` before command I/O. GET does not require
 that local opt-in; server ACLs apply to every operation. STOP returns false when no
 active session exists, and retains completed data. GET returns null before any session
 or after RESET; otherwise it returns the server's array of snapshot maps (normally one).
@@ -57,9 +58,9 @@ See [STOP](https://redis.io/docs/latest/commands/hotkeys-stop/) and
 Slot filters require Cluster and ownership by the target node; these remain server
 checks. Slot numbers are literal and never key-prefixed. Values are copied before
 asynchronous work; do not mutate supplied slot memory concurrently with the call.
-Explicit zero duration is rejected by the pinned Redis 8.6 implementation, despite
+Redis 8.6 rejects an explicit zero duration, despite
 the help text describing zero as unlimited; omit `DurationSeconds` for that behavior.
-See [START](https://redis.io/docs/latest/commands/hotkeys-start/) and the audited
+See [START](https://redis.io/docs/latest/commands/hotkeys-start/) and the Redis 8.6
 [source](https://github.com/redis/redis/blob/3b450c3dcb075e59f50dbc0377151e25c8f375d4/src/hotkeys.c).
 
 `ByCpuTime` reports estimated execution microseconds per binary key; `ByNetworkBytes`
@@ -116,6 +117,6 @@ Pre-cancelled operations send no command. Discovery cancellation throws; later f
 cancellation is reported per affected node. Cancelling a dispatched mutation cannot
 undo it. A lost reply can leave the outcome uncertain; inspect before retrying.
 
-This feature adds five members to `IServerCommands` and the `RespireHotKeysTracker`
-handle. External implementations and mocks must implement or forward the new members.
-It does not add batch or transaction commands.
+`GetHotKeysTrackerAsync` and the four `...HotKeysOnAllNodesAsync` methods are
+`IServerCommands` members. External implementations and mocks must implement or forward
+them. There are no batch or transaction HOTKEYS commands.

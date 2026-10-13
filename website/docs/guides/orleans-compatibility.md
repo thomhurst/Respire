@@ -1,9 +1,14 @@
+---
+title: Orleans Redis provider compatibility
+description: Run the official Orleans Redis clustering, persistence and reminder providers on Respire through the StackExchange.Redis adapter.
+---
+
 # Orleans Redis provider compatibility
 
 `Respire.StackExchangeCompat` supports the inventoried Redis operations used by
-Orleans clustering, grain persistence, and reminders. Use the existing official
-providers with an injected adapter multiplexer. Separate native providers are
-unnecessary for these assessed paths, and the Redis storage format remains the
+Orleans clustering, grain persistence, and reminders. Use the official Orleans
+providers with an injected adapter multiplexer. No separate native provider is
+needed for these assessed paths, and the Redis storage format remains the
 official provider's format.
 
 This assessment pins these packages to **10.2.2**, from Orleans tag `v10.2.2`,
@@ -16,12 +21,8 @@ commit [`a575888773a3b01b079c9c3720bb1553c3169997`](https://github.com/dotnet/or
 This is a tested version and selected provider acceptance, not a blanket
 supported-version declaration or the complete upstream conformance suite.
 
-The acceptance project pins all three providers to **10.2.2** by updating its
-central `PackageVersion` items. Repository defaults are **10.4.0**, but the
-project pins preserve the provider and runtime versions used by this source
-inventory and its recorded results. Renovate updates the repository defaults
-together and excludes the assessment pins. Version **10.4.0** is not assessed
-here; moving the pins requires a new source inventory and compatibility assessment.
+Later provider versions, including **10.4.0**, are not assessed here. Moving to
+another version requires a new source inventory and compatibility assessment.
 
 ## Configure the official providers
 
@@ -96,8 +97,7 @@ DI-registered multiplexer through that same factory. None of these providers cal
 
 ## Implemented persistence and reminder behavior
 
-The three gaps identified by the original assessment are now implemented in
-`src/Respire.StackExchangeCompat/CompatDatabaseAsync.Orleans.cs`:
+The providers depend on three adapter members beyond basic hash and key commands:
 
 1. `ScriptEvaluateAsync(string, RedisKey[], RedisValue[], CommandFlags)`.
    Persistence needs atomic ETag compare-and-write, compare-and-clear, and
@@ -118,14 +118,14 @@ The three gaps identified by the original assessment are now implemented in
 
 Synchronous counterparts and deferred batch/transaction dispatch also support
 these commands. The adapter copies binary keys, values, and bounds before queueing.
-See the [adapter guide](./stackexchange-interop) for script overload limitations,
+See the [adapter guide](stackexchange-interop.md) for script overload limitations,
 SHA-string dispatch, reply conversion, and flags. There are no additional
 unsupported members or option/flag branches in the in-scope source inventory.
 
 ## Real Redis evidence and decision
 
-`tests/Respire.Orleans.Acceptance.Tests` runs named upstream scenarios with the
-pinned production providers, first against StackExchange.Redis as a positive
+The repository's `tests/Respire.Orleans.Acceptance.Tests` project pins the three
+providers to **10.2.2** and runs named upstream scenarios with those production providers, first against StackExchange.Redis as a positive
 control, then against the shim. The test project records its upstream sources,
 adaptations, and exclusions in `NOTICE.md`.
 
@@ -151,20 +151,16 @@ combination (72 case executions). The NuGet repository metadata for all three
 packages matches the source commit above. These results apply to standalone
 Redis 7.0.15, not Redis Cluster or failover.
 
-Run the 18 cases on .NET 8 and .NET 10 with RESP2 and RESP3:
+To run the 18 cases from a repository checkout (Docker is required for the Redis
+container), set the protocol and target framework:
 
 ```powershell
 $env:RESPIRE_TEST_PROTOCOL = '2' # Repeat with '3'.
-& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
-    'run', '--project', 'tests/Respire.Orleans.Acceptance.Tests',
-    '-c', 'Release', '-f', 'net10.0', '--', '--minimum-expected-tests', '18')
-# Repeat with net8.0 as well.
+dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release -f net10.0 -- --minimum-expected-tests 18
+# Repeat with -f net8.0 as well.
 ```
 
-The adapter delivers the missing atomic persistence and reminder behavior for
-[#890](https://github.com/thomhurst/Respire/issues/890), preserving the official
-providers and their storage format. No native provider is needed for the assessed
-calls. Full silo/grain activation, all storage datasets/serializers, provider-owned
+Full silo/grain activation, all storage datasets/serializers, provider-owned
 shutdown, sustained parallel stress, Cluster routing, reconnect, and failover
 remain unvalidated. The expiry case checks the written key's positive TTL and
 payload; it does not wait for wall-clock expiration. Binary tests use Orleans'

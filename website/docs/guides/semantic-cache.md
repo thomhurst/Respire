@@ -103,8 +103,9 @@ public static class SemanticChatRequest
 }
 ```
 
-`ShouldBypass` can also exclude requests that depend on current time, account
-state, authorization, or other changing data. Scope selection is not authorization:
+Return `true` from `ShouldBypass` to skip embedding, reads and writes for a
+request. Use it for requests that depend on current time, account state,
+authorization, or other changing data. Scope selection is not authorization:
 derive user and tenant identifiers from trusted application context. A semantic
 match can return an answer generated for different wording, so opt out for
 transactional operations and exact identifiers.
@@ -133,13 +134,12 @@ so bound retention with TTL and measure production latency before scaling it.
 
 ## TTL, response fidelity and bypass behavior
 
-TTL starts when the response is inserted. A Lua script writes the complete hash
-and applies `PEXPIRE` in one atomic operation. TTL has millisecond precision and
-must be at least one millisecond. Hits do not extend it. Each insertion gets a new
-key, so replacing an entry cannot clear its expiry. This uses `Respire.Search`
-directly: the small cache-specific schema can apply TTL atomically without
-changing the complete-record upsert contract of `Respire.VectorData`. It does not
-use vector sets or depend on their AOF replacement behavior.
+`TimeToLive` defaults to one hour. TTL starts when the response is inserted. A Lua
+script writes the complete hash and applies `PEXPIRE` in one atomic operation. TTL
+has millisecond precision and must be at least one millisecond. Hits do not extend
+it. Each insertion gets a new key, so replacing an entry cannot clear its expiry.
+The cache uses `Respire.Search` hashes directly, not `Respire.VectorData` or
+vector sets.
 
 **Streaming always bypasses embedding, cache reads and cache writes.** Neither a
 streaming miss nor a streaming call after a cached response populates/replays the
@@ -163,8 +163,4 @@ provider response. Configure a Trace listener to capture these warnings. Set
 cancellation always propagate, including cancellation during insertion. Cancelled
 or failed provider calls never insert responses.
 
-The real Redis contracts use a fake embedding generator and chat provider on
-RESP2 and RESP3. They cover hits, misses, the inclusive distance boundary, exact
-scope/model/system/history isolation, opt-out, expiry, streaming bypass,
-invalid embeddings/options, stateful/tool bypass and dependency ownership on
-.NET 8 and .NET 10.
+The cache works over RESP2 and RESP3 on .NET 8 and .NET 10.

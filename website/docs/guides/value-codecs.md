@@ -1,8 +1,13 @@
+---
+title: Value compression codecs
+description: Compress serializer-backed values with framed Brotli, DEFLATE, LZ4, or Zstandard codecs.
+---
+
 # Value compression codecs
 
-Value codecs are opt-in. Configure `RespireValueCodecSerializer` around your existing
-serializer to frame and optionally compress **serializer-backed** values. No client
-setting or wire format changes when this decorator is absent.
+Value codecs are opt-in. Wrap your existing serializer in `RespireValueCodecSerializer` to
+frame and optionally compress **serializer-backed** values. Without this decorator, nothing
+about the client or the stored format changes.
 
 ```csharp
 using Respire.Compression;
@@ -27,9 +32,9 @@ var profile = await compressed.GetAsync<Dictionary<string, string>>("profile");
 
 `BrotliValueCodec` defaults to quality 4 (valid range 0–11). `DeflateValueCodec` uses
 raw DEFLATE and defaults to `CompressionLevel.Fastest`. Both use the .NET compression
-libraries without extra compression packages. The default threshold is 1 KiB and the
-default maximum original/decoded length is 8 MiB. Settings are captured when the codec
-is constructed. Instances are reusable across concurrent operations.
+libraries without extra packages. `RespireValueCodecOptions.MinimumLength` (the compression
+threshold) defaults to 1 KiB and `MaximumDecodedLength` defaults to 8 MiB. Settings are
+captured when the codec is constructed. Instances are thread-safe and reusable.
 
 Above the threshold, a codec tries compression and keeps it only if its payload is
 smaller. Below the threshold, empty values, and incompressible values use the same frame
@@ -39,17 +44,13 @@ allocate owned buffers and consume CPU. See the [focused benchmark design and re
 guide](./value-codec-benchmarks.md) for equivalent payloads, allocation scope, and threshold
 comparisons. No throughput improvement is promised.
 
-The serializer decorator buffers the complete serialized value in rented storage, then
-asks the codec to write into its destination. Built-in codecs construct the final frame
-directly in that writer, avoiding an intermediate frame array and its copy. Decode also
-uses rented scratch storage before calling the inner serializer. Every scratch rental is
-cleared and returned after success or failure; returned objects must own their data.
-Brotli compression writes into bounded rented storage without an intermediate compressed
-array. DEFLATE compression uses the compatibility fallback, which copies its compressed
-array into scratch storage. DEFLATE compression buffers stream output and copies it
-into an owned array; decoding copies compressed input into a stream-backed array.
-These allocations are part of the current opt-in cost. The decoded-length limit does
-not bound serializer buffering, compression workspace, or total peak memory.
+The serializer decorator buffers the complete serialized value in pooled storage, then
+asks the codec to write the frame into its destination. Built-in codecs compress into
+bounded pooled scratch storage and write the final frame directly into that destination.
+Decoding also uses pooled scratch storage before calling the inner serializer, so objects
+the inner serializer returns must own their data. Scratch buffers are cleared and returned
+after success or failure. The decoded-length limit does not bound serializer buffering,
+compression workspace, or total peak memory.
 
 ## Where codecs apply
 
@@ -91,8 +92,7 @@ it does not advance the destination. Existing custom implementations can impleme
 only the array members: default destination overloads copy those results. Implement
 the destination overloads to avoid those fallback allocations.
 
-Calling a codec
-explicitly does not configure the client to decode other raw reads. For a collection
+Calling a codec explicitly does not configure the client to decode other raw reads. For a collection
 that only accepts raw writes, explicitly serialize through the decorated serializer
 before enqueueing its value; the existing typed reader then uses the same decorator.
 
@@ -155,7 +155,7 @@ Its bounded span [block APIs](https://github.com/MiloszKrajewski/K4os.Compressio
 write only into caller-provided storage. The shared frame checks the declared length
 before allocating output; a failed decode does not advance a destination writer.
 The dependency uses unsafe managed code internally. No throughput, latency, or
-zero-allocation claim is implied; measurements remain tracked in #527.
+zero-allocation claim is implied.
 
 ## Optional Zstandard package
 
@@ -204,7 +204,7 @@ dependency-reported workspace sizes, excluding allocator overhead, managed buffe
 and active concurrent operations; they are not a process-wide memory ceiling.
 Higher levels can need more time and workspace. The decoded-length limit bounds
 the value, not all compressor workspace or concurrent process memory. Choose levels
-and limits for your workload; no performance claim is implied (#527).
+and limits for your workload; no performance claim is implied.
 
 Decoding writes directly into bounded output, checks the complete single-frame
 input and exact decoded length, and does not advance a destination writer on failure.
@@ -249,17 +249,12 @@ value limit that fits your data, and account for concurrent reads when choosing 
 The public `RespireValueCodec` base class shares these framing rules with optional/custom
 codecs. IDs 3 and 4 belong to the optional LZ4 and Zstandard packages. IDs 16–255 are available
 for an application's custom codecs and must be coordinated between its readers and writers.
-The protected constructor rejects IDs 0–15; built-in implementations use an internal
-reserved-ID constructor, also available to explicitly trusted optional codec assemblies.
-A custom codec implements compression and bounded decompression, while the base manages
+The protected constructor throws `ArgumentOutOfRangeException` for IDs 0–15, which are
+reserved for Respire's codecs. A custom codec implements compression and bounded decompression, while the base manages
 thresholds, ownership, framing, and checksums. Override the protected `TryCompress` span
 overload to avoid the owned-array fallback and its copy. Its destination is shorter than
-the original input; return false when compressed output does not fit. There is no decoder registry or automatic
-fallback between algorithms.
-
-These are additive public types; existing client and facet interfaces gain no members.
-Measured trade-offs remain a separate deliverable in
-[#425](https://github.com/thomhurst/Respire/issues/425).
+the original input; return false when compressed output does not fit. There is no decoder
+registry or automatic fallback between algorithms.
 
 Implementation references: [.NET BrotliEncoder](https://learn.microsoft.com/dotnet/api/system.io.compression.brotliencoder),
 [BrotliDecoder](https://learn.microsoft.com/dotnet/api/system.io.compression.brotlidecoder), and

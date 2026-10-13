@@ -19,9 +19,8 @@ server. `AllowAdmin` is not required; the server still enforces ACL permissions.
 | `ClusterSlotStatsByMetricAsync` | CLUSTER SLOT-STATS ORDERBY | 8.2 |
 
 Unsupported commands and standalone-server failures remain `RespireServerException`.
-No fallback fabricates a topology or returns an empty success. Redis 7.0 and 8.4
-Cluster tests cover RESP2 and RESP3, including explicit errors for newer commands
-against Redis 7.0. Standalone tests cover preserved server errors.
+No fallback fabricates a topology or returns an empty success. Both RESP2 and RESP3
+are supported.
 
 ```csharp
 RespireClusterInfo info = await redis.Server.ClusterInfoAsync();
@@ -46,9 +45,7 @@ annotations. Unknown trailing tokens remain in `AdditionalTokens`. An address su
 
 `RespireClusterInfo.CurrentEpoch` and `MyEpoch` are `ulong?` and preserve the full
 unsigned 64-bit epoch range, including values above `long.MaxValue`. Missing epoch
-fields remain null. This corrects their earlier `long?` type: callers that store or
-construct these values using signed locals must migrate those locals to `ulong?`.
-The other INFO counters remain nonnegative `long?` values; their signed limits do
+fields remain null. Store them in `ulong?` locals, not `long?`. The other INFO counters remain nonnegative `long?` values; their signed limits do
 not change. `Attributes` retains the original text of known and unknown fields.
 See the [Redis Cluster epoch specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#cluster-current-epoch).
 
@@ -123,6 +120,6 @@ Inspect every result. Node views may overlap or disagree during failover; no mer
 deduplication is implied. Cancellation during discovery throws. After discovery it is
 attributed to affected nodes while completed successes remain available.
 
-These 20 methods extend `IServerCommands`; external implementations, decorators, and
+These 20 methods are `IServerCommands` members; external implementations, decorators, and
 mocks must implement or forward them. They are immediate inspection APIs and do not
 add batch or transaction methods.

@@ -1,5 +1,9 @@
 # Prometheus dashboard smoke
 
+This sample exports Respire metrics through the OpenTelemetry Prometheus exporter and
+checks the scrapes against the published Redis client Grafana dashboard. `Smoke.ps1`
+starts its own Redis container, so you do not need a running Redis.
+
 From the repository root, with PowerShell 7, Docker, and the repository .NET SDK installed:
 
 ```powershell
@@ -7,6 +11,8 @@ pwsh samples/Respire.Samples.Observability/Smoke.ps1 -OutputDirectory ./observab
 pwsh samples/Respire.Samples.Observability/Smoke.ps1 -Framework net8.0 -OutputDirectory ./observability-evidence-net8
 ```
 
+`-Framework` defaults to `net10.0`. `-OutputDirectory` defaults to a new folder under the
+system temporary directory; the script prints the path as `Evidence: <path>`.
 Agents must choose an output directory outside the worktree. The script uses
 `scripts/Invoke-AgentDotNet.ps1` with unchanged resource limits. Each container is limited to
 128 MiB and one CPU. It removes only its own uniquely named containers, never shared Redis.
