@@ -15,27 +15,29 @@ public sealed partial class RespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-        TimeSpan ttl, CancellationToken cancellationToken = default)
+        RespireExpiry expiry, CancellationToken cancellationToken = default)
         => DispatchResponseSource<T?>.Run(
-            (Client: this, Key: key, Factory: factory, Ttl: ttl, Token: cancellationToken),
+            (Client: this, Key: key, Factory: factory, Expiry: expiry, Token: cancellationToken),
             static (state, observation) => state.Client.GetOrSetCoreAsync(
-                state.Key, state.Factory, state.Ttl, state.Token, observation));
+                state.Key, state.Factory, state.Expiry, state.Token, observation));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private ValueTask<T?> GetOrSetCoreAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-        TimeSpan ttl, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireExpiry expiry, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(factory);
-        var milliseconds = ttl.Ticks / TimeSpan.TicksPerMillisecond;
-        if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(ttl), "TTL must be at least one millisecond.");
+        if (!(expiry.TryGetRelativeMilliseconds(out var milliseconds)
+                || expiry.TryGetAbsoluteUnixMilliseconds(out milliseconds)) || milliseconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(expiry),
+                "Expiry must be a relative duration of at least one millisecond or an absolute instant after the Unix epoch.");
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         if (_core.ClientCache is null)
             throw new InvalidOperationException("GetOrSetAsync requires ClientSideCache to be enabled.");
         var resolvedKey = ResolveKey(key);
         if (ReadCache is not { } cache)
-            return GetOrSetUncachedAsync(resolvedKey.Snapshot(), factory, milliseconds, cancellationToken, observation);
+            return GetOrSetUncachedAsync(resolvedKey.Snapshot(), factory, expiry, cancellationToken, observation);
         if (typeof(T) == typeof(string))
         {
             if (cache.TryGetString(in resolvedKey, out var cachedText) && cachedText is not null)
@@ -44,7 +46,7 @@ public sealed partial class RespireClient
         else if (cache.TryGet(in resolvedKey, out var cached) && !cached.IsNull)
             return new ValueTask<T?>(DeserializeBorrowed<T>(in cached));
 
-        return GetOrSetMissAsync(resolvedKey.Snapshot(), factory, milliseconds, cache, cancellationToken, observation);
+        return GetOrSetMissAsync(resolvedKey.Snapshot(), factory, expiry, cache, cancellationToken, observation);
     }
 
 #if NET
@@ -53,10 +55,10 @@ public sealed partial class RespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private async ValueTask<T?> GetOrSetUncachedAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-        long milliseconds, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireExpiry expiry, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         // WithoutClientCache: read Redis directly and never join or populate local cache work.
-        using var response = await ProduceCacheAsideAsync(key, factory, milliseconds, cancellationToken,
+        using var response = await ProduceCacheAsideAsync(key, factory, expiry, cancellationToken,
             observation, useCache: false)
             .ConfigureAwait(false);
         return DeserializeBorrowed<T>(in response);
@@ -68,19 +70,22 @@ public sealed partial class RespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private async ValueTask<T?> GetOrSetMissAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-        long milliseconds, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        RespireExpiry expiry, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
-        // A factory is not a GET producer. Types and TTLs with different contracts never join.
+        // A factory is not a GET producer. Types and expiry forms/values with different contracts never join.
         // Within one identity the first factory wins; callers must agree on its meaning.
+        var absolute = expiry.TryGetAbsoluteUnixMilliseconds(out var milliseconds);
+        if (!absolute) expiry.TryGetRelativeMilliseconds(out milliseconds);
         using var response = cache.CoalesceConcurrentMisses
             ? await cache.CoalesceReadAsync(
-                new ClientCacheCommandKey("GETORSET", key.AsValue(), CacheAsideType<T>.Identity, milliseconds),
-                (Client: this, Key: key, Factory: factory, Milliseconds: milliseconds),
+                new ClientCacheCommandKey("GETORSET", key.AsValue(), CacheAsideType<T>.Identity,
+                    absolute ? "PXAT" : "PX", milliseconds),
+                (Client: this, Key: key, Factory: factory, Expiry: expiry),
                 static (state, token, producerObservation) => state.Client.ProduceCacheAsideAsync(
-                    state.Key, state.Factory, state.Milliseconds, token, producerObservation),
+                    state.Key, state.Factory, state.Expiry, token, producerObservation),
                 cancellationToken, observation).ConfigureAwait(false)
-            : await ProduceCacheAsideAsync(key, factory, milliseconds, cancellationToken, observation).ConfigureAwait(false);
+            : await ProduceCacheAsideAsync(key, factory, expiry, cancellationToken, observation).ConfigureAwait(false);
         return DeserializeBorrowed<T>(in response);
     }
 
@@ -90,7 +95,7 @@ public sealed partial class RespireClient
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private async ValueTask<RespValue> ProduceCacheAsideAsync<T>(RespireKey key,
-        Func<CancellationToken, ValueTask<T?>> factory, long milliseconds, CancellationToken cancellationToken,
+        Func<CancellationToken, ValueTask<T?>> factory, RespireExpiry expiry, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation, bool useCache = true)
     {
         // Use normal tracked reads and their insertion fences. Never insert a SET reply into
@@ -118,7 +123,7 @@ public sealed partial class RespireClient
         RespireValue.ThrowIfNull(serialized, nameof(factory));
         var bytes = new byte[serialized.GetWireLength()];
         serialized.WriteWirePayload(bytes);
-        var command = new SetCommand(key.AsValue(), bytes, TimeSpan.FromMilliseconds(milliseconds), SetWhen.NotExists, returnOld: true);
+        var command = new SetCommand(key.AsValue(), bytes, expiry, SetWhen.NotExists, returnOld: true);
         using var previous = await SendCoreAsync("SET", command, cancellationToken, RespireCommandFlags.None,
             allowReadFrom: true, cursorAffinity: null, observation: observation, observeErrors: false).ConfigureAwait(false);
         // Redis 7+ returns the existing winner even when NX refuses our write. A null reply

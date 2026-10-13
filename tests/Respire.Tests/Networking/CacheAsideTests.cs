@@ -13,6 +13,109 @@ public class CacheAsideTests
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(12);
 
     [Test]
+    [Arguments(false, 0)]
+    [Arguments(false, 1)]
+    [Arguments(false, 2)]
+    [Arguments(true, 0)]
+    [Arguments(true, 1)]
+    [Arguments(true, 2)]
+    public async Task WritesRelativeOrAbsoluteExpiryAcrossCacheModes(bool absolute, int mode)
+    {
+        await using var server = new CacheServer();
+        await using var client = await server.ConnectAsync(coalesce: mode == 0);
+        IRespireClient view = mode == 2 ? client.WithoutClientCache() : client;
+        RespireExpiry expiry = absolute
+            ? DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_123)
+            : TimeSpan.FromTicks(123_456);
+
+        await Assert.That(await view.GetOrSetAsync<string>("key",
+            _ => ValueTask.FromResult<string?>("created"), expiry: expiry)).IsEqualTo("created");
+        var command = server.Commands.Single(command => command.StartsWith("SET "));
+        await Assert.That(command).IsEqualTo(absolute
+            ? "SET key created PXAT 1800000000123 NX GET"
+            : "SET key created PX 12 NX GET");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DifferentExpiryFormsOrDeadlinesDoNotShareFactories(bool differentDeadline)
+    {
+        await using var server = new CacheServer();
+        await using var client = await server.ConnectAsync();
+        const long milliseconds = 1_800_000_000_123;
+        var entered = NewSignal();
+        var release = NewSignal();
+        var calls = 0;
+        async ValueTask<string?> Factory(CancellationToken token)
+        {
+            if (Interlocked.Increment(ref calls) == 2) entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return "value";
+        }
+        var firstExpiry = RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds));
+        RespireExpiry secondExpiry = differentDeadline
+            ? DateTimeOffset.FromUnixTimeMilliseconds(milliseconds + 1)
+            : TimeSpan.FromMilliseconds(milliseconds);
+        var first = client.GetOrSetAsync("key", Factory, firstExpiry).AsTask();
+        var second = client.GetOrSetAsync("key", Factory, secondExpiry).AsTask();
+        try { await entered.Task.WaitAsync(Limit); }
+        finally { release.TrySetResult(); }
+        await Task.WhenAll(first, second).WaitAsync(Limit);
+        await Assert.That(calls).IsEqualTo(2);
+        await Assert.That(server.SuccessfulSets).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MatchingAbsoluteExpiriesShareTheFirstFactory()
+    {
+        await using var server = new CacheServer();
+        await using var client = await server.ConnectAsync();
+        var expiry = RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(1_800_000_000_123));
+        var entered = NewSignal();
+        var release = NewSignal();
+        var calls = 0;
+        async ValueTask<string?> Factory(CancellationToken token)
+        {
+            Interlocked.Increment(ref calls);
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return "value";
+        }
+        var first = client.GetOrSetAsync("key", Factory, expiry).AsTask();
+        Task<string?>? second = null;
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            second = client.GetOrSetAsync("key", Factory, expiry).AsTask();
+        }
+        finally { release.TrySetResult(); }
+        await Task.WhenAll(first, second!).WaitAsync(Limit);
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RejectsExpiryPoliciesWithoutAUsableDeadlineBeforeReadsOrFactoryWork()
+    {
+        await using var server = new CacheServer();
+        server.Set("key", "existing");
+        await using var client = await server.ConnectAsync();
+        await client.GetStringAsync("key");
+        var reads = server.Commands.Count(command => command.StartsWith("GET "));
+        RespireExpiry[] invalid = [RespireExpiry.None, RespireExpiry.Keep, RespireExpiry.Persist,
+            TimeSpan.Zero, TimeSpan.FromTicks(1), TimeSpan.FromMilliseconds(-1),
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMilliseconds(-1)];
+        foreach (var expiry in invalid)
+        {
+            var error = await Assert.That(async () => await client.GetOrSetAsync<string>("key",
+                _ => throw new Exception("factory"), expiry)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(error!.ParamName).IsEqualTo("expiry");
+        }
+        await Assert.That(server.Commands.Count(command => command.StartsWith("GET "))).IsEqualTo(reads);
+        await Assert.That(server.SuccessfulSets).IsEqualTo(0);
+    }
+
+    [Test]
     [NotInParallel]
     public async Task HotPrimitiveHitsAllocateNothingWithPositiveControl()
     {

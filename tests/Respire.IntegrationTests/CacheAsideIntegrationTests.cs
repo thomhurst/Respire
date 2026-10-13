@@ -13,6 +13,36 @@ public class CacheAsideIntegrationTests(RedisTestContainer fixture)
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(1);
 
     [Test]
+    public async Task AbsoluteExpiryUsesTheServerDeadlineAndHitsDoNotExtendIt()
+    {
+        var key = NewKey();
+        await using var client = await ConnectAsync();
+        var deadline = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        await Assert.That(await client.GetOrSetAsync<string>(key,
+            _ => ValueTask.FromResult<string?>("created"), expiry: deadline)).IsEqualTo("created");
+        var expiry = await client.Keys.ExpiryTimeAsync(key);
+        await Assert.That(expiry.UnixTimeMilliseconds).IsEqualTo(deadline.ToUnixTimeMilliseconds());
+
+        await client.GetOrSetAsync<string>(key, _ => throw new Exception("factory"), expiry: deadline.AddHours(1));
+        await client.GetOrSetAsync<string>(key, _ => throw new Exception("factory"), expiry: Ttl);
+        await Assert.That((await client.Keys.ExpiryTimeAsync(key)).UnixTimeMilliseconds)
+            .IsEqualTo(deadline.ToUnixTimeMilliseconds());
+    }
+
+    [Test]
+    public async Task PastAbsoluteExpiryReturnsProducedValueWithoutRetainingTheKey()
+    {
+        var key = NewKey();
+        await using var client = await ConnectAsync();
+
+        await Assert.That(await client.GetOrSetAsync<string>(key,
+            _ => ValueTask.FromResult<string?>("created"), expiry: DateTimeOffset.UnixEpoch.AddSeconds(1)))
+            .IsEqualTo("created");
+        await Assert.That(await client.GetStringAsync(key)).IsNull();
+    }
+
+    [Test]
     [Arguments(RespireClientTrackingMode.OptIn)]
     [Arguments(RespireClientTrackingMode.Broadcast)]
     public async Task CreationAndExternalWritesInvalidateOtherClients(RespireClientTrackingMode mode)

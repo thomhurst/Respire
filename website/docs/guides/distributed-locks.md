@@ -9,6 +9,11 @@ Respire locks are Redis leases: each lock has an owner token and an expiry. Acqu
 `SET ... NX PX`; extension and release compare the owner atomically, so an expired handle cannot
 extend or delete a later owner's lock.
 
+Acquisition takes `TimeSpan leaseDuration`, a relative duration that can be renewed from now.
+It does not accept absolute `RespireExpiry` deadlines. Rename existing named `expiry:` acquisition
+arguments to `leaseDuration:`; positional calls are unchanged. `ResetExpiryAsync(newDuration)`
+continues to reset the lease to a relative duration from now.
+
 Lock ownership alone does not protect an external resource. For an ordered token that the resource
 can check, use [fencing-token locks](coordination.md) in `Respire.Coordination`.
 
@@ -20,7 +25,7 @@ attempt releases the lock if it was acquired.
 ```csharp
 await using var attempt = await redis.Locks.AcquireAsync(
     "locks:report",
-    expiry: TimeSpan.FromSeconds(30),
+    leaseDuration: TimeSpan.FromSeconds(30),
     cancellationToken);
 
 if (!attempt.Acquired)
@@ -38,7 +43,7 @@ When contention is exceptional, `AcquireOrThrowAsync` returns the handle directl
 ```csharp
 await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     "locks:report",
-    expiry: TimeSpan.FromSeconds(30),
+    leaseDuration: TimeSpan.FromSeconds(30),
     cancellationToken);
 ```
 
@@ -48,7 +53,7 @@ The acquisition cancellation token does not control the keep-alive.
 ```csharp
 await using var attempt = await redis.Locks.AcquireAsync(
     "locks:report",
-    expiry: TimeSpan.FromSeconds(30),
+    leaseDuration: TimeSpan.FromSeconds(30),
     keepAlive: true,
     cancellationToken);
 
@@ -67,7 +72,7 @@ Both methods have overloads that poll until a `wait` budget expires. `retryEvery
 ```csharp
 await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     "locks:report",
-    expiry: TimeSpan.FromSeconds(30),
+    leaseDuration: TimeSpan.FromSeconds(30),
     wait: TimeSpan.FromSeconds(5),
     retryEvery: TimeSpan.FromMilliseconds(250),
     cancellationToken);

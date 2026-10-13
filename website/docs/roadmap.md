@@ -74,6 +74,8 @@ Each linked guide lists its server and protocol requirements.
   filters, and hybrid search on Redis 8.4+. The guide lists unsupported features.
 - RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md) with OPTIN or
   BCAST/prefix tracking.
+- [Cache-aside factories](fundamentals/client-side-caching.md#populate-missing-values-with-a-factory)
+  with relative or absolute server expiry and optional concurrent-miss coalescing.
 - Typed serialization, custom serializers, and [value compression codecs](guides/value-codecs.md).
 - [Dependency injection](integrations/dependency-injection.md),
   [distributed caching and `HybridCache`](integrations/caching.md) with cross-instance tag
