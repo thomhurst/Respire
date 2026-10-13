@@ -11,9 +11,20 @@ Respire exposes subscriptions as `IAsyncEnumerable<RespireMessage>`. Leave the l
 
 `SubscribeAsync` returns after the server acknowledges SUBSCRIBE, so the subscription is live before the first publish.
 
+Each subscription kind has two overloads: a single `RespireChannel` or a
+`ReadOnlySpan<RespireChannel>`, followed by optional `options` and
+`cancellationToken` arguments. Strings convert implicitly to channels. Pass
+`cancellationToken:` by name when omitting options; pass multiple channels in a
+collection expression or a `RespireChannel[]` (string arrays do not convert).
+
+```csharp
+await using var configured = await redis.SubscribeAsync(
+    "orders", options: new RespireSubscriptionOptions(BufferSize: 32));
+```
+
 ```csharp
 await using var subscription =
-    await redis.SubscribeAsync(["orders", "payments"], stoppingToken);
+    await redis.SubscribeAsync(["orders", "payments"], cancellationToken: stoppingToken);
 
 await foreach (RespireMessage message in
     subscription.WithCancellation(stoppingToken))
@@ -52,17 +63,17 @@ long shardReceivers = await redis.PublishShardedAsync("events:eu-west", payload)
 
 ```csharp
 RespireChannel binary = new byte[] { 0xff, 0x00, 0x3a, 0x41 };
-await using var subscription = await redis.SubscribeAsync(binary, stoppingToken);
+await using var subscription = await redis.SubscribeAsync(binary, cancellationToken: stoppingToken);
 await redis.PublishAsync(binary, "payload", stoppingToken);
 
 var pattern = RespireChannel.Pattern(new byte[] { 0xff, 0x00, 0x3a, (byte)'*' });
-await using var patterns = await redis.SubscribeAsync(pattern, stoppingToken);
+await using var patterns = await redis.SubscribeAsync(pattern, cancellationToken: stoppingToken);
 var shard = RespireChannel.Sharded("events:{eu-west}");
-await using var sharded = await redis.SubscribeAsync(shard, stoppingToken);
+await using var sharded = await redis.SubscribeAsync(shard, cancellationToken: stoppingToken);
 await redis.PublishAsync(shard, "payload", stoppingToken); // SPUBLISH
 
 RespireChannel[] targets = ["orders", binary];
-await using var multiple = await redis.SubscribeAsync(targets, stoppingToken);
+await using var multiple = await redis.SubscribeAsync(targets, cancellationToken: stoppingToken);
 ```
 
 - `SubscribeAsync(RespireChannel)` uses `Kind` to choose SUBSCRIBE, PSUBSCRIBE, or SSUBSCRIBE.
@@ -83,7 +94,7 @@ Key prefixes do not change channels. Add a channel namespace separately:
 
 ```csharp
 IRespireClient tenant = redis.WithKeyPrefix("keys:42:").WithPubSubPrefix("events:42:");
-await using var subscription = await tenant.SubscribeAsync("orders", stoppingToken);
+await using var subscription = await tenant.SubscribeAsync("orders", cancellationToken: stoppingToken);
 await tenant.PublishAsync("orders", orderJson, stoppingToken); // events:42:orders
 RespireChannel physical = ((IRespireNameResolver)tenant).ResolveChannel("orders");
 ```
@@ -199,7 +210,7 @@ Streams contain `RespireMessageKind.Gap` items as well as messages. Check `Kind`
 Replace the gap log with your state reload and the message log with your handler:
 
 ```csharp
-await using var subscription = await redis.SubscribeAsync("orders", stoppingToken);
+await using var subscription = await redis.SubscribeAsync("orders", cancellationToken: stoppingToken);
 await foreach (var message in subscription.WithCancellation(stoppingToken))
 {
     switch (message.Kind)

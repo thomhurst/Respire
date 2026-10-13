@@ -10,6 +10,43 @@ namespace Respire;
 /// <summary>Redis 8.8+ sparse arrays with unsigned indexes. Reads preserve holes; generic value types require nullable T or TryGet to distinguish absent slots.</summary>
 public interface IArrayCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireArrayEntry<string>[]> GrepEntriesAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<RespireArrayEntry<T>[]> GrepEntriesAsync<T>(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?[]> GetManyAsync(RespireKey key, ulong index, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?[]> GetManyAsync<T>(RespireKey key, ulong index, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong> SetAsync(RespireKey key, ulong index, RespireValue value, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong> SetManyAsync(RespireKey key, RespireArrayItem item, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong> DeleteAsync(RespireKey key, ulong index, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong> DeleteRangeAsync(RespireKey key, RespireArrayRange range, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong> InsertAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<ulong> RingAsync(RespireKey key, long size, RespireValue value, CancellationToken cancellationToken);
+
     /// <summary>Matching indexes with default OR options. Redis: ARGREP.</summary>
     ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates);
 
@@ -172,6 +209,55 @@ public interface IArrayCommands
 
 internal sealed class ArrayCommands(RespireClient client) : IArrayCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken)
+        => GrepAsync(key, start, end, [predicate], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireArrayEntry<string>[]> GrepEntriesAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken)
+        => GrepEntriesAsync(key, start, end, [predicate], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<RespireArrayEntry<T>[]> GrepEntriesAsync<T>(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken)
+        => GrepEntriesAsync<T>(key, start, end, [predicate], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?[]> GetManyAsync(RespireKey key, ulong index, CancellationToken cancellationToken)
+        => GetManyAsync(key, [index], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?[]> GetManyAsync<T>(RespireKey key, ulong index, CancellationToken cancellationToken)
+        => GetManyAsync<T>(key, [index], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong> SetAsync(RespireKey key, ulong index, RespireValue value, CancellationToken cancellationToken)
+        => SetAsync(key, index, [value], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong> SetManyAsync(RespireKey key, RespireArrayItem item, CancellationToken cancellationToken)
+        => SetManyAsync(key, [item], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong> DeleteAsync(RespireKey key, ulong index, CancellationToken cancellationToken)
+        => DeleteAsync(key, [index], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong> DeleteRangeAsync(RespireKey key, RespireArrayRange range, CancellationToken cancellationToken)
+        => DeleteRangeAsync(key, [range], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong> InsertAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
+        => InsertAsync(key, [value], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<ulong> RingAsync(RespireKey key, long size, RespireValue value, CancellationToken cancellationToken)
+        => RingAsync(key, size, [value], cancellationToken);
+
+
     public ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates)
         => GrepAsync(key, start, end, predicates, default, CancellationToken.None);
 

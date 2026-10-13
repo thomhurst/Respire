@@ -5,11 +5,15 @@
       "OwnerType": "Respire.SetCommands",
       "Members": [
         "DifferenceCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DifferenceCountAsync(RespireKey,CancellationToken):ValueTask<long>",
         "DifferenceCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DifferenceCountAsync(long,RespireKey,CancellationToken):ValueTask<long>",
         "DifferenceCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "DifferenceCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "UnionCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnionCountAsync(RespireKey,CancellationToken):ValueTask<long>",
         "UnionCountAsync(RespireSetUnionCountOptions,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "UnionCountAsync(RespireSetUnionCountOptions,RespireKey,CancellationToken):ValueTask<long>",
         "UnionCountAsync(RespireSetUnionCountOptions,params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "UnionCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>"
       ],

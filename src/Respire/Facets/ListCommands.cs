@@ -26,6 +26,18 @@ public enum ListSide
 /// </summary>
 public partial interface IListCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> LeftPushIfExistsAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> RightPushIfExistsAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> LeftPushAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> RightPushAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
+
     /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
     ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default);
 
@@ -151,6 +163,23 @@ public partial interface IListCommands
 
 internal sealed partial class ListCommands(RespireClient client) : IListCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> LeftPushIfExistsAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
+        => LeftPushIfExistsAsync(key, [value], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> RightPushIfExistsAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
+        => RightPushIfExistsAsync(key, [value], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> LeftPushAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
+        => LeftPushAsync(key, [value], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> RightPushAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
+        => RightPushAsync(key, [value], cancellationToken);
+
+
     public ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long?>.Start();

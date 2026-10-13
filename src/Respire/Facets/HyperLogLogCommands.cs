@@ -5,6 +5,15 @@ namespace Respire;
 /// <summary>Probabilistic cardinality commands. Redis: PFADD, PFCOUNT, PFMERGE.</summary>
 public interface IHyperLogLogCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> MergeAsync(RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
+
     /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
     ValueTask<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
@@ -27,6 +36,19 @@ public interface IHyperLogLogCommands
 
 internal sealed class HyperLogLogCommands(RespireClient client) : IHyperLogLogCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
+        => AddAsync(key, [value], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken)
+        => CountAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> MergeAsync(RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
+        => MergeAsync(destination, [sourceKey], cancellationToken);
+
+
     public ValueTask<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
         => AddAsync(key, values, CancellationToken.None);
 

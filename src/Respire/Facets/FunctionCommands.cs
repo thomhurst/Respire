@@ -15,6 +15,28 @@ namespace Respire;
 /// to each primary when inspecting or backing up divergent server state. Fan-out mutations are not atomic.</remarks>
 public interface IFunctionCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, RespireKey key, ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> ExecuteAsync<T>(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync<T>(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> ExecuteIntegerAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteIntegerAsync(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?> ExecuteStringAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteStringAsync(function, [key], args, cancellationToken);
+
     /// <summary>Calls a function with prefixed keys. The result uses GC-owned storage; disposal is optional. A reusable library permits one missing-function reload/retry.</summary>
     ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -77,6 +99,29 @@ public interface IFunctionCommands
 
 internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, RespireKey key, ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?> ExecuteAsync<T>(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync<T>(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> ExecuteIntegerAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteIntegerAsync(function, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?> ExecuteStringAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteStringAsync(function, [key], args, cancellationToken);
+
+
     internal static readonly TimeSpan DefaultFunctionPropagationLimit = TimeSpan.FromSeconds(5);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]

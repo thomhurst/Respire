@@ -333,7 +333,7 @@ public class PubSubReconnectPolicyTests
         });
         listener.Start();
         server.SuppressReply = _ => true;
-        await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token))
+        await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token))
             .Throws<RespireConnectionException>();
         for (var count = 3; count <= 4; count++)
         {
@@ -344,7 +344,7 @@ public class PubSubReconnectPolicyTests
         await Assert.That(await subscription.Completion.WaitAsync(deadline.Token)).IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
         await Assert.That(await pendingRead.WaitAsync(deadline.Token)).IsFalse();
         await Assert.That(subscription.IsDisposed).IsTrue();
-        await Assert.That(async () => await client.SubscribeAsync("later", deadline.Token))
+        await Assert.That(async () => await client.SubscribeAsync("later", cancellationToken: deadline.Token))
             .ThrowsExactly<RespireReconnectLimitException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(4);
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(3);
@@ -386,7 +386,7 @@ public class PubSubReconnectPolicyTests
         for (var episode = 0; episode < 2; episode++)
         {
             server.CloseConnectionAfterCommand = 2 + episode * 2;
-            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token))
+            await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token))
                 .Throws<RespireConnectionException>();
             await recovered.WaitAsync(deadline.Token);
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
@@ -464,7 +464,7 @@ public class PubSubReconnectPolicyTests
         var subscribers = Enumerable.Range(0, 32).Select(async _ =>
         {
             await start.Task;
-            try { await client.SubscribeAsync("ch", deadline.Token); }
+            try { await client.SubscribeAsync("ch", cancellationToken: deadline.Token); }
             catch (RespireConnectionException) { }
             // A command already on the failed socket receives the injected protocol error.
             catch (RespireProtocolException) { }
@@ -500,7 +500,7 @@ public class PubSubReconnectPolicyTests
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change => { if (change.NextReconnectDelay is not null) waiting.TrySetResult(); };
         server.SuppressReply = command => command == "SELECT 1";
-        await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+        await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token)).Throws<RespireConnectionException>();
         await waiting.Task.WaitAsync(deadline.Token);
         if (handshake) await WaitForCommandsAsync(server, 4, deadline.Token);
         await client.DisposeAsync().AsTask().WaitAsync(deadline.Token);
@@ -526,7 +526,7 @@ public class PubSubReconnectPolicyTests
             if (change.NextReconnectDelay is { } delay) scheduled.TrySetResult(delay);
             if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
         };
-        var pending = client.SubscribeAsync("stalled", caller.Token).AsTask();
+        var pending = client.SubscribeAsync("stalled", cancellationToken: caller.Token).AsTask();
         await WaitForCommandsAsync(server, 2, deadline.Token);
         caller.Cancel();
         var error = await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
@@ -552,7 +552,7 @@ public class PubSubReconnectPolicyTests
         try
         {
             server.SuppressReply = _ => true;
-            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+            await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token)).Throws<RespireConnectionException>();
             await logger.FirstCleanup.Task.WaitAsync(deadline.Token);
             for (var count = 3; count <= 4; count++)
             {
@@ -585,7 +585,7 @@ public class PubSubReconnectPolicyTests
         try
         {
             server.SuppressReply = _ => true;
-            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+            await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token)).Throws<RespireConnectionException>();
             await logger.FirstCleanup.Task.WaitAsync(deadline.Token);
             await WaitForCommandsAsync(server, 3, deadline.Token);
             await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
@@ -712,7 +712,7 @@ public class PubSubReconnectPolicyTests
         try
         {
             server.SuppressReply = _ => true;
-            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+            await Assert.That(async () => await client.SubscribeAsync("lost", cancellationToken: deadline.Token)).Throws<RespireConnectionException>();
             await observingAttempt.Task.WaitAsync(deadline.Token);
             await WaitForCommandsAsync(server, 3, deadline.Token);
             await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);

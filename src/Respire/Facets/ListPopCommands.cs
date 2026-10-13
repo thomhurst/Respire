@@ -6,6 +6,12 @@ namespace Respire;
 
 public partial interface IListCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, long count = 1, ListSide side = ListSide.Left, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Pops up to count values from the first nonempty list in input order. Null when no list
     /// is ready before waitFor expires. Without waitFor, returns immediately. Redis: LMPOP / BLMPOP (7.0+).
@@ -35,6 +41,15 @@ public partial interface IListCommands
 
 internal sealed partial class ListCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, long count = 1, ListSide side = ListSide.Left, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+        => PopManyAsync([key], count, side, waitFor, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
+        => PopAsync([key], waitFor, side, cancellationToken);
+
+
     public ValueTask<RespireListPopManyResult?> PopManyAsync(
         ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)

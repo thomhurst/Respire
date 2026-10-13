@@ -396,6 +396,11 @@ public sealed partial class RespireServerNode
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
+    /// <summary>Migrates one physical source key to a TCP destination. Requires AllowAdmin. Redis: MIGRATE.</summary>
+    public ValueTask<RespireMigrateResult> MigrateAsync(RespireEndpoint destination, RespireKey key,
+        int database, TimeSpan timeout, RespireMigrateOptions? options = null, CancellationToken cancellationToken = default)
+        => MigrateAsync(destination, [key], database, timeout, options, cancellationToken);
+
     /// <summary>Migrates physical source keys to a TCP destination. Requires AllowAdmin. Redis: MIGRATE.</summary>
     /// <remarks>Keys are snapshotted before I/O. Timeout is the positive server-side maximum idle transfer time,
     /// not an overall transfer deadline. The client's CommandTimeout and caller cancellation apply independently;

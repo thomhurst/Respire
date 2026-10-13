@@ -53,7 +53,7 @@ internal static class SharedScenarios
     {
         // SubscribeAsync waits for acknowledgement; no scheduling delay is needed.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await using var subscription = await client.SubscribeAsync("events", deadline.Token);
+        await using var subscription = await client.SubscribeAsync("events", cancellationToken: deadline.Token);
         await using var messages = subscription.GetAsyncEnumerator(deadline.Token);
         await Assert.That(await other.PublishAsync("events", "ready", deadline.Token)).IsEqualTo(1L);
         await Assert.That(await messages.MoveNextAsync()).IsTrue();

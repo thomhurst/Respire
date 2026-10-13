@@ -6,7 +6,9 @@
       "Members": [
         "CountByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>",
         "IntersectCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(RespireKey,CancellationToken):ValueTask<long>",
         "IntersectCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "IntersectCountAsync(long,RespireKey,CancellationToken):ValueTask<long>",
         "IntersectCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "IntersectCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "RandomMemberAsync(RespireKey,CancellationToken):ValueTask<string?>",
@@ -21,7 +23,9 @@
       "Overrides": {
         "CountByLexAsync(RespireKey,RespireLexRange,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "IntersectCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IntersectCountAsync(RespireKey,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "IntersectCountAsync(long,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "IntersectCountAsync(long,RespireKey,CancellationToken):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "IntersectCountAsync(long,params ReadOnlySpan<RespireKey>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "IntersectCountAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "RandomMemberAsync(RespireKey,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",

@@ -5,10 +5,13 @@
       "OwnerType": "Respire.StreamCommands",
       "Members": [
         "ClaimAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ClaimAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamEntry[]>",
         "ClaimAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamEntry[]>",
         "ClaimIdsAsync(RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamId[]>",
+        "ClaimIdsAsync(RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamId[]>",
         "ClaimIdsAsync(RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamId[]>",
         "ClaimIdsAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamId[]>",
+        "ClaimIdsAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamId[]>",
         "ClaimIdsAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamId[]>",
         "ClaimPendingIdsAsync(RespireKey,string,string,TimeSpan,RespireStreamId?,int,CancellationToken):ValueTask<RespireStreamClaimIdsResult>",
         "PendingAsync(StreamPendingOptions,RespireKey,string,CancellationToken):ValueTask<RespireStreamPendingEntry[]>"

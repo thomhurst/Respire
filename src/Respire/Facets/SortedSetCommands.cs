@@ -156,6 +156,33 @@ public readonly record struct RespireLexRange(RespireLexBound Minimum, RespireLe
 /// </summary>
 public partial interface ISortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> AddAsync(RespireKey key, (RespireValue Member, double Score) entry, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<double?[]> ScoresManyAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string[]> IntersectAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string[]> UnionAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string[]> DifferenceAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> DifferenceStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
+
     /// <summary>Adds or updates one member. Returns true when the member was new. Redis: ZADD.</summary>
     ValueTask<bool> AddAsync(RespireKey key, RespireValue member, double score, CancellationToken cancellationToken = default);
 
@@ -376,6 +403,43 @@ public partial interface ISortedSetCommands
 
 internal sealed partial class SortedSetCommands(RespireClient client) : ISortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> AddAsync(RespireKey key, (RespireValue Member, double Score) entry, CancellationToken cancellationToken)
+        => AddAsync(key, [entry], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<double?[]> ScoresManyAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)
+        => ScoresManyAsync(key, [member], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> RemoveAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)
+        => RemoveAsync(key, [member], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string[]> IntersectAsync(RespireKey key, CancellationToken cancellationToken)
+        => IntersectAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string[]> UnionAsync(RespireKey key, CancellationToken cancellationToken)
+        => UnionAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string[]> DifferenceAsync(RespireKey key, CancellationToken cancellationToken)
+        => DifferenceAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
+        => IntersectStoreAsync(destination, [key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
+        => UnionStoreAsync(destination, [key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> DifferenceStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
+        => DifferenceStoreAsync(destination, [key], cancellationToken);
+
+
     public ValueTask<bool> AddAsync(RespireKey key, RespireValue member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync("ZADD", new Cmd3(Verbs.ZAdd, client.Key(in key), score, member), cancellationToken);
 

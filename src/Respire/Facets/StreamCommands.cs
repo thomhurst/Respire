@@ -346,6 +346,21 @@ public readonly record struct StreamAddOptions
 /// </summary>
 public partial interface IStreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamId> AddAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamId?> AddAsync(RespireKey key, StreamAddOptions options, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, RespireStreamId ids, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> AcknowledgeAsync(RespireKey key, string group, RespireStreamId ids, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamEntry[]> ClaimAsync(RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
+
     /// <summary>Appends an entry (id auto-generated) and returns its id. Redis: XADD.</summary>
     ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
@@ -545,6 +560,27 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands(RespireClient client) : IStreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamId> AddAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
+        => AddAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamId?> AddAsync(RespireKey key, StreamAddOptions options, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
+        => AddAsync(key, options, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> RemoveAsync(RespireKey key, RespireStreamId ids, CancellationToken cancellationToken)
+        => RemoveAsync(key, [ids], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> AcknowledgeAsync(RespireKey key, string group, RespireStreamId ids, CancellationToken cancellationToken)
+        => AcknowledgeAsync(key, group, [ids], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
+        => ClaimAsync(key, group, consumer, minIdle, [ids], cancellationToken);
+
+
     private static readonly TimeSpan BlockInterval = TimeSpan.FromSeconds(5);
     private static readonly Verb XDel = new("XDEL");
     internal static readonly Verb XTrim = new("XTRIM");

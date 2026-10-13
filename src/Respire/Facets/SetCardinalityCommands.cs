@@ -10,6 +10,18 @@ public readonly record struct RespireSetUnionCountOptions(long Limit = 0, bool A
 
 public partial interface ISetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> DifferenceCountAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> DifferenceCountAsync(long limit, RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> UnionCountAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> UnionCountAsync(RespireSetUnionCountOptions options, RespireKey key, CancellationToken cancellationToken);
+
     /// <summary>Counts members in the first set absent from all subsequent sets. Redis 8.10+: SDIFFCARD.</summary>
     ValueTask<long> DifferenceCountAsync(params ReadOnlySpan<RespireKey> keys);
     /// <summary>Counts the set difference with cancellation. Redis 8.10+: SDIFFCARD.</summary>
@@ -31,6 +43,23 @@ public partial interface ISetCommands
 
 internal sealed partial class SetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> DifferenceCountAsync(RespireKey key, CancellationToken cancellationToken)
+        => DifferenceCountAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> DifferenceCountAsync(long limit, RespireKey key, CancellationToken cancellationToken)
+        => DifferenceCountAsync(limit, [key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> UnionCountAsync(RespireKey key, CancellationToken cancellationToken)
+        => UnionCountAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> UnionCountAsync(RespireSetUnionCountOptions options, RespireKey key, CancellationToken cancellationToken)
+        => UnionCountAsync(options, [key], cancellationToken);
+
+
     public ValueTask<long> DifferenceCountAsync(params ReadOnlySpan<RespireKey> keys)
         => DifferenceCountAsync(0, keys, CancellationToken.None);
     public ValueTask<long> DifferenceCountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)

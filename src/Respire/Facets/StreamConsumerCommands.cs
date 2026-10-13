@@ -5,6 +5,15 @@ namespace Respire;
 
 public partial interface IStreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
+
     /// <summary>Lists pending entries with optional idle, consumer, and ID filters. Redis: XPENDING.</summary>
     ValueTask<RespireStreamPendingEntry[]> PendingAsync(StreamPendingOptions options, RespireKey key,
         string group, CancellationToken cancellationToken = default);
@@ -41,6 +50,19 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
+        => ClaimAsync(options, key, group, consumer, minIdle, [ids], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
+        => ClaimIdsAsync(key, group, consumer, minIdle, [ids], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
+        => ClaimIdsAsync(options, key, group, consumer, minIdle, [ids], cancellationToken);
+
+
     public ValueTask<RespireStreamPendingEntry[]> PendingAsync(StreamPendingOptions options, RespireKey key,
         string group, CancellationToken cancellationToken = default)
     {

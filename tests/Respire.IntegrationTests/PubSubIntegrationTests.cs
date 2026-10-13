@@ -147,7 +147,7 @@ public class PubSubIntegrationTests
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        var subscribe = async () => await client.SubscribeAsync(cancelled, cts.Token);
+        var subscribe = async () => await client.SubscribeAsync(cancelled, cancellationToken: cts.Token);
 
         await subscribe.Should().ThrowAsync<OperationCanceledException>();
 

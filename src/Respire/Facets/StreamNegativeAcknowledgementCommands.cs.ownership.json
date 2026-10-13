@@ -5,7 +5,9 @@
       "OwnerType": "Respire.StreamCommands",
       "Members": [
         "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,RespireStreamId,CancellationToken):ValueTask<long>",
         "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,StreamNackOptions,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,StreamNackOptions,RespireStreamId,CancellationToken):ValueTask<long>",
         "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,StreamNackOptions,params ReadOnlySpan<RespireStreamId>):ValueTask<long>",
         "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,params ReadOnlySpan<RespireStreamId>):ValueTask<long>"
       ],

@@ -27,7 +27,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var pending = client.SubscribeAsync("one", deadline.Token);
+        var pending = client.SubscribeAsync("one", cancellationToken: deadline.Token);
         while (!server.ReceivedCommands.Contains("SUBSCRIBE one")) await Task.Delay(1, deadline.Token);
         using var capture = new Capture(throwOnMeasurement: true);
         if (!attachLate) RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });

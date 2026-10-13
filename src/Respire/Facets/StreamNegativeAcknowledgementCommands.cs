@@ -25,6 +25,12 @@ public readonly record struct StreamNackOptions
 
 public partial interface IStreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, RespireStreamId ids, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, StreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken);
+
     /// <summary>Releases pending entries from their consumers. Returns Redis's aggregate count, not per-ID outcomes. Redis 8.8+: XNACK.</summary>
     ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
         params ReadOnlySpan<RespireStreamId> ids);
@@ -44,6 +50,15 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, RespireStreamId ids, CancellationToken cancellationToken)
+        => NegativeAcknowledgeAsync(key, group, mode, [ids], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, StreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken)
+        => NegativeAcknowledgeAsync(key, group, mode, options, [ids], cancellationToken);
+
+
     private static readonly Verb XNack = new("XNACK");
 
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,

@@ -61,6 +61,10 @@ public sealed partial class RespireClient
     public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => Keys.DeleteAsync(keys, cancellationToken);
 
+    /// <summary>Deletes one key with cancellation. Redis: DEL.</summary>
+    public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
+        => DeleteAsync([key], cancellationToken);
+
     /// <inheritdoc cref="IKeyCommands.ExistsAsync"/>
     public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
         => Keys.ExistsAsync(key, cancellationToken);

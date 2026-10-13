@@ -4,14 +4,18 @@
       "Type": "Respire.IGeoCommands",
       "OwnerType": "Respire.GeoCommands",
       "Members": [
+        "AddAsync(RespireKey,GeoAddOptions,GeoEntry,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,GeoAddOptions,ReadOnlySpan<GeoEntry>,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,GeoAddOptions,params ReadOnlySpan<GeoEntry>):ValueTask<long>",
+        "AddAsync(RespireKey,GeoEntry,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,ReadOnlySpan<GeoEntry>,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,params ReadOnlySpan<GeoEntry>):ValueTask<long>",
         "DistanceAsync(RespireKey,RespireValue,RespireValue,GeoUnit,CancellationToken):ValueTask<double?>",
         "HashAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<string?[]>",
+        "HashAsync(RespireKey,RespireValue,CancellationToken):ValueTask<string?[]>",
         "HashAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<string?[]>",
         "PositionAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<GeoPosition?[]>",
+        "PositionAsync(RespireKey,RespireValue,CancellationToken):ValueTask<GeoPosition?[]>",
         "PositionAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<GeoPosition?[]>",
         "SearchAsync(RespireKey,GeoSearchOrigin,GeoSearchShape,GeoSearchOptions,CancellationToken):ValueTask<GeoSearchResult[]>",
         "SearchStoreAsync(RespireKey,RespireKey,GeoSearchOrigin,GeoSearchShape,GeoSearchOptions,bool,CancellationToken):ValueTask<long>"

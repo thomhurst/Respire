@@ -48,7 +48,7 @@ public class PubSubGapTests
         subscription.DeliveryGap += gap => notification.TrySetResult(gap);
 
         using var cancel = new CancellationTokenSource();
-        var stalled = client.SubscribeAsync("stalled", cancel.Token).AsTask();
+        var stalled = client.SubscribeAsync("stalled", cancellationToken: cancel.Token).AsTask();
         while (server.CommandsSeen < 2) await Task.Delay(10, deadline.Token);
         await cancel.CancelAsync();
         await Assert.That(async () => await stalled).Throws<OperationCanceledException>();
@@ -85,7 +85,7 @@ public class PubSubGapTests
             await Assert.That(reader.Current.Text).IsEqualTo(expected);
         }
         using var cancel = new CancellationTokenSource();
-        var stalled = client.SubscribeAsync("stalled", cancel.Token).AsTask();
+        var stalled = client.SubscribeAsync("stalled", cancellationToken: cancel.Token).AsTask();
         while (server.CommandsSeen < 3) await Task.Delay(10, deadline.Token);
         await cancel.CancelAsync();
         await Assert.That(async () => await stalled).Throws<OperationCanceledException>();

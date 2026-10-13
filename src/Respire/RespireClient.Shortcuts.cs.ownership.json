@@ -6,6 +6,7 @@
       "Members": [
         "DecrementAsync(RespireKey,long,CancellationToken):ValueTask<long>",
         "DeleteAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "DeleteAsync(RespireKey,CancellationToken):ValueTask<long>",
         "DeleteAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "ExistsAsync(RespireKey,CancellationToken):ValueTask<bool>",
         "ExpireAsync(RespireKey,RespireExpiry,ExpireWhen,CancellationToken):ValueTask<bool>",

@@ -121,14 +121,15 @@ public partial class ErrorMetricsTests
                 case "subscribe-null": await client.SubscribeAsync((string)null!); break;
                 default:
                     RespireChannel[] mixed = [new("one"), new RespireChannel("two").WithKind(SubscriptionKind.Pattern)];
-                    await client.SubscribeAsync(mixed, CancellationToken.None);
+                    await client.SubscribeAsync(mixed, cancellationToken: CancellationToken.None);
                     break;
             }
         }
         var error = await Assert.That(Execute).Throws<Exception>();
         var items = capture.Items.ToArray();
-        await Assert.That(items.Length).IsEqualTo(enabled ? 1 : 0);
-        if (enabled)
+        // String conversion now runs at the call site, before the client can observe an error.
+        await Assert.That(items.Length).IsEqualTo(enabled && route != "subscribe-null" ? 1 : 0);
+        if (enabled && route != "subscribe-null")
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(items[0].Tags["error.type"]).IsEqualTo(error!.GetType().FullName);

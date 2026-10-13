@@ -8,6 +8,12 @@ namespace Respire;
 
 public partial interface ISortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> IntersectCountAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> IntersectCountAsync(long limit, RespireKey key, CancellationToken cancellationToken);
+
     /// <summary>One random UTF-8 member, or null when absent. Redis: ZRANDMEMBER (6.2+).</summary>
     ValueTask<string?> RandomMemberAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -53,6 +59,15 @@ public partial interface ISortedSetCommands
 
 internal sealed partial class SortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> IntersectCountAsync(RespireKey key, CancellationToken cancellationToken)
+        => IntersectCountAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> IntersectCountAsync(long limit, RespireKey key, CancellationToken cancellationToken)
+        => IntersectCountAsync(limit, [key], cancellationToken);
+
+
     public ValueTask<string?> RandomMemberAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();

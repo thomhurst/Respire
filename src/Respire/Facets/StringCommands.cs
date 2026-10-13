@@ -31,6 +31,26 @@ public enum SetWhen
 /// </summary>
 public partial interface IStringCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?[]> GetManyAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?[]> GetManyAsync<T>(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> SetManyAsync((RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> SetManyIfNotExistsAsync((RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, SetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
+
     /// <summary>Gets a key's value as a string, or null when missing. Redis: GET.</summary>
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -314,6 +334,33 @@ public partial interface IStringCommands
 
 internal sealed partial class StringCommands(RespireClient client) : IStringCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?[]> GetManyAsync(RespireKey key, CancellationToken cancellationToken)
+        => GetManyAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?[]> GetManyAsync<T>(RespireKey key, CancellationToken cancellationToken)
+        => GetManyAsync<T>([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> SetManyAsync((RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
+        => SetManyAsync([pairs], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> SetManyIfNotExistsAsync((RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
+        => SetManyIfNotExistsAsync([pairs], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
+        => SetManyExpireAsync(expiry, [pairs], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, SetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
+        => SetManyExpireAsync(expiry, when, [pairs], cancellationToken);
+
+
     // Hot single-key commands own only their preflight and pass an empty observation, so
     // the default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)

@@ -214,7 +214,7 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
         notification.RawType.Span.SequenceEqual("module.future"u8).Should().BeTrue();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var subscribe = async () => await client.SubscribeAsync(descriptor, cancellation.Token);
+        var subscribe = async () => await client.SubscribeAsync(descriptor, cancellationToken: cancellation.Token);
         await subscribe.Should().ThrowAsync<OperationCanceledException>();
         await subscription.DisposeAsync();
         (await client.PublishAsync(ordinary, "after-disposal")).Should().Be(0);

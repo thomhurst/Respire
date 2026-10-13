@@ -61,6 +61,15 @@ public enum RespireKeyType
 /// <summary>Generic key management commands.</summary>
 public partial interface IKeyCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken);
+
     /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
 
@@ -171,6 +180,19 @@ public partial interface IKeyCommands
 
 internal sealed partial class KeyCommands(RespireClient client, TimeProvider? scanTimeProvider = null) : IKeyCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
+        => DeleteAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken)
+        => UnlinkAsync([key], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
+        => TouchAsync([key], cancellationToken);
+
+
     // Single-key DEL and EXISTS own only their preflight and pass an empty observation, so the
     // default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)

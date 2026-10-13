@@ -12,6 +12,42 @@ namespace Respire;
 /// </summary>
 public partial interface IHashCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> SetAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?[]> GetManyAsync(RespireKey key, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, ExpireWhen when, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?[]> GetAndExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> SetExpireAsync(RespireKey key, RespireExpiry expiry, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool> SetExpireAsync(RespireKey key, RespireExpiry expiry, SetWhen when, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
+
     /// <summary>Sets one field. Returns true when the field was newly created. Redis: HSET.</summary>
     ValueTask<bool> SetAsync(
         RespireKey key, string field, RespireValue value,
@@ -239,6 +275,55 @@ public partial interface IHashCommands
 
 internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> SetAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
+        => SetAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?[]> GetManyAsync(RespireKey key, string field, CancellationToken cancellationToken)
+        => GetManyAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> RemoveAsync(RespireKey key, string field, CancellationToken cancellationToken)
+        => RemoveAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, string field, CancellationToken cancellationToken)
+        => ExpiryTimeAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, string field, CancellationToken cancellationToken)
+        => ExpiryTimeAsync(key, precision, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, string field, CancellationToken cancellationToken)
+        => ExpiryAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken)
+        => ExpireAsync(key, expiry, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, ExpireWhen when, string field, CancellationToken cancellationToken)
+        => ExpireAsync(key, expiry, when, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, string field, CancellationToken cancellationToken)
+        => GetAndRemoveAsync(key, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?[]> GetAndExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken)
+        => GetAndExpireAsync(key, expiry, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> SetExpireAsync(RespireKey key, RespireExpiry expiry, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
+        => SetExpireAsync(key, expiry, [field], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool> SetExpireAsync(RespireKey key, RespireExpiry expiry, SetWhen when, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
+        => SetExpireAsync(key, expiry, when, [field], cancellationToken);
+
+
     // Hot single-field commands own only their preflight and pass an empty observation, so
     // the default standalone route dispatches natively. See RespireClient.RecordPreflightFailure.
     public ValueTask<bool> SetAsync(

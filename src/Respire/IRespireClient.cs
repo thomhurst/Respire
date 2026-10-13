@@ -128,6 +128,10 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
     /// <summary>Deletes keys and returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+    /// <summary>Deletes one key with cancellation. Redis: DEL.</summary>
+    ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
+        => DeleteAsync([key], cancellationToken);
+
     /// <summary>Returns whether a key exists. Redis: EXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
     /// <summary>Increments an integer and returns the new value. Redis: INCR/INCRBY.</summary>
@@ -144,128 +148,48 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Measures a PING round trip.</summary>
     ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default);
 
-    // Pub/sub.
-    /// <summary>Publishes a message and returns the receiver count. Redis: PUBLISH.</summary>
-    ValueTask<long> PublishAsync(string channel, RespireValue message, CancellationToken cancellationToken = default);
-    /// <summary>Publishes a sharded message and returns the receiver count. Redis: SPUBLISH.</summary>
-    ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default);
-
-    // Subscribing is always awaited: the subscription is live on the server when the task
-    // completes, so a publish that follows is guaranteed to reach it.
-    /// <summary>Subscribes to one channel. Redis: SUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default);
-
-    /// <summary>Subscribes to one channel with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeAsync(
-        string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to channels. Redis: SUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels);
-
-    /// <summary>Subscribes to channels with cancellation. Redis: SUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeAsync(
-        ReadOnlySpan<string> channels, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to channels with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeAsync(
-        ReadOnlySpan<string> channels,
-        RespireSubscriptionOptions options,
-        CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to one channel pattern. Redis: PSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default);
-
-    /// <summary>Subscribes to one pattern with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribePatternAsync(
-        string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to channel patterns. Redis: PSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns);
-
-    /// <summary>Subscribes to channel patterns with cancellation. Redis: PSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribePatternAsync(
-        ReadOnlySpan<string> patterns, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to patterns with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribePatternAsync(
-        ReadOnlySpan<string> patterns,
-        RespireSubscriptionOptions options,
-        CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to one sharded channel. Redis: SSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default);
-
-    /// <summary>Subscribes to one sharded channel with per-subscription settings. Redis: SSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(
-        string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to sharded channels. Redis: SSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels);
-
-    /// <summary>Subscribes to sharded channels with cancellation. Redis: SSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(
-        ReadOnlySpan<string> channels, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to sharded channels with per-subscription settings. Redis: SSUBSCRIBE.</summary>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(
-        ReadOnlySpan<string> channels,
-        RespireSubscriptionOptions options,
-        CancellationToken cancellationToken);
-
-    /// <summary>Publishes channel bytes using this view's explicit pub/sub prefix; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
-    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
+    // Pub/sub. Activation completes only after the server acknowledges the subscription.
+    /// <summary>Publishes a message; sharded channel metadata selects SPUBLISH. Patterns cannot be published.</summary>
     ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
 
-    /// <summary>Publishes with SPUBLISH using this view's explicit pub/sub prefix.</summary>
-    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
+    /// <summary>Publishes a message with SPUBLISH. Patterns cannot be published.</summary>
     ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
 
-    /// <summary>Subscribes using the channel's explicit literal, pattern, or sharded kind.</summary>
-    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
-    ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, CancellationToken cancellationToken = default);
-
-    /// <summary>Subscribes using explicit channel metadata and per-subscription buffer settings.</summary>
+    /// <summary>Subscribes using the channel's explicit literal, pattern, or sharded kind, with optional buffer settings.</summary>
+    /// <remarks>Strings convert implicitly to RespireChannel. Conversion snapshots bytes and validates UTF-16 before the call.</remarks>
     ValueTask<RespireSubscription> SubscribeAsync(
-        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+        RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Subscribes to owned binary channels. All targets must have the same kind.</summary>
-    ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to same-kind binary channels with per-subscription buffer settings.</summary>
+    /// <summary>Subscribes to multiple channels using the channel's explicit literal, pattern, or sharded kind, with optional buffer settings.</summary>
+    /// <remarks>All targets must have the same kind. Use a collection expression for multiple channels.</remarks>
     ValueTask<RespireSubscription> SubscribeAsync(
-        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Subscribes to raw bytes using the pattern command family.</summary>
-    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
-    ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, CancellationToken cancellationToken = default);
-
-    /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
+    /// <summary>Subscribes using the pattern command family, with optional buffer settings.</summary>
+    /// <remarks>Strings convert implicitly to RespireChannel. Conversion snapshots bytes and validates UTF-16 before the call.</remarks>
     ValueTask<RespireSubscription> SubscribePatternAsync(
-        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+        RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Subscribes to binary targets using the pattern command family.</summary>
-    ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
+    /// <summary>Subscribes to multiple channels using the pattern command family, with optional buffer settings.</summary>
+    /// <remarks>Targets use the pattern kind. Use a collection expression for multiple channels.</remarks>
     ValueTask<RespireSubscription> SubscribePatternAsync(
-        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Subscribes to raw bytes using the sharded command family.</summary>
-    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, throwing ArgumentException for invalid UTF-16 and ArgumentNullException for null strings or byte arrays. Reuse a channel value to avoid repeated copies.</remarks>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, CancellationToken cancellationToken = default);
-
-    /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
+    /// <summary>Subscribes using the sharded command family, with optional buffer settings.</summary>
+    /// <remarks>Strings convert implicitly to RespireChannel. Conversion snapshots bytes and validates UTF-16 before the call.</remarks>
     ValueTask<RespireSubscription> SubscribeShardedAsync(
-        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+        RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Subscribes to binary targets using the sharded command family.</summary>
-    ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken);
-
-    /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
+    /// <summary>Subscribes to multiple channels using the sharded command family, with optional buffer settings.</summary>
+    /// <remarks>Targets use the sharded kind. Use a collection expression for multiple channels.</remarks>
     ValueTask<RespireSubscription> SubscribeShardedAsync(
-        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default);
 
     // Batches and transactions.
+    /// <summary>Creates a transaction watching one key with cancellation. Redis: WATCH.</summary>
+    ValueTask<RespireWatchedTransaction> CreateTransactionAsync(RespireKey watchKey, CancellationToken cancellationToken)
+        => CreateTransactionAsync([watchKey], cancellationToken);
+
     /// <summary>Creates an explicit pipeline that queues commands until execution.</summary>
     RespireBatch CreateBatch();
     /// <summary>Creates an un-watched transaction.</summary>
@@ -281,6 +205,14 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Creates a transaction watching keys with cancellation. Redis: WATCH.</summary>
     ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);
+
+    /// <summary>Sends a raw command with cancellation followed by individual arguments. The result uses GC-owned storage; disposal is optional.</summary>
+    ValueTask<RespireResult> ExecuteAsync(RespireCommand command, CancellationToken cancellationToken, params RespireValue[] args)
+        => ExecuteAsync(command, args, cancellationToken: cancellationToken);
+
+    /// <summary>Queues a raw command with cancellation followed by individual arguments and discards its reply.</summary>
+    ValueTask ExecuteFireAndForgetAsync(RespireCommand command, CancellationToken cancellationToken, params RespireValue[] args)
+        => ExecuteFireAndForgetAsync(command, args, cancellationToken);
 
     // Escape hatch. A string converts implicitly to RespireCommand. The params shape covers the
     // common case; the array shape adds flags and cancellation as optional arguments.

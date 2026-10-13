@@ -4,6 +4,18 @@ namespace Respire.TimeSeries;
 
 public sealed partial class RespireTimeSeriesClient
 {
+    /// <summary>Reads timestamp-aligned rows from one key in ascending order. Requires Redis 8.10.</summary>
+    public ValueTask<IReadOnlyList<RespireTimeSeriesRow>> RangeKeysAsync(
+        RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesKeyRangeOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => RangeKeysAsync([key], range, options, cancellationToken);
+
+    /// <summary>Reads timestamp-aligned rows from one key in descending order. Requires Redis 8.10.</summary>
+    public ValueTask<IReadOnlyList<RespireTimeSeriesRow>> ReverseRangeKeysAsync(
+        RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesKeyRangeOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => ReverseRangeKeysAsync([key], range, options, cancellationToken);
+
     /// <summary>Reads timestamp-aligned rows from explicit keys in ascending order. Requires Redis 8.10.</summary>
     /// <remarks>Keys must share a Cluster hash slot. Duplicate keys retain separate value columns.</remarks>
     public ValueTask<IReadOnlyList<RespireTimeSeriesRow>> RangeKeysAsync(
