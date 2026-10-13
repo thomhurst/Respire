@@ -1,0 +1,10 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireMigrateOptions.ToString():string",
+      "Reason": "Redacted diagnostic formatting; no command dispatch."
+    }
+  ]
+}

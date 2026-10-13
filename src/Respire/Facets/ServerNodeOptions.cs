@@ -38,6 +38,9 @@ public sealed record RespireFailoverOptions
 /// <summary>Options for MIGRATE. Credentials authenticate to the destination server.</summary>
 public sealed record RespireMigrateOptions
 {
+    /// <summary>Returns a diagnostic representation without credential material.</summary>
+    public override string ToString() => "RespireMigrateOptions { <redacted> }";
+
     /// <summary>Optional client response budget for this migration and its dedicated connection setup.
     /// Must be at least one millisecond. Null inherits RespireOptions.CommandTimeout.
     /// Does not change the server idle timeout, connection idle-read timeout, or caller cancellation.</summary>
