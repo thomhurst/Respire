@@ -13,6 +13,10 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty) return ConvertResponseCoreAsync(operation, command, ct, state, converter, transferOwnership, observation);
+        // A transferred reply would hand the caller a value the cache still owns.
+        if (!transferOwnership && TryGetCachedQuery(operation, in command, out var cache, out var query)
+            && cache.TryGetHit(in query, out var hit))
+            return ConvertCachedHit(state, converter, in hit);
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeConvertedAsync(in command, ct, operation, state, converter, transferOwnership);
         return DispatchResponseSource<TResult>.Run(
@@ -26,6 +30,9 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty) return StringOrNullCoreAsync(operation, command, ct, observation);
+        if (TryGetCachedQuery(operation, in command, out var cache, out var query)
+            && cache.TryGetStringHit(in query, out var hit))
+            return new ValueTask<string?>(hit);
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeStringAsync(in command, ct, operation);
         return DispatchResponseSource<string?>.Run((Client: this, Operation: operation, Command: command, Token: ct),
@@ -36,6 +43,9 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty) return BytesOrNullCoreAsync(operation, command, ct, observation);
+        if (TryGetCachedQuery(operation, in command, out var cache, out var query)
+            && cache.TryGetHit(in query, out var hit))
+            return new ValueTask<byte[]?>(ResponseReader.BytesOrNull(in hit));
         if (TryGetNativeDispatchConnection(operation, in command, out var connection))
             return connection.SendNativeBytesAsync(in command, ct, operation);
         return DispatchResponseSource<byte[]?>.Run((Client: this, Operation: operation, Command: command, Token: ct),
@@ -61,6 +71,37 @@ public sealed partial class RespireClient
     {
         try { return ResolveKey(key); }
         catch (Exception error) { RecordPreflightFailure(error); throw; }
+    }
+
+    // A resident command-query hit does no I/O. Its only telemetry is the cache request
+    // metric, which the hit probe records, so it needs no dispatch owner. These are
+    // SendCoreAsync's lookup conditions. Sentinel generations, disposal, streaming uploads
+    // and the GET/MGET/HMGET producers keep their owned route, which also counts every miss.
+    private bool TryGetCachedQuery<TCommand>(string operation, in TCommand command,
+        out ClientSideCacheCoordinator cache, out ClientSideCacheCoordinator.QueryRequest query)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        cache = core.ClientCache!;
+        query = default;
+        return cache is not null && !_bypassClientCache && core.Sentinel is null && !core.Disposed
+            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
+            && command is not IStreamingRespCommand
+            && operation is not ("GET" or "MGET" or "HMGET")
+            && ClientSideCacheCoordinator.TryCreateQuery(operation, in command, out query);
+    }
+
+    // Converts a borrowed cache value. A conversion failure is the operation's final error,
+    // reported once without an endpoint, as the owned route reports it for a cached reply.
+    private static ValueTask<TResult> ConvertCachedHit<TState, TResult>(
+        TState state, ResponseConverter<TState, TResult> converter, in RespValue hit)
+    {
+        try { return new ValueTask<TResult>(converter(state, in hit)); }
+        catch (Exception error)
+        {
+            ErrorObservation.FinishFinal(default, error);
+            throw;
+        }
     }
 
     private bool TryGetNativeDispatchConnection<TCommand>(string operation, in TCommand command,

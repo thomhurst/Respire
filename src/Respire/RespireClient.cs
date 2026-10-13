@@ -1890,6 +1890,10 @@ public sealed partial class RespireClient : IRespireClient
                 if (TryGetNativeDispatchConnection("GET", in get, out var connection))
                     return connection.SendNativeConvertedAsync(in get, cancellationToken, "GET", this, converter, transferOwnership: false);
             }
+            else if (_core.Sentinel is null && GetReadCache!.TryGetHit(in resolvedKey, out var hit))
+            {
+                return ConvertCachedHit(this, converter, in hit);
+            }
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Key: resolvedKey, Token: cancellationToken, Converter: converter),
                 static (state, owner) => state.Client.CachedGetAsync(
@@ -1918,8 +1922,14 @@ public sealed partial class RespireClient : IRespireClient
         if (cache is null)
             return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
         if (observation.IsEmpty)
+        {
+            // A warm hit needs no dispatch owner (see TryGetCachedQuery). Misses take the
+            // owned route below, which performs the counted lookup.
+            if (_core.Sentinel is null && cache.TryGetStringHit(in resolvedKey, out var hit))
+                return new ValueTask<string?>(hit);
             return DispatchResponseSource<string?>.Run((Client: this, Key: resolvedKey, Token: cancellationToken),
                 static (state, owner) => state.Client.CachedGetStringAsync(state.Key, state.Token, owner));
+        }
         var generation = _core.Sentinel?.Current;
         if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
             return new ValueTask<string?>(cached);
