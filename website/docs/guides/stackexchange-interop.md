@@ -5,6 +5,11 @@ description: Use Respire with libraries that expect StackExchange.Redis types, a
 
 # Incremental StackExchange.Redis migration
 
+:::warning Experimental API: RSP0006
+This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+See [RSP0006](../diagnostics/RSP0006.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
+:::
+
 `Respire.StackExchangeCompat` lets code and libraries that use StackExchange.Redis types (`RedisKey`,
 `RedisValue`, `RedisResult`, `IConnectionMultiplexer`) run on Respire. Use it during migration or at
 library boundaries; use Respire's native typed APIs everywhere else.

@@ -5,6 +5,11 @@ description: Cache Microsoft.Extensions.AI chat responses by cosine similarity, 
 
 # Semantic chat response cache
 
+:::warning Experimental API: RSP0002
+This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+See [RSP0002](../diagnostics/RSP0002.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
+:::
+
 `Respire.AI` adds `ChatClientBuilder.UseRespireSemanticCache` for `Microsoft.Extensions.AI` 10.10.0. Use it to reuse chat responses for prompts that mean the same thing. It embeds the final user prompt with your `IEmbeddingGenerator<string, Embedding<float>>` and searches a Redis Search FLOAT32 vector index. A hit within the cosine distance threshold returns the stored `ChatResponse`. A miss calls the inner chat client and stores eligible text responses with a TTL.
 
 Requirements:

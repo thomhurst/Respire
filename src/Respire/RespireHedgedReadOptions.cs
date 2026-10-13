@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Respire;
 
 /// <summary>Opt-in duplication of slow, idempotent buffered reads onto another eligible server.</summary>
@@ -11,6 +13,7 @@ namespace Respire;
 /// An asynchronous original may also allocate tasks, timers, and linked cancellation sources.
 /// A synchronously successful original avoids conversion to a race task and timer setup.
 /// </remarks>
+[Experimental("RSP0003", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
 public sealed record RespireHedgedReadOptions
 {
     /// <summary>Delay after the first read is dispatched before trying one additional server. Defaults to 10 ms.</summary>

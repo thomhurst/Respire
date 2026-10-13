@@ -7,6 +7,9 @@
     <!-- The public API uses C# 13 params collections (params ReadOnlySpan<T>). -->
     <LangVersion>14</LangVersion>
     <Deterministic>true</Deterministic>
+    <!-- Repo implementation, tests, samples, and benchmarks deliberately opt in to these
+         experimental features. This props file is not distributed to package consumers. -->
+    <NoWarn>$(NoWarn);RSP0001;RSP0002;RSP0003;RSP0004;RSP0005;RSP0006</NoWarn>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
