@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <DefineConstants Condition="$(STACKEXCHANGE_REDIS_BENCHMARK_VERSION.StartsWith('4.'))">$(DefineConstants);STACKEXCHANGE_REDIS_V4</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

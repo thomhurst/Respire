@@ -1,0 +1,8 @@
+<Project>
+  <Import Project="../../Directory.Packages.props" />
+  <!-- Environment variables survive BenchmarkDotNet's generated-project builds. Keep
+       this override local to the comparison suite, including those child projects. -->
+  <ItemGroup Condition="'$(STACKEXCHANGE_REDIS_BENCHMARK_VERSION)' != '' And '$(STACKEXCHANGE_REDIS_BENCHMARK_VERSION)' != 'repository'">
+    <PackageVersion Update="StackExchange.Redis" Version="$(STACKEXCHANGE_REDIS_BENCHMARK_VERSION)" />
+  </ItemGroup>
+</Project>
