@@ -64,6 +64,10 @@ jobs:
           version=$(basename "$package" .nupkg)
           echo "version=${version#Respire.}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify exact core dependencies for internals consumers
+        shell: pwsh
+        run: ./scripts/Verify-CoreInternalsDependencies.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
+
       - name: Publish generated commands with Native AOT from packed NuGet assets
         run: >-
           dotnet publish tests/Respire.GeneratedCommands.Smoke -c Release -r linux-x64
