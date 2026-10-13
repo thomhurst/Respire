@@ -142,6 +142,9 @@ public enum SubscriptionOverflow
 /// </summary>
 public sealed record RespireOptions
 {
+    /// <summary>Returns a diagnostic representation without credentials or nested configuration material.</summary>
+    public override string ToString() => "RespireOptions { <redacted> }";
+
     // Internal seam for Respire.Testing. Ordinary TCP/TLS connections retain their direct path.
     private const string ConnectionStringParameterName = "connectionString";
 

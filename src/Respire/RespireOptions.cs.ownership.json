@@ -20,6 +20,10 @@
   ],
   "NonRoutes": [
     {
+      "Member": "Respire.RespireOptions.ToString():string",
+      "Reason": "Redacted diagnostic formatting; no command dispatch."
+    },
+    {
       "Member": "Respire.RespireEndpoint.Parse(string):RespireEndpoint",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },

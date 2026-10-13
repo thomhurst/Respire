@@ -4376,6 +4376,8 @@ internal delegate bool RespirePushFilter(in RespValue value, bool hasPendingResp
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
+    public override string ToString() => "RespireConnectionOptions { <redacted> }";
+
     public static readonly RespireConnectionOptions Default = new();
 
     internal IConnectionGeneration? Generation { get; init; }
