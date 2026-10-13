@@ -31,7 +31,7 @@ var value = await client.Scripts.ExecuteStringAsync(read, keys: ["key"]);
 | `ExecuteIntegerAsync` | The reply as `long`. |
 | `ExecuteStringAsync` | The reply as `string`, or `null`. |
 
-Typed helpers dispose their replies for you. `ExecuteSpanAsync` copies its span inputs before returning, so you can reuse that storage immediately.
+Typed helpers dispose their replies for you. `ExecuteSpanAsync` copies the span collections before returning, so you can reuse the span storage immediately. Binary key and argument buffers stay borrowed: keep them unchanged until the operation completes.
 
 ### Read-only scripts
 

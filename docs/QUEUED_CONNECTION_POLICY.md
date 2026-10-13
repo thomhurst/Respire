@@ -10,8 +10,8 @@ import-session and WATCH owners. Queues recreate it for each decision. It alloca
 kept per command and takes no lease; the original queue or session still disposes.
 
 Separately, an opt-in `RespireOptions.RetryPolicy` can resend a whole standalone or Sentinel batch,
-or an unwatched transaction, when every member's retry category allows it. That whole-unit retry also
-excludes import sessions, WATCH leases and Cluster batches.
+each Cluster batch slot group, or an unwatched transaction on any topology, when every member's
+retry category allows it. That whole-unit retry excludes import sessions and WATCH leases.
 
 ## Execution and recovery inventory
 
