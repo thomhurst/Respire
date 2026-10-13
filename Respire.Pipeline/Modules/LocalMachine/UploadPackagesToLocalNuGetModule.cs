@@ -6,6 +6,7 @@ using ModularPipelines.Modules;
 namespace Respire.Pipeline.Modules.LocalMachine;
 
 [DependsOn<PackagePathsParserModule>]
+[DependsOn<VerifyCoreInternalsDependenciesModule>]
 [DependsOn<AddLocalNugetSourceModule>]
 [DependsOn<CreateLocalNugetFolderModule>]
 public class UploadPackagesToLocalNuGetModule : Module<int>

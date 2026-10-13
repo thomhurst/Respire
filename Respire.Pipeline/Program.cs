@@ -49,6 +49,7 @@ public class Program
             .AddModule<NugetVersionGeneratorModule>()
             .AddModule<BuildProjectsModule>()
             .AddModule<PackProjectsModule>()
+            .AddModule<VerifyCoreInternalsDependenciesModule>()
             .AddModule<PackageFilesRemovalModule>()
             .AddModule<PackagePathsParserModule>()
             .ExecutePipelineAsync();

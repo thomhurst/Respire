@@ -13,6 +13,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
 [xml]$props = Get-Content (Join-Path $repositoryRoot 'Directory.Build.props') -Raw
@@ -25,6 +26,7 @@ $friends = @($core.SelectNodes('/Project/ItemGroup/InternalsVisibleTo/@Include')
 if ($friends.Count -eq 0) { throw 'No shipping core friends found; package validation cannot proceed.' }
 
 function Read-PackageNuspec([string]$packageId) {
+    # Version selects the exact package filenames produced by this pipeline run.
     $path = Join-Path $PackagesPath "$packageId.$Version.nupkg"
     $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $path).Path)
     try {
