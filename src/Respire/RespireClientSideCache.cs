@@ -275,6 +275,43 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return found;
     }
 
+    // Hit-only probes serve owner-free fast paths. A miss records nothing here, so the
+    // caller's normal route performs the counted lookup exactly once.
+    internal bool TryGetStringHit(in RespireKey key, out string? value)
+    {
+        if (!Volatile.Read(ref _store).TryGetString(in key, out value)) return false;
+        RecordRequest(hit: true);
+        return true;
+    }
+
+    internal bool TryGetHit(in RespireKey key, out RespValue value)
+    {
+        if (!Volatile.Read(ref _store).TryGet(in key, out var payload))
+        {
+            value = default;
+            return false;
+        }
+        RecordRequest(hit: true);
+        value = payload is null ? RespValue.Null : RespValue.BulkString(payload);
+        return true;
+    }
+
+    internal bool TryGetHit(in QueryRequest request, out RespValue value)
+    {
+        var query = request.Query;
+        if (!Volatile.Read(ref _store).TryGet(in query, out value)) return false;
+        RecordRequest(hit: true);
+        return true;
+    }
+
+    internal bool TryGetStringHit(in QueryRequest request, out string? value)
+    {
+        var query = request.Query;
+        if (!Volatile.Read(ref _store).TryGetString(in query, out value)) return false;
+        RecordRequest(hit: true);
+        return true;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void RecordRequest(bool hit)
     {
@@ -1389,6 +1426,55 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             return false;
         }
 
+        // String replies keep their decoded text, as GET entries do, so warm hits allocate nothing.
+        public bool TryGetString(in ClientCacheCommandKey query, out string? value)
+        {
+            QueryCacheEntry? entry = null;
+            while (_queries.TryGetValue(query, out var candidate))
+            {
+                if (candidate.ExpiresAt == 0 || Stopwatch.GetTimestamp() < candidate.ExpiresAt)
+                {
+                    entry = candidate;
+                    break;
+                }
+
+                if (Remove(in query, candidate, CacheRemoval.Expiration))
+                {
+                    break;
+                }
+            }
+
+            if (entry is null)
+            {
+                value = null;
+                return false;
+            }
+            value = entry.DecodedText ?? GetString(in query, entry);
+            return true;
+        }
+
+        private string? GetString(in ClientCacheCommandKey query, QueryCacheEntry entry)
+        {
+            var response = entry.Value;
+            var decoded = ResponseReader.StringOrNull(in response);
+            if (decoded is null
+                || response.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
+                return decoded;
+            lock (_removalLock)
+            {
+                if (entry.DecodedText is { } published) return published;
+                // As for GET entries, a removed or retired entry still serves this borrowed
+                // lookup without increasing the current store's accounted size.
+                if (_state == StoreState.Retired || !_queries.TryGetValue(query, out var current)
+                    || !ReferenceEquals(current, entry)) return decoded;
+                var added = CacheEntry.DecodedSize(decoded);
+                entry.SetDecodedText(decoded, added);
+                Interlocked.Add(ref _sizeBytes, added);
+            }
+            Trim();
+            return decoded;
+        }
+
         public CacheEntry? Set(RespireKey key, in RespValue response, string? decodedText = null)
         {
             if (!response.IsNull && response.Type is not RespDataType.BulkString and not RespDataType.SimpleString)
@@ -1716,10 +1802,20 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         long size,
         long expiresAt)
     {
+        private string? _decodedText;
+        private long _size = size;
         public RespValue Value { get; } = value;
         public RespireKey[] Dependencies { get; } = dependencies;
-        public long Size { get; } = size;
+        public long Size => Interlocked.Read(ref _size);
         public long ExpiresAt { get; } = expiresAt;
+        internal string? DecodedText => Volatile.Read(ref _decodedText);
+
+        // The store's removal gate serializes accounting, publication and removal.
+        internal void SetDecodedText(string text, long addedSize)
+        {
+            Interlocked.Add(ref _size, addedSize);
+            Volatile.Write(ref _decodedText, text);
+        }
     }
 
     internal enum CacheRemoval

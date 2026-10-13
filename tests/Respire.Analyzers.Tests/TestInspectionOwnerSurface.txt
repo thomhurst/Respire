@@ -1,5 +1,5 @@
-# Reviewed source-declared member signatures: 404 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 61
+# Reviewed source-declared member signatures: 411 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 65
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -42,7 +42,11 @@ Respire.ClientSideCacheCoordinator | method SubscribeInvalidations(RespireKey, A
 Respire.ClientSideCacheCoordinator | method TryCreateQuery`1(string, in TCommand, out QueryRequest) : bool
 Respire.ClientSideCacheCoordinator | method TryGet(in QueryRequest, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryGet(in RespireKey, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryGetHit(in QueryRequest, out RespValue) : bool
+Respire.ClientSideCacheCoordinator | method TryGetHit(in RespireKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryGetString(in RespireKey, out string?) : bool
+Respire.ClientSideCacheCoordinator | method TryGetStringHit(in QueryRequest, out string?) : bool
+Respire.ClientSideCacheCoordinator | method TryGetStringHit(in RespireKey, out string?) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in QueryRequest, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryPeek(in RespireKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator | method TryPeekRead(in RespireKey, out GetReadResult) : bool
@@ -71,7 +75,7 @@ Respire.ClientSideCacheCoordinator.CacheEntry | property DecodedText [internal; 
 Respire.ClientSideCacheCoordinator.CacheEntry | property ExpiresAt [public; get] : long
 Respire.ClientSideCacheCoordinator.CacheEntry | property Payload [public; get] : byte[]?
 Respire.ClientSideCacheCoordinator.CacheEntry | property Size [public; get] : long
-# Count: Respire.ClientSideCacheCoordinator.CacheStore | 14
+# Count: Respire.ClientSideCacheCoordinator.CacheStore | 15
 Respire.ClientSideCacheCoordinator.CacheStore | constructor CacheStore(RespireClientSideCacheOptions, Action<CacheRemoval>)
 Respire.ClientSideCacheCoordinator.CacheStore | method GetString(in RespireKey, CacheEntry) : string?
 Respire.ClientSideCacheCoordinator.CacheStore | method Invalidate(in RespireKey) : int
@@ -83,6 +87,7 @@ Respire.ClientSideCacheCoordinator.CacheStore | method TryCreateEntry(in ClientC
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in ClientCacheCommandKey, out RespValue) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGet(in RespireKey, out byte[]?) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGetString(in RespireKey, out string?) : bool
+Respire.ClientSideCacheCoordinator.CacheStore | method TryGetString(in ClientCacheCommandKey, out string?) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | method TryGetRead(in RespireKey, out GetReadResult) : bool
 Respire.ClientSideCacheCoordinator.CacheStore | property Count [public; get] : int
 Respire.ClientSideCacheCoordinator.CacheStore | property SizeBytes [public; get] : long
@@ -107,8 +112,10 @@ Respire.ClientSideCacheCoordinator.MutationFence | constructor MutationFence(Mut
 Respire.ClientSideCacheCoordinator.MutationFence | method BindNative() : MutationReference
 Respire.ClientSideCacheCoordinator.MutationFence | method CompleteLogical(ClientSideCacheCoordinator, bool) : void
 Respire.ClientSideCacheCoordinator.MutationFence | method RetainNative() : bool
-# Count: Respire.ClientSideCacheCoordinator.QueryCacheEntry | 4
+# Count: Respire.ClientSideCacheCoordinator.QueryCacheEntry | 6
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Dependencies [public; get] : RespireKey[]
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | method SetDecodedText(string, long) : void
+Respire.ClientSideCacheCoordinator.QueryCacheEntry | property DecodedText [internal; get] : string?
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property ExpiresAt [public; get] : long
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Size [public; get] : long
 Respire.ClientSideCacheCoordinator.QueryCacheEntry | property Value [public; get] : RespValue
