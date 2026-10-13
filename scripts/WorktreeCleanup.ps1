@@ -53,7 +53,10 @@ $script:DisposableWorktreeScopedDirectories = @(
     'docs/.docusaurus',
     'docs/build',
     'website/build',
-    'website/.docusaurus'
+    'website/.docusaurus',
+    # Root-level SDK installs and agent scratch space.
+    '.dotnet',
+    '.tmp'
 )
 
 function Test-DisposableWorktreePath {
@@ -336,4 +339,164 @@ function Clear-CompletedWorktreeArtifacts {
     }
     Write-Host "Cleared generated output; preserving checkout for owner release or manual recovery $Label : $Worktree"
     return $true
+}
+
+# PENDING RELEASE REMOVALS
+# On Windows a directory cannot be deleted while any process has its current directory
+# inside it, for example the agent shell that ran release from the worktree. Git then
+# deletes most of the tree, including the .git file, and fails. Owner release records
+# each vetted checkout before deleting it and removes the record on success. The sweep
+# finishes a recorded removal only when every remaining file is known generated output:
+# it deletes those files one by one and empty directories non-recursively, so source
+# written since release survives and blocks completion.
+
+function Get-PendingWorktreeRemovalDirectory {
+    param([Parameter(Mandatory)][string]$Repo)
+
+    $common = git -C $Repo rev-parse --path-format=absolute --git-common-dir 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $common) { return $null }
+    return Join-Path $common.Trim() 'agent-pending-removals'
+}
+
+function Register-PendingWorktreeRemoval {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree,
+        [Parameter(Mandatory)][string]$GitDirectory,
+        [Parameter(Mandatory)][string]$LockName,
+        $PendingBranch
+    )
+
+    $directory = Get-PendingWorktreeRemovalDirectory -Repo $Repo
+    if (-not $directory) { return $null }
+    $path = [IO.Path]::GetFullPath($Worktree).TrimEnd([char[]]@('/', '\'))
+    $key = if ($IsWindows) { $path.ToLowerInvariant() } else { $path }
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($key)))
+    $record = Join-Path $directory ($hash.Substring(0, 16).ToLowerInvariant() + '.json')
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    [ordered]@{
+        path          = $path
+        gitDirectory  = [IO.Path]::GetFullPath($GitDirectory.Trim())
+        lockName      = $LockName
+        recordedAt    = [DateTimeOffset]::UtcNow.ToString('o')
+        pendingBranch = $PendingBranch
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $record -NoNewline
+    return $record
+}
+
+# Deletes a remnant that holds only generated output. Returns $null on success, or why
+# the remnant was kept.
+function Remove-GeneratedRemnant {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$GitDirectory
+    )
+
+    $files = @(Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction Stop)
+    foreach ($file in $files) {
+        $relative = [IO.Path]::GetRelativePath($Path, $file.FullName)
+        if ($relative -eq '.git') {
+            $gitdir = ((Get-Content -LiteralPath $file.FullName -TotalCount 1) -replace '^gitdir:\s*', '').Trim()
+            if (Test-SameNativePath -Left $gitdir -Right $GitDirectory) { continue }
+        }
+        elseif (Test-DisposableWorktreePath -Path $relative) { continue }
+        return "remaining file is not generated output: $relative"
+    }
+    foreach ($file in $files) {
+        try { [IO.File]::Delete($file.FullName) } catch { return "file is in use: $($file.FullName)" }
+    }
+    # Non-recursive deletes fail on any file written after enumeration.
+    $directories = @(Get-ChildItem -LiteralPath $Path -Directory -Recurse -Force -ErrorAction Stop |
+        Sort-Object { $_.FullName.Length } -Descending | ForEach-Object FullName) + $Path
+    foreach ($directory in $directories) {
+        try { [IO.Directory]::Delete($directory, $false) } catch { return "directory is in use or not empty: $directory" }
+    }
+    return $null
+}
+
+function Complete-PendingWorktreeRemovals {
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [switch]$WhatIf
+    )
+
+    $directory = Get-PendingWorktreeRemovalDirectory -Repo $Repo
+    if (-not $directory -or -not (Test-Path -LiteralPath $directory)) { return 0 }
+    $completed = 0
+    foreach ($recordFile in (Get-ChildItem -LiteralPath $directory -File -Filter '*.json')) {
+        try {
+            $record = Get-Content -LiteralPath $recordFile.FullName -Raw | ConvertFrom-Json
+            $path = [string]$record.path
+            $recordedAt = [DateTimeOffset]::Parse([string]$record.recordedAt, [Globalization.CultureInfo]::InvariantCulture)
+        }
+        catch {
+            Write-Host "sweep: WARNING unreadable pending removal record: $($recordFile.FullName)"
+            continue
+        }
+        $drop = { if (-not $WhatIf) { Remove-Item -LiteralPath $recordFile.FullName -Force -ErrorAction SilentlyContinue } }
+
+        if ($path -and (Test-Path -LiteralPath $path)) {
+            # A new checkout at the same path has its own Git metadata, created after the record.
+            $marker = Join-Path $path '.git'
+            if (Test-Path -LiteralPath $marker -PathType Container) {
+                Write-Host "sweep: dropping pending removal for a standalone repository: $path"
+                & $drop
+                continue
+            }
+            if (Test-Path -LiteralPath $marker -PathType Leaf) {
+                $gitdir = ((Get-Content -LiteralPath $marker -TotalCount 1) -replace '^gitdir:\s*', '').Trim()
+                if ($gitdir -and (Test-Path -LiteralPath $gitdir) -and (
+                        -not (Test-SameNativePath -Left $gitdir -Right ([string]$record.gitDirectory)) -or
+                        (Get-Item -LiteralPath $gitdir -Force).CreationTimeUtc -gt $recordedAt.UtcDateTime)) {
+                    Write-Host "sweep: dropping pending removal superseded by a new checkout: $path"
+                    & $drop
+                    continue
+                }
+            }
+
+            $lockNames = @([string]$record.lockName)
+            $identity = Get-WorktreeIdentity -Name (Split-Path -Path $path -Leaf)
+            if ($identity) { $lockNames += $identity.LockName }
+            $blocker = $null
+            foreach ($lockName in @($lockNames | Where-Object { $_ } | Sort-Object -Unique)) {
+                $blocker = Get-AgentLockBlocker -Repo $Repo -LockName $lockName
+                if ($blocker) { break }
+            }
+            if ($blocker) {
+                Write-Host "sweep: deferring pending removal of $path ($blocker)"
+                continue
+            }
+            if ($WhatIf) {
+                Write-Host "sweep: WOULD finish pending removal of $path"
+                continue
+            }
+            try { $blocker = Remove-GeneratedRemnant -Path $path -GitDirectory ([string]$record.gitDirectory) }
+            catch { $blocker = "could not inspect remnant: $($_.Exception.Message)" }
+            if ($blocker -like 'remaining file*') {
+                Write-Host "sweep: WARNING preserving pending removal for manual recovery; $blocker : $path"
+                & $drop
+                continue
+            }
+            if ($blocker) {
+                Write-Host "sweep: pending removal is still blocked, retrying next sweep ($blocker): $path"
+                continue
+            }
+        }
+        elseif ($WhatIf) {
+            Write-Host "sweep: WOULD forget completed pending removal of $path"
+            continue
+        }
+
+        git -C $Repo worktree prune 2>$null | Out-Null
+        & $drop
+        $completed++
+        Write-Host "sweep: finished pending removal of $path"
+        $branch = $record.pendingBranch
+        if ($branch) {
+            . (Join-Path $PSScriptRoot 'MergedBranchCleanup.ps1')
+            $null = Remove-MergedRemoteBranch -Repo $Repo -Branch $branch.Branch `
+                -ExpectedHead $branch.ExpectedHead -RemoteUrlHash $branch.RemoteUrlHash
+        }
+    }
+    return $completed
 }

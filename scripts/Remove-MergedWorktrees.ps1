@@ -224,7 +224,11 @@ try {
         }
     }
 
+    # Owner releases that a busy directory interrupted.
+    $pendingRemoved = Complete-PendingWorktreeRemovals -Repo $mainRepo -WhatIf:$WhatIf
+
     if (-not $WhatIf) { git -C $mainRepo worktree prune }
+    if ($pendingRemoved -gt 0) { Write-Host "sweep: finished $pendingRemoved pending release removal(s)." }
     Write-Host "sweep: cleared generated output in $cleaned completed checkout(s); preserved checkout contents and $orphansPreserved orphaned dir(s) for owner release or manual recovery."
 }
 catch {
