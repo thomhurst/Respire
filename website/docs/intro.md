@@ -61,6 +61,39 @@ await foreach (var key in redis.Keys.ScanAsync(match: "user:*"))
 }
 ```
 
+## Interface compatibility
+
+Before 1.0, public interfaces may change. Command facets, script-cache operations,
+cache-aside calls, invalidation observation and prefix views are required members: custom implementations and
+decorators must implement or forward them. Missing implementations are compile errors;
+there are no default members that report an unsupported capability by throwing
+`NotSupportedException`. Server-version and configuration requirements still apply.
+
+From 1.0 onward, adding required members to an existing public interface requires a
+major release. Minor releases can add extension methods composed from existing
+operations, or separate optional capability interfaces that callers check explicitly.
+Default interface implementations are allowed only when they provide complete behavior
+using the existing contract, such as forwarding a convenience overload. They must not
+hide an unavailable feature behind a throwing default.
+
+Physical name resolution is an integration capability, separate from `IRespireClient`.
+`RespireClient` and its prefixed views implement `IRespireNameResolver`:
+
+```csharp
+if (client is IRespireNameResolver resolver)
+{
+    RespireKey physicalKey = resolver.ResolveKey("item");
+    RespireChannel physicalChannel = resolver.ResolveChannel("events");
+}
+```
+
+Decorators used with integrations that need physical names (including cache coherence,
+notification-driven coordination waits, streaming dead-letter validation and the
+StackExchange.Redis adapter) must also implement `IRespireNameResolver` and forward both
+methods to the wrapped client's resolver. Such integrations reject a missing resolver
+with `RespireConfigurationException`; they never assume that a custom client has no
+prefix. Command-only implementations need not expose physical names.
+
 ## Choose your next step
 
 - [Get connected](./getting-started) and run the first command.

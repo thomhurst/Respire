@@ -213,16 +213,14 @@ public interface IScriptCommands
         => ExistsAsync(sha1s, CancellationToken.None);
 
     /// <summary>Checks script SHA1 digests, with cancellation. Redis: SCRIPT EXISTS.</summary>
-    ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
-        => throw new NotSupportedException("This implementation does not support SCRIPT EXISTS.");
+    ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken);
 
     /// <summary>
     /// Clears the script cache on the server, or every discovered Cluster primary. This does not
     /// delete keys. The default mode follows the server's lazyfree-lazy-user-flush setting.
     /// Explicit SYNC / ASYNC requires Redis 6.2+. Redis: SCRIPT FLUSH.
     /// </summary>
-    ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This implementation does not support SCRIPT FLUSH.");
+    ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default);
 }
 
 internal sealed class ScriptCommands(RespireClient client) : IScriptCommands

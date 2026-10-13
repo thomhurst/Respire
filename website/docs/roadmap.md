@@ -12,6 +12,9 @@ Six settling surfaces now require an explicit [experimental API opt-in](experime
 VectorData, semantic chat caching, hedged reads, hash import sessions, deferred raw commands,
 and StackExchange.Redis compatibility. These remain outside the 1.0 compatibility promise.
 
+Public interface compatibility and the post-1.0 extension policy are described in
+[Interface compatibility](intro.md#interface-compatibility).
+
 ## Available now
 
 - [Public API baselines and deprecation policy](packages.md#public-api-review-and-deprecation)

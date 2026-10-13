@@ -85,7 +85,7 @@ Key prefixes do not change channels. Add a channel namespace separately:
 IRespireClient tenant = redis.WithKeyPrefix("keys:42:").WithPubSubPrefix("events:42:");
 await using var subscription = await tenant.SubscribeAsync("orders", stoppingToken);
 await tenant.PublishAsync("orders", orderJson, stoppingToken); // events:42:orders
-RespireChannel physical = tenant.ResolveChannel("orders");
+RespireChannel physical = ((IRespireNameResolver)tenant).ResolveChannel("orders");
 ```
 
 `WithPubSubPrefix(string)` validates UTF-16 and encodes UTF-8. The `RespireKey` overload accepts any bytes, including NUL and invalid UTF-8, and snapshots them:

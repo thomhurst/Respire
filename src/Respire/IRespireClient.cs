@@ -38,8 +38,7 @@ public interface IRespireClient : IAsyncDisposable
     IListCommands Lists { get; }
 
     /// <summary>Redis sparse array commands.</summary>
-    /// <remarks>The default getter throws NotSupportedException when an implementation does not support arrays.</remarks>
-    IArrayCommands Arrays => throw new NotSupportedException("This client does not support Redis arrays.");
+    IArrayCommands Arrays { get; }
     /// <summary>Set commands.</summary>
     ISetCommands Sets { get; }
     /// <summary>Sorted-set commands.</summary>
@@ -58,7 +57,7 @@ public interface IRespireClient : IAsyncDisposable
     IScriptCommands Scripts { get; }
 
     /// <summary>Redis Functions (Redis 7+).</summary>
-    IFunctionCommands Functions => throw new NotSupportedException("This client does not support Redis Functions.");
+    IFunctionCommands Functions { get; }
     /// <summary>Server administration and introspection commands.</summary>
     IServerCommands Server { get; }
 
@@ -82,7 +81,6 @@ public interface IRespireClient : IAsyncDisposable
     /// <remarks>
     /// Uses GET then SET NX GET. A concurrent writer wins; its value and TTL are preserved.
     /// Server support is not preflighted; an unsupported SET can fail after the factory runs.
-    /// Existing third-party implementations default to NotSupportedException unless they implement this method.
     /// A null factory result is returned without storing it. Stored default values do not call the factory.
     /// Expiry must be a positive relative duration (at least one millisecond) or an absolute instant after
     /// the Unix epoch. None, Keep and Persist are rejected. Relative expiry starts at the successful SET;
@@ -103,8 +101,7 @@ public interface IRespireClient : IAsyncDisposable
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-        RespireExpiry expiry, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This client does not support tracking-aware cache-aside operations.");
+        RespireExpiry expiry, CancellationToken cancellationToken = default);
 
     /// <summary>Gets raw bytes, or null when the key is absent. Redis: GET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -285,9 +282,6 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);
 
-    /// <summary>Returns the effective Redis key after this client applies any key transformation.</summary>
-    RespireKey ResolveKey(RespireKey key);
-
     // Escape hatch. A string converts implicitly to RespireCommand. The params shape covers the
     // common case; the array shape adds flags and cancellation as optional arguments.
 
@@ -338,14 +332,8 @@ public interface IRespireClient : IAsyncDisposable
     IRespireClient WithKeyPrefix(string prefix);
 
     /// <summary>A view that prepends an owned, binary-safe prefix to every key.</summary>
-    /// <remarks>Empty prefixes are rejected. Channels are unchanged. Custom implementations must
-    /// override this overload to support binary prefixes; text prefixes delegate to the string overload.</remarks>
-    IRespireClient WithKeyPrefix(RespireKey prefix)
-    {
-        if (prefix.IsEmpty) throw new ArgumentException("A key prefix cannot be empty.", nameof(prefix));
-        return prefix.Text is { } text ? WithKeyPrefix(text)
-            : throw new NotSupportedException("This client does not support binary key-prefix views.");
-    }
+    /// <remarks>Empty prefixes are rejected. Channels are unchanged.</remarks>
+    IRespireClient WithKeyPrefix(RespireKey prefix);
 
     /// <summary>Returns a view with a separate namespace for typed pub/sub publishes and subscriptions.</summary>
     /// <remarks>Appends to this view's pub/sub prefix without changing keys. Messages, subscription targets
@@ -354,21 +342,10 @@ public interface IRespireClient : IAsyncDisposable
     /// and unchanged. Views share connections; disposing a view does not dispose the root client.</remarks>
     /// <exception cref="ArgumentException">The prefix is empty or contains an unpaired UTF-16 surrogate.</exception>
     /// <exception cref="ArgumentNullException">The prefix is null.</exception>
-    IRespireClient WithPubSubPrefix(string prefix)
-        => throw new NotSupportedException("This client does not support pub/sub-prefix views.");
+    IRespireClient WithPubSubPrefix(string prefix);
 
     /// <summary>Returns a view with an owned, binary-safe pub/sub prefix. Empty prefixes are rejected.</summary>
-    IRespireClient WithPubSubPrefix(RespireKey prefix)
-    {
-        if (prefix.IsEmpty) throw new ArgumentException("A pub/sub prefix cannot be empty.", nameof(prefix));
-        return prefix.Text is { } text ? WithPubSubPrefix(text)
-            : throw new NotSupportedException("This client does not support binary pub/sub-prefix views.");
-    }
-
-    /// <summary>Resolves a logical typed pub/sub target to its physical channel or escaped pattern.</summary>
-    /// <remarks>Notification descriptors are already physical and remain unchanged. Do not pass the result
-    /// back through a prefixed view: resolution is not idempotent. Custom prefixed implementations must override this member.</remarks>
-    RespireChannel ResolveChannel(RespireChannel channel) => channel;
+    IRespireClient WithPubSubPrefix(RespireKey prefix);
 
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
     /// <remarks>

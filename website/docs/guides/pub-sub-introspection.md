@@ -27,7 +27,7 @@ RespireChannelSubscriberCount[] shardSubscribers =
 - Channel names and patterns keep their exact bytes. Result channels own their storage after the reply and client are disposed.
 - Empty names, empty name lists, and an omitted versus empty pattern are distinct.
 - `sharded` alone selects the command family; the input channel's kind does not. Returned sharded names have `SubscriptionKind.Sharded`.
-- `WithKeyPrefix` and `WithPubSubPrefix` are not applied. Pass `view.ResolveChannel(logicalChannel)` for a prefixed literal or sharded count, and `view.ResolveChannel(RespireChannel.Pattern(logicalPattern))` for a prefixed CHANNELS pattern.
+- `WithKeyPrefix` and `WithPubSubPrefix` are not applied. Pass `((IRespireNameResolver)view).ResolveChannel(logicalChannel)` for a prefixed literal or sharded count, and `((IRespireNameResolver)view).ResolveChannel(RespireChannel.Pattern(logicalPattern))` for a prefixed CHANNELS pattern.
 
 What the counts mean:
 

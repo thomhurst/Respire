@@ -1410,7 +1410,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
         IKeyCommands? keys = null,
         bool ignoreScriptCancellation = false,
-        TimeSpan? setDelay = null) : IRespireClient
+        TimeSpan? setDelay = null) : IRespireClient, IRespireNameResolver
     {
         private int _scriptCalls;
         private int _setCalls;
@@ -1677,7 +1677,15 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public IRespireClient WithReadFrom(RespireReadFrom readFrom) => inner.WithReadFrom(readFrom);
         public IRespireClient WithoutClientCache() => inner.WithoutClientCache();
 
+        public IRespireClient WithKeyPrefix(RespireKey prefix) => inner.WithKeyPrefix(prefix);
+        public IRespireClient WithPubSubPrefix(string prefix) => inner.WithPubSubPrefix(prefix);
+        public IRespireClient WithPubSubPrefix(RespireKey prefix) => inner.WithPubSubPrefix(prefix);
+        public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
+            TimeSpan ttl, CancellationToken cancellationToken = default)
+            => inner.GetOrSetAsync(key, factory, ttl, cancellationToken);
+
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
+        public RespireChannel ResolveChannel(RespireChannel channel) => inner.ResolveChannel(channel);
 
         // The test owns the wrapped client's lifetime.
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

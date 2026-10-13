@@ -13,23 +13,6 @@ public class ClientCacheInvalidationObserverTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
     [Test]
-    public async Task ExistingCacheImplementationsRemainCompatible()
-    {
-        IRespireClientSideCache cache = new ExternalCache();
-        await Assert.That(() => cache.SubscribeInvalidations("key", _ => { })).ThrowsExactly<NotSupportedException>();
-        cache.Clear();
-        await Assert.That(cache.Count).IsEqualTo(0);
-    }
-
-    private sealed class ExternalCache : IRespireClientSideCache
-    {
-        public int Count => 0;
-        public long SizeBytes => 0;
-        public RespireClientSideCacheStatistics GetStatistics() => default;
-        public void Clear() { }
-    }
-
-    [Test]
     public async Task ExternalImplementationsCanReturnTheirOwnSubscription()
     {
         IRespireClientSideCache cache = new ExternalObservingCache();
