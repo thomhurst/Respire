@@ -37,6 +37,12 @@ public sealed class SyncOverAsyncCodeFixProvider : CodeFixProvider
             if (node.Parent is not ExpressionStatementSyntax)
                 replacement = SyntaxFactory.ParenthesizedExpression(replacement);
             replacement = replacement.WithTriviaFrom(node).WithAdditionalAnnotations(Formatter.Annotation, Simplifier.Annotation);
+            // The removed blocking suffix can contain comments on the operand, member name,
+            // or invocation parentheses. Move its trivia after the await expression, keeping
+            // line breaks as well so single-line comments cannot swallow following code.
+            var suffixTrivia = node.DescendantTrivia()
+                .Where(trivia => trivia.SpanStart >= operand.Span.End && trivia.Span.End <= node.Span.End);
+            replacement = replacement.WithTrailingTrivia(suffixTrivia.Concat(node.GetTrailingTrivia()));
             var updatedRoot = root.ReplaceNode(node, replacement);
             // Await is valid in existing async functions and top-level statements. A Task-returning
             // method/local function can also gain async if its remaining returns still compile.

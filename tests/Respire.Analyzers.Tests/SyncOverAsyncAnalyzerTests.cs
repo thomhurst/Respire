@@ -7,6 +7,35 @@ namespace Respire.Analyzers.Tests;
 public class SyncOverAsyncAnalyzerTests
 {
     [Test]
+    [Arguments("task /* explanation */.Result", "await task /* explanation */")]
+    [Arguments("task // explanation\n            .Result", "await task // explanation\n            ")]
+    [Arguments("task. /* member */ Result", "await task /* member */ ")]
+    [Arguments("task.GetAwaiter(/* awaiter */).GetResult(/* result */)", "await task/* awaiter *//* result */")]
+    [Arguments("task.AsTask().Wait(/* wait */)", "await task.AsTask()/* wait */")]
+    [Arguments("task /* explanation */.Result.AsString()", "(await task) /* explanation */.AsString()")]
+    public Task FixPreservesBlockingSuffixComments(string expression, string replacement)
+    {
+        var blocking = expression.EndsWith(".AsString()") ? expression[..^11] : expression;
+        var remaining = expression.EndsWith(".AsString()") ? ".AsString()" : "";
+        var statement = expression.Contains(".Wait(") ? "" : "var result = ";
+        var source = $$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class C
+            {
+                async Task M(RespireClient client)
+                {
+                    var task = client.ExecuteAsync("PING");
+                    {{statement}}{|RESP009:{{blocking}}|}{{remaining}};
+                    await Task.Yield();
+                }
+            }
+            """;
+        var fixedSource = source.Replace("{|RESP009:" + blocking + "|}" + remaining, replacement);
+        return VerifyFix.VerifyAsync(source, fixedSource);
+    }
+
+    [Test]
     public Task IgnoresNameOfResult() => Verify.VerifyAsync("""
         using Respire;
         class C
