@@ -87,6 +87,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
   [hash codecs](guides/generated-hash-codecs.md), and
   [Search schemas](guides/generated-search-schemas.md), with a
   [Native AOT sample](guides/generated-hash-codecs.md#native-aot-conformance-sample) for .NET 8 and .NET 10.
+- [Generated typed Search queries](guides/generated-search-schemas.md#typed-queries) for hash and JSON
+  models: filters, sorting, paging, field selection, aggregation, and filtered KNN without reflection.
 
 ### Caching, integration, and testing
 
