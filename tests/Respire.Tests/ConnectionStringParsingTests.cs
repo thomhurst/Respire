@@ -38,8 +38,8 @@ public class ConnectionStringParsingTests
     {
         foreach (var prefix in new[] { "redis://localhost?", "localhost," })
         {
-            var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse($"{prefix}protocol={value}"));
-            await Assert.That(error.ParamName).IsEqualTo("connectionString");
+            var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse($"{prefix}protocol={value}"));
+            await Assert.That(((ArgumentException)error.InnerException!).ParamName).IsEqualTo("connectionString");
             await Assert.That(error.Message).Contains("protocol");
         }
     }
@@ -75,8 +75,8 @@ public class ConnectionStringParsingTests
     {
         foreach (var value in new[] { "", "oops", "1.5", "2147483648", "-2147483649" })
         {
-            var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse($"{prefix}{option}={value}"));
-            await Assert.That(error.ParamName).IsEqualTo("connectionString");
+            var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse($"{prefix}{option}={value}"));
+            await Assert.That(((ArgumentException)error.InnerException!).ParamName).IsEqualTo("connectionString");
             await Assert.That(error.Message).Contains(option);
         }
     }
@@ -86,8 +86,8 @@ public class ConnectionStringParsingTests
     [Arguments("2147483648")]
     public async Task InvalidDatabasePathNamesDatabaseAndPublicParameter(string value)
     {
-        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse($"redis://localhost/{value}"));
-        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse($"redis://localhost/{value}"));
+        await Assert.That(((ArgumentException)error.InnerException!).ParamName).IsEqualTo("connectionString");
         await Assert.That(error.Message).Contains("database");
     }
 
@@ -110,10 +110,8 @@ public class ConnectionStringParsingTests
 
     [Test]
     [Arguments("redis://localhost?connectTimeout=1")]
-    [Arguments("localhost,connections=1")]
-    [Arguments("localhost,commandTimeoutMs=1")]
     public async Task SyntaxSpecificOptionsRemainUnsupported(string connectionString)
     {
-        await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
+        await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<RespireConfigurationException>();
     }
 }

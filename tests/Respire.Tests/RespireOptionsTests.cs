@@ -181,7 +181,7 @@ public class RespireOptionsTests
     public async Task ConnectionString_RejectsNonPositiveConnectionCount(string connectionString)
     {
         await Assert.That(() => RespireOptions.Parse(connectionString))
-            .Throws<ArgumentOutOfRangeException>();
+            .Throws<RespireConfigurationException>();
     }
 
     [Test]
@@ -336,7 +336,7 @@ public class RespireOptionsTests
     [Test]
     public async Task StackExchangeConnectionString_MultipleEndpointsFailClearly()
     {
-        var exception = Assert.Throws<ArgumentException>(
+        var exception = Assert.Throws<RespireConfigurationException>(
             () => RespireOptions.Parse("cache-a:6380,cache-b,password=secret"));
 
         await Assert.That(exception.Message).Contains("multiple endpoints");
@@ -377,7 +377,7 @@ public class RespireOptionsTests
     [Arguments("cache-a,cache-b")]
     public async Task StackExchangeConnectionString_AmbiguousModeExplainsChoices(string connectionString)
     {
-        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse(connectionString));
 
         await Assert.That(error.Message).Contains("cluster=true");
         await Assert.That(error.Message).Contains("serviceName");
@@ -394,8 +394,8 @@ public class RespireOptionsTests
     [Arguments("cache,serviceName=primary,sentinelSslHost= ")]
     public async Task ConnectionString_RejectsInvalidModesAndEmptyHosts(string connectionString)
     {
-        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
-        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(((ArgumentException)error.InnerException!).ParamName).IsEqualTo("connectionString");
     }
 
     [Test]
@@ -405,8 +405,8 @@ public class RespireOptionsTests
     [Arguments("cache,serviceName=primary,sentinelSslHost= ", "sentinelSslHost")]
     public async Task EmptyOption_DiagnosticNamesOptionAndPublicParameter(string connectionString, string option)
     {
-        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
-        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(((ArgumentException)error.InnerException!).ParamName).IsEqualTo("connectionString");
         await Assert.That(error.Message).Contains(option);
     }
 
@@ -475,8 +475,8 @@ public class RespireOptionsTests
     [Arguments("redis://cache?sentinelTls=invalid")]
     public async Task ConnectionString_RejectsInvalidBooleanOptions(string connectionString)
     {
-        var error = await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
-        await Assert.That(error!.ParamName).IsEqualTo("connectionString");
+        var error = await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<RespireConfigurationException>();
+        await Assert.That(((ArgumentException)error!.InnerException!).ParamName).IsEqualTo("connectionString");
     }
 
     [Test]
@@ -492,28 +492,22 @@ public class RespireOptionsTests
     public async Task StackExchangeConnectionString_RejectsUndefinedTlsProtocols(string protocols)
     {
         var error = await Assert.That(() => RespireOptions.Parse($"cache,sslProtocols={protocols}"))
-            .Throws<ArgumentException>();
-        await Assert.That(error!.ParamName).IsEqualTo("connectionString");
+            .Throws<RespireConfigurationException>();
+        await Assert.That(((ArgumentException)error!.InnerException!).ParamName).IsEqualTo("connectionString");
     }
 
     [Test]
-    public async Task StackExchangeConnectionString_UnknownOptionFailsClearly()
+    public async Task StackExchangeConnectionString_MapsReconnectLimit()
     {
-        var exception = Assert.Throws<ArgumentException>(
-            () => RespireOptions.Parse("localhost,connectRetry=3"));
-
-        await Assert.That(exception.Message).Contains("connectRetry");
-        await Assert.That(exception.Message).Contains("redis://");
+        var options = RespireOptions.Parse("localhost,connectRetry=3");
+        await Assert.That(options.ReconnectPolicy!.MaxAttempts).IsEqualTo(3);
     }
 
     [Test]
-    public async Task StackExchangeConnectionString_KeepAliveFailsClearly()
+    public async Task StackExchangeConnectionString_MapsKeepAliveSeconds()
     {
-        var exception = Assert.Throws<ArgumentException>(
-            () => RespireOptions.Parse("localhost,keepAlive=60"));
-
-        await Assert.That(exception.Message).Contains("keepAlive");
-        await Assert.That(exception.Message).Contains("redis://");
+        var options = RespireOptions.Parse("localhost,keepAlive=60");
+        await Assert.That(options.TcpKeepAliveTime).IsEqualTo(TimeSpan.FromSeconds(60));
     }
 
     [Test]

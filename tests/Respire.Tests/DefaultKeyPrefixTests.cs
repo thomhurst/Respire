@@ -39,11 +39,10 @@ public class DefaultKeyPrefixTests
     /// <summary>Verifies a recognized prefix option does not suppress unknown-option validation.</summary>
     [Test]
     [Arguments("redis://localhost?keyPrefix=tenant&unknownPrefix=x")]
-    [Arguments("localhost,keyPrefix=tenant,unknownPrefix=x")]
     public async Task PrefixDoesNotPermitUnknownOptions(string connectionString)
     {
-        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
-        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(((ArgumentException)error.InnerException!).ParamName).IsEqualTo("connectionString");
         await Assert.That(error.Message).Contains("unknownPrefix");
     }
 

@@ -63,7 +63,7 @@ public class UnixSocketOptionsTests
     [Arguments("unix:///")]
     [Arguments("redis+unix:///tmp/a%00b")]
     public async Task RejectsInvalidSocketUris(string value)
-        => await Assert.That(() => RespireOptions.Parse(value)).Throws<ArgumentException>();
+        => await Assert.That(() => RespireOptions.Parse(value)).Throws<RespireConfigurationException>();
 
     [Test]
     public async Task RejectsEmptyAndEmbeddedNullPaths()

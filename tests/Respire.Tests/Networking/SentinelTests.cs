@@ -610,7 +610,7 @@ public class SentinelTests
     [Test]
     public async Task ConnectionString_RejectsEmptyServiceName()
     {
-        var error = Assert.Throws<ArgumentException>(
+        var error = Assert.Throws<RespireConfigurationException>(
             () => RespireOptions.Parse("redis://sentinel.example?serviceName=%20%20"));
 
         await Assert.That(error.Message).Contains("serviceName");

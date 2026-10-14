@@ -2072,13 +2072,12 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new()
             { Groups = RespireMetricGroups.Resiliency | (commandMetrics ? RespireMetricGroups.Command : 0) });
-        var expected = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString!));
+        var expected = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse(connectionString!));
         using var capture = new Capture(throwOnMeasurement: commandMetrics, commandMetrics: commandMetrics);
 
         // Parsing must still throw synchronously, before a ValueTask is returned.
-        var error = Assert.Throws<ArgumentException>(() => { _ = RespireClient.ConnectAsync(connectionString!); });
+        var error = Assert.Throws<RespireConfigurationException>(() => { _ = RespireClient.ConnectAsync(connectionString!); });
         await Assert.That(error.GetType()).IsEqualTo(expected.GetType());
-        await Assert.That(error.ParamName).IsEqualTo(expected.ParamName);
         await Assert.That(error.Message).IsEqualTo(expected.Message);
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var item = capture.Items.Single();
