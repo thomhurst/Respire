@@ -109,6 +109,7 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageTags>redis;valkey;keydb;resp;cache;caching;client;dotnet</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageLanguage>en-US</PackageLanguage>
     <NeutralLanguage>en-US</NeutralLanguage>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -127,6 +128,7 @@
   <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">
     <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
     <!-- The package's buildTransitive targets include the two PublicAPI files as AdditionalFiles. -->
-    <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="/" />
+    <Content Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="/" />
+    <None Include="$(RepositoryRoot)assets/nuget/icon.png" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

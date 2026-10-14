@@ -1,5 +1,6 @@
 <#
-Compiles C# fences in README, website/docs, and docs against the packed packages.
+Verifies package READMEs and icons, and compiles C# fences in package READMEs,
+the root README, website/docs, and docs against the packed packages.
 Place doc-test directives immediately before their C# fence. Use
 <!-- doc-test-declaration: split-before=FIRST_STATEMENT --> for leading declarations,
 or <!-- doc-test-tail-declaration: split-before=FIRST_DECLARATION --> for trailing types.
@@ -30,6 +31,9 @@ $restorePackagesPath = Join-Path $generatedDirectory 'packages'
 $projectPath = Join-Path $repositoryRoot 'tests/Respire.DocTests/Respire.DocTests.csproj'
 $documentPaths = @(
     (Join-Path $repositoryRoot 'README.md')
+    Get-ChildItem (Join-Path $repositoryRoot 'src/*/README.md') -File |
+        Sort-Object FullName |
+        ForEach-Object FullName
     Get-ChildItem @((Join-Path $repositoryRoot 'website/docs'), (Join-Path $repositoryRoot 'docs')) -Recurse -File -Include '*.md', '*.mdx' |
         Sort-Object FullName |
         ForEach-Object FullName
@@ -75,6 +79,49 @@ foreach ($packageId in $requiredPackages)
     {
         throw "Documented package '$packageId' was not packed at '$packagePath'."
     }
+
+    $archive = [IO.Compression.ZipFile]::OpenRead($packagePath)
+    try
+    {
+        $nuspecEntry = $archive.GetEntry("$packageId.nuspec")
+        if ($null -eq $nuspecEntry)
+        {
+            throw "Package '$packageId' is missing its nuspec."
+        }
+        $reader = [IO.StreamReader]::new($nuspecEntry.Open())
+        try { [xml]$nuspec = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        if ($nuspec.package.metadata.readme -ne 'README.md' -or $nuspec.package.metadata.icon -ne 'icon.png')
+        {
+            throw "Package '$packageId' must declare README.md and icon.png in its nuspec."
+        }
+
+        $expectedFiles = @{
+            'README.md' = Join-Path $repositoryRoot "src/$packageId/README.md"
+            'icon.png' = Join-Path $repositoryRoot 'assets/nuget/icon.png'
+        }
+        foreach ($name in $expectedFiles.Keys)
+        {
+            $entries = @($archive.Entries | Where-Object FullName -CEQ $name)
+            if ($entries.Count -ne 1)
+            {
+                throw "Package '$packageId' must contain exactly one '$name'."
+            }
+            $stream = $entries[0].Open()
+            $buffer = [IO.MemoryStream]::new()
+            try
+            {
+                $stream.CopyTo($buffer)
+                $actual = [Convert]::ToBase64String($buffer.ToArray())
+                $expected = [Convert]::ToBase64String([IO.File]::ReadAllBytes($expectedFiles[$name]))
+                if ($actual -cne $expected)
+                {
+                    throw "Package '$packageId' contains the wrong '$name'."
+                }
+            }
+            finally { $stream.Dispose(); $buffer.Dispose() }
+        }
+    }
+    finally { $archive.Dispose() }
 }
 
 $snippets = [System.Collections.Generic.List[object]]::new()
