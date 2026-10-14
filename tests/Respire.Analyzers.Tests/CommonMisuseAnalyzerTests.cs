@@ -48,6 +48,10 @@ public class CommonMisuseAnalyzerTests
             static async Task Main()
             {
                 await using var client = await RespireClient.ConnectAsync("localhost");
+                for (var i = 0; i < 2; i++)
+                {
+                    await using var repeated = {|RESP010:RespireClient.Create("localhost")|};
+                }
             }
         }
         """, OutputKind.ConsoleApplication);
@@ -126,6 +130,77 @@ public class CommonMisuseAnalyzerTests
                 await foreach (var other in subscription)
                     await foreach (var inner in subscription)
                         {|RESP012:Thread.Sleep(2)|};
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
+    public Task MessageStreamImplementations(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
+        interface IMessageStream : IAsyncEnumerable<RespireMessage> { }
+        class MessageStream : IMessageStream
+        {
+            public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken token = default)
+                => throw new NotImplementedException();
+        }
+        class Consumer
+        {
+            async Task Read<T>(MessageStream concrete, IMessageStream abstraction, T generic)
+                where T : IAsyncEnumerable<RespireMessage>
+            {
+                await foreach (var message in concrete) {|RESP012:Thread.Sleep(1)|};
+                await foreach (var message in abstraction) {|RESP012:Thread.Sleep(1)|};
+                await foreach (var message in generic) {|RESP012:Thread.Sleep(1)|};
+            }
+            async Task Unrelated(IAsyncEnumerable<string> other)
+            {
+                await foreach (var item in other) Thread.Sleep(1);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
+    public Task ZeroTimeoutWaits(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
+        class Consumer
+        {
+            async Task Read(RespireSubscription subscription, Task work, SemaphoreSlim gate,
+                ManualResetEventSlim signal, WaitHandle handle, Thread thread, int timeout)
+            {
+                await foreach (var message in subscription)
+                {
+                    const int NoWait = 0;
+                    gate.Wait(NoWait);
+                    gate.Wait(TimeSpan.Zero);
+                    gate.Wait(cancellationToken: default, millisecondsTimeout: 0);
+                    signal.Wait(0);
+                    signal.Wait(TimeSpan.Zero);
+                    handle.WaitOne(0);
+                    handle.WaitOne(TimeSpan.Zero);
+                    WaitHandle.WaitAll(new[] { handle }, 0);
+                    WaitHandle.WaitAny(new[] { handle }, TimeSpan.Zero);
+                    work.Wait(0);
+                    work.Wait(TimeSpan.Zero);
+                    Task.WaitAll(new[] { work }, 0);
+                    Task.WaitAny(new[] { work }, TimeSpan.Zero);
+                    thread.Join(0);
+                    thread.Join(TimeSpan.Zero);
+                    {|RESP012:gate.Wait(1)|};
+                    {|RESP012:gate.Wait(timeout)|};
+                    {|RESP012:gate.Wait(Timeout.Infinite)|};
+                    {|RESP012:work.Wait(1)|};
+                    {|RESP012:Thread.Sleep(0)|};
+                    // The non-blocking outer wait must not hide blocking argument evaluation.
+                    Task.WaitAny(new[] { Task.FromResult({|RESP012:Task.FromResult(0).Result|}) }, 0);
+                }
+                subscription.DeliveryGap += gap =>
+                {
+                    gate.Wait(0);
+                    gate.Wait(TimeSpan.Zero);
+                    {|RESP012:gate.Wait(1)|};
+                };
             }
         }
         """);

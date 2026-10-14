@@ -7,8 +7,9 @@ description: Avoid blocking waits in message consumers and delivery-gap callback
 
 The bundled warning detects known blocking operations inside `await foreach`
 consumers of `RespireSubscription` or `IAsyncEnumerable<RespireMessage>`, including
-`WithCancellation` / `ConfigureAwait` streams. It also checks inline lambdas and
-method groups declared in the same source file and registered with
+implementations and derived interfaces, and `WithCancellation` / `ConfigureAwait`
+streams. It also checks inline lambdas and method groups declared in the same
+source file and registered with
 `RespireSubscription.DeliveryGap`.
 
 ```csharp
@@ -24,6 +25,10 @@ subscription.DeliveryGap += gap => Thread.Sleep(100); // RESP012
 Recognized operations include `Thread.Sleep` / `Join`, task `.Result`, `.Wait()`
 and direct `.GetAwaiter().GetResult()` chains, `Task.WaitAll` / `WaitAny`,
 `SemaphoreSlim.Wait`, `ManualResetEventSlim.Wait`, and `WaitHandle` waits.
+Timed waits with a constant zero millisecond timeout or `TimeSpan.Zero` are
+excluded because they only probe availability. `Thread.Sleep(0)` still yields
+the consumer thread and is reported.
+
 Blocking work in other methods, delegate variables, arbitrary synchronous I/O,
 locks, and CPU-intensive work is not inferred. Nested lambdas and local functions
 are excluded from message-loop traversal; work inside them may run elsewhere.

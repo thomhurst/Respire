@@ -69,8 +69,16 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
 
     private static bool IsMessageStream(ITypeSymbol? type)
     {
-        if (type is not INamedTypeSymbol named) return false;
-        if (named.ToDisplayString() == "Respire.RespireSubscription") return true;
+        if (type is null) return false;
+        if (type.ToDisplayString() == "Respire.RespireSubscription") return true;
+        return type is INamedTypeSymbol named && IsMessageEnumerable(named)
+            || type is ITypeParameterSymbol parameter && parameter.ConstraintTypes
+                .OfType<INamedTypeSymbol>().Any(IsMessageEnumerable)
+            || type.AllInterfaces.Any(IsMessageEnumerable);
+    }
+
+    private static bool IsMessageEnumerable(INamedTypeSymbol named)
+    {
         return named.OriginalDefinition.ToDisplayString() is
                 "System.Collections.Generic.IAsyncEnumerable<T>" or "System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable<T>"
             && named.TypeArguments[0].ToDisplayString() == "Respire.RespireMessage";
@@ -98,8 +106,24 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
                 blocking = method.Name;
         }
 
+        if (operation is IInvocationOperation timedWait && blocking is not null
+            && timedWait.TargetMethod.Name != "Sleep" && HasZeroTimeout(timedWait))
+            blocking = null;
+
         if (blocking is not null && reported.TryAdd(operation.Syntax.GetLocation(), 0))
             context.ReportDiagnostic(Diagnostic.Create(Rule, operation.Syntax.GetLocation(), blocking));
         foreach (var child in operation.ChildOperations) Inspect(context, child, reported);
+    }
+
+    private static bool HasZeroTimeout(IInvocationOperation call)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            if (argument.Parameter?.Name is not ("millisecondsTimeout" or "timeout")) continue;
+            if (argument.Value.ConstantValue is { HasValue: true, Value: 0 }) return true;
+            if (argument.Value is IFieldReferenceOperation { Field.Name: "Zero" } field
+                && field.Field.ContainingType.ToDisplayString() == "System.TimeSpan") return true;
+        }
+        return false;
     }
 }
