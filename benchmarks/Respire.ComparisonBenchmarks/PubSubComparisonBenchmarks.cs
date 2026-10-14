@@ -69,6 +69,10 @@ public class PubSubComparisonBenchmarks
         {
             throw new InvalidOperationException("Subscription ended before delivery.");
         }
+        if (_messages.Current.Kind == RespireMessageKind.Gap)
+        {
+            throw new InvalidOperationException("Subscription reported a delivery gap during measurement.");
+        }
         return _messages.Current.Text;
     }
 
