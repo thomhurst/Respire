@@ -468,6 +468,7 @@ Opt-in [hedged reads](../fundamentals/connections.md#hedged-reads) expose three 
 Pass an `ILoggerFactory` through `RespireOptions.LoggerFactory`, or use the
 [dependency-injection integration](./dependency-injection.md), which uses the container's
 factory. Logs cover connection lifecycle and recovery and never include payloads.
+All shipping packages use source-generated logging with [stable event IDs](./log-events.md).
 
 ## Health state
 
