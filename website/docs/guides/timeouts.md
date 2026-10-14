@@ -91,7 +91,7 @@ with your application's logger:
 ```csharp
 try
 {
-    return await redis.GetStringAsync("session", cancellationToken);
+    var session = await redis.GetStringAsync("session", cancellationToken);
 }
 catch (RespireTimeoutException error)
 {
