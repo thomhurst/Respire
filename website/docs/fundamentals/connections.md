@@ -95,7 +95,7 @@ redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
 
 - `rediss://` enables TLS. Without a port, both schemes use 6379 (26379 with `serviceName`).
 - Unix sockets: `unix:///path/to/redis.sock` (or `redis+unix://`), with `?db=N`.
-- Unknown parameters, bad protocol values, and malformed or overflowing integers throw `ArgumentException` naming the option, with `ParamName == "connectionString"`. This also applies to comma-delimited strings. Range checks still apply after parsing.
+- Unknown URI parameters, bad protocol values, and malformed or overflowing integers throw `RespireConfigurationException` naming the option. Parse errors use this exception for both URI and comma-delimited strings. Range checks still apply after parsing.
 - `keyPrefix` sets the [default root key namespace](../commands/strings-and-keys.md#default-root-namespace); it does not prefix channels. `pubSubPrefix` sets the [root pub/sub namespace](../guides/pub-sub.md#explicit-pubsub-prefixes) for typed publish and subscribe; notification descriptors and Server PUBSUB queries use physical names.
 - Both prefixes take percent-escaped UTF-8, decoded once (escape with `Uri.EscapeDataString`). Empty disables; the last repeat wins. For binary prefixes, set `RespireOptions.KeyPrefix` or `PubSubPrefix`.
 
@@ -106,6 +106,8 @@ Respire accepts the StackExchange.Redis comma-delimited format:
 ```text
 cache-a:6380,password=secret,ssl=true,defaultDatabase=2
 ```
+
+Endpoints without an explicit port use 6379, or 6380 when TLS is enabled (`ssl=true`, or `sslHost` without `ssl=false`). Sentinel seeds use 26379 even when TLS is enabled. Explicit ports always take precedence.
 
 | Endpoints | Meaning |
 | --- | --- |

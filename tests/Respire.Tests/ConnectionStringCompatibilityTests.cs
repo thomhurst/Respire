@@ -8,6 +8,37 @@ namespace Respire.Tests;
 public class ConnectionStringCompatibilityTests
 {
     [Test]
+    [Arguments("example.redis.cache.windows.net,ssl=true,abortConnect=false", 6380)]
+    [Arguments("localhost,ssl=false", 6379)]
+    [Arguments("localhost", 6379)]
+    [Arguments("localhost,ssl=true,ssl=false", 6379)]
+    [Arguments("localhost,ssl=false,ssl=true", 6380)]
+    [Arguments("localhost,sslHost=cache.example", 6380)]
+    [Arguments("localhost,sslHost=cache.example,ssl=false", 6379)]
+    [Arguments("localhost,ssl=false,sslHost=cache.example", 6379)]
+    [Arguments("localhost:6379,ssl=true", 6379)]
+    [Arguments("localhost:7000,ssl=true", 7000)]
+    [Arguments("[::1],ssl=true", 6380)]
+    [Arguments("[::1]:7000,ssl=true", 7000)]
+    [Arguments("sentinel,serviceName=primary,ssl=true", 26379)]
+    [Arguments("sentinel,serviceName=primary,ssl=false", 26379)]
+    [Arguments("sentinel:26380,serviceName=primary,ssl=true", 26380)]
+    public async Task EndpointPortHonorsTlsAndSentinelDefaults(string connectionString, int expectedPort)
+    {
+        var options = RespireOptions.Parse(connectionString);
+        await Assert.That(options.Endpoints.Single().Port).IsEqualTo(expectedPort);
+    }
+
+    [Test]
+    public async Task TlsDefaultPortAppliesToEachEndpointWithoutAPort()
+    {
+        var options = RespireOptions.Parse("first,second:7000,[::1],cluster=true,ssl=true,abortConnect=false");
+        await Assert.That(options.Endpoints[0].Port).IsEqualTo(6380);
+        await Assert.That(options.Endpoints[1].Port).IsEqualTo(7000);
+        await Assert.That(options.Endpoints[2].Port).IsEqualTo(6380);
+    }
+
+    [Test]
     [Arguments("example.redis.cache.windows.net:6380,password=secret==,ssl=True,abortConnect=False")]
     [Arguments("example.cache.amazonaws.com:6379,ssl=true,abortConnect=false,connectRetry=3,connectTimeout=5000")]
     [Arguments("localhost,allowAdmin=true,asyncTimeout=5000,syncTimeout=5000,defaultDatabase=1,name=app,user=default,password=secret,protocol=resp3")]

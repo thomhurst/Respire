@@ -1232,7 +1232,8 @@ public sealed record RespireOptions
                 nameof(connectionString));
         }
 
-        var defaultPort = mode.ServiceName is null ? 6379 : 26379;
+        var effectiveUseTls = useTls ?? !string.IsNullOrEmpty(tlsOptions?.TargetHost);
+        var defaultPort = mode.ServiceName is not null ? 26379 : effectiveUseTls ? 6380 : 6379;
         var endpoints = endpointTexts.Select(endpoint => RespireEndpoint.Parse(endpoint, defaultPort)).ToList();
 
         if (maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespProtocol.Resp2)
@@ -1248,7 +1249,7 @@ public sealed record RespireOptions
             PubSubPrefix = pubSubPrefix,
             Database = database,
             ConnectTimeout = connectTimeout,
-            UseTls = useTls ?? !string.IsNullOrEmpty(tlsOptions?.TargetHost),
+            UseTls = effectiveUseTls,
             TlsOptions = tlsOptions,
             UseCluster = mode.UseCluster,
             SentinelPrimaryName = mode.ServiceName,
