@@ -12,6 +12,36 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task EscapedClassCharactersStayLiteral(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        await using var client = await RespireClient.ConnectAsync(
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol });
+        var prefix = Guid.NewGuid().ToString("N") + ":";
+        foreach (var suffix in new[] { "a", "-", "z", "b" })
+            await client.SetAsync(prefix + suffix, "value");
+
+        foreach (var negate in new[] { false, true })
+        {
+            var pattern = prefix + (negate ? @"[^\a-z]" : @"[\a-z]");
+            var expected = (negate ? new[] { "b" } : new[] { "a", "-", "z" })
+                .Select(suffix => prefix + suffix).ToArray();
+            using var keys = await client.ExecuteAsync("KEYS", pattern);
+            keys.Select(value => value.AsString()).Should().BeEquivalentTo(expected);
+            var found = new HashSet<string>();
+            await foreach (var key in client.Keys.ScanAsync(pattern, countHint: 1))
+                found.Add(key);
+            found.Should().BeEquivalentTo(expected);
+        }
+        foreach (var suffix in new[] { "a", "-", "z", "b" })
+            await client.DeleteAsync(prefix + suffix);
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task TimeReplyAndKeyEnumerationMatch(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;

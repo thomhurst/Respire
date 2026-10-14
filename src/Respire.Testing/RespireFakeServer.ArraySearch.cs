@@ -218,7 +218,13 @@ public sealed partial class RespireFakeServer
                 if (--remainingWork < 0) throw new ArrayGlobLimitException();
                 var first = remaining[0];
                 remaining = remaining[1..];
-                if (first == '\\' && !remaining.IsEmpty) { first = remaining[0]; remaining = remaining[1..]; }
+                if (first == '\\' && !remaining.IsEmpty)
+                {
+                    // An escaped class character is literal, never the start of a range.
+                    matched |= actual == (ignoreCase ? ArrayFold(remaining[0]) : remaining[0]);
+                    remaining = remaining[1..];
+                    continue;
+                }
                 if (ignoreCase) first = ArrayFold(first);
                 if (remaining.Length >= 2 && remaining[0] == '-')
                 {

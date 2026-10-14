@@ -86,6 +86,12 @@ character classes such as `[a-z]` and `[^a-z]`, and backslash escaping. Both enu
 supported key types and exclude expired keys.
 
 ```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.SetAsync("coordinator:job", "pending");
+
 await foreach (var key in client.Keys.ScanAsync("coordinator:*", countHint: 10))
     await client.DeleteAsync(key);
 

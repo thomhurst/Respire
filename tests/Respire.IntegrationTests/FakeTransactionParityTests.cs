@@ -117,6 +117,9 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         await using var writer = await TestRespSession.ConnectAsync(options);
         var scenarios = new WatchCase[]
         {
+            new([ ["SET", "key", "value"] ], ["TIME"], false),
+            new([ ["SET", "key", "value"] ], ["KEYS", "*"], false),
+            new([ ["SET", "key", "value"] ], ["SCAN", "0", "MATCH", "*", "COUNT", "1000"], false),
             new([], ["ARSET", "key", "0", "value"], true),
             new([ ["ARSET", "key", "0", "value"] ], ["ARSET", "key", "0", "value"], true),
             new([], ["ARMSET", "key", "0", "value", "2", "other"], true),
@@ -356,6 +359,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         string[] nonInvalidatingCommands =
         [
             "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
+            "TIME", "KEYS", "SCAN",
             "ARCOUNT", "ARGET", "ARGETRANGE", "ARGREP", "ARINFO", "ARLASTITEMS", "ARLEN",
             "ARMGET", "ARNEXT", "AROP", "ARSCAN",
             "HIMPORT PREPARE", "HIMPORT DISCARD", "HIMPORT DISCARDALL",

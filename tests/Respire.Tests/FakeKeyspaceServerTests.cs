@@ -78,6 +78,12 @@ public class FakeKeyspaceServerTests
     [Arguments("a\\*", "a*", true)]
     [Arguments("a\\?", "ab", false)]
     [Arguments("A*", "ab", false)]
+    [Arguments(@"[\a-z]", "a", true)]
+    [Arguments(@"[\a-z]", "-", true)]
+    [Arguments(@"[\a-z]", "z", true)]
+    [Arguments(@"[\a-z]", "b", false)]
+    [Arguments(@"[^\a-z]", "b", true)]
+    [Arguments(@"[^\a-z]", "-", false)]
     [Arguments("", "", true)]
     public async Task KeysAndScanUseByteGlobPatterns(string pattern, string key, bool matches)
     {

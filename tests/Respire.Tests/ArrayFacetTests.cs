@@ -13,6 +13,22 @@ public class ArrayFacetTests
     [Arguments(3, false)]
     [Arguments(2, true)]
     [Arguments(3, true)]
+    public async Task EscapedGlobClassCharactersStayLiteral(int protocol, bool ignoreCase)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await client.Arrays.SetAsync("letters", 0, new RespireValue[] { "a", "-", "z", "b", "A", "Z", "B" });
+        var matches = await client.Arrays.GrepAsync("letters", RespireArrayBound.First, RespireArrayBound.Last,
+            [new RespireArrayPredicate(RespireArrayPredicateKind.Glob, @"[\a-z]")],
+            new RespireArrayGrepOptions { IgnoreCase = ignoreCase });
+        await Assert.That(matches).IsEquivalentTo(ignoreCase ? new ulong[] { 0, 1, 2, 4, 5 } : new ulong[] { 0, 1, 2 });
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
     public async Task BoundedAggregateArithmeticPreservesRequestedDirection(int protocol, bool descending)
     {
         await using var server = new RespireFakeServer();
