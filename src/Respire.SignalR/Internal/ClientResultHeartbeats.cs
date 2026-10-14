@@ -33,10 +33,6 @@ internal sealed class ClientResultHeartbeats(RespirePubSub bus, ClientResultsMan
         if (_pending.TryGetValue(invocationId, out var pending)) pending.Receive();
     }
 
-    internal Task SendAsync(string invocationId, CancellationToken token)
-        => _forwarded.TryGetValue(invocationId, out var forwarded)
-            ? SendAsync(forwarded, token) : Task.CompletedTask;
-
     private async Task SendAsync(Forwarded forwarded, CancellationToken token)
     {
         try { await bus.PublishAsync(forwarded.Channel, forwarded.Payload, token).ConfigureAwait(false); }

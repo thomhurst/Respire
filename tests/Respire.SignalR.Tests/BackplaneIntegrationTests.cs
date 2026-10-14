@@ -444,6 +444,9 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // Client delivery no longer waits for the first heartbeat. Establish that
+            // the caller has enabled failure detection before simulating owner loss.
+            await WaitForClientResultHeartbeatAsync(first.Manager, cancellation.Token);
             // Sever the backplane before stopping the host: no disconnect, disposal, or
             // timeout completion can reach the caller, just as with an abrupt process exit.
             await second.Application.Services.GetRequiredService<RespireClient>().DisposeAsync();
@@ -455,6 +458,30 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             await Assert.That(cancellation.IsCancellationRequested).IsFalse();
         }
         finally { cancellation.Cancel(); release.TrySetResult(1); }
+    }
+
+    private static async Task WaitForClientResultHeartbeatAsync(HubLifetimeManager<BackplaneTestHub> manager,
+        CancellationToken cancellationToken)
+    {
+        var heartbeats = manager.GetType().GetField("_clientResultHeartbeats", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(manager)!;
+        var pending = (IDictionary)heartbeats.GetType().GetField("_pending", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(heartbeats)!;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            foreach (var entry in pending.Values)
+            {
+                var gate = entry!.GetType().GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(entry)!;
+                lock ((System.Threading.Lock)gate)
+                {
+                    if (entry.GetType().GetField("_lastSeen", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(entry) is not null)
+                        return;
+                }
+            }
+            await Task.Delay(10, deadline.Token);
+        }
     }
 
     [Test]

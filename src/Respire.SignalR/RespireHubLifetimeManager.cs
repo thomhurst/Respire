@@ -590,12 +590,8 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                 }
                 catch { heartbeat?.Dispose(); lifetime.DisposeBeforeStart(); throw; }
                 lifetime.Start();
-                if (invocation.RequestHeartbeat)
-                {
-                    using var sending = CancellationTokenSource.CreateLinkedTokenSource(channelMessage.Stopping);
-                    sending.CancelAfter(ClientResultHeartbeats.Interval);
-                    await _clientResultHeartbeats.SendAsync(invocation.InvocationId, sending.Token).ConfigureAwait(false);
-                }
+                // The heartbeat loop publishes independently; Redis acknowledgements must
+                // not delay this invocation or subsequent messages on the connection.
             }
 
             // Forward message from other server to client
