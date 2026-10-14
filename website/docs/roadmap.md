@@ -90,6 +90,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ### Caching, integration, and testing
 
+- [Typed near-cache maps](guides/near-cache-map.md) with read-through loaders, write-through
+  or batched write-behind persistence, preload, shared invalidation, and hash field expiry.
 - [Semantic chat response caching](guides/semantic-cache.md) for `Microsoft.Extensions.AI`.
 - [VectorData hash and JSON collections](guides/vector-data.md) with AOT-friendly mapping, KNN,
   filters, and hybrid search on Redis 8.4+. The guide lists unsupported features.
