@@ -34,6 +34,11 @@ var value = await client.Scripts.ExecuteStringAsync(read, keys: ["key"]);
 
 Typed helpers dispose their replies for you. `ExecuteSpanAsync` copies the span collections before returning, so you can reuse the span storage immediately. Binary key and argument buffers stay borrowed: keep them unchanged until the operation completes.
 
+Script and function execution methods also accept a single key with cancellation,
+including the leased forms. For example,
+`using var result = await client.Scripts.ExecuteLeaseAsync(read, "key", cancellationToken: token);`
+keeps the same key prefixing and result ownership as the collection overload.
+
 ### Read-only scripts
 
 `RespireScript.Create(source, readOnly: true)` uses `EVALSHA_RO` with an `EVAL_RO` fallback (Redis 7+). Redis rejects writes inside the script. `IsReadOnly` reports the flag.

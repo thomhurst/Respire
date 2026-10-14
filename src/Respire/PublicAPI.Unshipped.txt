@@ -1,4 +1,8 @@
 #nullable enable
+Respire.IFunctionCommands.ExecuteLeaseAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IFunctionCommands.ExecuteLeaseSpanAsync(Respire.RespireFunction! function, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IScriptCommands.ExecuteLeaseAsync(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IScriptCommands.ExecuteLeaseSpanAsync(Respire.RespireScript! script, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 *REMOVED*Respire.IBatchHashCommands.DiscardAllImports() -> Respire.RespirePending<long>!
 *REMOVED*Respire.IBatchHashCommands.DiscardImport(Respire.RespireValue name) -> Respire.RespirePending<bool>!
 *REMOVED*Respire.IBatchHashCommands.Import(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> Respire.RespirePending<bool>!

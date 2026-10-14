@@ -192,6 +192,16 @@ public interface IScriptCommands
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Executes a script with one prefixed key and cancellation. Dispose the returned leased result.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey key,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Executes a script with one prefixed key and argument spans. Dispose the returned leased result; binary argument memory stays borrowed until completion.</summary>
+    ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, RespireKey key,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(script, [key], args, cancellationToken);
+
     /// <summary>Executes a script and returns a result that must be disposed. Implementations may use pooled storage.</summary>
     ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -299,6 +309,14 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
         => ExecuteCoreAsync(script, keys, args, cancellationToken, owned: true);
+
+    public ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey key,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseAsync(script, [key], args, cancellationToken);
+
+    public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, RespireKey key,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(script, [key], args, cancellationToken);
 
     public ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)

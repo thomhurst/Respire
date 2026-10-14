@@ -1,5 +1,6 @@
 using Respire.Tests.Networking;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -7,6 +8,48 @@ namespace Respire.Tests;
 
 public class SingleItemCancellationTests
 {
+    [Test]
+    [Arguments("script")]
+    [Arguments("script-span")]
+    [Arguments("function")]
+    [Arguments("function-span")]
+    public async Task SingleKeyLeasesPreservePrefixOwnershipAndCancellation(string operation)
+    {
+        await using var server = new FakeRespServer("*1\r\n$5\r\nvalue\r\n"u8.ToArray());
+        await using var connection = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = connection.WithKeyPrefix("tenant:");
+        var script = RespireScript.Create("return {ARGV[1]}");
+        var function = RespireFunction.Create("single");
+        using var cancellation = new CancellationTokenSource();
+
+        ValueTask<RespireResult> Execute(CancellationToken token) => operation switch
+        {
+            "script" => client.Scripts.ExecuteLeaseAsync(script, "key", ["value"], token),
+            "script-span" => client.Scripts.ExecuteLeaseSpanAsync(script, "key", ["value"], token),
+            "function" => client.Functions.ExecuteLeaseAsync(function, "key", ["value"], token),
+            _ => client.Functions.ExecuteLeaseSpanAsync(function, "key", ["value"], token),
+        };
+
+        using var result = await Execute(cancellation.Token);
+        var child = result[0];
+        await Assert.That(child.AsString()).IsEqualTo("value");
+        var arguments = server.ReceivedArguments.Last();
+        await Assert.That(arguments.Select(System.Text.Encoding.UTF8.GetString).ToArray())
+            .IsEquivalentTo(operation.StartsWith("script", StringComparison.Ordinal)
+                ? new[] { "EVALSHA", script.Sha1, "1", "tenant:key", "value" }
+                : new[] { "FCALL", "single", "1", "tenant:key", "value" }, CollectionOrdering.Matching);
+        result.Dispose();
+        await Assert.That(child.IsDisposed).IsTrue();
+        await Assert.That(() => child.AsString()).ThrowsExactly<ObjectDisposedException>();
+
+        cancellation.Cancel();
+        var error = await Assert.That(async () =>
+        {
+            using var cancelled = await Execute(cancellation.Token);
+        }).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+    }
+
     [Test]
     public async Task HashExpiryPreservesScalarAndCollectionResults()
     {

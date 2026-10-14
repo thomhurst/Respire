@@ -394,7 +394,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     // Command escape hatch
 
-    /// <summary>Sends a raw command with cancellation followed by individual arguments. Dispose the result.</summary>
+    /// <summary>Sends a raw command with cancellation followed by individual arguments. The result uses GC-owned storage; disposal is optional.</summary>
     // Prefer the interpolated handler when a call has no separate raw arguments.
     [OverloadResolutionPriority(-1)]
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, CancellationToken cancellationToken, params RespireValue[] args)

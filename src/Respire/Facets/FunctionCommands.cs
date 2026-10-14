@@ -44,6 +44,14 @@ public interface IFunctionCommands
     /// <summary>Consumes key/argument spans before returning. Underlying byte memory must remain unchanged until completion.</summary>
     ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default);
+    /// <summary>Calls a function with one prefixed key and cancellation. Dispose the returned leased result.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey key,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseAsync(function, [key], args, cancellationToken);
+    /// <summary>Calls a function with one prefixed key and argument spans. Dispose the returned leased result; binary argument memory stays borrowed until completion.</summary>
+    ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, RespireKey key,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(function, [key], args, cancellationToken);
     /// <summary>Calls a function and returns a result that must be disposed. Implementations may use pooled storage.</summary>
     ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -167,6 +175,14 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
         => ExecuteCoreAsync(function, keys, args, cancellationToken, owned: true);
+
+    public ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey key,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseAsync(function, [key], args, cancellationToken);
+
+    public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, RespireKey key,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(function, [key], args, cancellationToken);
 
     public ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
