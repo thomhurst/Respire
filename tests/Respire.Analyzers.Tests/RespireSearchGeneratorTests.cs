@@ -111,6 +111,31 @@ public class RespireSearchGeneratorTests
     }
 
     [Test]
+    [Arguments("RespireHash", "")]
+    [Arguments("RespireHash", "Models")]
+    [Arguments("RespireHash", "@event")]
+    [Arguments("RespireJson", "")]
+    [Arguments("RespireJson", "Models")]
+    [Arguments("RespireJson", "@event")]
+    public async Task QuerySelectorsCompileWhenPropertyShadowsSchemaName(string mapping, string modelNamespace)
+    {
+        var declaration = $$"""
+            [{{mapping}}("m:{Id}"), RespireSearch("models", Prefixes = new[] { "m:" })]
+            public partial record Model(string Id,
+                [property: RespireSearchField(RespireSearchFieldType.Text)] string ModelSearchSchema);
+            public class Queries
+            {
+                public object Build() => ModelSearchSchema.Query().Where(p => p.ModelSearchSchema.Matches("value"));
+            }
+            """;
+        if (modelNamespace.Length > 0)
+            declaration = "namespace " + modelNamespace + " { " + declaration + " }";
+
+        var (_, diagnostics) = Generate(declaration);
+        await Assert.That(diagnostics).IsEmpty();
+    }
+
+    [Test]
     public async Task DuplicateAliasesAreRejectedAndJsonMappedNamesAreEscaped()
     {
         var (_, invalid) = Generate("""
