@@ -16,7 +16,10 @@ await redis.SetAsync("greeting", "hello", expiry: TimeSpan.FromMinutes(5));
 string? greeting = await redis.GetStringAsync("greeting");
 ```
 
-See the [roadmap](./roadmap) for supported features and the
+The public API may change before the first supported major release, targeted at
+**2.0.0**, including APIs without an experimental opt-in. See the
+[installation guide](./getting-started#release-candidates) for stable package and
+release candidate selection, the [roadmap](./roadmap) for supported features, and the
 [experimental API policy](./experimental-apis) for surfaces that require an explicit opt-in.
 
 ## Why Respire
@@ -60,13 +63,14 @@ await foreach (var key in redis.Keys.ScanAsync(match: "user:*"))
 
 ## Interface compatibility
 
-Before 1.0, public interfaces may change. Command facets, script-cache operations,
+Before the first supported major release (2.0.0), public interfaces may change.
+Command facets, script-cache operations,
 cache-aside calls, invalidation observation and prefix views are required members: custom implementations and
 decorators must implement or forward them. Missing implementations are compile errors;
 there are no default members that report an unsupported capability by throwing
 `NotSupportedException`. Server-version and configuration requirements still apply.
 
-From 1.0 onward, adding required members to an existing public interface requires a
+From 2.0 onward, adding required members to an existing public interface requires a
 major release. Minor releases can add extension methods composed from existing
 operations, or separate optional capability interfaces that callers check explicitly.
 Default interface implementations are allowed only when they provide complete behavior

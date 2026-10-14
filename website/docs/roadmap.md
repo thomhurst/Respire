@@ -14,9 +14,9 @@ before the stable cut; ordinary pushes only validate packages.
 
 Six settling surfaces now require an explicit [experimental API opt-in](experimental-apis.md):
 VectorData, semantic chat caching, hedged reads, hash import sessions, deferred raw commands,
-and StackExchange.Redis compatibility. These remain outside the 1.0 compatibility promise.
+and StackExchange.Redis compatibility. These remain outside the 2.0 compatibility promise.
 
-Public interface compatibility and the post-1.0 extension policy are described in
+Public interface compatibility and the post-2.0 extension policy are described in
 [Interface compatibility](intro.md#interface-compatibility).
 
 ## Available now
