@@ -160,6 +160,44 @@ public class DependencyInjectionOptionsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Host_PreservesCallbackExceptionAtStartup(bool keyed)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        var expected = new InvalidOperationException("Callback service failed.", new Exception("Original cause."));
+        var section = Section(new() { ["Endpoints:0"] = "127.0.0.1:1" });
+        RespireOptions Configure(IServiceProvider provider, RespireOptions options) => throw expected;
+        if (keyed) builder.Services.AddKeyedRespire("jobs", section, Configure);
+        else builder.Services.AddRespire(section, Configure);
+        using var host = builder.Build();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StartAsync());
+
+        await Assert.That(error).IsSameReferenceAs(expected);
+        await Assert.That(error!.StackTrace).Contains("Configure");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Configuration_PreservesLoggerResolutionException(bool keyed)
+    {
+        var services = new ServiceCollection();
+        var expected = new InvalidOperationException("Logger service failed.");
+        services.AddSingleton<ILoggerFactory>(_ => throw expected);
+        var section = Section(new() { ["Endpoints:0"] = "127.0.0.1:1" });
+        if (keyed) services.AddKeyedRespire("jobs", section);
+        else services.AddRespire(section);
+        await using var provider = services.BuildServiceProvider();
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            provider.GetRequiredService<IOptionsMonitor<RespireOptions>>().Get(keyed ? "jobs" : Options.DefaultName));
+
+        await Assert.That(error).IsSameReferenceAs(expected);
+    }
+
+    [Test]
     public async Task Host_RejectsMissingEndpointsForDefaultClient()
     {
         var builder = Host.CreateApplicationBuilder();

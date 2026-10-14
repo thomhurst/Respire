@@ -42,9 +42,20 @@ public static class RespireServiceCollectionExtensions
         var name = serviceKey ?? Options.DefaultName;
         services.AddSingleton(new RespireOptionsRegistration(name, provider =>
         {
-            var options = RespireConfiguration.Apply(configuration, new RespireOptions());
+            RespireOptions options;
+            try
+            {
+                options = RespireConfiguration.Apply(configuration, new RespireOptions());
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or FormatException or OverflowException)
+            {
+                throw new OptionsValidationException(name, typeof(RespireOptions),
+                    [$"Invalid Respire configuration in '{configuration.Path}': {exception.Message}"]);
+            }
+
+            // Callback and service-resolution failures must retain their original exception and stack.
             return Resolve(provider, _ => configure is null ? options : configure(provider, options));
-        }, configuration.Path));
+        }));
         services.TryAddTransient<IOptionsFactory<RespireOptions>, RespireOptionsFactory>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<RespireOptions>, RespireOptionsValidator>());
         services.AddOptions<RespireOptions>(name).ValidateOnStart();

@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 namespace Respire.DependencyInjection;
 
 internal sealed record RespireOptionsRegistration(
-    string Name, Func<IServiceProvider, RespireOptions> Create, string ConfigurationPath);
+    string Name, Func<IServiceProvider, RespireOptions> Create);
 
 // OptionsFactory's configure/post-configure/validate pipeline remains available even though
 // the initial value is an immutable record produced by our configuration mapper.
@@ -17,16 +17,7 @@ internal sealed class RespireOptionsFactory(
     protected override RespireOptions CreateInstance(string name)
     {
         var registration = registrations.FirstOrDefault(item => item.Name == name);
-        if (registration is null) return new RespireOptions();
-        try
-        {
-            return registration.Create(provider);
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or FormatException or OverflowException)
-        {
-            throw new OptionsValidationException(name, typeof(RespireOptions),
-                [$"Invalid Respire configuration in '{registration.ConfigurationPath}': {exception.Message}"]);
-        }
+        return registration is null ? new RespireOptions() : registration.Create(provider);
     }
 }
 
@@ -39,6 +30,8 @@ internal sealed class RespireOptionsValidator : IValidateOptions<RespireOptions>
         try
         {
             options.ValidateAndSnapshot();
+            // Configuration-bound endpoint objects need a host check at startup; core validation
+            // otherwise leaves empty TCP hosts to connection setup.
             if (options.Endpoints.Concat(options.ReplicaEndpoints).Any(endpoint => string.IsNullOrWhiteSpace(endpoint.Host)))
                 return ValidateOptionsResult.Fail("Respire endpoint Host must not be empty.");
             return ValidateOptionsResult.Success;
