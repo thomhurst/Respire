@@ -232,7 +232,7 @@ internal sealed partial class SortedSetCommands
             {
                 if (!arguments[i].TryGetClusterSlot(out var current)) continue;
                 if (slot is { } expected && expected != current)
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "ZINTERCARD");
+                    throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, "ZINTERCARD", expected, current, arguments[i]);
                 slot = current;
             }
         }

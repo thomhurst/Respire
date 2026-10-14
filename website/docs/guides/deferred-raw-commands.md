@@ -68,7 +68,7 @@ Only the layouts below are supported. Unknown, module, and immediate-only layout
 
 ## Cluster and queue restrictions
 
-- All keys in one raw command must share a slot after prefixing. A mismatch throws `RespireServerException` with code `CROSSSLOT` locally, before queuing, as typed multi-key commands do. No server round trip happens.
+- All keys in one raw command must share a slot after prefixing. A mismatch throws `RespireCrossSlotException` locally, before queuing, as typed multi-key commands do. No server round trip happens.
 - Rejected commands do not pin a transaction to a slot. A Cluster transaction requires all its commands to share one slot.
 - Cluster batches group commands by slot. Order is kept within a group; different groups may run independently.
 - Keyless commands run on one execution node and never fan out across primaries.

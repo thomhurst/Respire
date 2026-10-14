@@ -241,16 +241,16 @@ public class KeySortCommandTests
         await using var rejectedTransaction = view.CreateTransaction();
         foreach (var queue in new[] { rejectedBatch.Keys, rejectedTransaction.Keys })
         {
-            await Assert.That(() => queue.SortStore("{a}:key", "{b}:key")).Throws<RespireServerException>();
-            await Assert.That(() => queue.Sort("{a}:key", options)).Throws<RespireServerException>();
+            await Assert.That(() => queue.SortStore("{a}:key", "{b}:key")).Throws<RespireCrossSlotException>();
+            await Assert.That(() => queue.Sort("{a}:key", options)).Throws<RespireCrossSlotException>();
             await Assert.That(() => queue.Sort("{a}:key", new RespireSortOptions { By = "*{a}" })).Throws<NotSupportedException>();
             await Assert.That(() => queue.Move("key", 1)).Throws<NotSupportedException>();
             await Assert.That(() => queue.Random()).Throws<NotSupportedException>();
         }
-        await Assert.That(async () => await view.Keys.SortStoreAsync("{a}:key", "{b}:key")).Throws<RespireServerException>();
-        await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options)).Throws<RespireServerException>();
+        await Assert.That(async () => await view.Keys.SortStoreAsync("{a}:key", "{b}:key")).Throws<RespireCrossSlotException>();
+        await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options)).Throws<RespireCrossSlotException>();
         var readOnlyError = await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options with { ReadOnly = true }))
-            .Throws<RespireServerException>();
+            .Throws<RespireCrossSlotException>();
         await Assert.That(readOnlyError!.CommandName).IsEqualTo("SORT_RO");
         await Assert.That(async () => await view.Keys.SortAsync("{a}:key", new RespireSortOptions { By = "weight:*" })).Throws<NotSupportedException>();
         await Assert.That(async () => await view.Keys.MoveAsync("key", 1)).Throws<NotSupportedException>();

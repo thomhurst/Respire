@@ -80,11 +80,11 @@ public class CopyDatabaseTests
         await Assert.That(owner.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(["COPY tenant:{copy}:source tenant:{copy}:target DB 2 REPLACE"]);
         await Assert.That(async () => await view.Keys.CopyAsync("{a}:source", "{b}:target", 2))
-            .Throws<RespireServerException>();
+            .Throws<RespireCrossSlotException>();
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
-        await Assert.That(() => batch.Keys.Copy("{a}:source", "{b}:target", 2)).Throws<RespireServerException>();
-        await Assert.That(() => transaction.Keys.Copy("{a}:source", "{b}:target", 2)).Throws<RespireServerException>();
+        await Assert.That(() => batch.Keys.Copy("{a}:source", "{b}:target", 2)).Throws<RespireCrossSlotException>();
+        await Assert.That(() => transaction.Keys.Copy("{a}:source", "{b}:target", 2)).Throws<RespireCrossSlotException>();
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
     }

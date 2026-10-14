@@ -37,7 +37,7 @@ This sends `ZMPOP` (Redis 7.0+) and returns `null` when every key is empty.
 - Entries come only from the selected set, lowest score first; `descending: true` returns the highest first. Equal scores follow Redis ordering.
 - `count` defaults to 1 and must be positive.
 - The key span must not be empty. Empty key names and duplicate keys are sent unchanged, in order.
-- In Cluster, all prefixed keys must share a hash slot. Otherwise Respire throws `RespireServerException` with `Code` `CROSSSLOT` before sending.
+- In Cluster, all prefixed keys must share a hash slot. Otherwise Respire throws `RespireCrossSlotException` before sending.
 - The returned `Key` has the view prefix removed and owns its bytes, including non-UTF-8 bytes. Entries stay valid after the reply is released.
 - `PopManyAsync<T>` and `PopAsync<T>` deserialize members with the client serializer.
 

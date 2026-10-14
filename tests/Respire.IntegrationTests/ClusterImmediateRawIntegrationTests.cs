@@ -37,21 +37,21 @@ public class ClusterImmediateRawIntegrationTests(ClusterTransactionTestContainer
             {
                 using var ignored = await client.ExecuteAsync(RespireCommands.String.MSET, first, "changed", other, "bad");
             };
-            (await crossSlot.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
+            (await crossSlot.Should().ThrowAsync<RespireCrossSlotException>()).Which.CommandName.Should().NotBeNullOrEmpty();
             Func<Task> discarded = async () => await client.ExecuteFireAndForgetAsync(RespireCommands.String.MSET,
                 first, "changed", other, "bad");
-            (await discarded.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
+            (await discarded.Should().ThrowAsync<RespireCrossSlotException>()).Which.CommandName.Should().NotBeNullOrEmpty();
             Func<Task> blocking = async () =>
             {
                 using var ignored = await client.ExecuteAsync(RespireCommands.List.BLPOP, first, other, 0.01);
             };
-            (await blocking.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
+            (await blocking.Should().ThrowAsync<RespireCrossSlotException>()).Which.CommandName.Should().NotBeNullOrEmpty();
             Func<Task> streams = async () =>
             {
                 using var ignored = await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                     "COUNT", 1, "STREAMS", first, other, "0", "0");
             };
-            (await streams.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
+            (await streams.Should().ThrowAsync<RespireCrossSlotException>()).Which.CommandName.Should().NotBeNullOrEmpty();
             (await client.GetStringAsync(first)).Should().Be("one");
             (await client.Keys.ExistsAsync(other)).Should().BeFalse();
         }

@@ -48,12 +48,12 @@ public class ImmediateRawKeyLayoutTests
         {
             var error = await Assert.That(async () =>
                 await client.ExecuteAsync(descriptor, args, flags: RespireCommandFlags.NoRedirect))
-                .ThrowsExactly<RespireServerException>();
-            await Assert.That(error!.Code).IsEqualTo("CROSSSLOT");
+                .ThrowsExactly<RespireCrossSlotException>();
+            await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
             if (catalog.IsBlocking(args)) continue;
             var discarded = await Assert.That(async () => await client.ExecuteFireAndForgetAsync(descriptor, args))
-                .ThrowsExactly<RespireServerException>();
-            await Assert.That(discarded!.Code).IsEqualTo("CROSSSLOT");
+                .ThrowsExactly<RespireCrossSlotException>();
+            await Assert.That(discarded!.ExpectedSlot).IsNotEqualTo(discarded.ConflictingSlot);
         }
     }
 
@@ -68,11 +68,11 @@ public class ImmediateRawKeyLayoutTests
         var first = "{a}:key with spaces";
         var second = "{b}:key";
         await Assert.That(async () => await client.ExecuteAsync($"MGET {first} {second}"))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
         await Assert.That(async () => await client.ExecuteFireAndForgetAsync($"MGET {first} {second}"))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
         await Assert.That(async () => await client.ExecuteAsync("MGET {a}:one", second))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
     }
 
     [Test]

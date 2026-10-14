@@ -70,6 +70,7 @@ public class DependencyInjectionOptionsTests
             ["KeyPrefix"] = "keys:", ["PubSubPrefix"] = "channels:", ["ReadFrom"] = "Primary",
             ["HedgedReads:Delay"] = "00:00:00.025", ["ClientAvailabilityZone"] = "zone-1",
             ["ReplicaRefreshInterval"] = "00:00:02", ["UseCluster"] = "false",
+            ["IncludeCrossSlotKeyContext"] = "true",
             ["SentinelPrimaryName"] = "primary", ["Username"] = "user", ["Password"] = "password",
             ["CredentialRefreshBeforeExpiry"] = "00:02:00", ["CredentialRefreshRetryDelay"] = "00:00:03",
             ["SentinelUsername"] = "sentinel-user", ["SentinelPassword"] = "sentinel-password",
@@ -117,6 +118,28 @@ public class DependencyInjectionOptionsTests
             else if (actual is TimeSpan time) await Assert.That(time).IsEqualTo(TimeSpan.Parse(expected!, CultureInfo.InvariantCulture));
             else await Assert.That(Convert.ToString(actual, CultureInfo.InvariantCulture)).IsEqualTo(expected);
         }
+    }
+
+    [Test]
+    [Arguments(null, false, false)]
+    [Arguments(null, true, true)]
+    [Arguments("false", false, false)]
+    [Arguments("false", true, false)]
+    [Arguments("true", false, true)]
+    [Arguments("true", true, true)]
+    public async Task Configuration_CrossSlotKeyContext_RequiresExplicitOptIn(
+        string? configuredValue, bool initialValue, bool expectedValue)
+    {
+        var values = new Dictionary<string, string?>();
+        if (configuredValue is not null)
+        {
+            values["IncludeCrossSlotKeyContext"] = configuredValue;
+        }
+
+        var options = RespireConfiguration.Apply(Section(values),
+            new RespireOptions { IncludeCrossSlotKeyContext = initialValue });
+
+        await Assert.That(options.IncludeCrossSlotKeyContext).IsEqualTo(expectedValue);
     }
 
     [Test]

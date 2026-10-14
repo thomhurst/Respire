@@ -8,6 +8,8 @@ Respire.DependencyInjection.RespireOptionsBuilder.ClusterTopologyRefreshInterval
 Respire.DependencyInjection.RespireOptionsBuilder.Endpoints.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.HedgedReads.get -> Respire.RespireHedgedReadOptions?
 Respire.DependencyInjection.RespireOptionsBuilder.HedgedReads.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.IncludeCrossSlotKeyContext.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.IncludeCrossSlotKeyContext.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.KeyPrefix.get -> Respire.RespireKey
 Respire.DependencyInjection.RespireOptionsBuilder.KeyPrefix.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceNotifications.get -> Respire.RespireMaintenanceNotificationMode

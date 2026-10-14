@@ -55,7 +55,7 @@ public class MGetRoutingTests
         await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("MGET ", StringComparison.Ordinal))).IsFalse();
         await Assert.That(otherOwner.ReceivedCommands.Any(command => command.StartsWith("MGET ", StringComparison.Ordinal))).IsFalse();
         await Assert.That(async () => await client.Strings.GetManyAsync("{first}a", "{second}b"))
-            .ThrowsExactly<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+            .ThrowsExactly<RespireCrossSlotException>();
     }
 
     /// <summary>Exercises MGetCommand through a cache-enabled replica policy and completes via a primary hedge.</summary>

@@ -82,7 +82,7 @@ A prefix containing `*`, `->`, or a NUL byte could make a pattern read keys outs
 
 - `SortStoreAsync` requires the source and destination to share a slot after prefixing.
 - External patterns need a fixed, nonempty hash tag before the wildcard that maps to the source's slot, for example `{jobs}:weight:*` with `{jobs}:ids`. Otherwise Respire throws `NotSupportedException`.
-- Slot mismatches throw `RespireServerException` (`Code` `CROSSSLOT`, `CommandName` `SORT` or `SORT_RO`) before sending.
+- Slot mismatches throw `RespireCrossSlotException` before sending.
 - External Cluster patterns require Redis 7.4 or later; older servers return their own error.
 - Redis ACL rules may require full key-read permission for external lookups.
 
@@ -106,7 +106,7 @@ var copiedByBatch = pending.Result;
 - Returns `false` when the source is missing, or the target exists and `replace` is `false`.
 - The copy stays on one server.
 - A negative database number throws `ArgumentOutOfRangeException` before sending. The server enforces other limits and its errors are returned.
-- [Redis Cluster supports only database 0](https://redis.io/docs/latest/commands/select/); compatible servers with several Cluster databases must accept the index. In Cluster, source and destination must share a hash slot after prefixing, or Respire throws `RespireServerException` (`Code` `CROSSSLOT`, `CommandName` `COPY`) before sending.
+- [Redis Cluster supports only database 0](https://redis.io/docs/latest/commands/select/); compatible servers with several Cluster databases must accept the index. In Cluster, source and destination must share a hash slot after prefixing, or Respire throws `RespireCrossSlotException` before sending.
 
 Transactions expose the same `Keys.Copy` overload.
 

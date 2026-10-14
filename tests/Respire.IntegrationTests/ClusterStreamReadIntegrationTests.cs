@@ -28,7 +28,7 @@ public class ClusterStreamReadIntegrationTests(ClusterTransactionTestContainer f
         result[0].Entries.Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"1-0");
         result[1].Entries.Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"2-0");
         Func<Task> crossSlot = async () => await view.Streams.ReadAsync([("{a}:one", "0"), ("{b}:two", "0")]);
-        await crossSlot.Should().ThrowAsync<RespireServerException>().WithMessage("*CROSSSLOT*");
+        await crossSlot.Should().ThrowAsync<RespireCrossSlotException>().WithMessage("*CROSSSLOT*");
         await view.Keys.DeleteAsync("{a}:one", "{a}:two");
     }
 }

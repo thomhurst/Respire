@@ -432,9 +432,9 @@ internal static partial class RespireTelemetry
     // cache waiters, or deferred execution owners after cleanup. Never wrap one of these
     // with another final observer. Retry producers may be shared by several caller boundaries.
     // Other not-submitted failures (authentication, reconnect limits) were rejected by a node,
-    // so only waits that end before ring admission drop the endpoint.
+    // so only local validation and waits that end before ring admission drop the endpoint.
     private static bool IsBeforeAdmission(Exception error)
-        => error is RespireCommandNotSubmittedException or RespireTimeoutException { IsCommandNotSubmitted: true };
+        => error is RespireCrossSlotException or RespireCommandNotSubmittedException or RespireTimeoutException { IsCommandNotSubmitted: true };
 
     internal static void RecordError(Exception error, bool internallyHandled, int retryAttempts = 0,
         RespireEndpoint? endpoint = null)
@@ -474,6 +474,7 @@ internal static partial class RespireTelemetry
             RespireAuthenticationException => "auth",
             RespireServerException when code is "NOAUTH" or "NOPERM" or "WRONGPASS" => "auth",
             AuthenticationException => "tls",
+            RespireCrossSlotException => "validation",
             RespireServerException => "server",
             SocketException or IOException or RespireConnectionException or RespireTimeoutException => "network",
             _ => "other",

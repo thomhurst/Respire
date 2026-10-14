@@ -99,7 +99,7 @@ public class SetCardinalityTests
         await Assert.That(await Count(client, mode, true, ["{sets}:first", "{sets}:second"])).IsEqualTo(5);
         foreach (var union in new[] { false, true })
             await Assert.That(async () => await Count(client, mode, union, ["{a}:first", "{b}:second"]))
-                .Throws<RespireServerException>();
+                .Throws<RespireCrossSlotException>();
         await Assert.That(seed.ReceivedCommands.SequenceEqual(["CLUSTER SLOTS"])).IsTrue();
     }
 

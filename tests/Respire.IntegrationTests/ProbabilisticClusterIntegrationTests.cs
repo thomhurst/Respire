@@ -44,11 +44,11 @@ public class ProbabilisticClusterIntegrationTests(BloomRedisClusterFixture fixtu
         (await client.Keys.ExistsAsync("bloom")).Should().BeFalse();
 
         var cmsError = await probabilistic.Awaiting(p => p.CountMinMergeAsync("{cms}:destination", ["{other}:source"]).AsTask())
-            .Should().ThrowAsync<RespireServerException>();
-        cmsError.Which.Code.Should().Be("CROSSSLOT");
+            .Should().ThrowAsync<RespireCrossSlotException>();
+        cmsError.Which.CommandName.Should().NotBeNullOrEmpty();
         var digestError = await probabilistic.Awaiting(p => p.TDigestMergeAsync("{digest}:destination", ["{other}:source"]).AsTask())
-            .Should().ThrowAsync<RespireServerException>();
-        digestError.Which.Code.Should().Be("CROSSSLOT");
+            .Should().ThrowAsync<RespireCrossSlotException>();
+        digestError.Which.CommandName.Should().NotBeNullOrEmpty();
         (await probabilistic.CountMinQueryAsync("{cms}:destination", ["item"])).Should().Equal(3);
         (await probabilistic.TDigestMaximumAsync("{digest}:destination")).Should().Be(4);
     }

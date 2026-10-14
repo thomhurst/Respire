@@ -257,7 +257,7 @@ public class HashMultiReadCacheTests
         await client.GetStringAsync("{a}");
         await client.GetStringAsync("{b}");
         await Assert.That(async () => await client.Strings.GetManyAsync("{a}", "{b}"))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("MGET "))).IsFalse();
     }
 

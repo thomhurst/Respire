@@ -143,6 +143,11 @@ public enum SubscriptionOverflow
 /// </summary>
 public sealed record RespireOptions
 {
+    /// <summary>Include the conflicting physical key as hex in local cross-slot exceptions. Default: false.</summary>
+    /// <remarks>Explicit diagnostic opt-in: keys may contain secrets or personal data.
+    /// Hex is reversible. Key context is never added to telemetry tags or exception messages.</remarks>
+    public bool IncludeCrossSlotKeyContext { get; init; }
+
     /// <summary>Returns a diagnostic representation without credentials or nested configuration material.</summary>
     public override string ToString() => "RespireOptions { <redacted> }";
 

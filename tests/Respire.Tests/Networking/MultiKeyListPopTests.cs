@@ -189,13 +189,13 @@ public class MultiKeyListPopTests
         });
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{a}:first", "{b}:second"];
-        await Assert.That(async () => await view.Lists.PopManyAsync(keys)).Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
-        await Assert.That(async () => await view.Lists.PopManyAsync(keys, waitFor: TimeSpan.Zero)).Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
-        await Assert.That(async () => await view.Lists.PopAsync(keys, TimeSpan.Zero)).Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+        await Assert.That(async () => await view.Lists.PopManyAsync(keys)).Throws<RespireCrossSlotException>();
+        await Assert.That(async () => await view.Lists.PopManyAsync(keys, waitFor: TimeSpan.Zero)).Throws<RespireCrossSlotException>();
+        await Assert.That(async () => await view.Lists.PopAsync(keys, TimeSpan.Zero)).Throws<RespireCrossSlotException>();
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
-        await Assert.That(() => batch.Lists.PopMany(keys)).Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
-        await Assert.That(() => transaction.Lists.PopMany(keys)).Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+        await Assert.That(() => batch.Lists.PopMany(keys)).Throws<RespireCrossSlotException>();
+        await Assert.That(() => transaction.Lists.PopMany(keys)).Throws<RespireCrossSlotException>();
         _ = transaction.Lists.PopMany(["{c}:first", "{c}:second"]);
         await Assert.That(server.ReceivedCommands.Where(command => command != "CLUSTER SLOTS")).IsEmpty();
     }

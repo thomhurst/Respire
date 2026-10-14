@@ -922,11 +922,11 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         ValidatePairs(pairs);
         var args = SetManyArgs(client, pairs);
         if (client.Core.Cluster is not null)
-            EnsureSameSlot(args, stride: 2, operation: "MSETNX");
+            EnsureSameSlot(client, args, stride: 2, operation: "MSETNX");
         return args;
     }
 
-    private static void EnsureSameSlot(ReadOnlySpan<RespireValue> args, int stride, string operation)
+    private static void EnsureSameSlot(RespireClient client, ReadOnlySpan<RespireValue> args, int stride, string operation)
     {
         int? slot = null;
         for (var index = 0; index < args.Length; index += stride)
@@ -935,8 +935,8 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
             {
                 if (slot is { } expected && keySlot != expected)
                 {
-                    // Match other multi-key facets: this server-shaped error is raised locally before I/O.
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
+                    // Reject before I/O or enqueueing, without retaining keys by default.
+                    throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, operation, expected, keySlot, args[index]);
                 }
                 slot = keySlot;
             }

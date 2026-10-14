@@ -66,11 +66,11 @@ public class StreamReadTests
         await Assert.That(async () => await client.Streams.ReadAsync("key", ">" )).Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ReadAsync([("a", "0"), ("a", "0")])).Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ReadAsync([("{a}:one", "0"), ("{b}:two", "0")]))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
         foreach (var streams in new[] { batch.Streams, transaction.Streams })
         {
             await Assert.That(() => streams.Read([])).Throws<ArgumentException>();
-            await Assert.That(() => streams.Read([("{a}:one", "0"), ("{b}:two", "0")])).ThrowsExactly<RespireServerException>();
+            await Assert.That(() => streams.Read([("{a}:one", "0"), ("{b}:two", "0")])).ThrowsExactly<RespireCrossSlotException>();
         }
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);

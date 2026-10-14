@@ -164,7 +164,7 @@ internal sealed partial class StreamCommands
             {
                 var current = client.ResolveKey(key).ClusterSlot;
                 if (slot is { } expected && current != expected)
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", group ? "XREADGROUP" : "XREAD");
+                    throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, group ? "XREADGROUP" : "XREAD", expected, current, client.Key(in key));
                 slot = current;
             }
             snapshot[i] = (key, id);

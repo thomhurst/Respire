@@ -396,3 +396,11 @@ Respire.IListCommands.PopManyAsync(Respire.RespireKey key, long count = 1, Respi
 Respire.ISortedSetCommands.PopAsync(Respire.RespireKey key, System.TimeSpan? waitFor, bool descending, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopResult?>
 Respire.ISortedSetCommands.PopAsync<T>(Respire.RespireKey key, System.TimeSpan? waitFor, bool descending, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopResult<T>?>
 Respire.StreamReadOptions.IsBlocking.get -> bool
+Respire.RespireCrossSlotException
+Respire.RespireCrossSlotException.CommandName.get -> string!
+Respire.RespireCrossSlotException.ExpectedSlot.get -> int
+Respire.RespireCrossSlotException.ConflictingSlot.get -> int
+Respire.RespireCrossSlotException.ConflictingKeyHex.get -> string?
+Respire.RespireCrossSlotException.RespireCrossSlotException(string! commandName, int expectedSlot, int conflictingSlot) -> void
+Respire.RespireOptions.IncludeCrossSlotKeyContext.get -> bool
+Respire.RespireOptions.IncludeCrossSlotKeyContext.init -> void

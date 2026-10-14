@@ -211,7 +211,7 @@ long removed = await redis.DeleteAsync("feature:a", "feature:b");
 
 - Returns `false` without changing anything when any key exists, whatever its type. New values have no expiry.
 - Needs at least one pair. Empty keys and values are valid. With duplicate keys, the last value wins.
-- In Cluster, prefixed keys must share a slot, or it throws `RespireServerException` (`Code` `CROSSSLOT`) before sending.
+- In Cluster, prefixed keys must share a slot, or it throws `RespireCrossSlotException` before sending.
 - Values are raw `RespireValue`s. Keep binary buffers unchanged until completion.
 - Batches and transactions expose `Strings.SetManyIfNotExists(pairs)`.
 

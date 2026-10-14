@@ -1189,40 +1189,61 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [NotInParallel(ClientPause), Category(ClientPause)]
     public async Task Set_TimedOutWait_CorrectionChasesTheStall_UntilTheRemainderIsFresh()
     {
-        await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
-        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        var firstCorrection = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var freshCorrection = new TaskCompletionSource<(string Command, DateTimeOffset Received)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var scriptCalls = 0;
+        await using var server = new FakeRespServer(":0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command == "CLIENT ID" ? ":42\r\n"u8.ToArray() : null,
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    && !command.StartsWith("EVAL ", StringComparison.Ordinal)) return false;
+                var call = Interlocked.Increment(ref scriptCalls);
+                if (call == 2) firstCorrection.TrySetResult(command);
+                if (call == 3) freshCorrection.TrySetResult((command, DateTimeOffset.UtcNow));
+                // Keep the original set and its FIFO correction pending until the test releases them.
+                return call <= 2;
+            },
+        };
+        await using var timeoutClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        await timeoutClient.EnsureReliableCorrectionOrderingAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        // A stall longer than SendDelayTolerance: the first correction pass chases the queued
-        // set through it, so its remainder is stale by more than the tolerance and a second
-        // pass with a freshly derived remainder must run.
-        var stallObserved = await StartServerPauseAsync(2500);
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+        var set = timeoutCache.SetAsync("chased-set", [1],
+            new DistributedCacheEntryOptions { AbsoluteExpiration = deadline });
 
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
-        var threw = false;
-        try
-        {
-            await timeoutCache.SetAsync("chased-set", [1],
-                new DistributedCacheEntryOptions { AbsoluteExpiration = deadline });
-        }
-        catch (RespireTimeoutException)
-        {
-            threw = true;
-        }
+        var staleCommand = await firstCorrection.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Start the delay only after the correction arrives. A fixed CLIENT PAUSE measured
+        // from before SetAsync can end less than SendDelayTolerance after a late timeout,
+        // legitimately allowing one pass to finish with up to one second of stale TTL.
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        await Assert.That(set.IsCompleted).IsFalse();
+        await server.SendRawAsync(":0\r\n:0\r\n"u8.ToArray());
 
-        await Assert.That(threw).IsTrue();
-        await stallObserved;
+        var fresh = await freshCorrection.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(10)))
+            .ThrowsExactly<RespireTimeoutException>();
 
-        // A single stale pass would have left the TTL near the full 10s, letting the entry
-        // outlive its deadline by the stall; the re-derived pass pins it to the true remainder.
-        await Assert.That(await Cache.GetAsync("chased-set")).IsNotNull();
-        var pttl = await PttlAsync("chased-set");
-        var remaining = (long)(deadline - DateTimeOffset.UtcNow).TotalMilliseconds;
-        await Assert.That(pttl).IsGreaterThan(0);
-        await Assert.That(pttl).IsLessThanOrEqualTo(remaining + 500);
+        // The final argument is the relative TTL. Prove both that a second pass ran and
+        // that it re-derived the remainder rather than resending the first pass's stale value.
+        var staleTtl = long.Parse(staleCommand.AsSpan(staleCommand.LastIndexOf(' ') + 1));
+        var freshTtl = long.Parse(fresh.Command.AsSpan(fresh.Command.LastIndexOf(' ') + 1));
+        var remaining = (long)(deadline - fresh.Received).TotalMilliseconds;
+        await Assert.That(freshTtl).IsGreaterThan(0);
+        await Assert.That(freshTtl).IsLessThanOrEqualTo(staleTtl - 1000);
+        await Assert.That(freshTtl).IsLessThanOrEqualTo(remaining + 500);
     }
 
     [Test]

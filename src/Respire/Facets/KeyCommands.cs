@@ -491,7 +491,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         var resolvedSource = client.Key(in source);
         var resolvedDestination = client.Key(in destination);
         if (client.Core.Cluster is not null && resolvedSource.AsKey().ClusterSlot != resolvedDestination.AsKey().ClusterSlot)
-            throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "COPY");
+            throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, "COPY", resolvedSource.AsKey().ClusterSlot, resolvedDestination.AsKey().ClusterSlot, resolvedDestination);
         return (resolvedSource, resolvedDestination);
     }
 
