@@ -43,6 +43,25 @@ public class ContainerReservedPortTests
             var start = await container.ExecAsync(
                 [$"{binary}-server", "--port", "12345", "--daemonize", "yes", "--save", "", "--appendonly", "no"], deadline.Token);
             start.ExitCode.Should().Be(0, start.Stdout + start.Stderr);
+            // Daemonization returns before the child necessarily starts listening.
+            // Inspect the socket table instead of probing with a connection: a probe
+            // would consume the single ephemeral port this test needs to observe.
+            while (true)
+            {
+                var listeners = await container.ExecAsync(["cat", "/proc/net/tcp"], deadline.Token);
+                listeners.ExitCode.Should().Be(0, listeners.Stdout + listeners.Stderr);
+                if (listeners.Stdout.Split('\n').Any(line =>
+                {
+                    var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                    return fields.Length > 3 && fields[1].EndsWith(":3039", StringComparison.Ordinal) && fields[3] == "0A";
+                }))
+                {
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(25), deadline.Token);
+            }
+
             // No explicit source port: this exercises the kernel's automatic allocator.
             var connect = await container.ExecAsync([$"{binary}-cli", "-p", "12345", "PING"], deadline.Token);
             if (reservePort)
