@@ -25,7 +25,7 @@ public sealed record RespireJobQueueOptions
 {
     /// <summary>Maximum due jobs ordered by priority in one promotion. Between 1 and 256.</summary>
     public int SchedulingBatchSize { get; init; } = 64;
-    /// <summary>Maximum blocking read between scheduling passes. Defaults to one second.</summary>
+    /// <summary>Minimum interval between each reader's scheduling passes and maximum blocking read. Defaults to one second.</summary>
     public TimeSpan SchedulingPollInterval { get; init; } = TimeSpan.FromSeconds(1);
     /// <summary>Initial delay after Nack or a handler exception. Null retains visibility-timeout recovery.</summary>
     public TimeSpan? RetryBackoff { get; init; }

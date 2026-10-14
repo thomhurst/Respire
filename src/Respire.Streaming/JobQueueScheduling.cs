@@ -69,6 +69,7 @@ internal static class JobQueueScheduling
 
     internal static readonly RespireScript Enqueue = RespireScript.Create(Helpers + """
         local existing = redis.call('GET', KEYS[4])
+        -- A deduplication hit needs no mutation permissions.
         if existing then return {existing, 0} end
 
         """ + StagePermissions + """
@@ -98,9 +99,12 @@ internal static class JobQueueScheduling
         local entries = {}
         for position, id in ipairs(ids) do
             local rows = redis.call('XRANGE', KEYS[2], id, id)
-            if #rows ~= 1 then error('ERR scheduled job body is missing') end
-            table.insert(entries, {id = id, fields = rows[1][2], position = position,
-                priority = tonumber(field(rows[1][2], '_respire.job.priority', '0'))})
+            if #rows ~= 1 then
+                redis.call('ZREM', KEYS[3], id)
+            else
+                table.insert(entries, {id = id, fields = rows[1][2], position = position,
+                    priority = tonumber(field(rows[1][2], '_respire.job.priority', '0'))})
+            end
         end
         table.sort(entries, function(a, b)
             if a.priority == b.priority then return a.position < b.position end
@@ -125,14 +129,39 @@ internal static class JobQueueScheduling
 
         """;
 
-    internal static readonly RespireScript Retry = RespireScript.Create(Helpers + Fence + StagePermissions + """
-        permit('XACK', KEYS[1], ARGV[1], ARGV[3])
+    private const string Acknowledge = StreamWorkerScripts.CapabilitySource + """
+        local delete = ARGV[6] == '1' and supports(2)
+        if delete then
+            local command = redis.pcall('COMMAND', 'INFO', 'XACKDEL')
+            delete = type(command) == 'table' and not command.err and command[1] and true or false
+        end
+        -- Preflight the selected acknowledgement before staging any retry body.
+        if delete then
+            if not redis.acl_check_cmd('XACKDEL', KEYS[1], ARGV[1], 'ACKED', 'IDS', 1, ARGV[3]) then
+                error('NOPERM job acknowledgement is not permitted')
+            end
+        elseif not redis.acl_check_cmd('XACK', KEYS[1], ARGV[1], ARGV[3]) then
+            error('NOPERM job acknowledgement is not permitted')
+        end
+        local function acknowledge()
+            if delete then
+                redis.call('XACKDEL', KEYS[1], ARGV[1], 'ACKED', 'IDS', 1, ARGV[3])
+                return 1
+            end
+            return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
+        end
+
+        """;
+
+    internal static readonly RespireScript Retry = RespireScript.Create(Helpers + Fence + StagePermissions + Acknowledge + """
         local rows = redis.call('XRANGE', KEYS[1], ARGV[3], ARGV[3])
-        if #rows ~= 1 then return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
+        if #rows ~= 1 then return acknowledge() end
         local fields = rows[1][2]
         local clock = now()
         local expires = tonumber(field(fields, '_respire.job.expires', '0'))
-        if expires > 0 and expires <= clock then return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
+        if expires > 0 and expires <= clock then return acknowledge() end
+        -- ARGV[4] is both the fenced delivery count and this copy's contribution;
+        -- a newly staged copy starts its consumer-group delivery count from zero.
         local attempts = tonumber(field(fields, '_respire.job.attempts', '0')) + tonumber(ARGV[4])
         local updated = false
         for i = 1, #fields, 2 do
@@ -141,7 +170,7 @@ internal static class JobQueueScheduling
         if not updated then table.insert(fields, '_respire.job.attempts'); table.insert(fields, tostring(attempts)) end
         local id = stage(fields, clock + tonumber(ARGV[5]))
         if type(id) == 'table' then return id end
-        redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
+        acknowledge()
         return 1
         """);
 
@@ -150,7 +179,9 @@ internal static class JobQueueScheduling
         local time = redis.call('TIME')
         local clock = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
         if tonumber(ARGV[5]) > 0 and tonumber(ARGV[5]) <= clock then
-            redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
+
+        """ + Acknowledge + """
+            acknowledge()
             return -1
         end
         return 1

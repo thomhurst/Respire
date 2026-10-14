@@ -184,13 +184,20 @@ The returned `EntryId` identifies the staged enqueue, and duplicates return that
 the original payload and options. Promotion assigns a new ready-stream ID. Deduplication is
 shared with `EnqueueAsync`, so switching methods does not bypass an active deduplication window.
 
+Pass a non-null `RespireJobQueueOptions` to the registration overload to enable scheduling,
+TTL checks and durable retries (including `RetryAfter`). The original overload, or null queue
+options, retains immediate-only processing and requires no access to the scheduling keys.
+Enable scheduling on every worker for a scheduled queue, and grant the permissions below
+before switching producers to `EnqueueScheduledAsync`.
+
 Each worker reader promotes at most `SchedulingBatchSize` due jobs before reading or recovering
-work. Redis `TIME` determines due times and expiry; application clocks are not used. Clock jumps
+work, at most once per `SchedulingPollInterval`. Redis `TIME` determines due times and expiry; application clocks are not used. Clock jumps
 on the Redis server or after failover can advance or postpone eligibility. Delay is a minimum,
 not an execution deadline. Busy handlers, polling, ready-stream backlog and recovery can add latency.
 Scheduling pauses when there are no active job workers and resumes on restart. A blocking reader
 wakes at least every `SchedulingPollInterval` (default one second); handlers are never interrupted
-to run a scheduling pass.
+to run a scheduling pass. An index entry whose staged body was deleted is removed and skipped
+so it cannot block later jobs; the missing payload cannot be recovered.
 
 The scheduler selects the oldest due jobs first (equal due times use Redis lexicographic staging
 ID order), then orders that bounded batch by descending integer `Priority`, preserving selection
@@ -207,7 +214,9 @@ expired staged jobs, and the worker acknowledges expired ready deliveries withou
 handler or adding a dead letter. TTL is an admission check immediately before dispatch, not a
 cancellation deadline for a running handler; it cannot undo external side effects. Expired staged
 bodies are removed on a scheduling pass after their due time. Expired ready bodies follow normal
-stream retention. Expiry does not remove the deduplication record.
+stream retention. With `DeleteAcknowledgedEntries`, retries and expiry use the same Redis 8.2+
+group-aware `XACKDEL ACKED` deletion policy as successful completion (and require that permission).
+Older servers retain acknowledged entries for trimming. Expiry does not remove the deduplication record.
 
 ## Progress and completion observers
 

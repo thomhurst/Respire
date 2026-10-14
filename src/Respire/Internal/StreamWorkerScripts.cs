@@ -54,7 +54,7 @@ internal static class StreamWorkerScripts
     // Discovery executes inside the operation's script, on its actual serving server.
     // No capability evidence survives a redirect, failover, or reconnect. Denied INFO
     // and non-Redis implementations conservatively retain the compatible path.
-    private const string CapabilitySource = """
+    internal const string CapabilitySource = """
         local function supports(minor)
             local info = redis.pcall('INFO', 'SERVER')
             if type(info) ~= 'string' or string.find(info, 'valkey_version:', 1, true) then return false end

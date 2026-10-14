@@ -111,13 +111,18 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         RespireStreamId? cursor = options.ConsumerName is null ? (RespireStreamId?)null : RespireStreamId.Beginning;
         var recoveryCursor = RespireStreamId.Beginning;
         var recoveryClock = Stopwatch.StartNew();
+        var schedulingClock = new Stopwatch();
         try
         {
             while (!readers.IsCancellationRequested)
             {
-                if (options.JobQueue is { } queue)
+                if (options.JobQueue is { } queue
+                    && (!schedulingClock.IsRunning || schedulingClock.Elapsed >= queue.SchedulingPollInterval))
+                {
                     await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Promote, [.. JobQueueScheduling.Keys(stream)],
                         [queue.SchedulingBatchSize], readers.Token).ConfigureAwait(false);
+                    schedulingClock.Restart();
+                }
                 Delivery[] deliveries;
                 var recoveredBatch = false;
                 if (cursor.HasValue)
@@ -221,7 +226,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             if (expires is not null)
             {
                 var live = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.CheckExpiry, [stream],
-                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, expires], _handlers.Token).ConfigureAwait(false);
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, expires,
+                        options.DeleteAcknowledgedEntries ? 1 : 0], _handlers.Token).ConfigureAwait(false);
                 if (live != 1) { observation.Outcome = live == -1 ? "expired" : "stale"; return; }
             }
         }
@@ -284,7 +290,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 && ((message as IJobRetry)?.RetryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
             {
                 var retried = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Retry, [.. JobQueueScheduling.Keys(stream)],
-                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, (long)Math.Ceiling(delay.TotalMilliseconds)],
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, (long)Math.Ceiling(delay.TotalMilliseconds),
+                        options.DeleteAcknowledgedEntries ? 1 : 0],
                     _handlers.Token).ConfigureAwait(false);
                 observation.Outcome = retried == 1 ? "nack" : "stale";
             }

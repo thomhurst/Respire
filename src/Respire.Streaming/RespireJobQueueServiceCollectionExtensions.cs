@@ -10,7 +10,8 @@ public static class RespireJobQueueServiceCollectionExtensions
     /// <remarks>Register IRespireClient separately. Resolve the producer using
     /// GetRequiredKeyedService&lt;RespireJobQueue&lt;T&gt;&gt;(queueName). Each registration needs a distinct queue name
     /// and stream-worker TelemetryName. Serializers can run concurrently. Concurrency is per registration, not global.
-    /// New consumer groups must start at the beginning so jobs enqueued before startup are not skipped.</remarks>
+    /// New consumer groups must start at the beginning so jobs enqueued before startup are not skipped.
+    /// This overload processes immediate jobs only. Use non-null queue options to enable scheduling and durable retries.</remarks>
     public static IServiceCollection AddRespireJobQueue<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, T>(
         this IServiceCollection services, string queueName, Func<T, byte[]> serialize, Func<byte[], T> deserialize,
@@ -18,7 +19,7 @@ public static class RespireJobQueueServiceCollectionExtensions
         where THandler : class, IRespireStreamHandler<RespireJob<T>>
         => services.AddRespireJobQueue<THandler, T>(queueName, serialize, deserialize, options, null);
 
-    /// <summary>Registers a typed queue with explicit scheduling and retry policy.</summary>
+    /// <summary>Registers a typed queue with explicit scheduling and retry policy. Null queue options retain immediate-only processing.</summary>
     public static IServiceCollection AddRespireJobQueue<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, T>(
         this IServiceCollection services, string queueName, Func<T, byte[]> serialize, Func<byte[], T> deserialize,
@@ -35,8 +36,7 @@ public static class RespireJobQueueServiceCollectionExtensions
         options ??= new RespireStreamWorkerOptions { DeliveryLimit = 5 };
         if (options.GroupStart != RespireStreamId.Beginning && options.GroupStart != (RespireStreamId)"0-0")
             throw new ArgumentException("Job queue groups must start at the beginning.", nameof(options));
-        queueOptions ??= new();
-        queueOptions.Validate();
+        queueOptions?.Validate();
         options = options with
         {
             DeadLetterStream = options.DeadLetterStream ?? RespireJobQueue<T>.GetDeadLetterStreamKey(queueName),

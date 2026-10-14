@@ -11,11 +11,11 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
 
     void IJobDelivery.Attach(JobProgress progress) => _progress = progress;
 
-    /// <summary>Compares the job envelope, excluding the delivery's progress transport.</summary>
+    /// <summary>Compares the job envelope, excluding per-delivery progress and retry control state.</summary>
     public bool Equals(RespireJob<T>? other) => other is not null
         && Id == other.Id && EqualityComparer<T>.Default.Equals(Payload, other.Payload) && EntryId == other.EntryId;
 
-    /// <summary>Hashes the job envelope, excluding the delivery's progress transport.</summary>
+    /// <summary>Hashes the job envelope, excluding per-delivery progress and retry control state.</summary>
     public override int GetHashCode() => HashCode.Combine(Id, Payload, EntryId);
 
     /// <summary>Appends progress from 0 through 100 for this delivery; false means it is no longer current.</summary>

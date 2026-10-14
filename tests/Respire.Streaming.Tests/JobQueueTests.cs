@@ -19,6 +19,20 @@ public class JobQueueTests
     }
 
     [Test]
+    public async Task RetryControlDoesNotChangeJobValueEquality()
+    {
+        var job = new RespireJob<string>("id", "payload", new("1-0"));
+        var equal = job with { };
+        var jobs = new HashSet<RespireJob<string>> { job };
+        var hash = job.GetHashCode();
+        job.RetryAfter(TimeSpan.FromSeconds(1));
+        await Assert.That(job.GetHashCode()).IsEqualTo(hash);
+        await Assert.That(job.Equals(equal)).IsTrue();
+        await Assert.That(jobs.Contains(job)).IsTrue();
+        await Assert.That(jobs.Contains(equal)).IsTrue();
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments(" ")]
     [Arguments("{queue}")]
