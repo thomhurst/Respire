@@ -269,6 +269,56 @@ The client never resends:
 - Hash import sessions.
 - Units holding a server-local cursor continuation.
 
+## Lifetime validation
+
+Retry cancellation ends the logical operation; an accepted reply can still own a FIFO slot.
+That slot must drain before its response source can return to the pool. A cache waiter has a
+separate lifetime: cancelling one waiter leaves the producer running for the others, while
+the last waiter leaving cancels the producer. Disposing the client stops cache waiters with
+producer cancellation or client disposal, depending on which wakeup wins. Immediate commands
+and whole units waiting for a replacement connection report disposal.
+
+The lifetime audit in [#1694](https://github.com/thomhurst/Respire/issues/1694) maps the
+following tests in `tests/Respire.Tests/Networking`. Names below identify the evidence,
+rather than promising every possible thread interleaving.
+
+| Owner | Cancellation and deadline budget | Disposal and replacement | Late replies and reuse |
+| --- | --- | --- | --- |
+| Immediate command | `StandaloneCommandRetryTests.CancellationDuringBackoffStopsResend`, `OneDeadlineSpansRetriesAndStopsAcceptedLateReplies`; `TopologyCommandRetryTests.CrossPathCancellationDuringBackoffPreservesTokenAndDoesNotResend` covers Sentinel, Cluster, raw, script, function and group dispatch | `StandaloneCommandRetryTests.CircuitAwareRetryWaitsForReplacementWithoutSpendingAttempts`; `UnitRetryLifetimeTests.StoppedOwnerCannotResumeWhenReplacementDialIsReleased` cancels or disposes while a replacement dial is held | `ReusedRetryOwnerDoesNotChangeCanceledFramesAwaitingRetirement` covers cancelled write frames and mutation fences; `LateRetriedReplyCannotCompleteNewOwnerOrChangeTerminalResult` covers cancellation and timeout after the resend is accepted |
+| Whole batch | `BatchCommandRetryTests.CallerCancellationStopsWholeUnitAndPreservesToken`, `OneDeadlineIncludesFirstAttemptAndLateRetryReplies` | `UnitRetryLifetimeTests.DisposingClientDuringUnitRetryWaitFaultsUnitWithoutResend` covers standalone/Sentinel backoff and replacement; the held-dial test above adds caller cancellation | `CanceledAttemptRetainsNativeFenceAcrossSnapshotAndSourceReuse`, `ExhaustionReportsOncePerUnitAcrossReusedResponseSources`; the late-retried-reply test also checks that the deferred member's terminal result stays unchanged |
+| Whole transaction | `TransactionCommandRetryTests.CancellationDuringBackoffKeepsCallerTokenAndStopsResend`, `BackoffBeyondDeadlineDoesNotResend` | The same standalone/Sentinel disposal test and held-dial cancellation test as batches; `CircuitAwareUnitRetryWaitsForReplacementWithoutSpendingAttempts` covers successful replacement | `UnitRetryLifetimeTests.LateRetriedReplyCannotCompleteNewOwnerOrChangeTerminalResult` holds a retried EXEC through cancellation or timeout, then delivers it ahead of a new transaction's replies and verifies the original member remains faulted |
+| Coalesced cache producer | `StandaloneCommandRetryTests.CoalescedCacheMissOwnsOneRetryAndOnePublication`; `UnitRetryLifetimeTests.LastCoalescedWaiterCancelsRetryBackoffBeforeSameKeyProducerStarts` detaches the leader, then the last waiter, before starting a new same-key producer | `ClientSideCacheCoalescingTests.DisposalCancelsBothCurrentAndRetiredFlights` and `TransportFailureFansOutWithoutReplayAndReconnectStartsNewTrackedRead` cover the no-policy path; the held-dial test adds an enabled retry policy | The late-retried-reply test covers cancellation and producer timeout with a new same-key producer already waiting; `ClientSideCacheCoalescingTests.LastCancellationRetiresFlightAndAcceptedReplyStillDrainsInOrder` supplies the no-policy baseline |
+
+The new public-operation cases use server receipt signals, explicitly injected FIFO replies,
+and a held replacement dial. The batch deadline test compares the first and retried attempt's
+absolute deadlines instead of relying on a narrow elapsed-time margin. Tests count callbacks
+on the public operation's awaiter before converting it to a Task, so a Task cannot hide
+duplicate callback invocation. Batch and
+transaction member handles are synchronous results: their status, exception and value are
+checked before and after late reply retirement instead. Subsequent successful calls exercise
+pool turnover without assuming a particular pool rental order.
+
+Exact-source generation checks are separate: `PendingResponseLifetimeTests` rents the same
+single- and multi-reply source again and verifies that an old timeout generation cannot
+complete it. It also tests both caller/receiver release orders and concurrent releases.
+`ImmediateRetryStateTests.ReturnClearsPayloadAndState` checks that returned retry storage
+clears its payload, slot and counters. These tests complement the public-operation scenarios;
+the latter do not claim to force reuse of a particular pooled object.
+
+After the late replies and subsequent operations drain, the tests inspect the captured
+response source's reference count and cancellation registration, the empty connection FIFO,
+and the cache's active producers and retained query dependencies. These are quiescent
+ownership snapshots. They establish that those references have been released in the tested
+scenario, not complete heap reclamation, a retained-byte bound, or race safety by themselves.
+
+Limits remain: wall-clock deadline tests depend on the runtime timer; there is no virtual
+clock or exhaustive scheduler. Backoff that cannot fit within the remaining budget is
+rejected before waiting and retains the last failure, rather than manufacturing a timeout.
+The held-dial/late-reply matrix uses standalone routing; existing topology tests cover routing
+composition and failover, but do not repeat every matrix row on every topology. External
+Redis failover, arbitrary user-retained results, unconsumed ValueTasks and process-wide GC
+reclamation are outside these synchronized in-process tests.
+
 ## Performance
 
 With `RetryPolicy = null`, commands take the ordinary dispatch path. An enabled policy adds

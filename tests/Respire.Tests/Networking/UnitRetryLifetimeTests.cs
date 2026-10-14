@@ -11,7 +11,7 @@ namespace Respire.Tests.Networking;
 // waits to resend, failures while publishing the final attempt, and independent commands
 // that share the connection with a pending unit.
 [NotInParallel]
-public class UnitRetryLifetimeTests
+public partial class UnitRetryLifetimeTests
 {
     private static readonly byte[] TryAgain = "-TRYAGAIN busy\r\n"u8.ToArray();
     private static readonly byte[] Value = "$5\r\nvalue\r\n"u8.ToArray();
