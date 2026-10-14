@@ -5,7 +5,7 @@ using Respire.Internal;
 
 namespace Respire.Streaming;
 
-/// <summary>A typed, immediate job producer backed by a Redis stream and expiring deduplication keys.</summary>
+/// <summary>A typed job producer backed by Redis streams and expiring deduplication keys.</summary>
 /// <remarks>The client is caller-owned. Enqueue deduplication does not make processing exactly once;
 /// handlers must tolerate redelivery. Reserve this queue's generated key namespace for its exclusive use.
 /// Requires Redis 7.0 or later, script execution, GET/SET on deduplication keys, and XADD/XDEL on the stream.</remarks>
@@ -102,6 +102,29 @@ public sealed class RespireJobQueue<T>
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         using var result = await _client.Scripts.ExecuteAsync(Enqueue, [StreamKey, deduplicationKey],
             [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
+        trace.Succeeded = true;
+        return new(new(result[0].AsString()), result[1].AsInteger() == 1);
+    }
+
+    /// <summary>Enqueues with delay, bounded-batch priority and optional lifetime from enqueue.</summary>
+    /// <remarks>The returned ID identifies the staged enqueue; processing receives a new ready-stream ID.
+    /// A registered job worker promotes due jobs using Redis server time. Duplicate calls retain the first options.</remarks>
+    public async ValueTask<RespireJobEnqueueResult> EnqueueScheduledAsync(string jobId, T payload,
+        RespireJobEnqueueOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
+        cancellationToken.ThrowIfCancellationRequested();
+        var deduplicationKey = StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(jobId)));
+        string[] keys = [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey];
+        JobQueueScheduling.ValidateKeys(_client, keys);
+        using var trace = new JobEnqueueTrace();
+        var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
+        using var result = await _client.Scripts.ExecuteAsync(JobQueueScheduling.Enqueue, [.. keys],
+            [jobId, bytes, (long)Math.Ceiling(options.DeduplicationWindow.TotalMilliseconds),
+                (long)Math.Ceiling(options.Delay.TotalMilliseconds), options.Priority,
+                (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }

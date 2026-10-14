@@ -19,6 +19,20 @@ public class JobQueueTests
     }
 
     [Test]
+    public async Task RetryControlDoesNotChangeJobValueEquality()
+    {
+        var job = new RespireJob<string>("id", "payload", new("1-0"));
+        var equal = job with { };
+        var jobs = new HashSet<RespireJob<string>> { job };
+        var hash = job.GetHashCode();
+        job.RetryAfter(TimeSpan.FromSeconds(1));
+        await Assert.That(job.GetHashCode()).IsEqualTo(hash);
+        await Assert.That(job.Equals(equal)).IsTrue();
+        await Assert.That(jobs.Contains(job)).IsTrue();
+        await Assert.That(jobs.Contains(equal)).IsTrue();
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments(" ")]
     [Arguments("{queue}")]
@@ -83,6 +97,43 @@ public class JobQueueTests
         await Assert.That(() => services.AddRespireJobQueue<Handler, string>("queue", Encoding.UTF8.GetBytes,
             Encoding.UTF8.GetString, new() { GroupStart = "$" })).Throws<ArgumentException>();
         await Assert.That(services.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task InvalidSchedulingOptionsFailBeforeSerializationOrRegistration()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", _ => throw new InvalidOperationException());
+        RespireJobEnqueueOptions[] invalid =
+        [
+            new() { Delay = TimeSpan.FromTicks(-1) },
+            new() { Delay = TimeSpan.FromMilliseconds((long)int.MaxValue + 1) },
+            new() { TimeToLive = TimeSpan.Zero },
+            new() { DeduplicationWindow = TimeSpan.Zero },
+        ];
+        foreach (var options in invalid)
+            await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", options))
+                .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", new(), new(true)))
+            .Throws<OperationCanceledException>();
+        var services = new ServiceCollection();
+        RespireJobQueueOptions[] policies =
+        [
+            new() { SchedulingBatchSize = 0 }, new() { SchedulingBatchSize = 257 },
+            new() { SchedulingPollInterval = TimeSpan.Zero },
+            new() { RetryBackoff = TimeSpan.FromSeconds(2), MaximumRetryBackoff = TimeSpan.FromSeconds(1) },
+            new() { RetryBackoff = TimeSpan.FromTicks(-1) },
+        ];
+        foreach (var policy in policies)
+        {
+            await Assert.That(() => services.AddRespireJobQueue<Handler, string>("queue", Encoding.UTF8.GetBytes,
+                Encoding.UTF8.GetString, null, policy)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(services.Count).IsEqualTo(0);
+        }
+        var job = new RespireJob<string>("id", "payload", "1-0");
+        await Assert.That(() => job.RetryAfter(TimeSpan.FromTicks(-1))).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(job.RetryAfter(TimeSpan.Zero)).IsEqualTo(RespireStreamWorkerResult.Nack);
     }
 
     public sealed class Handler : IRespireStreamHandler<RespireJob<string>>

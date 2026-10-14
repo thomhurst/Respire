@@ -1,6 +1,6 @@
 ---
 title: Typed job queues
-description: Enqueue deduplicated jobs with progress, durable completion events, tracing, visibility recovery and dead letters.
+description: Schedule deduplicated jobs with priority, retry backoff, progress, durable completion events and tracing.
 ---
 
 # Typed job queues
@@ -9,8 +9,7 @@ description: Enqueue deduplicated jobs with progress, durable completion events,
 deduplication to the [hosted stream worker](stream-workers.md). Workers share a Redis consumer
 group, explicitly acknowledge jobs, and recover deliveries abandoned by another consumer.
 
-This API currently queues jobs for immediate processing. Delay, priority, job TTL and retry
-backoff are tracked in [#1649](https://github.com/thomhurst/Respire/issues/1649).
+Jobs support immediate enqueue, delayed scheduling, priority, TTL and durable retry backoff.
 Handlers can report progress, observers can replay retained completion events, and tracing links
 each delivery attempt to its enqueue.
 
@@ -62,7 +61,7 @@ public sealed class EmailHandler : IRespireStreamHandler<RespireJob<EmailJob>>
         RespireJob<EmailJob> job, CancellationToken cancellationToken)
     {
         // Perform an idempotent application operation using job.Id before returning Ack.
-        // job.Payload is EmailJob; job.EntryId identifies this enqueue across redeliveries.
+        // job.Payload is EmailJob; job.EntryId identifies this ready-stream entry.
         if (!await job.ReportProgressAsync(50, cancellationToken))
             return RespireStreamWorkerResult.Nack; // Another delivery already owns this job.
         return RespireStreamWorkerResult.Ack;
@@ -104,7 +103,8 @@ A handler returns one of these explicit results:
 | Result | Effect |
 | --- | --- |
 | `Ack` | Atomically publish a `completed` event and acknowledge this delivery. |
-| `Nack` | Leave the delivery eligible for recovery after its visibility timeout; dead-letter when the delivery limit is reached. |
+| `Nack` | Apply the queue retry policy; dead-letter when the delivery limit is reached. |
+| `job.RetryAfter(delay)` | Return `Nack` with a delay from completion, overriding the queue backoff for this attempt. |
 | `DeadLetter` | Atomically append the original envelope plus worker metadata to the dead-letter stream, publish a `dead-letter` event, and acknowledge the current attempt. |
 
 A thrown handler or deserialization exception follows the `Nack` policy. With no options supplied,
@@ -114,8 +114,36 @@ configured automatically unless you supply your own same-slot `DeadLetterStream`
 
 `MinimumIdleTime` is the visibility timeout from delivery, not a delay measured from the handler's
 return. `RecoveryPollInterval` controls the recovery scan cadence. There is no lease extension:
-choose a timeout longer than normal processing and keep handlers idempotent. Returning `Nack`
-does not accept a custom retry delay in this version.
+choose a timeout longer than normal processing and keep handlers idempotent. Without a retry
+backoff or explicit `RetryAfter`, `Nack` retains the visibility-timeout recovery behavior.
+
+Configure bounded exponential backoff with the registration overload accepting `queueOptions`:
+
+```csharp
+using Respire.Streaming;
+
+var queueOptions = new RespireJobQueueOptions
+{
+    RetryBackoff = TimeSpan.FromSeconds(2),
+    MaximumRetryBackoff = TimeSpan.FromMinutes(1),
+    SchedulingPollInterval = TimeSpan.FromMilliseconds(250),
+    SchedulingBatchSize = 64,
+};
+```
+
+Pass this as the final argument after `RespireStreamWorkerOptions` in `AddRespireJobQueue`.
+For total delivery attempt `n`, the delay is `min(MaximumRetryBackoff, RetryBackoff * 2^(n-1))`.
+Handler exceptions use this policy too, discarding any explicit retry delay set before the exception.
+Returning `job.RetryAfter(TimeSpan.FromSeconds(30))` overrides
+the delay, including the backoff cap, but never the delivery limit or job TTL. Zero requests
+an immediate retry. Delays round up to whole milliseconds and must be at most `Int32.MaxValue`
+milliseconds. Retry delays start when Redis commits the retry transition, after the handler returns.
+Crashes before that transition leave the current entry pending for visibility recovery.
+
+Retries atomically stage a new entry and acknowledge the old pending entry. The new ready entry
+has a new `EntryId`; `job.Id` and payload stay unchanged. The delivery limit counts attempts across
+these entries, including startup replay and recovery. Dead-letter `_respire.attempt` is the count
+on its current ready entry; add `_respire.job.attempts` (zero when absent) for the total count.
 
 Each invocation receives its own DI scope. `ConsumerCount` bounds concurrent handlers per worker
 registration; it is not a distributed concurrency cap across hosts. The default batch size is one.
@@ -124,7 +152,7 @@ names, use a distinct name per active host; see [consumer names](stream-workers.
 Queue groups start at the beginning so jobs enqueued before worker startup are processed.
 
 Completion is fenced by consumer identity and delivery attempt. A slow handler that finishes
-after another consumer recovers its job cannot acknowledge or dead-letter that newer attempt.
+after another consumer recovers its job cannot acknowledge, dead-letter or reschedule that newer attempt.
 This prevents lost queue deliveries, but cannot undo the slow handler's external side effects.
 
 Read dead letters through the stream API using `queue.DeadLetterStreamKey` (or your override).
@@ -132,6 +160,68 @@ Entries retain `_respire.job.id` and binary `_respire.job.payload`, plus worker 
 `_respire.source_id`, `_respire.attempt`, and `_respire.reason`. For a controlled re-enqueue after
 fixing a poison job, choose a new application ID or wait for the original deduplication window
 and preserve an application-level idempotency key. Reading a dead letter does not requeue it.
+
+## Delay, priority and expiry
+
+Use `EnqueueScheduledAsync` with `RespireJobEnqueueOptions` for scheduling. A producer sending
+string payloads can use explicit UTF-8 codecs:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reminders", Encoding.UTF8.GetBytes);
+await queue.EnqueueScheduledAsync("reminder:customer-42",
+    "customer@example.com", new RespireJobEnqueueOptions
+    {
+        Delay = TimeSpan.FromMinutes(5),
+        Priority = 10,
+        TimeToLive = TimeSpan.FromHours(1),
+        DeduplicationWindow = TimeSpan.FromHours(24),
+    });
+```
+
+The returned `EntryId` identifies the staged enqueue, and duplicates return that same ID with
+the original payload and options. Promotion assigns a new ready-stream ID. Deduplication is
+shared with `EnqueueAsync`, so switching methods does not bypass an active deduplication window.
+
+Pass a non-null `RespireJobQueueOptions` to the registration overload to enable scheduling,
+TTL checks and durable retries (including `RetryAfter`). The original overload, or null queue
+options, retains immediate-only processing and requires no access to the scheduling keys.
+Enable scheduling on every worker for a scheduled queue, and grant the permissions below
+before switching producers to `EnqueueScheduledAsync`.
+
+Each worker reader promotes at most `SchedulingBatchSize` due jobs (default 64, maximum 256) before reading or recovering
+work, at most once per `SchedulingPollInterval`. Redis `TIME` determines due times and expiry; application clocks are not used. Clock jumps
+on the Redis server or after failover can advance or postpone eligibility. Delay is a minimum,
+not an execution deadline. Busy handlers, polling, ready-stream backlog and recovery can add latency.
+Scheduling pauses when there are no active job workers and resumes on restart. A blocking reader
+wakes at least every `SchedulingPollInterval` (default one second); handlers are never interrupted
+to run a scheduling pass. An index entry whose staged body was deleted is removed and skipped
+so it cannot block later jobs; the missing payload cannot be recovered.
+
+The scheduler selects the oldest due jobs first (equal due times use Redis lexicographic staging
+ID order), then orders that bounded batch by descending integer `Priority`, preserving selection
+order for equal priorities. Priority defaults to zero and accepts negative values. This is **batch
+priority**, not a global priority heap: it cannot reorder entries already in the ready stream,
+preempt running handlers, or outrank another batch. Continuous newer high-priority arrivals cannot
+starve an older due job while scheduling makes progress. Concurrent consumers may start or finish
+handlers in a different order. Use scheduled enqueue with zero delay for priority-only jobs;
+ordinary `EnqueueAsync` appends directly to the ready stream.
+
+`TimeToLive` starts at enqueue and includes delay, backlog and retries. Null means no expiry;
+a specified TTL must be positive and at most `Int32.MaxValue` milliseconds. The scheduler drops
+expired staged jobs, and the worker acknowledges expired ready deliveries without invoking a
+handler or adding a dead letter. TTL is an admission check immediately before dispatch, not a
+cancellation deadline for a running handler; it cannot undo external side effects. Expired staged
+bodies are removed on a scheduling pass after their due time. Expired ready bodies follow normal
+stream retention. With `DeleteAcknowledgedEntries`, retries and expiry use the same Redis 8.2+
+group-aware `XACKDEL ACKED` deletion policy as successful completion (and require that permission).
+On Redis 8.2+, these transitions also require `COMMAND INFO` to detect `XACKDEL` before staging
+or acknowledging. Denied discovery fails the transition and leaves the original delivery pending.
+Older servers retain acknowledged entries for trimming. Expiry does not remove the deduplication record.
 
 ## Progress and completion observers
 
@@ -141,7 +231,9 @@ has been acknowledged, recovered by another attempt, or its body has been remove
 are fenced by both consumer name and delivery count, including recovery with the same name.
 Await reports before returning. Progress neither extends the visibility timeout nor completes
 the job; returning `Ack` is what publishes success. A retry may start progress again from zero,
-so observers should compare the event's `Attempt`. Progress need not be monotonic.
+so observers should compare the event's `EntryId` and `Attempt`. The attempt counter is scoped
+to a ready-stream entry; a durable retry creates a new entry with a fresh counter. Progress
+need not be monotonic.
 
 Each queue has an independent event stream at `queue.EventsStreamKey`. A producer-only client
 can observe it without registering a hosted worker:
@@ -165,8 +257,10 @@ await foreach (var update in queue.ReadEventsAsync(cursor, shutdown.Token))
 `Kind` is `progress`, `completed`, or `dead-letter`. Every event contains `JobId`, `EntryId`,
 `Attempt`, and its own cursor `Id`; only progress includes `Percent`, and only dead letters
 include `Reason` (`explicit`, `nack`, `processing-failed`, or `delivery-limit`). Events omit
-the payload and exception message. Match terminal events to the enqueue result's `EntryId`,
-since an application job ID can be reused after its deduplication window expires. Deserialization
+the payload and exception message. Immediate jobs without durable retries retain the enqueue
+result's `EntryId`. Scheduling promotion and durable retries create new ready-stream IDs;
+use a unique application `JobId` per logical job to correlate events across those transitions.
+Expired jobs produce no terminal event. Deserialization
 errors can dead-letter without invoking a handler and still produce a terminal event.
 
 Each enumeration sees all events after its cursor; observers do not compete for events.
@@ -217,8 +311,8 @@ fixed application role for `TelemetryName`, not a per-tenant or per-job name.
 
 Queue names must be nonblank and cannot contain braces. The generated ready stream is
 `{respire-job:<name>}:ready`; its default dead-letter stream appends `:dead`, and deduplication
-keys append `:dedup:<SHA256-of-job-ID>`, and the event stream appends `:events`.
-The shared hash tag keeps the atomic operations in one
+keys append `:dedup:<SHA256-of-job-ID>`. The staging stream appends `:scheduled`, and its due-time
+sorted set appends `:due`. The event stream appends `:events`. The shared hash tag keeps the atomic operations in one
 Redis Cluster slot, including through key-prefixed clients. Reserve this namespace exclusively
 for the queue. All worker hosts must agree on the codecs and worker policy for a queue.
 
@@ -226,6 +320,10 @@ Producers require Redis 7.0 or later for [Lua ACL preflight](https://redis.io/do
 In addition to script execution,
 allow `GET` and `SET` on deduplication keys, and `XADD` and `XDEL` on the ready stream; `XDEL`
 is required to roll back an append if recording its deduplication key fails.
+Scheduled producers and workers additionally need `TIME`, `TYPE`, `XRANGE`, `XADD`, `XDEL`,
+`ZADD`, `ZRANGEBYSCORE` and `ZREM` on the generated scheduling keys, plus the normal group,
+pending, acknowledgement and recovery permissions. Transition scripts check key types and
+cleanup permissions before writes, and compensate a staging append when indexing fails.
 Hosted job workers also require Redis 7.0 or later because registration configures a
 dead-letter destination and terminal completion uses Lua ACL preflight. Allow `XADD` and
 `XDEL` on both event and dead-letter streams, alongside the underlying worker's read,
@@ -242,3 +340,10 @@ failover, persistence and memory eviction settings still determine survival of s
 Use an appropriate persistence policy and protect queue keys from eviction. Do not delete groups,
 expire streams, or trim unprocessed entries. Acknowledged stream bodies are retained by default;
 plan retention deliberately using the worker's acknowledgement/deletion options and stream APIs.
+Promotion moves a staged job to the ready stream and removes its scheduling metadata in one Lua
+execution. Retry stages the next attempt and acknowledges the current attempt in one fenced Lua
+execution. A scheduler or consumer process crash cannot interrupt these server-side transitions:
+before commit the original is recoverable; after commit the destination is durable to the extent
+of Redis persistence. A lost reply may hide a successful transition, but repeating it cannot
+reschedule an acknowledged attempt or promote an already removed staging entry. Do not edit,
+trim, expire or evict the staging stream or due index independently.
