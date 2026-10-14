@@ -3,6 +3,14 @@ namespace Respire;
 /// <summary>Base exception for all Respire failures.</summary>
 public class RespireException : Exception
 {
+    /// <summary>The endpoint associated with this failure, when known.</summary>
+    /// <remarks>
+    /// Null means no single endpoint is known. An endpoint does not prove that a command was
+    /// submitted or executed. General-purpose wrappers do not infer it from their inner exception,
+    /// which may describe only one of several failed candidates.
+    /// </remarks>
+    public RespireEndpoint? Endpoint { get; init; }
+
     internal bool IsCommandNotSubmitted { get; set; }
 
     // Only a transparent wrapper opts into classification through its cause.
@@ -124,7 +132,10 @@ public sealed class RespireTransactionRetryException : RespireException
     internal override Exception? ErrorCause => ServerError;
     internal RespireTransactionRetryException(RespireServerException serverError)
         : base("Redis Cluster rejected the watched transaction. Start a new WATCH attempt and re-read all inputs before retrying.", serverError)
-        => ServerError = serverError;
+    {
+        ServerError = serverError;
+        Endpoint = serverError.Endpoint;
+    }
 
     /// <summary>The original MOVED, ASK, or READONLY rejection.</summary>
     public RespireServerException ServerError { get; }
@@ -186,7 +197,7 @@ public sealed class RespireScriptingEngineUnavailableException : RespireExceptio
         : base($"Scripting engine '{engine}' is unavailable at {endpoint}. Load the engine on that server before retrying the command.", serverError)
     {
         Engine = engine;
-        Endpoint = endpoint;
+        base.Endpoint = endpoint;
         ServerError = serverError;
     }
 
@@ -194,7 +205,7 @@ public sealed class RespireScriptingEngineUnavailableException : RespireExceptio
     public string Engine { get; }
 
     /// <summary>The endpoint whose connection confirmed the missing engine.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public new RespireEndpoint Endpoint => base.Endpoint!.Value;
 
     /// <summary>The original command error; engine detection does not replay it.</summary>
     public RespireServerException ServerError { get; }
@@ -266,6 +277,7 @@ public sealed class RespireTimeoutException : RespireException
         CommandName = commandName;
         Timeout = timeout;
         Diagnostics = diagnostics;
+        Endpoint = diagnostics.Endpoint ?? (innerException as RespireException)?.Endpoint;
     }
 
     internal static RespireTimeoutException FunctionPropagation(string commandName, TimeSpan timeout, TimeSpan limit, Exception error)

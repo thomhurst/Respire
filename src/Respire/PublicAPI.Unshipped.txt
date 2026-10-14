@@ -1,4 +1,6 @@
 #nullable enable
+Respire.RespireException.Endpoint.get -> Respire.RespireEndpoint?
+Respire.RespireException.Endpoint.init -> void
 Respire.RespireTracing
 Respire.RespireTracingOptions
 Respire.RespireTracingOptions.RespireTracingOptions() -> void

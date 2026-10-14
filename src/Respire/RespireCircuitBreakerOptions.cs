@@ -47,13 +47,13 @@ public sealed class RespireCircuitOpenException : RespireException
         : base($"The circuit for endpoint {endpoint} is open.")
     {
         if (retryAfter < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retryAfter));
-        Endpoint = endpoint;
+        base.Endpoint = endpoint;
         RetryAfter = retryAfter;
         IsCommandNotSubmitted = true;
     }
 
     /// <summary>The rejected data endpoint.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public new RespireEndpoint Endpoint => base.Endpoint!.Value;
 
     /// <summary>Remaining recovery delay, or null when probe completion determines the next admission.</summary>
     /// <remarks>This is a snapshot, not permission to resend a command. A retry must reacquire endpoint admission.</remarks>
