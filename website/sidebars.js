@@ -63,6 +63,7 @@ const sidebars = {
         'guides/coordination',
         'guides/blocking-queues',
         'guides/stream-workers',
+        'guides/job-queues',
         'guides/pub-sub',
         'guides/keyspace-notifications',
         'guides/pub-sub-introspection',

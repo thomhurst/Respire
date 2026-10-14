@@ -1,1 +1,39 @@
 #nullable enable
+~override Respire.Streaming.RespireJobEnqueueResult.Equals(object obj) -> bool
+~override Respire.Streaming.RespireJobEnqueueResult.ToString() -> string
+const Respire.Streaming.RespireJobQueue<T>.ConsumerGroup = "respire-jobs" -> string!
+override Respire.Streaming.RespireJob<T>.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJob<T>.GetHashCode() -> int
+override Respire.Streaming.RespireJob<T>.ToString() -> string!
+override Respire.Streaming.RespireJobEnqueueResult.GetHashCode() -> int
+Respire.Streaming.RespireJob<T>
+Respire.Streaming.RespireJob<T>.<Clone>$() -> Respire.Streaming.RespireJob<T>!
+Respire.Streaming.RespireJob<T>.Deconstruct(out string! Id, out T Payload, out Respire.RespireStreamId EntryId) -> void
+Respire.Streaming.RespireJob<T>.EntryId.get -> Respire.RespireStreamId
+Respire.Streaming.RespireJob<T>.EntryId.init -> void
+Respire.Streaming.RespireJob<T>.Equals(Respire.Streaming.RespireJob<T>? other) -> bool
+Respire.Streaming.RespireJob<T>.Id.get -> string!
+Respire.Streaming.RespireJob<T>.Id.init -> void
+Respire.Streaming.RespireJob<T>.Payload.get -> T
+Respire.Streaming.RespireJob<T>.Payload.init -> void
+Respire.Streaming.RespireJob<T>.RespireJob(string! Id, T Payload, Respire.RespireStreamId EntryId) -> void
+Respire.Streaming.RespireJobEnqueueResult
+Respire.Streaming.RespireJobEnqueueResult.Deconstruct(out Respire.RespireStreamId EntryId, out bool Enqueued) -> void
+Respire.Streaming.RespireJobEnqueueResult.Enqueued.get -> bool
+Respire.Streaming.RespireJobEnqueueResult.Enqueued.init -> void
+Respire.Streaming.RespireJobEnqueueResult.EntryId.get -> Respire.RespireStreamId
+Respire.Streaming.RespireJobEnqueueResult.EntryId.init -> void
+Respire.Streaming.RespireJobEnqueueResult.Equals(Respire.Streaming.RespireJobEnqueueResult other) -> bool
+Respire.Streaming.RespireJobEnqueueResult.RespireJobEnqueueResult() -> void
+Respire.Streaming.RespireJobEnqueueResult.RespireJobEnqueueResult(Respire.RespireStreamId EntryId, bool Enqueued) -> void
+Respire.Streaming.RespireJobQueue<T>
+Respire.Streaming.RespireJobQueue<T>.DeadLetterStreamKey.get -> string!
+Respire.Streaming.RespireJobQueue<T>.EnqueueAsync(string! jobId, T payload, System.TimeSpan? deduplicationWindow = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobEnqueueResult>
+Respire.Streaming.RespireJobQueue<T>.RespireJobQueue(Respire.IRespireClient! client, string! queueName, System.Func<T, byte[]!>! serialize) -> void
+Respire.Streaming.RespireJobQueue<T>.StreamKey.get -> string!
+Respire.Streaming.RespireJobQueueServiceCollectionExtensions
+static Respire.Streaming.RespireJob<T>.operator !=(Respire.Streaming.RespireJob<T>? left, Respire.Streaming.RespireJob<T>? right) -> bool
+static Respire.Streaming.RespireJob<T>.operator ==(Respire.Streaming.RespireJob<T>? left, Respire.Streaming.RespireJob<T>? right) -> bool
+static Respire.Streaming.RespireJobEnqueueResult.operator !=(Respire.Streaming.RespireJobEnqueueResult left, Respire.Streaming.RespireJobEnqueueResult right) -> bool
+static Respire.Streaming.RespireJobEnqueueResult.operator ==(Respire.Streaming.RespireJobEnqueueResult left, Respire.Streaming.RespireJobEnqueueResult right) -> bool
+static Respire.Streaming.RespireJobQueueServiceCollectionExtensions.AddRespireJobQueue<THandler, T>(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! queueName, System.Func<T, byte[]!>! serialize, System.Func<byte[]!, T>! deserialize, Respire.Streaming.RespireStreamWorkerOptions? options = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
