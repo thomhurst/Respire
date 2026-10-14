@@ -40,6 +40,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ### Connections, routing, and recovery
 
+- A [timeouts and thread-pool starvation guide](guides/timeouts.md) explains timeout
+  snapshots, scheduling diagnostics, and StackExchange.Redis v3 message equivalents.
 - [Physical connection hooks](guides/connection-hooks.md) for auditing, timing, and rejection,
   including reconnects, dedicated connections, Cluster, replicas, and Sentinel.
 - [Connections](fundamentals/connections.md) from Redis URIs, pasted Azure portal strings, StackExchange.Redis connection

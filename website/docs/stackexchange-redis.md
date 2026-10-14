@@ -132,7 +132,8 @@ Review these before you switch; they can change application behavior.
 - **Timeouts are longer by default.** `CommandTimeout` defaults to 10 seconds; StackExchange.Redis
   defaults to 5 seconds. A timed-out command may still run on the server, as with
   StackExchange.Redis. `asyncTimeout` and `syncTimeout` in a connection string set
-  `CommandTimeout`.
+  `CommandTimeout`. See [timeouts and thread-pool starvation](./guides/timeouts.md)
+  for timeout stages, diagnosis, and a mapping of StackExchange.Redis v3 message fields.
 - **Cancellation is supported.** Most methods accept a `CancellationToken`. Cancellation abandons
   the wait only; a command that was already written still runs.
 - **Batch results throw before the batch runs.** Reading `RespirePending<T>.Result` before

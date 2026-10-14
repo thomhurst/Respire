@@ -93,6 +93,7 @@ const sidebars = {
       type: 'category',
       label: 'Resilience',
       items: [
+        'guides/timeouts',
         'guides/command-retries',
         'guides/external-resilience',
         'guides/reconnect-policy',
