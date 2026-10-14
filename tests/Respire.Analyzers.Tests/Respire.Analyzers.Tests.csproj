@@ -17,6 +17,7 @@
 
     <ItemGroup>
         <PackageReference Include="TUnit" />
+        <PackageReference Include="StackExchange.Redis" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.CodeFix.Testing" />
         <!-- The testing packages float to Roslyn 1.0.1; pin the graph to the version the
@@ -34,6 +35,7 @@
 
     <ItemGroup>
         <EmbeddedResource Include="TestInspectionOwnerSurface.txt" LogicalName="TestInspectionOwnerSurface.txt" />
+        <EmbeddedResource Include="Fixtures/StackExchangeMigration.cs.txt" LogicalName="StackExchangeMigration.cs.txt" WithCulture="false" />
         <!-- Test the exact library source without depending on a checkout at test runtime. -->
         <EmbeddedResource Include="../../src/**/*.cs" Exclude="../../src/**/bin/**;../../src/**/obj/**"
                           LogicalName="LibrarySource/%(RecursiveDir)%(Filename)%(Extension)" />

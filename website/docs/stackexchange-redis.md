@@ -9,6 +9,9 @@ This page compares Respire with StackExchange.Redis and maps common StackExchang
 Both cover multiplexed connections, automatic pipelining, Cluster, Sentinel, pub/sub, transactions,
 and scripting. Respire has a different API shape and some extra capabilities.
 
+The opt-in [migration analyzer and code fix](./guides/stackexchange-migration-tool) converts
+supported `IDatabase` methods to native Respire calls and flags other calls for manual review.
+
 To migrate gradually, use the [incremental migration adapter](./guides/stackexchange-interop). It
 accepts `RedisKey`, `RedisValue`, and `RedisResult`, and provides a limited `IConnectionMultiplexer`
 for the official distributed cache, DataProtection, and [Hangfire](./guides/hangfire-acceptance).

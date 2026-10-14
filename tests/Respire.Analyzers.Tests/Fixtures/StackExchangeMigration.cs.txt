@@ -1,0 +1,25 @@
+#nullable enable
+using System.Threading.Tasks;
+using StackExchange.Redis;
+
+// Application boundary: the host supplies the configured database/client.
+// The fixture deliberately contains no connection setup or database selection.
+public static class CacheSample
+{
+    public static async Task<string?> RefreshAsync(IDatabase database, string key)
+    {
+        if (await database.KeyExistsAsync(key).ConfigureAwait(false))
+        {
+            bool removed = await database.KeyDeleteAsync(key).ConfigureAwait(false);
+            if (!removed) return null;
+        }
+
+        await database.StringSetAsync(key, "ready").ConfigureAwait(false);
+        return (string?)await database.StringGetAsync(key).ConfigureAwait(false);
+    }
+
+    public static async Task<byte[]?> ReadBinaryAsync(IDatabase database, string key)
+    {
+        return (byte[]?)await database.StringGetAsync(key);
+    }
+}
