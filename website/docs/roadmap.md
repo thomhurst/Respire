@@ -88,6 +88,8 @@ and StackExchange.Redis compatibility. These remain outside the 1.0 compatibilit
   [distributed caching and `HybridCache`](integrations/caching.md) with cross-instance tag
   invalidation, and [OpenTelemetry](integrations/observability.md), including a
   [Prometheus and Redis dashboard setup](integrations/observability.md#prometheus-and-the-published-redis-dashboard).
+- [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
+  with a generated builder covering every client option and validation at host startup.
 - An [in-memory test server](guides/in-memory-testing.md), [Redis/Valkey container fixtures](guides/testing-containers.md),
   and a [test sample](guides/testing-sample.md).
 - Samples: [.NET Aspire](integrations/aspire-sample.md),

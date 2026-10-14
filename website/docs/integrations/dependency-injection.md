@@ -79,6 +79,69 @@ builder.Services.AddRespire(options =>
   `await RespireClient.ConnectAsync(options)` instead. Consumers and prefixed views keep the
   same client when the primary changes.
 
+The mutable builder is generated from `RespireOptions`: every public option is available,
+with the same defaults, including replica routing, retry policies, circuit breakers, maintenance
+notifications, and stream producer identity.
+
+## Bind appsettings.json and validate at startup
+
+Pass a configuration section to register both a client and `IOptions<RespireOptions>`:
+
+```json
+{
+  "Redis": {
+    "Endpoints": ["localhost:6379"],
+    "KeyPrefix": "app:",
+    "CommandTimeout": "00:00:02",
+    "Connections": 2,
+    "RetryPolicy": { "MaxAttempts": 3, "MaxCommandRetryCategory": "ReadOnly" },
+    "CircuitBreaker": { "MinimumFailureCount": 5 }
+  }
+}
+```
+
+```csharp
+builder.Services.AddRespire(builder.Configuration.GetSection("Redis"));
+```
+
+Configuration registrations use `ValidateOnStart`. Starting the host checks endpoints,
+timeouts, nested policies, and incompatible combinations using the same validation as the
+client. Invalid settings throw `OptionsValidationException`, including the options name and
+the invalid setting. Parsing errors also identify the configuration path. Startup validation
+does not connect to Redis or acquire credentials. Outside a host, validation runs when options
+or the client are first resolved.
+
+`AddKeyedRespire("jobs", configurationSection)` also registers named options. Use
+`IOptionsMonitor<RespireOptions>.Get("jobs")` or `IOptionsSnapshot<RespireOptions>.Get("jobs")`
+to inspect them, and `[FromKeyedServices("jobs")]` to inject the client. Different names keep
+their own configuration. The connection-string and action overloads retain their lazy
+validation on client resolution.
+
+All serializable options use their `RespireOptions` property names. Endpoint arrays accept
+strings or `{ "Host": "localhost", "Port": 6379 }` objects. Prefixes are literal text, enums
+use their names, and time spans use strings such as `"00:00:02"`. An empty string clears a
+nullable timeout; an omitted setting keeps its default. Nested objects configure
+`HedgedReads`, `ReconnectPolicy`, `RetryPolicy`, `CircuitBreaker`, and `ClientSideCache`.
+TLS objects accept scalar settings such as `TargetHost`, `EnabledSslProtocols`, and
+`CertificateRevocationCheckMode`.
+
+Service instances (`CredentialProvider`, `SentinelCredentialProvider`, `Serializer`, and
+`LoggerFactory`), TLS certificate objects and callbacks, and binary prefixes are supplied
+through the optional callback, which runs after binding:
+
+```csharp
+builder.Services.AddRespire(builder.Configuration.GetSection("Redis"),
+    (services, options) => options with
+    {
+        CredentialProvider = services.GetRequiredService<IRespireCredentialProvider>()
+    });
+```
+
+The callback requires that the credential provider has already been registered. Keep secrets
+in a configuration secret provider. Options are read when first resolved; existing singleton
+clients do not reconnect or change settings when configuration reloads. Restart the host to
+apply client configuration changes.
+
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).
 For readiness endpoints, see [health checks](./health-checks).
 

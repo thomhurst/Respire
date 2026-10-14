@@ -1,11 +1,60 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Respire.DependencyInjection;
 
 /// <summary>Dependency-injection registrations for Respire clients.</summary>
 public static class RespireServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers a lazy singleton client and default <see cref="IOptions{TOptions}"/> from
+    /// configuration. Options are validated at host startup without connecting to Redis.
+    /// The optional callback runs after binding and can supply serializers, credentials, and logging.
+    /// Configuration is captured when options are first resolved; clients do not reload live.
+    /// </summary>
+    public static IServiceCollection AddRespire(this IServiceCollection services,
+        IConfigurationSection configuration,
+        Func<IServiceProvider, RespireOptions, RespireOptions>? configure = null)
+        => AddConfiguration(services, null, configuration, configure);
+
+    /// <summary>
+    /// Registers a keyed singleton client and named options from configuration. The service key
+    /// is also the name used with <see cref="IOptionsMonitor{TOptions}.Get"/>.
+    /// Options are validated at host startup without connecting to Redis.
+    /// </summary>
+    public static IServiceCollection AddKeyedRespire(this IServiceCollection services, string serviceKey,
+        IConfigurationSection configuration,
+        Func<IServiceProvider, RespireOptions, RespireOptions>? configure = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serviceKey);
+        return AddConfiguration(services, serviceKey, configuration, configure);
+    }
+
+    private static IServiceCollection AddConfiguration(IServiceCollection services, string? serviceKey,
+        IConfigurationSection configuration, Func<IServiceProvider, RespireOptions, RespireOptions>? configure)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+        ThrowIfRegistered(services, serviceKey);
+        var name = serviceKey ?? Options.DefaultName;
+        services.AddSingleton(new RespireOptionsRegistration(name, provider =>
+        {
+            var options = RespireConfiguration.Apply(configuration, new RespireOptions());
+            return Resolve(provider, _ => configure is null ? options : configure(provider, options));
+        }, configuration.Path));
+        services.TryAddTransient<IOptionsFactory<RespireOptions>, RespireOptionsFactory>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<RespireOptions>, RespireOptionsValidator>());
+        services.AddOptions<RespireOptions>(name).ValidateOnStart();
+
+        RespireOptions GetOptions(IServiceProvider provider) => provider.GetRequiredService<IOptionsMonitor<RespireOptions>>().Get(name);
+        return serviceKey is null
+            ? AddRespireCore(services, GetOptions)
+            : AddKeyedRespireCore(services, serviceKey, GetOptions);
+    }
+
     /// <summary>
     /// Registers a singleton <see cref="IRespireClient"/> (and <see cref="RespireClient"/>).
     /// Construction is lazy — nothing connects until the first command — so startup never

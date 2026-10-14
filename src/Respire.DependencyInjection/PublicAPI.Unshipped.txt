@@ -1,1 +1,30 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.CircuitBreaker.get -> Respire.RespireCircuitBreakerOptions?
+Respire.DependencyInjection.RespireOptionsBuilder.CircuitBreaker.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ClientAvailabilityZone.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.ClientAvailabilityZone.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ClusterTopologyRefreshInterval.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.ClusterTopologyRefreshInterval.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.Endpoints.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.HedgedReads.get -> Respire.RespireHedgedReadOptions?
+Respire.DependencyInjection.RespireOptionsBuilder.HedgedReads.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.KeyPrefix.get -> Respire.RespireKey
+Respire.DependencyInjection.RespireOptionsBuilder.KeyPrefix.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceNotifications.get -> Respire.RespireMaintenanceNotificationMode
+Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceNotifications.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceRelaxedTimeout.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceRelaxedTimeout.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceWindowTimeout.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.MaintenanceWindowTimeout.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReadFrom.get -> Respire.RespireReadFrom
+Respire.DependencyInjection.RespireOptionsBuilder.ReadFrom.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaEndpoints.get -> System.Collections.Generic.IList<Respire.RespireEndpoint>!
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaEndpoints.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaRefreshInterval.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaRefreshInterval.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.RetryPolicy.get -> Respire.RespireRetryPolicy?
+Respire.DependencyInjection.RespireOptionsBuilder.RetryPolicy.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.StreamProducerId.get -> string?
+Respire.DependencyInjection.RespireOptionsBuilder.StreamProducerId.set -> void
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, Microsoft.Extensions.Configuration.IConfigurationSection! configuration, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.DependencyInjection.RespireServiceCollectionExtensions.AddKeyedRespire(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! serviceKey, Microsoft.Extensions.Configuration.IConfigurationSection! configuration, System.Func<System.IServiceProvider!, Respire.RespireOptions!, Respire.RespireOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
