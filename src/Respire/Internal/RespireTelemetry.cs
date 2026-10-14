@@ -546,16 +546,32 @@ internal static partial class RespireTelemetry
         return operations.Count != 0 || selection.IncludesCommand(prefix);
     }
 
+    private static bool IsCommandTraceEnabled(string operation)
+        => Source.HasListeners() && RespireTracing.IncludesCommand(RespireTracing.CommandFilter, operation);
+
+    private static bool IsBatchTraceEnabled<T>(string prefix, IReadOnlyList<T> operations, Func<T, string> operationName)
+    {
+        if (!Source.HasListeners()) return false;
+        var filter = RespireTracing.CommandFilter;
+        if (filter is null) return true;
+        if (operations.Count == 0) return RespireTracing.IncludesCommand(filter, prefix);
+        if ((prefix is "WAIT" or "WAITAOF") && !RespireTracing.IncludesCommand(filter, prefix)) return false;
+        for (var i = 0; i < operations.Count; i++)
+            if (!RespireTracing.IncludesCommand(filter, operationName(operations[i]))) return false;
+        return true;
+    }
+
     internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
         Func<T, string> operationName, int database, OperationStart started, Exception error, RespireEndpoint? endpoint = null)
     {
         if (started.Timestamp == 0) return;
         var metricEnabled = started.MetricEnabled;
-        if (!Source.HasListeners() && !metricEnabled) return;
+        var traceEnabled = IsBatchTraceEnabled(prefix, operations, operationName);
+        if (!traceEnabled && !metricEnabled) return;
         var operation = BatchOperationName(prefix, operations, operationName);
         int? batchSize = operations.Count == 1 ? null : operations.Count;
         StartOperationCore(operation, endpoint?.Host, endpoint?.Port ?? DefaultRedisPort, database,
-            batchSize, null, started.Timestamp, metricEnabled).Complete(operation, endpoint?.Host,
+            batchSize, null, started.Timestamp, metricEnabled, traceEnabled).Complete(operation, endpoint?.Host,
                 endpoint?.Port ?? DefaultRedisPort, database, error: error, batchSize: batchSize);
     }
 
@@ -597,6 +613,7 @@ internal static partial class RespireTelemetry
         int? batchSize = null, string? storedProcedureName = null, OperationStart? started = null)
         => StartOperationCore(operation, connection.Host, connection.Port, database, batchSize, storedProcedureName,
             started?.Timestamp ?? 0, started?.MetricEnabled ?? IsCommandMetricEnabled(operation),
+            IsCommandTraceEnabled(operation),
             connection.OperationMetricDatabase == database ? connection.OperationMetricNamespace : null);
 
     public static OperationScope StartOperation(
@@ -608,12 +625,12 @@ internal static partial class RespireTelemetry
         string? storedProcedureName = null,
         OperationStart? started = null)
         => StartOperationCore(operation, host, port, database, batchSize, storedProcedureName,
-            started?.Timestamp ?? 0, started?.MetricEnabled ?? IsCommandMetricEnabled(operation));
+            started?.Timestamp ?? 0, started?.MetricEnabled ?? IsCommandMetricEnabled(operation), IsCommandTraceEnabled(operation));
 
     private static OperationScope StartOperationCore(string operation, string? host, int port, int database,
-        int? batchSize, string? storedProcedureName, long started, bool metricEnabled, string? databaseNamespace = null)
+        int? batchSize, string? storedProcedureName, long started, bool metricEnabled, bool traceEnabled,
+        string? databaseNamespace = null)
     {
-        var traceEnabled = Source.HasListeners();
         if (!traceEnabled && !metricEnabled)
         {
             return default;
@@ -667,7 +684,8 @@ internal static partial class RespireTelemetry
         int database, out string operation, OperationStart? started = null)
     {
         var metricEnabled = started?.MetricEnabled ?? IsBatchMetricEnabled(prefix, operations, operationName);
-        if (!Source.HasListeners() && !metricEnabled)
+        var traceEnabled = IsBatchTraceEnabled(prefix, operations, operationName);
+        if (!traceEnabled && !metricEnabled)
         {
             operation = prefix;
             return default;
@@ -675,7 +693,7 @@ internal static partial class RespireTelemetry
 
         operation = BatchOperationName(prefix, operations, operationName);
         return StartOperationCore(operation, null, DefaultRedisPort, database,
-            operations.Count == 1 ? null : operations.Count, null, started?.Timestamp ?? 0, metricEnabled);
+            operations.Count == 1 ? null : operations.Count, null, started?.Timestamp ?? 0, metricEnabled, traceEnabled);
     }
 
     public static OperationScope StartBatchOperation<T>(
@@ -689,7 +707,8 @@ internal static partial class RespireTelemetry
         OperationStart? started = null)
     {
         var metricEnabled = started?.MetricEnabled ?? IsBatchMetricEnabled(prefix, operations, operationName);
-        if (!Source.HasListeners() && !metricEnabled)
+        var traceEnabled = IsBatchTraceEnabled(prefix, operations, operationName);
+        if (!traceEnabled && !metricEnabled)
         {
             operation = prefix;
             return default;
@@ -702,7 +721,7 @@ internal static partial class RespireTelemetry
             port,
             database,
             operations.Count == 1 ? null : operations.Count,
-            null, started?.Timestamp ?? 0, metricEnabled);
+            null, started?.Timestamp ?? 0, metricEnabled, traceEnabled);
     }
 
     private static string BatchOperationName<T>(

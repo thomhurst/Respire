@@ -1,4 +1,11 @@
 #nullable enable
+Respire.RespireTracing
+Respire.RespireTracingOptions
+Respire.RespireTracingOptions.RespireTracingOptions() -> void
+Respire.RespireTracingOptions.CommandFilter.get -> System.Func<string!, bool>?
+Respire.RespireTracingOptions.CommandFilter.init -> void
+static Respire.RespireTracing.Configuration.get -> Respire.RespireTracingOptions!
+static Respire.RespireTracing.Configure(Respire.RespireTracingOptions! options) -> void
 Respire.IFunctionCommands.ExecuteLeaseAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.IFunctionCommands.ExecuteLeaseSpanAsync(Respire.RespireFunction! function, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.IScriptCommands.ExecuteLeaseAsync(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>

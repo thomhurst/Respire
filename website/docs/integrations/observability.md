@@ -57,6 +57,46 @@ digest or function name. A pipeline or transaction is one span.
 Spans never carry command values, because arbitrary Redis payloads cannot be reliably
 sanitized.
 
+### Command trace filters
+
+Use `RespireTracing` to select command spans independently of metrics and execution:
+
+```csharp
+RespireTracing.Configure(new RespireTracingOptions
+{
+    CommandFilter = static name => name is not ("PING" or "GET"),
+});
+```
+
+The predicate receives the reported command name, including subcommands such as `CLIENT LIST`,
+without keys, values, script digests or function names. It can select exact names or an
+application-defined category. For example, to trace a selected set of hash reads:
+
+```csharp
+RespireTracing.Configure(new RespireTracingOptions
+{
+    CommandFilter = static name => name is "HGET" or "HMGET" or "HGETALL",
+});
+```
+
+- The default `null` predicate allows all commands. `RespireTracing.Configure(new())` restores it.
+- Selection applies to every client and prefix view in the process. Configure once at startup
+  when possible. Replacement is atomic; the last call wins. `Configuration` returns a copy
+  containing the same delegate, so captured state still belongs to your application.
+- The predicate runs synchronously before activity creation and sampling, only when the
+  `Respire` activity source has listeners. It must be fast, nonblocking and thread-safe.
+  Avoid issuing Redis commands from the predicate. A predicate exception suppresses that
+  span; it cannot block a command or suppress its duration metric.
+- A pipeline or transaction is traced only if every member passes. A durability batch also
+  checks `WAIT` or `WAITAOF`. Selection uses member names, not synthetic span labels such as
+  `PIPELINE GET`. An empty batch checks its prefix. Each batch uses one predicate snapshot.
+- Selection is evaluated when a span would start, including after connection acquisition or
+  when reporting a failure to acquire a connection. Configuration changes leave existing
+  spans alone. Metrics retain their separate selection rules.
+- Filtering affects command spans only. Maintenance notification spans and the separate
+  `Respire.Streaming` source are unaffected. It does not remove the listener-dependent
+  dispatch overhead; detach trace listeners when tracing is completely disabled.
+
 ## Metric selection
 
 One process-wide selection applies to every client and prefix view. For narrower collection,
