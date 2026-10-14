@@ -156,6 +156,104 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WriteBehindDeleteIsPersistedBeforeLoading(bool preload)
+    {
+        await using var client = await ConnectAsync();
+        var stored = new RespireGet<int>(true, 10);
+        var writes = 0;
+        var loads = 0;
+        var hash = UniqueKey();
+        await client.Hashes.SetAsync(hash, "1", (RespireValue)"10");
+        await using var map = Create(client, hash, new()
+        {
+            WriteBehind = true, FlushInterval = TimeSpan.FromHours(1),
+            Loader = (_, _) => { loads++; return ValueTask.FromResult(stored); },
+            Writer = (batch, _) => { writes++; stored = batch[^1].Entry; return ValueTask.CompletedTask; },
+        });
+
+        await map.RemoveAsync(1);
+        writes.Should().Be(0);
+        if (preload)
+            (await map.PreloadAsync([1])).Should().Be(0);
+        else
+            (await map.GetAsync(1)).Found.Should().BeFalse();
+        writes.Should().Be(1);
+        loads.Should().Be(1);
+        (await client.Hashes.ExistsAsync(hash, "1")).Should().BeFalse();
+    }
+
+    [Test]
+    public async Task WriteBehindExpiredSetIsPersistedBeforeLoading()
+    {
+        await using var client = await ConnectAsync();
+        var stored = new RespireGet<int>(true, 10);
+        var writes = new List<int>();
+        var hash = UniqueKey();
+        await using var map = Create(client, hash, new()
+        {
+            WriteBehind = true, BatchSize = 1, FlushInterval = TimeSpan.FromHours(1),
+            EntryExpiration = TimeSpan.FromMinutes(1),
+            Loader = (_, _) => ValueTask.FromResult(stored),
+            Writer = (batch, _) =>
+            {
+                stored = batch[^1].Entry;
+                writes.Add(stored.Value);
+                return ValueTask.CompletedTask;
+            },
+        });
+
+        await map.SetAsync(1, 20);
+        await map.SetAsync(1, 30);
+        // Expire immediately on the server without a wall-clock delay or a cached read.
+        await client.Hashes.ExpireAsync(hash, RespireExpiry.At(DateTimeOffset.UnixEpoch.AddSeconds(1)), "1");
+        (await client.Hashes.ExistsAsync(hash, "1")).Should().BeFalse();
+        writes.Should().BeEmpty();
+        (await map.GetAsync(1)).Value.Should().Be(30);
+        writes.Should().Equal(20, 30);
+        (await client.Hashes.GetBytesAsync(hash, "1")).Should().Equal(Encoding.UTF8.GetBytes("30"));
+    }
+
+    [Test]
+    public async Task WriteBehindFlushFailurePreventsLoaderAndRetainsChangesForRetry()
+    {
+        await using var client = await ConnectAsync();
+        var stored = new RespireGet<int>(true, 10);
+        var fail = true;
+        var loads = 0;
+        var attempts = 0;
+        var hash = UniqueKey();
+        var map = Create(client, hash, new()
+        {
+            WriteBehind = true, FlushInterval = TimeSpan.FromHours(1),
+            Loader = (_, _) => { loads++; return ValueTask.FromResult(stored); },
+            Writer = (batch, _) =>
+            {
+                attempts++;
+                if (fail) throw new IOException("store unavailable");
+                stored = batch[^1].Entry;
+                return ValueTask.CompletedTask;
+            },
+        });
+        try
+        {
+            await map.RemoveAsync(1);
+            var read = () => map.GetAsync(1).AsTask();
+            await read.Should().ThrowAsync<IOException>();
+            loads.Should().Be(0);
+            map.LastWriterError.Should().BeOfType<IOException>();
+            (await client.Hashes.ExistsAsync(hash, "1")).Should().BeFalse();
+            fail = false;
+            (await map.GetAsync(1)).Found.Should().BeFalse();
+            attempts.Should().Be(2);
+            loads.Should().Be(1);
+            map.LastWriterError.Should().BeNull();
+        }
+        finally { fail = false; await map.DisposeAsync(); }
+    }
+
+    [Test]
     public async Task CleanShutdownDrainsPartialBatchesInOrderAndKeepsClientAlive()
     {
         await using var client = await ConnectAsync();

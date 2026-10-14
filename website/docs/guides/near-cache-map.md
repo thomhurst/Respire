@@ -40,10 +40,19 @@ Stored `default(TValue)` is distinct from an absent field through `RespireGet<TV
 
 ## Loading and persistence
 
-Pass `RespireMapOptions<TKey, TValue>` as the last constructor argument:
+Pass `RespireMapOptions<TKey, TValue>` as the last constructor argument. This factory
+adapts an application persistence service:
 
+<!-- doc-test-declaration -->
 ```csharp
-var options = new RespireMapOptions<int, int>
+public interface IScoreStore
+{
+    ValueTask<int?> ReadScoreAsync(int key, CancellationToken cancellationToken);
+    ValueTask UpsertScoreAsync(int key, int value, CancellationToken cancellationToken);
+    ValueTask DeleteScoreAsync(int key, CancellationToken cancellationToken);
+}
+
+static RespireMapOptions<int, int> CreateOptions(IScoreStore database) => new()
 {
     Loader = async (key, ct) =>
     {
@@ -96,9 +105,13 @@ of the same entry. They are not coalesced. Background writer failures retain the
 for the next interval. Inspect `LastWriterError` or call `FlushAsync` to observe a failure.
 Writers must be idempotent: a partially applied batch may be delivered again. Ordering across
 different map instances is not guaranteed; use external version checks when that matters.
-While writes are pending, the external store can lag Redis. A read-through miss (for example,
-after deletion or expiry) can therefore reload an older external value. Use version checks or
-tombstones in your loader/store when combining read-through with deferred persistence.
+Before invoking a loader on a Redis miss, the map drains all of its pending writer batches.
+This prevents a read after deletion or expiry from reloading an external value that predates
+this map's queued changes. The read (including keyed preload) waits for persistence; if a
+writer fails, the read throws without calling the loader and retains the failed batch for
+retry. Cache hits and reads without a loader do not trigger a flush. Other map instances'
+queues are independent: use external version checks or tombstones when coordinating deferred
+writes across instances.
 
 **Dispose the map before its client.** `DisposeAsync` rejects new operations, waits for accepted
 operations and the active writer call, then drains all queued batches, including a final short

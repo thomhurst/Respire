@@ -69,6 +69,10 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public Exception? LastWriterError => Volatile.Read(ref _lastWriterError);
 
     /// <summary>Reads from the near cache or Redis, then optionally loads an absent field.</summary>
+    /// <remarks>
+    /// Before loading a miss, drains this map's pending write-behind changes so the loader sees
+    /// them in the external store. A writer failure propagates without invoking the loader.
+    /// </remarks>
     public async ValueTask<RespireGet<TValue>> GetAsync(TKey key, CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
@@ -86,6 +90,10 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         var bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
         if (bytes is not null) return new(true, _decode(bytes));
         if (_options.Loader is null) return default;
+        // A pending delete or an expired pending write must reach the store before a loader
+        // can read it. Admission is held, so no newer mutation can be enqueued during the drain.
+        if (_pending.Count != 0)
+            await FlushCoreAsync(cancellationToken).ConfigureAwait(false);
         var loaded = await _options.Loader(key, cancellationToken).ConfigureAwait(false);
         if (!loaded.Found) return default;
         // Never replace a concurrent writer's value, and never echo a loader fill to its writer.
