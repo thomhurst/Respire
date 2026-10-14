@@ -57,6 +57,7 @@ public class DependencyInjectionOptionsTests
         if (type == typeof(IRespireCredentialProvider)) return new Credentials();
         if (type == typeof(IRespireSerializer)) return RespireSerializer.Default;
         if (type == typeof(ILoggerFactory)) return NullLoggerFactory.Instance;
+        if (type == typeof(RespirePipelineHook)) return new PipelineHook();
         return Activator.CreateInstance(type)!;
     }
 
@@ -99,7 +100,7 @@ public class DependencyInjectionOptionsTests
         // Mapping is tested separately from validation: this exercises all fields, including
         // settings that cannot be enabled together on one client (replicas and circuit breaker).
         var options = RespireConfiguration.Apply(section, new RespireOptions());
-        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "Serializer", "LoggerFactory"];
+        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "Serializer", "LoggerFactory", "PipelineHook"];
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
             if (runtimeServices.Contains(property.Name)) continue;
@@ -268,6 +269,14 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.RetryPolicy!.MaxAttempts).IsEqualTo(8);
         await Assert.That(options.CircuitBreaker!.OpenDuration).IsEqualTo(TimeSpan.FromSeconds(20));
         await Assert.That(options.StreamProducerId).IsEqualTo("worker-1");
+    }
+
+    private sealed class PipelineHook : RespirePipelineHook
+    {
+        public override object? OnExecuting(RespirePipelineContext context) => null;
+
+        public override void OnCompleted(RespirePipelineContext context, object? state,
+            RespirePipelineOutcome outcome, Exception? error) { }
     }
 
     private sealed class Credentials : IRespireCredentialProvider

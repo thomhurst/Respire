@@ -246,9 +246,14 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     /// connection-acquisition failures are reported in the result rather than rethrown.
     /// Invalid lifecycle use, such as executing a disposed or already-sent batch, still throws.
     /// </summary>
-    public async ValueTask<RespireBatchResult> TryExecuteAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireBatchResult> TryExecuteAsync(CancellationToken cancellationToken = default)
+        => _client.Core.Options.PipelineHook is { } hook
+            ? TryExecuteHookedAsync(hook, cancellationToken)
+            : TryExecuteCoreAsync(cancellationToken);
+
+    private async ValueTask<RespireBatchResult> TryExecuteCoreAsync(CancellationToken cancellationToken, bool admitted = false)
     {
-        using var importUsage = EnterObservedOperation();
+        using var importUsage = admitted ? null : EnterObservedOperation();
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";

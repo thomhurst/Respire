@@ -7,6 +7,85 @@ description: Flush commands together and execute atomic Redis transactions.
 
 Respire pipelines concurrent commands automatically. Use a batch when sequential code should queue several commands and send them in one flush. Use a transaction when they must run atomically.
 
+## Observe or reject explicit executions
+
+Set `RespireOptions.PipelineHook` to audit, time, or reject explicit batches and transaction
+commits. Client views share the hook. The default is `null`: execution allocates no hook state
+and uses the existing async path without a hook wrapper.
+
+<!-- doc-test-tail-declaration: split-before=sealed class AuditPipelineHook -->
+```csharp
+using System.Diagnostics;
+
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    PipelineHook = new AuditPipelineHook(),
+});
+
+sealed class AuditPipelineHook : RespirePipelineHook
+{
+    public override object? OnExecuting(RespirePipelineContext context)
+    {
+        if (context.Commands.Any(name => name is "FLUSHDB" or "FLUSHALL"))
+            throw new InvalidOperationException("Flush commands are forbidden in this execution.");
+        return Stopwatch.GetTimestamp();
+    }
+
+    public override void OnCompleted(RespirePipelineContext context, object? state,
+        RespirePipelineOutcome outcome, Exception? error)
+    {
+        var elapsed = state is long started ? Stopwatch.GetElapsedTime(started) : TimeSpan.Zero;
+        Console.WriteLine($"{context.Commands.Count} commands: {outcome} in {elapsed}; {error?.Message}");
+    }
+}
+```
+
+Admission runs synchronously once after lifecycle validation, before connection acquisition or
+submission of any queued command. `Commands` is an immutable ordered snapshot of command names;
+durability batches append `WAIT` or `WAITAOF`. It contains no keys or values. Transaction framing
+(`MULTI`/`EXEC`) is represented by `IsTransaction`, rather than extra list entries. You may retain
+the context after completion.
+
+Throwing from admission rejects the whole execution and faults every pending with that exception.
+`TryExecuteAsync` returns those failures; `ExecuteAsync`, durability methods, and transaction
+commits throw. An empty batch's admission rejection also throws because there is no pending in
+which to return a failure. Rejected executions are consumed and cannot be resubmitted.
+
+Completion runs once with the state returned by admission (or `null` when admission threw):
+
+| Outcome | Meaning |
+| --- | --- |
+| `Succeeded` | All queued results and any acknowledgement succeeded. |
+| `Failed` | Execution failed, or at least one queued result failed, including conversion errors. |
+| `Canceled` | The first execution failure was an `OperationCanceledException`. Timeouts are `Failed`. |
+| `Aborted` | A watched commit returned `false`. |
+| `Rejected` | Admission threw, including if the callback threw cancellation. |
+
+The completion error is the first failure in queue order when several members fail. A transaction
+can commit successfully and still report `Failed` because a member's pending contains a Redis
+error. Completion runs after result publication and execution cleanup. Completion exceptions are
+ignored so they cannot replace the result or leak response resources. Record observer errors
+inside your hook if you need to diagnose them.
+
+Internal retries and redirects are enclosed by the same pair of callbacks. Empty valid executions
+also invoke the hook. Invalid lifecycle calls and failed preflight validation do not. An already
+canceled ordinary execution still reaches admission; durability preflight can reject cancellation
+before admission. A hook sees the caller's token and cannot replace it.
+
+Hooks must be thread-safe: multiple batches and client views may invoke the same instance
+concurrently. Keep callbacks short and nonblocking. A callback may start a separate execution,
+which invokes the hook independently; guard against recursion in your own code. Do not mutate,
+dispose, or resubmit the execution being observed.
+
+This hook covers explicit batches, durability batches, transaction commits, and batches/commits
+created by hash import sessions. `WATCH` and import-session setup occur before this boundary.
+An external transaction retry helper creates a new transaction for each attempt, so each commit
+has its own callbacks. Individually dispatched commands, automatic pipelining, cache hits, hedges,
+subscriptions, and streaming operations outside an explicit batch do not invoke this hook. It is
+**not a client-wide command authorization policy**; logical command interception is tracked
+separately in [#1685](https://github.com/thomhurst/Respire/issues/1685).
+
 ## Batch one flush
 
 ```csharp

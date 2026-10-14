@@ -1,4 +1,20 @@
 #nullable enable
+Respire.RespirePipelineContext
+Respire.RespirePipelineContext.CancellationToken.get -> System.Threading.CancellationToken
+Respire.RespirePipelineContext.Commands.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.RespirePipelineContext.IsTransaction.get -> bool
+Respire.RespirePipelineHook
+Respire.RespirePipelineHook.RespirePipelineHook() -> void
+abstract Respire.RespirePipelineHook.OnCompleted(Respire.RespirePipelineContext! context, object? state, Respire.RespirePipelineOutcome outcome, System.Exception? error) -> void
+abstract Respire.RespirePipelineHook.OnExecuting(Respire.RespirePipelineContext! context) -> object?
+Respire.RespirePipelineOutcome
+Respire.RespirePipelineOutcome.Aborted = 3 -> Respire.RespirePipelineOutcome
+Respire.RespirePipelineOutcome.Canceled = 2 -> Respire.RespirePipelineOutcome
+Respire.RespirePipelineOutcome.Failed = 1 -> Respire.RespirePipelineOutcome
+Respire.RespirePipelineOutcome.Rejected = 4 -> Respire.RespirePipelineOutcome
+Respire.RespirePipelineOutcome.Succeeded = 0 -> Respire.RespirePipelineOutcome
+Respire.RespireOptions.PipelineHook.get -> Respire.RespirePipelineHook?
+Respire.RespireOptions.PipelineHook.init -> void
 Respire.RespireException.Endpoint.get -> Respire.RespireEndpoint?
 Respire.RespireException.Endpoint.init -> void
 Respire.RespireTracing

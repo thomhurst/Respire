@@ -86,11 +86,19 @@ public sealed partial class RespireBatch
             + (timeout.Ticks % TimeSpan.TicksPerMillisecond == 0 ? 0 : 1);
     }
 
-    private async ValueTask<T> ExecuteWithAcknowledgementAsync<TCommand, T>(
+    private ValueTask<T> ExecuteWithAcknowledgementAsync<TCommand, T>(
         string operation, TCommand acknowledgement, Func<RespValue, T> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
+        => _client.Core.Options.PipelineHook is { } hook
+            ? ExecuteAcknowledgementHookedAsync(hook, operation, acknowledgement, convert, cancellationToken)
+            : ExecuteAcknowledgementCoreAsync(operation, acknowledgement, convert, cancellationToken);
+
+    private async ValueTask<T> ExecuteAcknowledgementCoreAsync<TCommand, T>(
+        string operation, TCommand acknowledgement, Func<RespValue, T> convert, CancellationToken cancellationToken,
+        bool admitted = false, int? admittedSlot = null)
+        where TCommand : struct, IRespCommand
     {
-        var slot = ValidateDurabilityAdmission(cancellationToken);
+        var slot = admitted ? admittedSlot : ValidateDurabilityAdmission(cancellationToken);
         var core = _client.Core;
 
         _sent = true;

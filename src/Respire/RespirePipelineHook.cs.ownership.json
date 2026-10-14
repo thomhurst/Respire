@@ -1,0 +1,14 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespirePipelineHook.OnExecuting(RespirePipelineContext):object?",
+      "Reason": "Application admission callback; the explicit execution owns dispatch and rejection."
+    },
+    {
+      "Member": "Respire.RespirePipelineHook.OnCompleted(RespirePipelineContext,object?,RespirePipelineOutcome,Exception?):void",
+      "Reason": "Application completion observer; no command dispatch and exceptions are contained."
+    }
+  ]
+}
