@@ -7,7 +7,7 @@ namespace Respire.Tests;
 
 public class LoggingCatalogTests
 {
-    private sealed record LogEvent(string Package, int Id, string Name);
+    private sealed record LogEvent(string Package, int Id, string Name, string Level);
 
     [Test]
     public async Task ShippingLogsHaveUniqueExplicitIdsAndMatchPublishedCatalog()
@@ -36,8 +36,37 @@ public class LoggingCatalogTests
         var published = File.ReadLines(Path.Combine(root, "website", "docs", "integrations", "log-events.md"))
             .Where(line => line.StartsWith("| `", StringComparison.Ordinal))
             .Select(line => line.Split('|', StringSplitOptions.TrimEntries))
-            .Select(parts => new LogEvent(parts[1].Trim('`'), int.Parse(parts[2]), parts[3].Trim('`'))).ToArray();
+            .Select(parts => new LogEvent(parts[1].Trim('`'), int.Parse(parts[2]), parts[3].Trim('`'), parts[4])).ToArray();
         await Assert.That(events.ToArray()).IsEquivalentTo(published);
+    }
+
+    [Test]
+    public async Task CatalogComparisonRejectsLevelMismatch()
+    {
+        var syntax = CSharpSyntaxTree.ParseText("""
+            partial class Example {
+                [LoggerMessage(1, LogLevel.Warning, "Positional")]
+                static partial void Positional(ILogger logger);
+                [LoggerMessage(EventId = 2, Level = LogLevel.Error, Message = "Named")]
+                static partial void Named(ILogger logger);
+                [LoggerMessage(EventId = 3, Message = "Dynamic")]
+                static partial void Dynamic(ILogger logger, LogLevel level);
+            }
+            """).GetRoot();
+        var events = ReadEvents("Package", syntax).ToArray();
+        LogEvent[] published = [
+            new("Package", 1, "Positional", "Warning"),
+            new("Package", 2, "Named", "Error"),
+            new("Package", 3, "Dynamic", "Dynamic"),
+        ];
+        await Assert.That(events).IsEquivalentTo(published);
+        foreach (var index in Enumerable.Range(0, published.Length))
+        {
+            var mismatched = published.ToArray();
+            mismatched[index] = mismatched[index] with { Level = "Information" };
+            await Assert.That(async () => await Assert.That(events).IsEquivalentTo(mismatched))
+                .Throws<TUnit.Assertions.Exceptions.AssertionException>();
+        }
     }
 
     [Test]
@@ -86,7 +115,13 @@ public class LoggingCatalogTests
                 var eventName = name is null ? method.Identifier.ValueText
                     : name.Expression is LiteralExpressionSyntax { Token.Value: string text } ? text
                     : throw new InvalidOperationException("Event names must be stable string literals.");
-                yield return new LogEvent(package, value, eventName);
+                var level = arguments.FirstOrDefault(argument => argument.NameEquals?.Name.Identifier.ValueText == "Level"
+                        || argument.NameColon?.Name.Identifier.ValueText == "level")
+                    ?? arguments.Where(argument => argument.NameEquals is null && argument.NameColon is null).Skip(1).FirstOrDefault();
+                var eventLevel = level is null ? "Dynamic"
+                    : level.Expression is MemberAccessExpressionSyntax member ? member.Name.Identifier.ValueText
+                    : throw new InvalidOperationException("Event levels must be explicit LogLevel members.");
+                yield return new LogEvent(package, value, eventName, eventLevel);
             }
         }
     }
