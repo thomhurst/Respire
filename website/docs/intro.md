@@ -80,7 +80,7 @@ Physical name resolution is an integration capability, separate from `IRespireCl
 `RespireClient` and its prefixed views implement `IRespireNameResolver`:
 
 ```csharp
-if (client is IRespireNameResolver resolver)
+if (redis is IRespireNameResolver resolver)
 {
     RespireKey physicalKey = resolver.ResolveKey("item");
     RespireChannel physicalChannel = resolver.ResolveChannel("events");

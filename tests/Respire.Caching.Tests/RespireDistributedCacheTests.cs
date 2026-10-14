@@ -25,7 +25,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         TestContext.Current!.Metadata.TestDetails.Categories.Contains(ClientPause) ? PausableServer : fixture;
 
     [Test]
-    public async Task ExistingDecoratorRejectsUnsupportedCacheAsideWithoutRunningFactory()
+    public async Task DecoratorForwardsCacheAsideConfigurationErrorWithoutRunningFactory()
     {
         IRespireClient decorator = new ScriptInterceptingClient(Client, static (_, send) => send());
         var calls = 0;
@@ -33,8 +33,30 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         {
             calls++;
             return ValueTask.FromResult<string?>("unused");
-        }, TimeSpan.FromSeconds(1))).ThrowsExactly<NotSupportedException>();
+        }, TimeSpan.FromSeconds(1))).ThrowsExactly<InvalidOperationException>();
         await Assert.That(calls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DecoratorForwardsCacheAsideToEnabledClient()
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Server.ConnectionString) with
+        {
+            ClientSideCache = new RespireClientSideCacheOptions()
+        });
+        IRespireClient decorator = new ScriptInterceptingClient(client, static (_, send) => send());
+        var calls = 0;
+        var key = $"decorator-cache-aside:{Guid.NewGuid():N}";
+
+        var value = await decorator.GetOrSetAsync<string>(key, _ =>
+        {
+            calls++;
+            return ValueTask.FromResult<string?>("created");
+        }, TimeSpan.FromMinutes(1));
+
+        await Assert.That(value).IsEqualTo("created");
+        await Assert.That(calls).IsEqualTo(1);
+        await Assert.That(await Client.GetStringAsync(key)).IsEqualTo("created");
     }
 
     private RespireClient? _client;
