@@ -8,6 +8,10 @@ description: What Respire supports today and what remains before a stable releas
 Respire is pre-release. Everything below is implemented, but public APIs may change.
 Each linked guide lists its server and protocol requirements.
 
+The next supported major targets **2.0.0** to avoid the occupied NuGet 1.x line.
+The pipeline supports manually published [release candidates](getting-started.md#release-candidates)
+before the stable cut; ordinary pushes only validate packages.
+
 Six settling surfaces now require an explicit [experimental API opt-in](experimental-apis.md):
 VectorData, semantic chat caching, hedged reads, hash import sessions, deferred raw commands,
 and StackExchange.Redis compatibility. These remain outside the 1.0 compatibility promise.
