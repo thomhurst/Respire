@@ -11,6 +11,49 @@ public class DeferredTypedFacetTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task SingleItemCancellationFormsHaveEquivalentDeferredCommands(bool transaction)
+    {
+        byte[][] replies = [":1\r\n"u8.ToArray(), "*1\r\n:123\r\n"u8.ToArray(),
+            ":7\r\n"u8.ToArray(), "*-1\r\n"u8.ToArray(), "*-1\r\n"u8.ToArray()];
+        await using var server = new FakeRespServer([.. replies, .. DeferredReplies(transaction, replies)]);
+        await using var connection = await FakeRespServer.ConnectClientAsync(server.Port);
+        var client = connection.WithKeyPrefix("tenant:");
+        using var cancellation = new CancellationTokenSource();
+        var function = RespireFunction.Create("single");
+
+        var deleted = await client.Keys.DeleteAsync("key", cancellation.Token);
+        var expiry = await client.Hashes.ExpiryAsync("hash", "field", cancellation.Token);
+        var called = await client.Functions.ExecuteIntegerAsync(function, "key", cancellationToken: cancellation.Token);
+        var list = await client.Lists.PopManyAsync("list", cancellationToken: cancellation.Token);
+        var sorted = await client.SortedSets.PopManyAsync("sorted", 1, false, null, cancellation.Token);
+        var expected = server.ReceivedCommands.ToArray();
+
+        await ExecuteAsync(client, transaction, async (queue, execute) =>
+        {
+            // Params handles single keys; cast the hash field to select the scalar result.
+            // Functions and multi-key pop result shapes use collection expressions.
+            RespirePending<long> pendingDelete = queue.Keys.Delete("key");
+            RespirePending<RespireTtl> pendingExpiry = queue.Hashes.Expiry("hash", (RespireKey)"field");
+            var pendingCall = queue.Functions.ExecuteInteger(function, ["key"]);
+            var pendingList = queue.Lists.PopMany(["list"]);
+            var pendingSorted = queue.SortedSets.PopMany(["sorted"]);
+            await execute();
+
+            await Assert.That(pendingDelete.Result).IsEqualTo(deleted);
+            await Assert.That(pendingExpiry.Result).IsEqualTo(expiry);
+            await Assert.That(pendingCall.Result).IsEqualTo(called);
+            await Assert.That(pendingList.Result).IsEqualTo(list);
+            await Assert.That(pendingSorted.Result).IsEqualTo(sorted);
+        });
+
+        var actual = server.ReceivedCommands.Skip(replies.Length)
+            .Where(command => command is not "MULTI" and not "EXEC");
+        await Assert.That(actual).IsEquivalentTo(expected, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task InferredRawValuesKeepTheirExistingWireEncoding(bool transaction)
     {
         var guid = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
@@ -196,7 +239,7 @@ public class DeferredTypedFacetTests
         });
     }
 
-    private static async Task ExecuteAsync(RespireClient client, bool transaction,
+    private static async Task ExecuteAsync(IRespireClient client, bool transaction,
         Func<IRespireCommandQueue, Func<Task>, Task> test)
     {
         if (transaction)

@@ -23,8 +23,8 @@ public class SystemTextJsonSerializerTests
     [Test]
     public async Task SerializerBackedPublicApis_DeclareTrimAndAotRequirements()
     {
-        var methods = new[]
-        {
+        MethodInfo[] methods =
+        [
             typeof(IRespireSerializer).GetMethods().Single(method =>
                 method.Name == nameof(IRespireSerializer.Serialize) && method.IsGenericMethod),
             typeof(IRespireSerializer).GetMethods().Single(method =>
@@ -33,9 +33,9 @@ public class SystemTextJsonSerializerTests
             typeof(IRespireClient).GetMethods().Single(method =>
                 method.Name == nameof(IRespireClient.SetAsync) && method.IsGenericMethod),
             typeof(RespireResult).GetMethod(nameof(RespireResult.As))!,
-            typeof(IScriptCommands).GetMethods().Single(method =>
+            .. typeof(IScriptCommands).GetMethods().Where(method =>
                 method.Name == nameof(IScriptCommands.ExecuteAsync) && method.IsGenericMethod),
-        };
+        ];
 
         foreach (var method in methods)
         {
