@@ -47,9 +47,9 @@ before offering them, including signature collisions between otherwise valid fix
 Automatic conversion currently targets static async methods with exactly one `IDatabase`
 parameter, used only as the receiver of supported calls. There must be no nested lambdas
 or local functions, parameter attributes/defaults, preprocessor directives, other database
-receivers, or partial-method declaration. Calls
+receivers, extension methods, or partial-method declaration. Calls
 must be immediately awaited; `ConfigureAwait(bool)` is preserved. The parameter becomes
-`global::Respire.RespireClient`, retaining its name.
+`global::Respire.RespireClient`, retaining its name and nullable annotation.
 
 | StackExchange.Redis expression | Converted Respire expression |
 | --- | --- |
@@ -72,10 +72,14 @@ instance methods, database aliases, batches, transactions, and other commands. A
 StackExchange.Redis SET value can delete a key; the tool never rewrites it to a native SET
 that rejects null. It never drops an option to make a call fit.
 
-The fix compiles the edited project and its dependent projects in the loaded solution.
-It is withheld if those projects have compiler errors, a caller still supplies `IDatabase`,
-a method-group conversion no longer matches, or a Respire reference is missing. RESP007
-can therefore appear without an available fix. Address compilation errors and migrate
+The fix checks compiler diagnostics in the edited document and its partial-type declarations,
+and searches references in the
+loaded solution. Methods with references to any member of their overload group (including
+inherited overloads) require manual migration. This protects both calls and method groups
+from silently selecting a different overload after the signature changes. The fix is also
+withheld if those documents have compiler errors or a Respire reference is missing;
+unrelated errors in other documents do not suppress it. RESP007
+can therefore appear without an available fix. Address relevant compilation errors and migrate
 callers/boundaries first, or migrate that method manually. External callers outside the
 loaded solution cannot be checked: changing a public method's parameter is a public API
 change that must be coordinated with its consumers.
@@ -84,7 +88,10 @@ change that must be coordinated with its consumers.
 
 Before:
 
+<!-- doc-test-declaration -->
 ```csharp
+using StackExchange.Redis;
+
 public static async Task<string?> ReadAsync(IDatabase database, string key)
 {
     return (string?)await database.StringGetAsync(key).ConfigureAwait(false);
@@ -93,6 +100,7 @@ public static async Task<string?> ReadAsync(IDatabase database, string key)
 
 After applying the fix:
 
+<!-- doc-test-declaration -->
 ```csharp
 public static async Task<string?> ReadAsync(global::Respire.RespireClient database, string key)
 {

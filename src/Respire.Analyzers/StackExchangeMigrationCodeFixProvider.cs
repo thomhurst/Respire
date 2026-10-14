@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Formatting;
 
 namespace Respire.Analyzers;
@@ -28,26 +29,48 @@ public sealed class StackExchangeMigrationCodeFixProvider : CodeFixProvider
             var method = root.FindNode(diagnostic.Location.SourceSpan).FirstAncestorOrSelf<MethodDeclarationSyntax>();
             var plan = MigrationPlan.Create(method, model, cancellationToken);
             if (plan is null) continue;
+            var symbol = (IMethodSymbol)model.GetDeclaredSymbol(plan.Method, cancellationToken)!;
+            if (await HasReferencedOverloadsAsync(symbol, context.Document.Project.Solution, cancellationToken).ConfigureAwait(false)) continue;
             var updated = context.Document.WithSyntaxRoot(root.ReplaceNode(plan.Method,
                 plan.Rewrite().WithAdditionalAnnotations(Formatter.Annotation)));
 
-            // Do not leave known callers, overloads, or method-group conversions broken. A
-            // missing Respire reference also prevents an action. No dependency is installed.
-            var solution = updated.Project.Solution;
-            var projectIds = solution.GetProjectDependencyGraph()
-                .GetProjectsThatTransitivelyDependOnThisProject(updated.Project.Id).Append(updated.Project.Id);
-            if (!await CompilesAsync(solution, projectIds, cancellationToken).ConfigureAwait(false)) continue;
+            // Only diagnose the changed document and its partial type. Reference searches protect callers
+            // without forcing a semantic diagnostics pass over every dependent project.
+            if (!await CompilesAsync(updated, cancellationToken).ConfigureAwait(false)) continue;
             context.RegisterCodeFix(CodeAction.Create(Title, _ => Task.FromResult(updated), Title), diagnostic);
         }
     }
 
-    private static async Task<bool> CompilesAsync(Solution solution, IEnumerable<ProjectId> projectIds, CancellationToken cancellationToken)
+    private static async Task<bool> HasReferencedOverloadsAsync(IMethodSymbol method, Solution solution, CancellationToken cancellationToken)
     {
-        foreach (var projectId in projectIds.Distinct())
+        // Even successful compilation cannot prove a caller retained its binding: a call
+        // can fall back to object, or a new RespireClient overload can steal an existing call.
+        // Keep referenced overload groups (including inherited methods) manual for now.
+        for (var type = method.ContainingType; type is not null; type = type.BaseType)
         {
-            var compilation = await solution.GetProject(projectId)!.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            if (compilation is null || compilation.GetDiagnostics(cancellationToken).Any(d => d.Severity == DiagnosticSeverity.Error)) return false;
+            foreach (var overload in type.GetMembers(method.Name).OfType<IMethodSymbol>())
+            {
+                var references = await SymbolFinder.FindReferencesAsync(overload, solution, cancellationToken).ConfigureAwait(false);
+                if (references.Any(r => r.Locations.Any())) return true;
+            }
         }
+        return false;
+    }
+
+    private static async Task<bool> CompilesAsync(Document document, CancellationToken cancellationToken)
+    {
+        var model = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+        var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+        if (model is null || root is null) return false;
+        // A duplicate signature can be diagnosed on the unchanged half of a partial type.
+        var trees = root.DescendantNodes().OfType<TypeDeclarationSyntax>()
+            .Select(type => model.GetDeclaredSymbol(type, cancellationToken))
+            .Where(symbol => symbol is not null)
+            .SelectMany(symbol => symbol!.DeclaringSyntaxReferences.Select(reference => reference.SyntaxTree))
+            .Append(model.SyntaxTree).Distinct();
+        foreach (var tree in trees)
+            if (model.Compilation.GetSemanticModel(tree).GetDiagnostics(cancellationToken: cancellationToken)
+                .Any(d => d.Severity == DiagnosticSeverity.Error)) return false;
         return true;
     }
 
@@ -60,11 +83,10 @@ public sealed class StackExchangeMigrationCodeFixProvider : CodeFixProvider
             var operations = await action.GetOperationsAsync(fixAllContext.CancellationToken).ConfigureAwait(false);
             var solution = operations.OfType<ApplyChangesOperation>().SingleOrDefault()?.ChangedSolution;
             if (solution is null) return null;
-            var graph = solution.GetProjectDependencyGraph();
-            var projects = solution.GetChanges(fixAllContext.Solution).GetProjectChanges()
-                .SelectMany(p => graph.GetProjectsThatTransitivelyDependOnThisProject(p.ProjectId).Append(p.ProjectId));
             // Individually valid signature changes can collide when combined across methods.
-            if (!await CompilesAsync(solution, projects, fixAllContext.CancellationToken).ConfigureAwait(false)) return null;
+            var documents = solution.GetChanges(fixAllContext.Solution).GetProjectChanges().SelectMany(p => p.GetChangedDocuments());
+            foreach (var id in documents)
+                if (!await CompilesAsync(solution.GetDocument(id)!, fixAllContext.CancellationToken).ConfigureAwait(false)) return null;
             return CodeAction.Create(Title, _ => Task.FromResult(solution), Title);
         }
     }

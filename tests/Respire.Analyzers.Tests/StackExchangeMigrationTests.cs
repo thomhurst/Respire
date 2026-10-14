@@ -83,6 +83,10 @@ public sealed class StackExchangeMigrationTests
     [Arguments("return await db.StringSetAsync(value: \"v\", key: key);", "Task<bool>", "value: \"v\", key: key")]
     [Arguments("return (string?)await db.StringGetAsync(key);", "Task<string?>", "Strings.GetStringAsync")]
     [Arguments("return (byte[]?)await db.StringGetAsync(key);", "Task<byte[]?>", "Strings.GetBytesAsync")]
+    [Arguments("var ok = await db.StringSetAsync(key, \"v\"); return ok;", "Task<bool>", "Strings.SetAsync")]
+    [Arguments("return (string?)await db.StringGetAsync((string?)await db.StringGetAsync(key));", "Task<string?>", "db.Strings.GetStringAsync(key)")]
+    [Arguments("return await db.StringSetAsync((string?)await db.StringGetAsync(key), \"v\");", "Task<bool>", "Strings.SetAsync")]
+    [Arguments("return (string?)await db.StringGetAsync((string?)await db.StringGetAsync(key).ConfigureAwait(false)).ConfigureAwait(false);", "Task<string?>", "ConfigureAwait(false)")]
     public async Task SupportedCalls_CompileAfterFix(string body, string returnType, string expected)
     {
         using var workspace = new AdhocWorkspace();
@@ -182,6 +186,92 @@ public sealed class StackExchangeMigrationTests
     }
 
     [Test]
+    [Arguments("Task<bool> Call(IDatabase db) => C.Run(db, \"k\");")]
+    [Arguments("System.Func<IDatabase, string, Task<bool>> Call() => C.Run;")]
+    [Arguments("Task<bool> Call(Respire.RespireClient db) => C.Run(db, \"k\");")]
+    public async Task ReferencedOverloads_RequireManualMigration(string caller)
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, $$"""
+            using System.Threading.Tasks;
+            using StackExchange.Redis;
+            public static class C {
+                public static async Task<bool> Run(IDatabase db, string key) => await db.KeyExistsAsync(key);
+                public static Task<bool> Run(object db, string key) => Task.FromResult(false);
+            }
+            class Caller { {{caller}} }
+            """);
+        await AssertCompiles(document.Project);
+        await Assert.That((await Actions(document, (await Analyze(document)).Single())).Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task NullableDatabaseParameter_PreservesAnnotation()
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, Wrap("if (db is null) return false; return await db.KeyExistsAsync(key);", "Task<bool>")
+            .Replace("IDatabase db", "IDatabase? db"));
+        // Any non-receiver use remains manual, including a null guard.
+        await Assert.That((await Analyze(document)).Single().Id).IsEqualTo(DiagnosticIds.StackExchangeManualMigration);
+        document = document.WithText(Microsoft.CodeAnalysis.Text.SourceText.From(
+            Wrap("return await db.KeyExistsAsync(key);", "Task<bool>").Replace("IDatabase db", "IDatabase? db")));
+        var solution = await Apply((await Actions(document, (await Analyze(document)).Single())).Single());
+        var updated = solution.GetDocument(document.Id)!;
+        await AssertCompiles(updated.Project);
+        await Assert.That((await updated.GetTextAsync()).ToString().Contains("RespireClient? db")).IsTrue();
+    }
+
+    [Test]
+    public async Task UnrelatedDocumentErrors_DoNotSuppressFix()
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, Wrap("return await db.KeyExistsAsync(key);", "Task<bool>"));
+        var other = document.Project.AddDocument("Broken.cs", "class Broken { MissingType Field; }");
+        document = other.Project.GetDocument(document.Id)!;
+        await Assert.That((await Actions(document, (await Analyze(document)).Single())).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task PartialTypeSignatureCollision_WithholdsFix()
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, Wrap("return await db.KeyExistsAsync(key);", "Task<bool>")
+            .Replace("static class C", "static partial class C"));
+        var other = document.Project.AddDocument("Other.cs", """
+            using System.Threading.Tasks;
+            public static partial class C {
+                public static Task<bool> Run(Respire.RespireClient db, string key) => Task.FromResult(false);
+            }
+            """);
+        document = other.Project.GetDocument(document.Id)!;
+        await AssertCompiles(document.Project);
+        await Assert.That((await Actions(document, (await Analyze(document)).Single())).Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ManySupportedCalls_ProduceOneMethodDiagnostic()
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, Wrap(string.Concat(Enumerable.Repeat("await db.KeyExistsAsync(key);", 100)), "Task"));
+        var diagnostic = (await Analyze(document)).Single();
+        await Assert.That(diagnostic.Id).IsEqualTo(DiagnosticIds.StackExchangeMigration);
+        var solution = await Apply((await Actions(document, diagnostic)).Single());
+        await AssertCompiles(solution.GetDocument(document.Id)!.Project);
+    }
+
+    [Test]
+    public async Task DatabaseSelectionOutsideMethod_IsManual()
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, """
+            using StackExchange.Redis;
+            class C { IConnectionMultiplexer connection = null!; IDatabase Database => connection.GetDatabase(3); }
+            """);
+        await AssertCompiles(document.Project);
+        await Assert.That((await Analyze(document)).Single().Id).IsEqualTo(DiagnosticIds.StackExchangeManualMigration);
+    }
+
+    [Test]
     public async Task DependentProjectCaller_PreventsSignatureBreakingFix()
     {
         using var workspace = new AdhocWorkspace();
@@ -247,10 +337,12 @@ public sealed class StackExchangeMigrationTests
     [Arguments("public static async Task<bool> Run(IDatabaseAsync db) => await db.KeyExistsAsync(\"k\");")]
     [Arguments("public static async Task<bool> Run(IDatabase db, IDatabase other) => await db.KeyExistsAsync(\"k\");")]
     [Arguments("public static async Task<bool> Run(IDatabase db) => await db.KeyExistsAsync((string)null!);")]
+    [Arguments("public static async Task<bool> Run(this IDatabase db) => await db.KeyExistsAsync(\"k\");")]
     public async Task UnsupportedMethodBoundaries_AreManual(string member)
     {
         using var workspace = new AdhocWorkspace();
-        var document = CreateDocument(workspace, "using System.Threading.Tasks; using StackExchange.Redis; class C { " + member + " }");
+        var document = CreateDocument(workspace, "using System.Threading.Tasks; using StackExchange.Redis; "
+            + (member.Contains("this IDatabase") ? "static " : "") + "class C { " + member + " }");
         await AssertCompiles(document.Project);
         var diagnostic = (await Analyze(document)).Single();
         await Assert.That(diagnostic.Id).IsEqualTo(DiagnosticIds.StackExchangeManualMigration);

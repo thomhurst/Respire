@@ -10,7 +10,7 @@ namespace Respire.Analyzers;
 internal sealed class MigrationPlan
 {
     private MigrationPlan(MethodDeclarationSyntax method, ParameterSyntax parameter,
-        List<InvocationExpressionSyntax> calls, Dictionary<SyntaxNode, SyntaxNode> replacements)
+        List<InvocationExpressionSyntax> calls, Dictionary<SyntaxNode, Func<SyntaxNode, SyntaxNode>> replacements)
     {
         Method = method;
         Parameter = parameter;
@@ -21,10 +21,11 @@ internal sealed class MigrationPlan
     internal MethodDeclarationSyntax Method { get; }
     internal ParameterSyntax Parameter { get; }
     internal List<InvocationExpressionSyntax> Calls { get; }
-    private Dictionary<SyntaxNode, SyntaxNode> Replacements { get; }
+    private Dictionary<SyntaxNode, Func<SyntaxNode, SyntaxNode>> Replacements { get; }
 
     private static bool IsStackExchangeType(INamedTypeSymbol? type, string name)
-        => type?.Name == name && type.ContainingNamespace.ToDisplayString() == "StackExchange.Redis"
+        => type?.Name == name && type.ContainingNamespace is { Name: "Redis", ContainingNamespace:
+            { Name: "StackExchange", ContainingNamespace.IsGlobalNamespace: true } }
             && type.ContainingAssembly.Name == "StackExchange.Redis";
 
     internal static bool IsDatabaseCall(IInvocationOperation operation)
@@ -43,7 +44,7 @@ internal sealed class MigrationPlan
             || method.Modifiers.Any(SyntaxKind.PartialKeyword)
             || method.DescendantNodes().Any(n => n is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax)
             || model.GetDeclaredSymbol(method, cancellationToken) is not { } symbol
-            || symbol.ExplicitInterfaceImplementations.Length != 0) return null;
+            || symbol.IsExtensionMethod || symbol.ExplicitInterfaceImplementations.Length != 0) return null;
 
         var parameters = symbol.Parameters.Where(p => IsStackExchangeType(p.Type as INamedTypeSymbol, "IDatabase")).ToArray();
         if (parameters.Length != 1 || parameters[0].RefKind != RefKind.None) return null;
@@ -51,7 +52,7 @@ internal sealed class MigrationPlan
         if (parameter.Default is not null || parameter.AttributeLists.Count != 0) return null;
 
         var calls = new List<InvocationExpressionSyntax>();
-        var replacements = new Dictionary<SyntaxNode, SyntaxNode>();
+        var replacements = new Dictionary<SyntaxNode, Func<SyntaxNode, SyntaxNode>>();
         foreach (var reference in method.DescendantNodes().OfType<IdentifierNameSyntax>())
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -66,20 +67,24 @@ internal sealed class MigrationPlan
         }
         if (calls.Count == 0) return null;
         // Do not let a supported parameter hide diagnostics on other database receivers.
+        var callSet = new HashSet<InvocationExpressionSyntax>(calls);
         if (method.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(i =>
             model.GetOperation(i, cancellationToken) is IInvocationOperation operation
-            && IsDatabaseCall(operation) && !calls.Contains(i))) return null;
-        replacements.Add(parameter.Type!, SyntaxFactory.ParseTypeName("global::Respire.RespireClient").WithTriviaFrom(parameter.Type!));
+            && IsDatabaseCall(operation) && !callSet.Contains(i))) return null;
+        var targetType = parameters[0].NullableAnnotation == NullableAnnotation.Annotated
+            ? "global::Respire.RespireClient?" : "global::Respire.RespireClient";
+        replacements.Add(parameter.Type!, node => SyntaxFactory.ParseTypeName(targetType).WithTriviaFrom(node));
         return new MigrationPlan(method, parameter, calls, replacements);
     }
 
     internal MethodDeclarationSyntax Rewrite()
-        => Method.ReplaceNodes(Replacements.Keys, (original, _) => Replacements[original]);
+        => Method.ReplaceNodes(Replacements.Keys, (original, rewritten) => Replacements[original](rewritten));
 
     private static bool TryRewrite(InvocationExpressionSyntax invocation, IInvocationOperation operation,
-        SemanticModel model, CancellationToken cancellationToken, out SyntaxNode? original, out SyntaxNode? replacement)
+        SemanticModel model, CancellationToken cancellationToken, out SyntaxNode? original, out Func<SyntaxNode, SyntaxNode>? replacement)
     {
-        original = replacement = null;
+        original = null;
+        replacement = null;
         var name = operation.TargetMethod.Name;
         if (name is not ("StringGetAsync" or "StringSetAsync" or "KeyExistsAsync" or "KeyDeleteAsync")) return false;
 
@@ -132,13 +137,26 @@ internal sealed class MigrationPlan
             resultNode = cast;
         }
 
+        original = resultNode;
+        var configured = awaitedExpression != invocation;
+        var compareDelete = name == "KeyDeleteAsync" && awaitExpression.Parent is not ExpressionStatementSyntax;
+        replacement = rewritten => RewriteCall(rewritten, target, configured, name == "KeyDeleteAsync", compareDelete);
+        return true;
+    }
+
+    private static ExpressionSyntax RewriteCall(SyntaxNode rewritten, string target, bool configured, bool delete, bool compareDelete)
+    {
+        var awaitExpression = (AwaitExpressionSyntax)(rewritten is CastExpressionSyntax cast ? cast.Expression : rewritten);
+        var invocation = (InvocationExpressionSyntax)(configured
+            ? ((MemberAccessExpressionSyntax)((InvocationExpressionSyntax)awaitExpression.Expression).Expression).Expression
+            : awaitExpression.Expression);
         var member = (MemberAccessExpressionSyntax)invocation.Expression;
         var names = target.Split('.');
         var facet = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression,
             member.Expression, SyntaxFactory.IdentifierName(names[0]));
         var updatedCall = invocation.WithExpression(member.WithExpression(facet)
             .WithName(SyntaxFactory.IdentifierName(names[1]).WithTriviaFrom(member.Name)));
-        if (name == "KeyDeleteAsync")
+        if (delete)
         {
             // Select the single-key overload even with a C# compiler predating params spans.
             updatedCall = updatedCall.WithArgumentList(updatedCall.ArgumentList.AddArguments(
@@ -147,17 +165,14 @@ internal sealed class MigrationPlan
         }
         var updatedAwait = awaitExpression.ReplaceNode(invocation, updatedCall);
         ExpressionSyntax result = updatedAwait;
-        if (name == "KeyDeleteAsync")
+        if (compareDelete)
         {
             // StackExchange single-key DEL is bool; Respire returns the number deleted.
             // A bare comparison is not a legal expression statement, so keep discarded awaits.
-            if (awaitExpression.Parent is not ExpressionStatementSyntax)
-                result = SyntaxFactory.ParenthesizedExpression(SyntaxFactory.BinaryExpression(
+            result = SyntaxFactory.ParenthesizedExpression(SyntaxFactory.BinaryExpression(
                     SyntaxKind.NotEqualsExpression, updatedAwait,
                     SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(0))));
         }
-        original = resultNode;
-        replacement = result.WithTriviaFrom(resultNode);
-        return true;
+        return result.WithTriviaFrom(rewritten);
     }
 }
