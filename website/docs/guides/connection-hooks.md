@@ -8,6 +8,7 @@ description: Audit, time, or reject physical connection establishment without ex
 Set `RespireOptions.ConnectionHook` to observe or reject each physical connection attempt.
 The default is `null`; that path creates no hook context, delegate, or extra async wrapper.
 
+<!-- doc-test-tail-declaration: split-before=sealed class ConnectionAudit -->
 ```csharp
 var options = new RespireOptions
 {
