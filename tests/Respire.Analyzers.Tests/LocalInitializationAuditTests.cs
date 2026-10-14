@@ -29,7 +29,7 @@ public class LocalInitializationAuditTests
     /// </summary>
     private static readonly Dictionary<string, string> ReviewedImportedSites = new(StringComparer.Ordinal)
     {
-        // Polyfill 11.4.4, net8.0 only. Base64Url.Decode: quantum[i] is read only for i below count, after
+        // Polyfill 11.4.5, net8.0 only. Base64Url.Decode: quantum[i] is read only for i below count, after
         // DecodeValue wrote it. CreateVersion7: CopyTo writes bytes 0..6 and RandomNumberGenerator.Fill
         // writes 6..16 before the Guid reads all 16. HighNibble: Guid.TryWriteBytes writes all 16 bytes
         // before buffer[index] is read.
@@ -39,6 +39,61 @@ public class LocalInitializationAuditTests
         ["Respire.SignalR|net8.0|System.Buffers.Text.Base64Url::Decode``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Boolean,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64Url.Decode quantum",
         ["Respire.SignalR|net8.0|Polyfills.Polyfill::CreateVersion7``0(System.DateTimeOffset):System.Guid|1"] = "Polyfill Guid.CreateVersion7 uuidBytes",
         ["Respire.SignalR|net8.0|Polyfills.Polyfill::HighNibble``0(System.Guid,Int32):Int32|1"] = "Polyfill Guid.Variant/Version buffer",
+
+        // Polyfill 11.4.5 Base64Url.EncodeToString, net8.0 only: the 128-char buffer is sliced to
+        // EncodedLength(source.Length). Encode writes every character of that slice before ToString;
+        // empty input returns before allocating, and a length overflow throws before the buffer is read.
+        ["Respire|net8.0|System.Buffers.Text.Base64Url::EncodeToString``0(System.ReadOnlySpan`1<Byte>):String|1"] = "Polyfill Base64Url.EncodeToString buffer",
+        ["Respire.SignalR|net8.0|System.Buffers.Text.Base64Url::EncodeToString``0(System.ReadOnlySpan`1<Byte>):String|1"] = "Polyfill Base64Url.EncodeToString buffer",
+
+        // Polyfill 11.4.5 Base64.DecodeBase64, both frameworks: the span overload writes decoded
+        // bytes and returns their count. Only that prefix of the 256-byte buffer is copied by ToArray.
+        // Invalid input throws from Convert.FromBase64CharArray before the buffer is read.
+        ["Respire|net8.0|Polyfills.Polyfill::DecodeBase64``0(System.ReadOnlySpan`1<Char>):Byte[]|1"] = "Polyfill Base64.DecodeBase64 buffer",
+        ["Respire|net10.0|Polyfills.Polyfill::DecodeBase64``0(System.ReadOnlySpan`1<Char>):Byte[]|1"] = "Polyfill Base64.DecodeBase64 buffer",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::DecodeBase64``0(System.ReadOnlySpan`1<Char>):Byte[]|1"] = "Polyfill Base64.DecodeBase64 buffer",
+        ["Respire.SignalR|net10.0|Polyfills.Polyfill::DecodeBase64``0(System.ReadOnlySpan`1<Char>):Byte[]|1"] = "Polyfill Base64.DecodeBase64 buffer",
+
+        // Polyfill 11.4.5 Base64.TryDecodeBase64, both frameworks: DecodeBase64 initializes the
+        // decoded prefix before CopyTo. A short destination skips CopyTo; invalid input throws before
+        // reading the buffer. Large inputs replace the 256-byte stack span with a rented array.
+        ["Respire|net8.0|Polyfills.Polyfill::TryDecodeBase64``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&):Boolean|1"] = "Polyfill Base64.TryDecodeBase64 buffer",
+        ["Respire|net10.0|Polyfills.Polyfill::TryDecodeBase64``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&):Boolean|1"] = "Polyfill Base64.TryDecodeBase64 buffer",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::TryDecodeBase64``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&):Boolean|1"] = "Polyfill Base64.TryDecodeBase64 buffer",
+        ["Respire.SignalR|net10.0|Polyfills.Polyfill::TryDecodeBase64``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&):Boolean|1"] = "Polyfill Base64.TryDecodeBase64 buffer",
+
+        // Polyfill 11.4.5 Base64.DecodeFromChars (OperationStatus), both frameworks: DecodeViaUtf8
+        // writes each byte of the source-length slice before Base64.DecodeFromUtf8 sees it, including
+        // 0xFF for non-ASCII input. The unused tail of the 256-byte buffer is never read, on any status.
+        ["Respire|net8.0|Polyfills.Polyfill::DecodeFromChars``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.DecodeFromChars buffer",
+        ["Respire|net10.0|Polyfills.Polyfill::DecodeFromChars``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.DecodeFromChars buffer",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::DecodeFromChars``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.DecodeFromChars buffer",
+        ["Respire.SignalR|net10.0|Polyfills.Polyfill::DecodeFromChars``0(System.ReadOnlySpan`1<Char>,System.Span`1<Byte>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.DecodeFromChars buffer",
+
+        // Polyfill 11.4.5 Base64.DecodeFromUtf8, both frameworks: Widen writes every character of
+        // the source-length slice of the 256-char buffer before DecodeBase64 reads it. Empty input
+        // returns before allocation; malformed Base64 reaches the decoder only after initialization.
+        ["Respire|net8.0|Polyfills.Polyfill::DecodeFromUtf8``0(System.ReadOnlySpan`1<Byte>):Byte[]|1"] = "Polyfill Base64.DecodeFromUtf8 buffer",
+        ["Respire|net10.0|Polyfills.Polyfill::DecodeFromUtf8``0(System.ReadOnlySpan`1<Byte>):Byte[]|1"] = "Polyfill Base64.DecodeFromUtf8 buffer",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::DecodeFromUtf8``0(System.ReadOnlySpan`1<Byte>):Byte[]|1"] = "Polyfill Base64.DecodeFromUtf8 buffer",
+        ["Respire.SignalR|net10.0|Polyfills.Polyfill::DecodeFromUtf8``0(System.ReadOnlySpan`1<Byte>):Byte[]|1"] = "Polyfill Base64.DecodeFromUtf8 buffer",
+
+        // Polyfill 11.4.5 Base64.EncodeToChars (OperationStatus), both frameworks: EncodeViaUtf8
+        // reads only the charsWritten bytes initialized by Base64.EncodeToUtf8 in the 256-byte buffer.
+        // This also bounds reads when the destination is short or the final block is incomplete.
+        ["Respire|net8.0|Polyfills.Polyfill::EncodeToChars``0(System.ReadOnlySpan`1<Byte>,System.Span`1<Char>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.EncodeToChars buffer",
+        ["Respire|net10.0|Polyfills.Polyfill::EncodeToChars``0(System.ReadOnlySpan`1<Byte>,System.Span`1<Char>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.EncodeToChars buffer",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::EncodeToChars``0(System.ReadOnlySpan`1<Byte>,System.Span`1<Char>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.EncodeToChars buffer",
+        ["Respire.SignalR|net10.0|Polyfills.Polyfill::EncodeToChars``0(System.ReadOnlySpan`1<Byte>,System.Span`1<Char>,Int32&,Int32&,Boolean):System.Buffers.OperationStatus|1"] = "Polyfill Base64.EncodeToChars buffer",
+
+        // Polyfill 11.4.5 CryptographicOperations.VerifyHmac, both frameworks: TryHmacData writes
+        // bytesWritten bytes of the 64-byte mac buffer; FixedTimeEquals reads only that slice.
+        // Supported hashes fit in 64 bytes. Invalid algorithms/hash lengths throw before allocation;
+        // a failed TryHmacData reports zero bytes, so no unwritten bytes are compared.
+        ["Respire|net8.0|Polyfills.Polyfill::VerifyHmac``0(System.Security.Cryptography.HashAlgorithmName,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>):Boolean|1"] = "Polyfill CryptographicOperations.VerifyHmac mac",
+        ["Respire|net10.0|Polyfills.Polyfill::VerifyHmac``0(System.Security.Cryptography.HashAlgorithmName,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>):Boolean|1"] = "Polyfill CryptographicOperations.VerifyHmac mac",
+        ["Respire.SignalR|net8.0|Polyfills.Polyfill::VerifyHmac``0(System.Security.Cryptography.HashAlgorithmName,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>):Boolean|1"] = "Polyfill CryptographicOperations.VerifyHmac mac",
+        ["Respire.SignalR|net10.0|Polyfills.Polyfill::VerifyHmac``0(System.Security.Cryptography.HashAlgorithmName,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>,System.ReadOnlySpan`1<Byte>):Boolean|1"] = "Polyfill CryptographicOperations.VerifyHmac mac",
     };
 
     private static readonly string Flavor =
