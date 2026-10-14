@@ -185,6 +185,12 @@ public sealed class RespireJsonClient
         return await SetCoreAsync(key, utf8Json, path, token, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Gets one path from one key, preserving the multi-key result shape.</summary>
+    public ValueTask<RespireJsonValue<T>[]?[]> MultiGetAsync<T>(
+        RespireKey key, JsonTypeInfo<T> jsonTypeInfo, RespireJsonPath path = default,
+        CancellationToken cancellationToken = default)
+        => MultiGetAsync([key], jsonTypeInfo, path, cancellationToken);
+
     /// <summary>Gets one path from several keys. All keys must share a Cluster slot.</summary>
     /// <returns>
     /// One entry per key, in order. An entry is null when its key does not exist. Otherwise it holds the

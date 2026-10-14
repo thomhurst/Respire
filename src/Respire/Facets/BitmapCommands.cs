@@ -177,6 +177,15 @@ public readonly struct BitFieldOperation
 /// <summary>Redis bitmap and bit-field commands.</summary>
 public interface IBitmapCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> OperateAsync(BitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long?[]> FieldAsync(RespireKey key, BitFieldOperation operation, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, BitFieldOperation get, CancellationToken cancellationToken);
+
     /// <summary>Returns the bit stored at an offset. Redis: GETBIT.</summary>
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
 
@@ -225,6 +234,19 @@ public interface IBitmapCommands
 
 internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> OperateAsync(BitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
+        => OperateAsync(operation, destination, [sourceKey], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long?[]> FieldAsync(RespireKey key, BitFieldOperation operation, CancellationToken cancellationToken)
+        => FieldAsync(key, [operation], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, BitFieldOperation get, CancellationToken cancellationToken)
+        => FieldReadOnlyAsync(key, [get], cancellationToken);
+
+
     public ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);

@@ -310,7 +310,7 @@ public class ClusterNotificationRoutingTests
             .First(static value => ClusterHash.GetSlot(value) >= 8192);
         var firstChannel = RespireChannel.KeySpaceSingleKey(firstKey, 0);
         var secondChannel = RespireChannel.KeySpaceSingleKey(secondKey, 0);
-        await using var subscription = await client.SubscribeAsync(new RespireChannel[] { firstChannel, secondChannel }, CancellationToken.None)
+        await using var subscription = await client.SubscribeAsync(new RespireChannel[] { firstChannel, secondChannel }, cancellationToken: CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(second.Port, first.Port);
@@ -364,7 +364,7 @@ public class ClusterNotificationRoutingTests
         var allChannel = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
         RespireChannel[] channels = includeAllPrimaries
             ? [allChannel, firstChannel, secondChannel] : [firstChannel, secondChannel];
-        var subscribing = client.SubscribeAsync(channels, CancellationToken.None).AsTask();
+        var subscribing = client.SubscribeAsync(channels, cancellationToken: CancellationToken.None).AsTask();
         await resolvingSecond.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -411,7 +411,7 @@ public class ClusterNotificationRoutingTests
         await using var client = CreateClusterClient(first.Port, resp3: true);
         var all = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
         var key = RespireChannel.KeySpaceSingleKey("key", 0);
-        var subscribing = client.SubscribeAsync(new[] { all, key }, CancellationToken.None).AsTask();
+        var subscribing = client.SubscribeAsync(new[] { all, key }, cancellationToken: CancellationToken.None).AsTask();
         await connecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var router = client.Core.Cluster!;
         router.ClearSlotOwner(0, router.GetKnownSlotOwner(0)!);
@@ -669,7 +669,7 @@ public class ClusterNotificationRoutingTests
         };
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         using var cancellation = new CancellationTokenSource();
-        var activation = client.SubscribeAsync(descriptor, cancellation.Token).AsTask();
+        var activation = client.SubscribeAsync(descriptor, cancellationToken: cancellation.Token).AsTask();
         await pendingAck.Task.WaitAsync(TimeSpan.FromSeconds(10));
         cancellation.Cancel();
         await Assert.That(async () => await activation.WaitAsync(TimeSpan.FromSeconds(10)))
@@ -793,7 +793,7 @@ public class ClusterNotificationRoutingTests
             return true;
         };
         using var cancellation = new CancellationTokenSource();
-        var activation = client.SubscribeAsync(RespireChannel.KeySpacePrefix("tenant:", 0), cancellation.Token).AsTask();
+        var activation = client.SubscribeAsync(RespireChannel.KeySpacePrefix("tenant:", 0), cancellationToken: cancellation.Token).AsTask();
         await pendingAck.Task.WaitAsync(TimeSpan.FromSeconds(10));
         cancellation.Cancel();
         await Assert.That(async () => await activation.WaitAsync(TimeSpan.FromSeconds(10)))
@@ -1560,7 +1560,7 @@ public class ClusterNotificationRoutingTests
         // replayed route must not wait for it.
         await using var client = CreateClusterClient(server.Port, resp3: false);
         await using var subscription = await client.SubscribeAsync(
-                new RespireChannel[] { stableDescriptor, tenantDescriptor }, CancellationToken.None)
+                new RespireChannel[] { stableDescriptor, tenantDescriptor }, cancellationToken: CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         var gapPublished = new TaskCompletionSource<RespireSubscriptionGap>(TaskCreationOptions.RunContinuationsAsynchronously);
         subscription.DeliveryGap += gap => gapPublished.TrySetResult(gap);

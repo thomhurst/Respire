@@ -23,6 +23,7 @@
         "LatencyGraphAsync(string,CancellationToken):ValueTask<string>",
         "MemoryMallocStatsAsync(CancellationToken):ValueTask<string>",
         "MigrateAsync(RespireEndpoint,ReadOnlySpan<RespireKey>,int,TimeSpan,RespireMigrateOptions?,CancellationToken):ValueTask<RespireMigrateResult>",
+        "MigrateAsync(RespireEndpoint,RespireKey,int,TimeSpan,RespireMigrateOptions?,CancellationToken):ValueTask<RespireMigrateResult>",
         "ModuleLoadAsync(string,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask",
         "ModuleLoadExtendedAsync(string,ReadOnlySpan<KeyValuePair<string,RespireValue>>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask",
         "ModuleUnloadAsync(string,CancellationToken):ValueTask",

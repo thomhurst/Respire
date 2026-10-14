@@ -24,14 +24,18 @@ Descriptors expose the canonical command name and the references that list it. C
 
 The catalog is grouped by feature for IDE completion: `Array`, `Bitmap`, `Bloom`, `Cluster`, `Connection`, `CountMinSketch`, `Cuckoo`, `Dragonfly`, `Geo`, `Hash`, `HyperLogLog`, `Json`, `Key`, `KeyDb`, `List`, `PubSub`, `Scripting`, `Search`, `Sentinel`, `Server`, `Set`, `SortedSet`, `Stream`, `String`, `TDigest`, `TimeSeries`, `TopK`, `Transaction`, and `VectorSet`. See [Dragonfly and KeyDB extensions](server-extensions.md) for vendor commands.
 
-Blocking descriptors, such as `BLPOP` or an `XREAD` with `BLOCK`, use a dedicated connection automatically. When the server-side timeout can be unbounded, pass a cancellation token to the array overload. Flags and cancellation are optional there, so name the one you need:
+Blocking descriptors, such as `BLPOP` or an `XREAD` with `BLOCK`, use a dedicated connection automatically. When the server-side timeout can be unbounded, pass a cancellation token before the individual arguments:
 
 ```csharp
 using RespireResult popped = await redis.ExecuteAsync(
     RespireCommands.List.BLPOP,
-    ["jobs", 0],
-    cancellationToken: cancellationToken);
+    cancellationToken,
+    "jobs", 0);
 ```
+
+`ExecuteFireAndForgetAsync(command, cancellationToken, args...)` uses the same
+ordering. The array overload remains available when supplying command flags:
+`ExecuteAsync(command, args, flags, cancellationToken)`.
 
 Commands that need or change connection state, such as `MULTI`, `WAIT`, `SELECT`, `SUBSCRIBE`, `AUTH`, and `CLIENT TRACKING`, throw `NotSupportedException`, because multiplexing cannot keep their connection affinity. Use transactions, subscription APIs, or `RespireOptions` instead.
 

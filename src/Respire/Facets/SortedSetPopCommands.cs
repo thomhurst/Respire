@@ -9,6 +9,22 @@ namespace Respire;
 
 public partial interface ISortedSetCommands
 {
+    /// <summary>Pops from one key using ZMPOP or BZMPOP. Pass null for waitFor to return immediately.</summary>
+    ValueTask<RespireSortedSetPopManyResult?> PopManyAsync(RespireKey key, long count, bool descending, TimeSpan? waitFor, CancellationToken cancellationToken = default);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireSortedSetPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<RespireSortedSetPopManyResult<T>?> PopManyAsync<T>(RespireKey key, long count, bool descending, TimeSpan? waitFor, CancellationToken cancellationToken = default);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default);
+
     /// <summary>Pops up to count entries from the first nonempty sorted set. Redis: ZMPOP / BZMPOP (7.0+).</summary>
     /// <remarks>Count must be positive. Keys must share a Cluster slot after prefixing. Omit waitFor for nonblocking execution.
     /// Timeout.InfiniteTimeSpan waits indefinitely; TimeSpan.Zero uses a one-millisecond blocking wait. Null means no entry was available.</remarks>
@@ -43,6 +59,27 @@ public partial interface ISortedSetCommands
 
 internal sealed partial class SortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireSortedSetPopManyResult?> PopManyAsync(RespireKey key, long count, bool descending, TimeSpan? waitFor, CancellationToken cancellationToken = default)
+        => PopManyAsync([key], count, descending, waitFor, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireSortedSetPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default)
+        => PopAsync([key], waitFor, descending, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<RespireSortedSetPopManyResult<T>?> PopManyAsync<T>(RespireKey key, long count, bool descending, TimeSpan? waitFor, CancellationToken cancellationToken = default)
+        => PopManyAsync<T>([key], count, descending, waitFor, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default)
+        => PopAsync<T>([key], waitFor, descending, cancellationToken);
+
+
     public ValueTask<RespireSortedSetPopManyResult?> PopManyAsync(
         ReadOnlySpan<RespireKey> keys, long count = 1, bool descending = false,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)

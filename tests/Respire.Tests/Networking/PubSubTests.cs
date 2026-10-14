@@ -205,7 +205,7 @@ public class PubSubTests
             if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
         };
         using var cts = new CancellationTokenSource();
-        var failedSubscription = client.SubscribeAsync("ch", cts.Token).AsTask();
+        var failedSubscription = client.SubscribeAsync("ch", cancellationToken: cts.Token).AsTask();
         await WaitForCommandsAsync(server, 2);
 
         var cancellationStarted = Stopwatch.GetTimestamp();

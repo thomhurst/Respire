@@ -1316,29 +1316,81 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [NotInParallel(ClientPause), Category(ClientPause)]
     public async Task Set_CorrectionTimeoutFencesExactOriginalConnection()
     {
-        await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
-        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        var controlHandshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var killReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var selectCount = 0;
+        var fenced = 0;
+        // Leave room for reconnect attempts if a replacement handshake times out under load.
+        await using var server = new FakeRespServer(16, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (connection, command) => command == "CLIENT ID"
+                ? Encoding.UTF8.GetBytes($":{connection + 100}\r\n")
+                : command.StartsWith("EVAL ", StringComparison.Ordinal)
+                    || command.StartsWith("CLIENT KILL ", StringComparison.Ordinal) ? ":0\r\n"u8.ToArray() : null,
+            SuppressReply = command =>
+            {
+                if (command == "SELECT 1" && Interlocked.Increment(ref selectCount) == 2)
+                {
+                    controlHandshake.TrySetResult();
+                    return true;
+                }
+                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)
+                    && !command.EndsWith("SKIPME yes", StringComparison.Ordinal))
+                {
+                    killReceived.TrySetResult();
+                    return true;
+                }
+                // Keep both the original set and its FIFO correction unanswered until
+                // the fence. A fixed CLIENT PAUSE can end before correction starts on CI.
+                return command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    || command.StartsWith("EVAL ", StringComparison.Ordinal) && Volatile.Read(ref fenced) == 0;
+            },
+        };
+        await using var timeoutClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespProtocol.Resp2,
+            Database = 1,
+            Connections = 1,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+        await timeoutClient.EnsureReliableCorrectionOrderingAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient)
         {
             CorrectionWaitBound = TimeSpan.FromMilliseconds(100),
         };
         var originalClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
 
-        // A cold fencing connection must complete SELECT while the ordinary 1s
-        // command deadline expires inside this pause; the kill barrier must still complete.
-        var stallObserved = await StartServerPauseAsync(2500);
+        var set = timeoutCache.SetAsync(
+            "fenced-original", [1],
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) });
+
+        await controlHandshake.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var controlIndex = server.ReceivedCommands.ToList().FindLastIndex(command => command == "SELECT 1");
+        var controlConnection = server.ReceivedConnectionIds[controlIndex];
+        // The cold control handshake must survive the ordinary 1s command deadline.
+        // Only this test releases SELECT, so scheduler delays cannot bypass the fence.
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        await Assert.That(set.IsCompleted).IsFalse();
+        await Assert.That(killReceived.Task.IsCompleted).IsFalse();
+        await server.SendRawAsync(FakeRespServer.OkReply, controlConnection);
+        await killReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var killIndex = server.ReceivedCommands.ToList().FindIndex(command =>
+            command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)
+            && !command.EndsWith("SKIPME yes", StringComparison.Ordinal));
+        await Assert.That(server.ReceivedCommands[killIndex]).IsEqualTo($"CLIENT KILL ID {originalClientId}");
+        await Assert.That(server.ReceivedConnectionIds[killIndex]).IsEqualTo(controlConnection);
+        await Assert.That(set.IsCompleted).IsFalse();
+        Volatile.Write(ref fenced, 1);
+        await server.SendRawAsync(":1\r\n"u8.ToArray(), controlConnection);
 
         RespireTimeoutException? failure = null;
         try
         {
-            await timeoutCache.SetAsync(
-                "fenced-original",
-                [1],
-                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) })
-                .WaitAsync(TimeSpan.FromSeconds(10));
+            await set.WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (RespireTimeoutException ex)
         {
@@ -1349,7 +1401,6 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             Assert.Fail("Exact-connection fencing did not complete within 10 seconds.");
         }
 
-        await stallObserved;
         await Assert.That(failure).IsNotNull();
         // Exact-connection fencing closes the old socket; wait for the replacement's handshake.
         _ = await timeoutClient.Core.Multiplexer.GetHealthyConnectionAsync(CancellationToken.None)
@@ -1573,41 +1624,29 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishShardedAsync(channel, message, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, CancellationToken cancellationToken = default)
-            => inner.SubscribeAsync(channel, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeAsync(channel, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
+            => inner.SubscribeAsync(channel, options, cancellationToken: cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
-            => inner.SubscribeAsync(channels, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeAsync(channels, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
+            => inner.SubscribeAsync(channels, options, cancellationToken: cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, CancellationToken cancellationToken = default)
-            => inner.SubscribePatternAsync(channel, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribePatternAsync(channel, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
+            => inner.SubscribePatternAsync(channel, options, cancellationToken: cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
-            => inner.SubscribePatternAsync(channels, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribePatternAsync(channels, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
+            => inner.SubscribePatternAsync(channels, options, cancellationToken: cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, CancellationToken cancellationToken = default)
-            => inner.SubscribeShardedAsync(channel, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeShardedAsync(channel, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
+            => inner.SubscribeShardedAsync(channel, options, cancellationToken: cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
-            => inner.SubscribeShardedAsync(channels, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeShardedAsync(channels, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
+            => inner.SubscribeShardedAsync(channels, options, cancellationToken: cancellationToken);
 
         public ValueTask<long> PublishAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishAsync(channel, message, cancellationToken);
@@ -1615,45 +1654,6 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishShardedAsync(channel, message, cancellationToken);
 
-        public ValueTask<RespireSubscription> SubscribeAsync(
-            string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeAsync(channel, options, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeAsync(
-            ReadOnlySpan<string> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeAsync(channels, options, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribePatternAsync(
-            string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribePatternAsync(pattern, options, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribePatternAsync(
-            ReadOnlySpan<string> patterns, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribePatternAsync(patterns, options, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(
-            string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeShardedAsync(channel, options, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(
-            ReadOnlySpan<string> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-            => inner.SubscribeShardedAsync(channels, options, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
-            => inner.SubscribeAsync(channel, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)
-            => inner.SubscribeAsync(channels);
-        public ValueTask<RespireSubscription> SubscribeAsync(
-            ReadOnlySpan<string> channels, CancellationToken cancellationToken)
-            => inner.SubscribeAsync(channels, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
-            => inner.SubscribePatternAsync(pattern, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns)
-            => inner.SubscribePatternAsync(patterns);
-        public ValueTask<RespireSubscription> SubscribePatternAsync(
-            ReadOnlySpan<string> patterns, CancellationToken cancellationToken)
-            => inner.SubscribePatternAsync(patterns, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
-            => inner.SubscribeShardedAsync(channel, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels)
-            => inner.SubscribeShardedAsync(channels);
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(
-            ReadOnlySpan<string> channels, CancellationToken cancellationToken)
-            => inner.SubscribeShardedAsync(channels, cancellationToken);
 
         public RespireBatch CreateBatch() => inner.CreateBatch();
         public RespireTransaction CreateTransaction() => inner.CreateTransaction();
@@ -1715,6 +1715,13 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
     private sealed class BlockingUnlinkKeyCommands(IKeyCommands inner) : IKeyCommands
     {
+        public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
+            => DeleteAsync([key], cancellationToken);
+        public ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken)
+            => UnlinkAsync([key], cancellationToken);
+        public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
+            => TouchAsync([key], cancellationToken);
+
         public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortAsync(key, options, cancellationToken);
         public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortAsync<T>(key, options, cancellationToken);
         public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortStoreAsync(key, destination, options, cancellationToken);

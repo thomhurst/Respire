@@ -7,6 +7,9 @@ namespace Respire;
 
 public partial interface ISortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> AddAsync(RespireKey key, RespireSortedSetAddOptions options, (RespireValue Member, double Score) entry, CancellationToken cancellationToken);
+
     /// <summary>Adds or conditionally updates one member. Returns true when new, or changed when CH is set. Redis: ZADD.</summary>
     ValueTask<bool> AddAsync(RespireKey key, RespireSortedSetAddOptions options, RespireValue member, double score,
         CancellationToken cancellationToken = default);
@@ -34,6 +37,11 @@ public partial interface ISortedSetCommands
 
 internal sealed partial class SortedSetCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> AddAsync(RespireKey key, RespireSortedSetAddOptions options, (RespireValue Member, double Score) entry, CancellationToken cancellationToken)
+        => AddAsync(key, options, [entry], cancellationToken);
+
+
     public ValueTask<bool> AddAsync(RespireKey key, RespireSortedSetAddOptions options, RespireValue member, double score,
         CancellationToken cancellationToken = default)
         => client.FlagAsync("ZADD", AddCommand(client, key, options, member, score), cancellationToken);

@@ -80,6 +80,10 @@ public class DeferredScriptOwnershipTests
     [Arguments("script-span")]
     [Arguments("function")]
     [Arguments("function-span")]
+    [Arguments("script-single")]
+    [Arguments("script-span-single")]
+    [Arguments("function-single")]
+    [Arguments("function-span-single")]
     public async Task ImmediateResults_AreOwnedUnlessExplicitlyLeased(string api)
     {
         await using var server = new FakeRespServer(NestedReply);
@@ -98,6 +102,10 @@ public class DeferredScriptOwnershipTests
             "script" => client.Scripts.ExecuteAsync(script),
             "script-span" => client.Scripts.ExecuteSpanAsync(script, [], []),
             "function" => client.Functions.ExecuteAsync(function),
+            "script-single" => client.Scripts.ExecuteAsync(script, "key", cancellationToken: cancellation.Token),
+            "script-span-single" => client.Scripts.ExecuteSpanAsync(script, "key", [], cancellation.Token),
+            "function-single" => client.Functions.ExecuteAsync(function, "key", cancellationToken: cancellation.Token),
+            "function-span-single" => client.Functions.ExecuteSpanAsync(function, "key", [], cancellation.Token),
             _ => client.Functions.ExecuteSpanAsync(function, [], []),
         });
         var nested = result[1][0];
@@ -112,6 +120,10 @@ public class DeferredScriptOwnershipTests
             "script" => client.Scripts.ExecuteLeaseAsync(script),
             "script-span" => client.Scripts.ExecuteLeaseSpanAsync(script, [], []),
             "function" => client.Functions.ExecuteLeaseAsync(function),
+            "script-single" => client.Scripts.ExecuteLeaseAsync(script, "key", cancellationToken: cancellation.Token),
+            "script-span-single" => client.Scripts.ExecuteLeaseSpanAsync(script, "key", [], cancellation.Token),
+            "function-single" => client.Functions.ExecuteLeaseAsync(function, "key", cancellationToken: cancellation.Token),
+            "function-span-single" => client.Functions.ExecuteLeaseSpanAsync(function, "key", [], cancellation.Token),
             _ => client.Functions.ExecuteLeaseSpanAsync(function, [], []),
         });
         var copy = lease;

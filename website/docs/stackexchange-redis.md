@@ -285,7 +285,7 @@ A Respire subscription is an async stream, not a handler or `ChannelMessageQueue
 `SubscribeAsync` returns after the server acknowledges the subscription:
 
 ```csharp
-await using var subscription = await redis.SubscribeAsync("orders", token);
+await using var subscription = await redis.SubscribeAsync("orders", cancellationToken: token);
 
 await foreach (var message in subscription.WithCancellation(token))
 {

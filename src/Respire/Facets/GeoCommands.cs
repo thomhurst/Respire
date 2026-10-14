@@ -230,6 +230,18 @@ public readonly record struct GeoAddOptions
 /// <summary>Redis geospatial index commands.</summary>
 public interface IGeoCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> AddAsync(RespireKey key, GeoEntry entry, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> AddAsync(RespireKey key, GeoAddOptions options, GeoEntry entry, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?[]> HashAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<GeoPosition?[]> PositionAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
+
     /// <summary>Adds geospatial members and returns the number added. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<GeoEntry> entries);
 
@@ -283,6 +295,23 @@ public interface IGeoCommands
 
 internal sealed class GeoCommands(RespireClient client) : IGeoCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> AddAsync(RespireKey key, GeoEntry entry, CancellationToken cancellationToken)
+        => AddAsync(key, [entry], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> AddAsync(RespireKey key, GeoAddOptions options, GeoEntry entry, CancellationToken cancellationToken)
+        => AddAsync(key, options, [entry], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?[]> HashAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)
+        => HashAsync(key, [member], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<GeoPosition?[]> PositionAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)
+        => PositionAsync(key, [member], cancellationToken);
+
+
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<GeoEntry> entries)
         => AddAsync(key, default, entries, CancellationToken.None);
 

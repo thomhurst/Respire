@@ -783,7 +783,7 @@ public class ClusterShardedPubSubTests
         await using var subscription = await client.SubscribeShardedAsync("bar");
         cluster.Second.SuppressReply = command => command == "SSUBSCRIBE foo";
         using var cancellation = new CancellationTokenSource();
-        var pending = client.SubscribeShardedAsync("foo", cancellation.Token).AsTask();
+        var pending = client.SubscribeShardedAsync("foo", cancellationToken: cancellation.Token).AsTask();
         await WaitAsync(() => cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo"));
         await cancellation.CancelAsync();
         var error = await Assert.That(async () => await pending.WaitAsync(Deadline)).Throws<OperationCanceledException>();

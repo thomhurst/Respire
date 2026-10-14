@@ -41,7 +41,7 @@ public class KeyNotificationDeliveryTests
         await Assert.That(reader.Current.TryParseKeyNotification(out var first)).IsTrue();
         await Assert.That(first.Key).IsEqualTo(new RespireKey("tenant:key"));
         using var cancellation = new CancellationTokenSource();
-        var pending = client.SubscribeAsync("stalled", cancellation.Token).AsTask();
+        var pending = client.SubscribeAsync("stalled", cancellationToken: cancellation.Token).AsTask();
         await stalled.Task.WaitAsync(deadline.Token);
         cancellation.Cancel();
         await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();

@@ -790,9 +790,9 @@ public partial class ErrorMetricsTests
         var pending = ActivateAsync();
         async Task<RespireSubscription> ActivateAsync() => await (path switch
         {
-            "pattern" => subscriber.SubscribePatternAsync(names, caller.Token),
-            "sharded" => subscriber.SubscribeShardedAsync(names, caller.Token),
-            _ => subscriber.SubscribeAsync(names, caller.Token),
+            "pattern" => subscriber.SubscribePatternAsync(names, cancellationToken: caller.Token),
+            "sharded" => subscriber.SubscribeShardedAsync(names, cancellationToken: caller.Token),
+            _ => subscriber.SubscribeAsync(names, cancellationToken: caller.Token),
         });
         if (outcome == "cancelled")
         {

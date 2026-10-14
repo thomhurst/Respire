@@ -40,7 +40,7 @@ public sealed class RespireCountdownLatch
         if (initialState.Generation != _generation) return false;
         if (initialState.Remaining == 0) return true;
 
-        var subscription = await _client.SubscribeAsync(new RespireChannel(_channel), cancellationToken).ConfigureAwait(false);
+        var subscription = await _client.SubscribeAsync(new RespireChannel(_channel), cancellationToken: cancellationToken).ConfigureAwait(false);
         var messages = subscription.GetAsyncEnumerator(cancellationToken);
         Task<bool>? pending = null;
         try

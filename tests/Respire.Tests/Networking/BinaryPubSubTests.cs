@@ -51,7 +51,7 @@ public class BinaryPubSubTests
         await using var subscription = await client.SubscribeAsync((RespireChannel)bytes);
         Array.Fill(bytes, (byte)'z');
         using var cancellation = new CancellationTokenSource();
-        var pending = client.SubscribeAsync("stalled", cancellation.Token).AsTask();
+        var pending = client.SubscribeAsync("stalled", cancellationToken: cancellation.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen < 2) await Task.Delay(10, deadline.Token);
         await cancellation.CancelAsync();
@@ -120,7 +120,7 @@ public class BinaryPubSubTests
         await using var server = new FakeRespServer(Confirmation("subscribe", bytes));
         await using var client = CreateClient(server.Port);
         RespireChannel[] channels = [text, bytes];
-        var first = await client.SubscribeAsync(channels, CancellationToken.None);
+        var first = await client.SubscribeAsync(channels, cancellationToken: CancellationToken.None);
         var second = await client.SubscribeAsync((RespireChannel)bytes);
         await Assert.That(first.Targets.Count).IsEqualTo(1);
         await first.DisposeAsync();
@@ -154,7 +154,7 @@ public class BinaryPubSubTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = CreateClient(server.Port);
         RespireChannel[] channels = ["same", RespireChannel.Pattern("same")];
-        await Assert.That(async () => await client.SubscribeAsync(channels, CancellationToken.None)).Throws<ArgumentException>();
+        await Assert.That(async () => await client.SubscribeAsync(channels, cancellationToken: CancellationToken.None)).Throws<ArgumentException>();
         await Assert.That(async () => await client.PublishAsync(channels[1], "payload")).Throws<ArgumentException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }

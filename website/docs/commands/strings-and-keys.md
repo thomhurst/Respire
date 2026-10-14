@@ -5,6 +5,14 @@ description: Read, write, expire, scan, and manage Redis keys.
 
 # Strings and keys
 
+Multi-key commands accept one key and a cancellation token without a collection
+expression, for example `redis.DeleteAsync("key", cancellationToken)`,
+`redis.Keys.UnlinkAsync("key", cancellationToken)`, and
+`redis.Strings.GetManyAsync("key", cancellationToken)`. The single-key overload
+keeps the multi-key result shape: `GetManyAsync` still returns an array.
+Collection facets also accept a single member, field, or other item followed by
+a token, such as `redis.Lists.LeftPushAsync("jobs", "job", cancellationToken)`.
+
 Common string and key operations are on `IRespireClient` directly. The full surfaces are `redis.Strings` and `redis.Keys`.
 
 ## Read and write

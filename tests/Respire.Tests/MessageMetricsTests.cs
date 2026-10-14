@@ -135,7 +135,7 @@ public class MessageMetricsTests
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
         await Assert.That(await reader.MoveNextAsync()).IsTrue();
         using var cancellation = new CancellationTokenSource();
-        var stalled = client.SubscribeAsync("stalled", cancellation.Token).AsTask();
+        var stalled = client.SubscribeAsync("stalled", cancellationToken: cancellation.Token).AsTask();
         while (server.CommandsSeen < 2) await Task.Delay(1, deadline.Token);
         cancellation.Cancel();
         await Assert.That(async () => await stalled).Throws<OperationCanceledException>();

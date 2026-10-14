@@ -4,6 +4,7 @@
       "Type": "Respire.ISortedSetCommands",
       "OwnerType": "Respire.SortedSetCommands",
       "Members": [
+        "AddAsync(RespireKey,RespireSortedSetAddOptions,(RespireValueMember,doubleScore),CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,RespireSortedSetAddOptions,ReadOnlySpan<(RespireValueMember,doubleScore)>,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,RespireSortedSetAddOptions,RespireValue,double,CancellationToken):ValueTask<bool>",
         "AddAsync(RespireKey,RespireSortedSetAddOptions,params ReadOnlySpan<(RespireValueMember,doubleScore)>):ValueTask<long>",

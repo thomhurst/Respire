@@ -15,6 +15,68 @@ namespace Respire.Tests;
 public class MultiItemCancellationOverloadTests
 {
     [Test]
+    public async Task EveryParamsFacetCommand_HasASingleItemCancellationOverload()
+    {
+        var missing = new List<string>();
+        foreach (var type in typeof(RespireClient).Assembly.GetExportedTypes()
+                     .Where(type => type.IsInterface && type.Name.EndsWith("Commands", StringComparison.Ordinal)
+                         && !type.Name.StartsWith("IBatch", StringComparison.Ordinal)))
+        {
+            var methods = type.GetMethods();
+            foreach (var method in methods)
+            {
+                var parameters = method.GetParameters();
+                if (parameters.Length == 0 || !IsParamsSpan(parameters[^1])) continue;
+                var expected = parameters.Select(parameter => parameter.ParameterType).ToArray();
+                expected[^1] = expected[^1].GetGenericArguments()[0];
+                expected = [.. expected, typeof(CancellationToken)];
+                if (!methods.Any(candidate => candidate.Name == method.Name
+                    && candidate.GetGenericArguments().Length == method.GetGenericArguments().Length
+                    && candidate.GetParameters().Length == expected.Length
+                    && candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                        .Zip(expected).All(pair => TypesEquivalent(pair.First, pair.Second))))
+                    missing.Add($"{type.Name}.{method.Name}");
+            }
+        }
+        await Assert.That(missing).IsEmpty();
+    }
+
+    [Test]
+    public async Task EveryMultiKeyFacetCommand_HasASingleKeyOverload()
+    {
+        var missing = new List<string>();
+        foreach (var type in typeof(RespireClient).Assembly.GetExportedTypes()
+                     .Concat([typeof(Json.RespireJsonClient), typeof(TimeSeries.RespireTimeSeriesClient),
+                         typeof(Probabilistic.RespireProbabilisticClient)])
+                     .Where(type => (type.IsInterface && type.Name.EndsWith("Commands", StringComparison.Ordinal)
+                         && !type.Name.StartsWith("IBatch", StringComparison.Ordinal))
+                         || type == typeof(IRespireClient) || type == typeof(RespireClient)
+                         || type == typeof(RespireServerNode) || type == typeof(Json.RespireJsonClient)
+                         || type == typeof(TimeSeries.RespireTimeSeriesClient)
+                         || type == typeof(Probabilistic.RespireProbabilisticClient)))
+        {
+            var methods = type.GetMethods();
+            foreach (var method in methods)
+            {
+                var parameters = method.GetParameters();
+                if (!parameters.Any(parameter => parameter.ParameterType == typeof(CancellationToken))) continue;
+                var expected = parameters.Select(parameter => parameter.ParameterType).ToArray();
+                var index = Array.FindIndex(expected, type => type == typeof(ReadOnlySpan<RespireKey>)
+                    || type == typeof(RespireKey[]) || type == typeof(IReadOnlyList<RespireKey>));
+                if (index < 0) continue;
+                expected[index] = typeof(RespireKey);
+                if (!methods.Any(candidate => candidate.Name == method.Name
+                    && candidate.GetGenericArguments().Length == method.GetGenericArguments().Length
+                    && candidate.GetParameters().Length == expected.Length
+                    && candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                        .Zip(expected).All(pair => TypesEquivalent(pair.First, pair.Second))))
+                    missing.Add($"{type.Name}.{method.Name}");
+            }
+        }
+        await Assert.That(missing).IsEmpty();
+    }
+
+    [Test]
     public async Task EveryParamsSpanCommand_HasACancellationTokenSibling()
     {
         var missing = new List<string>();
@@ -199,21 +261,21 @@ public class MultiItemCancellationOverloadTests
             "g", new GeoAddOptions { When = SetWhen.NotExists },
             new GeoEntry(0, 0, "a"), new GeoEntry(1, 1, "b"));
 
-        string[] channels = ["a", "b"];
-        _ = client.SubscribeAsync("a", "b");
-        _ = client.SubscribePatternAsync("a:*", "b:*");
-        _ = client.SubscribeShardedAsync("a", "b");
+        RespireChannel[] channels = ["a", "b"];
+        _ = client.SubscribeAsync(["a", "b"]);
+        _ = client.SubscribePatternAsync(["a:*", "b:*"]);
+        _ = client.SubscribeShardedAsync(["a", "b"]);
         _ = client.CreateTransactionAsync("a", "b");
-        _ = client.SubscribeAsync(channels, token);
-        _ = client.SubscribePatternAsync(channels, token);
-        _ = client.SubscribeShardedAsync(channels, token);
+        _ = client.SubscribeAsync(channels, cancellationToken: token);
+        _ = client.SubscribePatternAsync(channels, cancellationToken: token);
+        _ = client.SubscribeShardedAsync(channels, cancellationToken: token);
         var subscriptionOptions = new RespireSubscriptionOptions(BufferSize: 32);
-        _ = client.SubscribeAsync("a", subscriptionOptions, token);
-        _ = client.SubscribeAsync(channels, subscriptionOptions, token);
-        _ = client.SubscribePatternAsync("a:*", subscriptionOptions, token);
-        _ = client.SubscribePatternAsync(channels, subscriptionOptions, token);
-        _ = client.SubscribeShardedAsync("a", subscriptionOptions, token);
-        _ = client.SubscribeShardedAsync(channels, subscriptionOptions, token);
+        _ = client.SubscribeAsync("a", subscriptionOptions, cancellationToken: token);
+        _ = client.SubscribeAsync(channels, subscriptionOptions, cancellationToken: token);
+        _ = client.SubscribePatternAsync("a:*", subscriptionOptions, cancellationToken: token);
+        _ = client.SubscribePatternAsync(channels, subscriptionOptions, cancellationToken: token);
+        _ = client.SubscribeShardedAsync("a", subscriptionOptions, cancellationToken: token);
+        _ = client.SubscribeShardedAsync(channels, subscriptionOptions, cancellationToken: token);
         _ = client.CreateTransactionAsync(keys, token);
         _ = client.CreateTransactionAsync(keys.AsSpan(), token);
         _ = client.Geo.HashAsync("g", values, token);
@@ -323,6 +385,12 @@ public class MultiItemCancellationOverloadTests
     /// <summary>Records which <c>DeleteAsync</c> overload the compiler picked.</summary>
     private sealed class RecordingKeyCommands : IKeyCommands
     {
+        public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
+            => DeleteAsync([key], cancellationToken);
+        public ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken)
+            => UnlinkAsync([key], cancellationToken);
+        public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
+            => TouchAsync([key], cancellationToken);
         public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();

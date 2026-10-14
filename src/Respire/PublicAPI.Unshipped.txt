@@ -1,39 +1,8 @@
 #nullable enable
-[RSP0003]override Respire.RespireHedgedReadOptions.Equals(object? obj) -> bool
-[RSP0003]override Respire.RespireHedgedReadOptions.GetHashCode() -> int
-[RSP0003]override Respire.RespireHedgedReadOptions.ToString() -> string!
-[RSP0003]Respire.RespireHedgedReadOptions
-[RSP0003]Respire.RespireHedgedReadOptions.<Clone>$() -> Respire.RespireHedgedReadOptions!
-[RSP0003]Respire.RespireHedgedReadOptions.Delay.get -> System.TimeSpan
-[RSP0003]Respire.RespireHedgedReadOptions.Delay.init -> void
-[RSP0003]Respire.RespireHedgedReadOptions.Equals(Respire.RespireHedgedReadOptions? other) -> bool
-[RSP0003]Respire.RespireHedgedReadOptions.MaximumExtraLoadPercent.get -> int
-[RSP0003]Respire.RespireHedgedReadOptions.MaximumExtraLoadPercent.init -> void
-[RSP0003]Respire.RespireHedgedReadOptions.RespireHedgedReadOptions() -> void
-[RSP0003]static Respire.RespireHedgedReadOptions.operator !=(Respire.RespireHedgedReadOptions? left, Respire.RespireHedgedReadOptions? right) -> bool
-[RSP0003]static Respire.RespireHedgedReadOptions.operator ==(Respire.RespireHedgedReadOptions? left, Respire.RespireHedgedReadOptions? right) -> bool
-[RSP0004]Respire.IBatchHashCommands.DiscardAllImports() -> Respire.RespirePending<long>!
-[RSP0004]Respire.IBatchHashCommands.DiscardImport(Respire.RespireValue name) -> Respire.RespirePending<bool>!
-[RSP0004]Respire.IBatchHashCommands.Import(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> Respire.RespirePending<bool>!
-[RSP0004]Respire.IBatchHashCommands.PrepareImport(Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> fields) -> Respire.RespirePending<bool>!
-[RSP0004]Respire.IHashCommands.CreateImportSessionAsync(Respire.RespireKey routingKey, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireHashImportSession!>
-[RSP0004]Respire.IHashCommands.CreateImportSessionAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireHashImportSession!>
-[RSP0004]Respire.RespireHashImportSession
-[RSP0004]Respire.RespireHashImportSession.CreateBatch() -> Respire.RespireBatch!
-[RSP0004]Respire.RespireHashImportSession.CreateTransaction() -> Respire.RespireTransaction!
-[RSP0004]Respire.RespireHashImportSession.DiscardAllAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
-[RSP0004]Respire.RespireHashImportSession.DiscardAsync(Respire.RespireValue name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
-[RSP0004]Respire.RespireHashImportSession.DisposeAsync() -> System.Threading.Tasks.ValueTask
-[RSP0004]Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> fields) -> System.Threading.Tasks.ValueTask<bool>
-[RSP0004]Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, System.ReadOnlySpan<Respire.RespireValue> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
-[RSP0004]Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> System.Threading.Tasks.ValueTask<bool>
-[RSP0004]Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, System.ReadOnlySpan<Respire.RespireValue> values, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
-[RSP0005]Respire.IRespireCommandQueue.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
-[RSP0005]Respire.RespireBatch.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
-[RSP0005]Respire.RespireTransactionBase.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
-*REMOVED*override Respire.RespireHedgedReadOptions.Equals(object? obj) -> bool
-*REMOVED*override Respire.RespireHedgedReadOptions.GetHashCode() -> int
-*REMOVED*override Respire.RespireHedgedReadOptions.ToString() -> string!
+Respire.IFunctionCommands.ExecuteLeaseAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IFunctionCommands.ExecuteLeaseSpanAsync(Respire.RespireFunction! function, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IScriptCommands.ExecuteLeaseAsync(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IScriptCommands.ExecuteLeaseSpanAsync(Respire.RespireScript! script, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 *REMOVED*Respire.IBatchHashCommands.DiscardAllImports() -> Respire.RespirePending<long>!
 *REMOVED*Respire.IBatchHashCommands.DiscardImport(Respire.RespireValue name) -> Respire.RespirePending<bool>!
 *REMOVED*Respire.IBatchHashCommands.Import(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> Respire.RespirePending<bool>!
@@ -50,19 +19,77 @@
 *REMOVED*Respire.IRespireClient.GetOrSetAsync<T>(Respire.RespireKey key, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<T?>>! factory, System.TimeSpan ttl, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
 *REMOVED*Respire.IRespireClient.ResolveChannel(Respire.RespireChannel channel) -> Respire.RespireChannel
 *REMOVED*Respire.IRespireClient.ResolveKey(Respire.RespireKey key) -> Respire.RespireKey
+*REMOVED*Respire.IRespireClient.PublishAsync(string! channel, Respire.RespireValue message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IRespireClient.PublishShardedAsync(string! channel, Respire.RespireValue message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(Respire.RespireChannel channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(System.ReadOnlySpan<string!> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(System.ReadOnlySpan<string!> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(params System.ReadOnlySpan<string!> channels) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(string! channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeAsync(string! channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(Respire.RespireChannel channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(System.ReadOnlySpan<string!> patterns, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(System.ReadOnlySpan<string!> patterns, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(params System.ReadOnlySpan<string!> patterns) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(string! pattern, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribePatternAsync(string! pattern, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(Respire.RespireChannel channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(System.ReadOnlySpan<string!> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(System.ReadOnlySpan<string!> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(params System.ReadOnlySpan<string!> channels) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(string! channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.IRespireClient.SubscribeShardedAsync(string! channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
 *REMOVED*Respire.IRespireCommandQueue.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
 *REMOVED*Respire.RespireBatch.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
 *REMOVED*Respire.RespireClient.GetOrSetAsync<T>(Respire.RespireKey key, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<T?>>! factory, System.TimeSpan ttl, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
+*REMOVED*Respire.RespireClient.PublishAsync(string! channel, Respire.RespireValue message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.RespireClient.PublishShardedAsync(string! channel, Respire.RespireValue message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.RespireClient.SubscribeAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(Respire.RespireChannel channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(System.ReadOnlySpan<string!> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(System.ReadOnlySpan<string!> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(params System.ReadOnlySpan<string!> channels) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(string! channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeAsync(string! channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(Respire.RespireChannel channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(System.ReadOnlySpan<string!> patterns, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(System.ReadOnlySpan<string!> patterns, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(params System.ReadOnlySpan<string!> patterns) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(string! pattern, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribePatternAsync(string! pattern, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(Respire.RespireChannel channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(System.ReadOnlySpan<string!> channels, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(System.ReadOnlySpan<string!> channels, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(params System.ReadOnlySpan<string!> channels) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(string! channel, Respire.RespireSubscriptionOptions options, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+*REMOVED*Respire.RespireClient.SubscribeShardedAsync(string! channel, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
 *REMOVED*Respire.RespireHashImportSession
 *REMOVED*Respire.RespireHashImportSession.CreateBatch() -> Respire.RespireBatch!
 *REMOVED*Respire.RespireHashImportSession.CreateTransaction() -> Respire.RespireTransaction!
 *REMOVED*Respire.RespireHashImportSession.DiscardAllAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
 *REMOVED*Respire.RespireHashImportSession.DiscardAsync(Respire.RespireValue name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 *REMOVED*Respire.RespireHashImportSession.DisposeAsync() -> System.Threading.Tasks.ValueTask
-*REMOVED*Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> fields) -> System.Threading.Tasks.ValueTask<bool>
 *REMOVED*Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, System.ReadOnlySpan<Respire.RespireValue> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
-*REMOVED*Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> System.Threading.Tasks.ValueTask<bool>
+*REMOVED*Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> fields) -> System.Threading.Tasks.ValueTask<bool>
 *REMOVED*Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, System.ReadOnlySpan<Respire.RespireValue> values, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+*REMOVED*Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> System.Threading.Tasks.ValueTask<bool>
 *REMOVED*Respire.RespireHedgedReadOptions
 *REMOVED*Respire.RespireHedgedReadOptions.<Clone>$() -> Respire.RespireHedgedReadOptions!
 *REMOVED*Respire.RespireHedgedReadOptions.Delay.get -> System.TimeSpan
@@ -72,9 +99,59 @@
 *REMOVED*Respire.RespireHedgedReadOptions.MaximumExtraLoadPercent.init -> void
 *REMOVED*Respire.RespireHedgedReadOptions.RespireHedgedReadOptions() -> void
 *REMOVED*Respire.RespireTransactionBase.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
+*REMOVED*override Respire.RespireHedgedReadOptions.Equals(object? obj) -> bool
+*REMOVED*override Respire.RespireHedgedReadOptions.GetHashCode() -> int
+*REMOVED*override Respire.RespireHedgedReadOptions.ToString() -> string!
 *REMOVED*static Respire.LockCommandExtensions.AcquireAsync(this Respire.ILockCommands! locks, Respire.RespireKey key, System.TimeSpan expiry, bool keepAlive, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockAttempt>
 *REMOVED*static Respire.RespireHedgedReadOptions.operator !=(Respire.RespireHedgedReadOptions? left, Respire.RespireHedgedReadOptions? right) -> bool
 *REMOVED*static Respire.RespireHedgedReadOptions.operator ==(Respire.RespireHedgedReadOptions? left, Respire.RespireHedgedReadOptions? right) -> bool
+Respire.IArrayCommands.DeleteAsync(Respire.RespireKey key, ulong index, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
+Respire.IArrayCommands.DeleteRangeAsync(Respire.RespireKey key, Respire.RespireArrayRange range, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
+Respire.IArrayCommands.GetManyAsync(Respire.RespireKey key, ulong index, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
+Respire.IArrayCommands.GetManyAsync<T>(Respire.RespireKey key, ulong index, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<T?[]!>
+Respire.IArrayCommands.GrepAsync(Respire.RespireKey key, Respire.RespireArrayBound start, Respire.RespireArrayBound end, Respire.RespireArrayPredicate predicate, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong[]!>
+Respire.IArrayCommands.GrepEntriesAsync(Respire.RespireKey key, Respire.RespireArrayBound start, Respire.RespireArrayBound end, Respire.RespireArrayPredicate predicate, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireArrayEntry<string!>[]!>
+Respire.IArrayCommands.GrepEntriesAsync<T>(Respire.RespireKey key, Respire.RespireArrayBound start, Respire.RespireArrayBound end, Respire.RespireArrayPredicate predicate, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireArrayEntry<T>[]!>
+Respire.IArrayCommands.InsertAsync(Respire.RespireKey key, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
+Respire.IArrayCommands.RingAsync(Respire.RespireKey key, long size, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
+Respire.IArrayCommands.SetAsync(Respire.RespireKey key, ulong index, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
+Respire.IArrayCommands.SetManyAsync(Respire.RespireKey key, Respire.RespireArrayItem item, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
+Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, Respire.BitFieldOperation operation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, Respire.BitFieldOperation get, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.OperateAsync(Respire.BitOperation operation, Respire.RespireKey destination, Respire.RespireKey sourceKey, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IFunctionCommands.ExecuteAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IFunctionCommands.ExecuteAsync<T>(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
+Respire.IFunctionCommands.ExecuteIntegerAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IFunctionCommands.ExecuteSpanAsync(Respire.RespireFunction! function, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IFunctionCommands.ExecuteStringAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, Respire.GeoEntry entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoEntry entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.HashAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
+Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.GeoPosition?[]!>
+Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+Respire.IHashCommands.ExpiryAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireTtl>
+Respire.IHashCommands.ExpiryTimeAsync(Respire.RespireKey key, Respire.ExpiryTimePrecision precision, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireExpiryTime[]!>
+Respire.IHashCommands.ExpiryTimeAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireExpiryTime[]!>
+Respire.IHashCommands.GetAndExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
+Respire.IHashCommands.GetAndRemoveAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
+Respire.IHashCommands.GetManyAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
+Respire.IHashCommands.RemoveAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IHashCommands.SetAsync(Respire.RespireKey key, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IHashCommands.SetExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IHashCommands.SetExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.SetWhen when, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IHyperLogLogCommands.AddAsync(Respire.RespireKey key, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IHyperLogLogCommands.CountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IHyperLogLogCommands.MergeAsync(Respire.RespireKey destination, Respire.RespireKey sourceKey, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IKeyCommands.DeleteAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IKeyCommands.TouchAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IKeyCommands.UnlinkAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IListCommands.LeftPushAsync(Respire.RespireKey key, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IListCommands.LeftPushIfExistsAsync(Respire.RespireKey key, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IListCommands.PopAsync(Respire.RespireKey key, System.TimeSpan waitFor, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopResult?>
+Respire.IListCommands.PopManyAsync(Respire.RespireKey key, long count = 1, Respire.ListSide side = Respire.ListSide.Left, System.TimeSpan? waitFor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
+Respire.IListCommands.RightPushAsync(Respire.RespireKey key, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IListCommands.RightPushIfExistsAsync(Respire.RespireKey key, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
 Respire.ILockCommands.AcquireAsync(Respire.RespireKey key, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockAttempt>
 Respire.ILockCommands.AcquireAsync(Respire.RespireKey key, System.TimeSpan leaseDuration, System.TimeSpan wait, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockAttempt>
 Respire.ILockCommands.AcquireAsync(Respire.RespireKey key, System.TimeSpan leaseDuration, System.TimeSpan wait, System.TimeSpan retryEvery, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockAttempt>
@@ -82,11 +159,119 @@ Respire.ILockCommands.AcquireOrThrowAsync(Respire.RespireKey key, System.TimeSpa
 Respire.ILockCommands.AcquireOrThrowAsync(Respire.RespireKey key, System.TimeSpan leaseDuration, System.TimeSpan wait, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLock!>
 Respire.ILockCommands.AcquireOrThrowAsync(Respire.RespireKey key, System.TimeSpan leaseDuration, System.TimeSpan wait, System.TimeSpan retryEvery, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLock!>
 Respire.ILockCommands.TryTakeAsync(Respire.RespireKey key, Respire.RespireLockToken token, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespireClient.CreateTransactionAsync(Respire.RespireKey watchKey, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireWatchedTransaction!>
+Respire.IRespireClient.DeleteAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespireClient.ExecuteAsync(Respire.RespireCommand command, System.Threading.CancellationToken cancellationToken, params Respire.RespireValue[]! args) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IRespireClient.ExecuteFireAndForgetAsync(Respire.RespireCommand command, System.Threading.CancellationToken cancellationToken, params Respire.RespireValue[]! args) -> System.Threading.Tasks.ValueTask
 Respire.IRespireClient.GetOrSetAsync<T>(Respire.RespireKey key, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<T?>>! factory, Respire.RespireExpiry expiry, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
 Respire.IRespireNameResolver
 Respire.IRespireNameResolver.ResolveChannel(Respire.RespireChannel channel) -> Respire.RespireChannel
 Respire.IRespireNameResolver.ResolveKey(Respire.RespireKey key) -> Respire.RespireKey
+Respire.IRespireClient.SubscribeAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.IRespireClient.SubscribeAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.IRespireClient.SubscribePatternAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.IRespireClient.SubscribePatternAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.IRespireClient.SubscribeShardedAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.IRespireClient.SubscribeShardedAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.IScriptCommands.ExecuteAsync(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IScriptCommands.ExecuteAsync<T>(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
+Respire.IScriptCommands.ExecuteIntegerAsync(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IScriptCommands.ExecuteSpanAsync(Respire.RespireScript! script, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.IScriptCommands.ExecuteStringAsync(Respire.RespireScript! script, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Respire.IScriptCommands.ExistsAsync(string! sha1, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool[]!>
+Respire.ISetCommands.AddAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.ContainsManyAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool[]!>
+Respire.ISetCommands.DifferenceAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.ISetCommands.DifferenceCountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.DifferenceCountAsync(long limit, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.DifferenceStoreAsync(Respire.RespireKey destination, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.IntersectAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.ISetCommands.IntersectCountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.IntersectCountAsync(long limit, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.IntersectStoreAsync(Respire.RespireKey destination, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.RemoveAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.UnionAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.ISetCommands.UnionCountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.UnionCountAsync(Respire.RespireSetUnionCountOptions options, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISetCommands.UnionStoreAsync(Respire.RespireKey destination, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.AddAsync(Respire.RespireKey key, (Respire.RespireValue Member, double Score) entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.AddAsync(Respire.RespireKey key, Respire.RespireSortedSetAddOptions options, (Respire.RespireValue Member, double Score) entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.DifferenceAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.ISortedSetCommands.DifferenceStoreAsync(Respire.RespireKey destination, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.IntersectAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.ISortedSetCommands.IntersectCountAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.IntersectCountAsync(long limit, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.IntersectStoreAsync(Respire.RespireKey destination, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.PopAsync(Respire.RespireKey key, System.TimeSpan waitFor, bool descending, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopResult?>
+Respire.ISortedSetCommands.PopAsync<T>(Respire.RespireKey key, System.TimeSpan waitFor, bool descending, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopResult<T>?>
+Respire.ISortedSetCommands.PopManyAsync(Respire.RespireKey key, long count, bool descending, System.TimeSpan? waitFor, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopManyResult?>
+Respire.ISortedSetCommands.PopManyAsync<T>(Respire.RespireKey key, long count, bool descending, System.TimeSpan? waitFor, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopManyResult<T>?>
+Respire.ISortedSetCommands.RemoveAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.ISortedSetCommands.ScoresManyAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<double?[]!>
+Respire.ISortedSetCommands.UnionAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.ISortedSetCommands.UnionStoreAsync(Respire.RespireKey destination, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.AcknowledgeAndRemoveAsync(Respire.RespireKey key, string! group, Respire.StreamReferencePolicy policy, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamDeletionResult[]!>
+Respire.IStreamCommands.AcknowledgeAsync(Respire.RespireKey key, string! group, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.AddAsync(Respire.RespireKey key, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId>
+Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.StreamAddOptions options, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
+Respire.IStreamCommands.ClaimAsync(Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamEntry[]!>
+Respire.IStreamCommands.ClaimAsync(Respire.StreamClaimOptions options, Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamEntry[]!>
+Respire.IStreamCommands.ClaimIdsAsync(Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId[]!>
+Respire.IStreamCommands.ClaimIdsAsync(Respire.StreamClaimOptions options, Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId[]!>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.StreamNackOptions options, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.RemoveAsync(Respire.RespireKey key, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.RemoveAsync(Respire.RespireKey key, Respire.StreamReferencePolicy policy, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamDeletionResult[]!>
+Respire.IStringCommands.GetManyAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
+Respire.IStringCommands.GetManyAsync<T>(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<T?[]!>
+Respire.IStringCommands.SetManyAsync((Respire.RespireKey Key, Respire.RespireValue Value) pairs, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IStringCommands.SetManyExpireAsync(Respire.RespireExpiry expiry, (Respire.RespireKey Key, Respire.RespireValue Value) pairs, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IStringCommands.SetManyExpireAsync(Respire.RespireExpiry expiry, Respire.SetWhen when, (Respire.RespireKey Key, Respire.RespireValue Value) pairs, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IStringCommands.SetManyIfNotExistsAsync((Respire.RespireKey Key, Respire.RespireValue Value) pairs, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+Respire.RespireClient.CreateTransactionAsync(Respire.RespireKey watchKey, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireWatchedTransaction!>
+Respire.RespireClient.DeleteAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.RespireClient.ExecuteAsync(Respire.RespireCommand command, System.Threading.CancellationToken cancellationToken, params Respire.RespireValue[]! args) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.RespireClient.ExecuteFireAndForgetAsync(Respire.RespireCommand command, System.Threading.CancellationToken cancellationToken, params Respire.RespireValue[]! args) -> System.Threading.Tasks.ValueTask
 Respire.RespireClient.GetOrSetAsync<T>(Respire.RespireKey key, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<T?>>! factory, Respire.RespireExpiry expiry, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
+Respire.RespireClient.SubscribeAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.RespireClient.SubscribeAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.RespireClient.SubscribePatternAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.RespireClient.SubscribePatternAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.RespireClient.SubscribeShardedAsync(Respire.RespireChannel channel, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.RespireClient.SubscribeShardedAsync(System.ReadOnlySpan<Respire.RespireChannel> channels, Respire.RespireSubscriptionOptions options = default(Respire.RespireSubscriptionOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSubscription!>
+Respire.RespireServerNode.MigrateAsync(Respire.RespireEndpoint destination, Respire.RespireKey key, int database, System.TimeSpan timeout, Respire.RespireMigrateOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireMigrateResult>
+[RSP0003]Respire.RespireHedgedReadOptions
+[RSP0003]Respire.RespireHedgedReadOptions.<Clone>$() -> Respire.RespireHedgedReadOptions!
+[RSP0003]Respire.RespireHedgedReadOptions.Delay.get -> System.TimeSpan
+[RSP0003]Respire.RespireHedgedReadOptions.Delay.init -> void
+[RSP0003]Respire.RespireHedgedReadOptions.Equals(Respire.RespireHedgedReadOptions? other) -> bool
+[RSP0003]Respire.RespireHedgedReadOptions.MaximumExtraLoadPercent.get -> int
+[RSP0003]Respire.RespireHedgedReadOptions.MaximumExtraLoadPercent.init -> void
+[RSP0003]Respire.RespireHedgedReadOptions.RespireHedgedReadOptions() -> void
+[RSP0003]override Respire.RespireHedgedReadOptions.Equals(object? obj) -> bool
+[RSP0003]override Respire.RespireHedgedReadOptions.GetHashCode() -> int
+[RSP0003]override Respire.RespireHedgedReadOptions.ToString() -> string!
+[RSP0003]static Respire.RespireHedgedReadOptions.operator !=(Respire.RespireHedgedReadOptions? left, Respire.RespireHedgedReadOptions? right) -> bool
+[RSP0003]static Respire.RespireHedgedReadOptions.operator ==(Respire.RespireHedgedReadOptions? left, Respire.RespireHedgedReadOptions? right) -> bool
+[RSP0004]Respire.IBatchHashCommands.DiscardAllImports() -> Respire.RespirePending<long>!
+[RSP0004]Respire.IBatchHashCommands.DiscardImport(Respire.RespireValue name) -> Respire.RespirePending<bool>!
+[RSP0004]Respire.IBatchHashCommands.Import(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> Respire.RespirePending<bool>!
+[RSP0004]Respire.IBatchHashCommands.PrepareImport(Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> fields) -> Respire.RespirePending<bool>!
+[RSP0004]Respire.IHashCommands.CreateImportSessionAsync(Respire.RespireKey routingKey, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireHashImportSession!>
+[RSP0004]Respire.IHashCommands.CreateImportSessionAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireHashImportSession!>
+[RSP0004]Respire.RespireHashImportSession
+[RSP0004]Respire.RespireHashImportSession.CreateBatch() -> Respire.RespireBatch!
+[RSP0004]Respire.RespireHashImportSession.CreateTransaction() -> Respire.RespireTransaction!
+[RSP0004]Respire.RespireHashImportSession.DiscardAllAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+[RSP0004]Respire.RespireHashImportSession.DiscardAsync(Respire.RespireValue name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+[RSP0004]Respire.RespireHashImportSession.DisposeAsync() -> System.Threading.Tasks.ValueTask
+[RSP0004]Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, System.ReadOnlySpan<Respire.RespireValue> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+[RSP0004]Respire.RespireHashImportSession.PrepareAsync(Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> fields) -> System.Threading.Tasks.ValueTask<bool>
+[RSP0004]Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, System.ReadOnlySpan<Respire.RespireValue> values, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+[RSP0004]Respire.RespireHashImportSession.SetAsync(Respire.RespireKey key, Respire.RespireValue name, params System.ReadOnlySpan<Respire.RespireValue> values) -> System.Threading.Tasks.ValueTask<bool>
+[RSP0005]Respire.IRespireCommandQueue.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
+[RSP0005]Respire.RespireBatch.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
+[RSP0005]Respire.RespireTransactionBase.Execute(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> Respire.RespirePending<Respire.RespireResult>!
 static Respire.LockCommandExtensions.AcquireAsync(this Respire.ILockCommands! locks, Respire.RespireKey key, System.TimeSpan leaseDuration, bool keepAlive, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockAttempt>
 Respire.IFunctionCommands.ExecuteLeaseAsync(Respire.RespireFunction! function, Respire.RespireKey[]? keys = null, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.IFunctionCommands.ExecuteLeaseSpanAsync(Respire.RespireFunction! function, System.ReadOnlySpan<Respire.RespireKey> keys, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>

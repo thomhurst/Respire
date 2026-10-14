@@ -522,9 +522,9 @@ public class CommandCatalogTests
                 .ToArray();
 
             await Assert.That(executeMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
-                .IsEqualTo(3);
+                .IsEqualTo(4);
             await Assert.That(executeMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
-                .IsEqualTo(3);
+                .IsEqualTo(4);
             await Assert.That(stringForwarders).IsEmpty();
         }
         await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);

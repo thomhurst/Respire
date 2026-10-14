@@ -31,9 +31,9 @@ public class DeferredFacetParityTests
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         typeof(ISortedSetCommands).GetMethod(nameof(ISortedSetCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
-        // Multi-key scalar list pops are always blocking and cannot be queued.
-        typeof(IListCommands).GetMethod(nameof(IListCommands.PopAsync),
-            [typeof(ReadOnlySpan<RespireKey>), typeof(TimeSpan), typeof(ListSide), typeof(CancellationToken)])!,
+        // Single- and multi-key scalar list pops always block and cannot be queued.
+        .. typeof(IListCommands).GetMethods().Where(method => method.Name == nameof(IListCommands.PopAsync)
+            && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(TimeSpan))),
         // Both typed and string multi-key scalar sorted-set pops always block on a dedicated lease.
         .. typeof(ISortedSetCommands).GetMethods().Where(method => method.Name == nameof(ISortedSetCommands.PopAsync)
             && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(TimeSpan))),
@@ -69,10 +69,10 @@ public class DeferredFacetParityTests
     {
         var immediate = typeof(IRespireClient).GetProperty(facet)!.PropertyType;
         var deferred = typeof(IRespireCommandQueue).GetProperty(facet)!.PropertyType;
+        var actual = deferred.GetMethods().Select(method => Signature(method, immediate: false)).ToHashSet();
         var expected = immediate.GetMethods()
             .Where(method => !ImmediateOnlyMethods.Contains(method))
-            .Select(method => Signature(method, immediate: true));
-        var actual = deferred.GetMethods().Select(method => Signature(method, immediate: false));
+            .Select(method => DeferredSignature(method, actual));
 
         await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
     }
@@ -96,25 +96,65 @@ public class DeferredFacetParityTests
         ];
         var immediate = typeof(IStreamCommands).GetMethods();
         await Assert.That(clientOnly.Except(immediate.Select(method => method.Name)).ToArray()).IsEmpty();
+        var actual = typeof(IBatchStreamCommands).GetMethods()
+            .Select(method => Signature(method, immediate: false)).ToHashSet();
         var expected = immediate.Where(method => !clientOnly.Contains(method.Name)
                 && !(method.Name == nameof(IStreamCommands.ReadGroupAsync)
                     && method.ReturnType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>)))
-            .Select(method => Signature(method, immediate: true));
-        var actual = typeof(IBatchStreamCommands).GetMethods().Select(method => Signature(method, immediate: false));
+            .Select(method => DeferredSignature(method, actual)).ToArray();
         await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
         await Assert.That(actual.Except(expected).ToArray()).IsEmpty();
     }
 
-    private static string Signature(MethodInfo method, bool immediate)
+    private static string DeferredSignature(MethodInfo method, HashSet<string> actual)
+    {
+        var signature = Signature(method, immediate: true);
+        if (actual.Contains(signature)) return signature;
+
+        // Cancellation belongs to Execute/Commit for deferred commands. The immediate
+        // single-item conveniences can therefore use an existing collection command,
+        // passing [item] (or simply item for params). Require the same name, all other
+        // parameters, generic arity and result shape; a missing command still fails.
+        var parameters = CommandParameters(method, immediate: true).ToArray();
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var item = parameters[index];
+            foreach (var collection in new[] { $"ReadOnlySpan`1<{item}>", $"{item}[]" })
+            {
+                parameters[index] = collection;
+                var candidate = Signature(method, immediate: true, parameters);
+                if (actual.Contains(candidate)) return candidate;
+            }
+            parameters[index] = item;
+        }
+
+        // The string-field convenience preserves the existing scalar RespireKey result.
+        // Deferred callers select that result explicitly with (RespireKey)field; a
+        // bare string selects the existing params-string overload returning an array.
+        if (method.DeclaringType == typeof(IHashCommands)
+            && method.Name == nameof(IHashCommands.ExpiryAsync)
+            && parameters.SequenceEqual([nameof(RespireKey), nameof(String)]))
+        {
+            parameters[1] = nameof(RespireKey);
+            return Signature(method, immediate: true, parameters);
+        }
+
+        return signature;
+    }
+
+    private static IEnumerable<string> CommandParameters(MethodInfo method, bool immediate)
+        => method.GetParameters()
+            .Where(parameter => !immediate || (parameter.ParameterType != typeof(CancellationToken)
+                && !(parameter.Name == "waitFor" && parameter.ParameterType == typeof(TimeSpan?))))
+            .Select(parameter => TypeName(parameter.ParameterType));
+
+    private static string Signature(MethodInfo method, bool immediate, IEnumerable<string>? parameters = null)
     {
         // Compare generic parameters by position; this shape audit does not compare their constraints.
         var name = immediate ? method.Name[..^"Async".Length] : method.Name;
         // Single-stream group pages distinguish themselves from existing consumer loops by name.
         if (immediate && method.Name == nameof(IStreamCommands.ReadGroupOnceAsync)) name = nameof(IBatchStreamCommands.ReadGroup);
-        var parameters = method.GetParameters()
-            .Where(parameter => !immediate || (parameter.ParameterType != typeof(CancellationToken)
-                && !(parameter.Name == "waitFor" && parameter.ParameterType == typeof(TimeSpan?))))
-            .Select(parameter => TypeName(parameter.ParameterType));
+        parameters ??= CommandParameters(method, immediate);
         var result = method.ReturnType.GetGenericArguments().Single();
         return $"{name}`{method.GetGenericArguments().Length}({string.Join(", ", parameters)}): {TypeName(result)}";
     }

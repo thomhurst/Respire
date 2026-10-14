@@ -215,6 +215,10 @@ public sealed class RespireProbabilisticClient
         => _commands.CountMinInfoAsync(key, cancellationToken);
 
     /// <summary>Merges Count-Min Sketches into a destination sketch.</summary>
+    public ValueTask CountMinMergeAsync(RespireKey destination, RespireKey source, RespireCountMinMergeOptions? options = null, CancellationToken cancellationToken = default)
+        => CountMinMergeAsync(destination, [source], options, cancellationToken);
+
+    /// <summary>Merges Count-Min sketches into the destination.</summary>
     public async ValueTask CountMinMergeAsync(RespireKey destination, IReadOnlyList<RespireKey> sources, RespireCountMinMergeOptions? options = null, CancellationToken cancellationToken = default)
     {
         ValidateKeys(sources);
@@ -285,6 +289,10 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Merges t-digest sketches into a destination sketch.</summary>
+    public ValueTask TDigestMergeAsync(RespireKey destination, RespireKey source, RespireTDigestOptions? options = null, CancellationToken cancellationToken = default)
+        => TDigestMergeAsync(destination, [source], options, cancellationToken);
+
+    /// <summary>Merges t-digests into the destination.</summary>
     public async ValueTask TDigestMergeAsync(RespireKey destination, IReadOnlyList<RespireKey> sources, RespireTDigestOptions? options = null, CancellationToken cancellationToken = default)
     {
         ValidateKeys(sources);

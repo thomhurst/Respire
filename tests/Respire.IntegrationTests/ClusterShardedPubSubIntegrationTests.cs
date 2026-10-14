@@ -27,7 +27,7 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
         var physical = view.ResolveChannel(logical);
         physical.ClusterSlot.Should().NotBe(logical.ClusterSlot);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await using var subscription = await view.SubscribeShardedAsync(logical, deadline.Token);
+        await using var subscription = await view.SubscribeShardedAsync(logical, cancellationToken: deadline.Token);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
         (await view.PublishShardedAsync(logical, "before", deadline.Token)).Should().Be(1);
         (await reader.MoveNextAsync()).Should().BeTrue();
@@ -66,7 +66,7 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
             $"{{{fixture.ReserveSlot(node: 2)}}}:moving",
         ];
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await using var subscription = await client.SubscribeShardedAsync(channels, deadline.Token);
+        await using var subscription = await client.SubscribeShardedAsync(channels, cancellationToken: deadline.Token);
         await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
         await PublishAndReadAll("before");
 

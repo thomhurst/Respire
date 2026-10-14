@@ -28,6 +28,12 @@ public enum RespireStreamDeletionResult
 
 public partial interface IStreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken);
+
     /// <summary>Removes entries under a reference policy, returning one outcome per ID. Redis 8.2+: XDELEX.</summary>
     ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy,
         params ReadOnlySpan<RespireStreamId> ids);
@@ -47,6 +53,15 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
+        => RemoveAsync(key, policy, [ids], cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
+        => AcknowledgeAndRemoveAsync(key, group, policy, [ids], cancellationToken);
+
+
     private static readonly Verb XDelEx = new("XDELEX");
     private static readonly Verb XAckDel = new("XACKDEL");
 

@@ -24,7 +24,7 @@ internal sealed class SentinelMonitorClient(RespireOptions options) : ISentinelM
 
     public async ValueTask<ISentinelMonitorSubscription> SubscribeAsync(CancellationToken cancellationToken)
         => new Subscription(await _client.SubscribeAsync(
-            ["+switch-master", "+sdown", "+odown"], cancellationToken).ConfigureAwait(false));
+            ["+switch-master", "+sdown", "+odown"], cancellationToken: cancellationToken).ConfigureAwait(false));
 
     public ValueTask DisposeAsync() => _client.DisposeAsync();
 

@@ -142,6 +142,32 @@ public enum ScriptFlushMode
 /// <summary>Lua scripting commands.</summary>
 public interface IScriptCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireResult> ExecuteAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<RespireResult> ExecuteSpanAsync(RespireScript script, RespireKey key, ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> ExecuteAsync<T>(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync<T>(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<long> ExecuteIntegerAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteIntegerAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<string?> ExecuteStringAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteStringAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    ValueTask<bool[]> ExistsAsync(string sha1, CancellationToken cancellationToken)
+        => ExistsAsync([sha1], cancellationToken);
+
     /// <summary>
     /// Executes a script. Keys go through KEYS[…] (and get this view's key prefix); args through
     /// ARGV[…]. The result uses GC-owned storage; disposal is optional. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.
@@ -165,6 +191,16 @@ public interface IScriptCommands
         ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Executes a script with one prefixed key and cancellation. Dispose the returned leased result.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey key,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Executes a script with one prefixed key and argument spans. Dispose the returned leased result; binary argument memory stays borrowed until completion.</summary>
+    ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, RespireKey key,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(script, [key], args, cancellationToken);
 
     /// <summary>Executes a script and returns a result that must be disposed. Implementations may use pooled storage.</summary>
     ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
@@ -235,6 +271,33 @@ public interface IScriptCommands
 
 internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
 {
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireResult> ExecuteAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<RespireResult> ExecuteSpanAsync(RespireScript script, RespireKey key, ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?> ExecuteAsync<T>(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteAsync<T>(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<long> ExecuteIntegerAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteIntegerAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<string?> ExecuteStringAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteStringAsync(script, [key], args, cancellationToken);
+
+    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    public ValueTask<bool[]> ExistsAsync(string sha1, CancellationToken cancellationToken)
+        => ExistsAsync([sha1], cancellationToken);
+
+
     public ValueTask<RespireResult> ExecuteAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
@@ -246,6 +309,14 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
         => ExecuteCoreAsync(script, keys, args, cancellationToken, owned: true);
+
+    public ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey key,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseAsync(script, [key], args, cancellationToken);
+
+    public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, RespireKey key,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(script, [key], args, cancellationToken);
 
     public ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)

@@ -40,7 +40,7 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
                     lock (existing.Handlers) existing.Handlers.Clear();
                 }
                 byte[]? bytes = channel;
-                var subscription = await client.SubscribeAsync(new RespireChannel(bytes!.AsMemory()), token).ConfigureAwait(false);
+                var subscription = await client.SubscribeAsync(new RespireChannel(bytes!.AsMemory()), cancellationToken: token).ConfigureAwait(false);
                 var registration = new Registration(subscription, [handler]);
                 _subscriptions.Add(channel, registration);
                 // Never invoke a callback inline while subscription admission holds the dispatch gate.

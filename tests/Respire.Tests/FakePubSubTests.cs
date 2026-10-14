@@ -149,7 +149,7 @@ public class FakePubSubTests
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("SUBSCRIBE", RespireFakeFault.Pause(gate, afterExecution: true));
         using var caller = new CancellationTokenSource();
-        var subscribing = subscriber.SubscribeAsync("channel", caller.Token).AsTask();
+        var subscribing = subscriber.SubscribeAsync("channel", cancellationToken: caller.Token).AsTask();
         await fault.Matched.WaitAsync(Limit);
         await Assert.That(await publisher.PublishAsync("channel", "before cancellation")).IsEqualTo(1);
         caller.Cancel();

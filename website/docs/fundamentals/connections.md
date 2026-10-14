@@ -205,7 +205,7 @@ Respire reconnects in the background to the same deployment, and resubscribes pu
 
 ## Cancellation and timeouts
 
-Cancelling a token abandons the wait; it cannot guarantee the server did not execute a command already written. Variadic `params ReadOnlySpan<T>` commands take a token on a sibling overload: `DeleteAsync(keys, cancellationToken)`.
+Cancelling a token abandons the wait; it cannot guarantee the server did not execute a command already written. Variadic `params ReadOnlySpan<T>` commands take a token on sibling overloads for a collection or a single item: `DeleteAsync(keys, cancellationToken)` or `DeleteAsync("key", cancellationToken)`.
 
 `RespireTimeoutException.Timeout` reports the budget that expired:
 
