@@ -199,7 +199,7 @@ The `valkey/valkey:9.1.0-alpine` image allows `MODULE UNLOAD lua` when module ad
 
 ## Custom implementations
 
-In `IScriptCommands` and `IBatchScriptCommands`, the cache members (`ExistsAsync` with cancellation, `FlushAsync`, `Load`, `Exists`, `Flush`) default to throwing `NotSupportedException`, as do `IRespireClient.Functions` and `IRespireCommandQueue.Functions`. Decorators should forward them.
+In `IScriptCommands` and `IBatchScriptCommands`, the cache members (`ExistsAsync` with cancellation, `FlushAsync`, `Load`, `Exists`, `Flush`) are required implementations, as are `IRespireClient.Functions` and `IRespireCommandQueue.Functions`. Custom implementations and decorators must implement or forward them; omitting them is a compile error. Convenience overloads that forward to required members remain available. See [interface compatibility](../intro.md#interface-compatibility) for the versioning policy.
 
 ## Redis references
 

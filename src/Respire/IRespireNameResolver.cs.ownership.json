@@ -1,0 +1,15 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireNameResolver",
+      "OwnerType": "Respire.RespireClient",
+      "Members": [
+        "ResolveChannel(RespireChannel):RespireChannel",
+        "ResolveKey(RespireKey):RespireKey"
+      ],
+      "Contract": "Resolve physical names through the concrete client or view. This capability does not dispatch commands."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

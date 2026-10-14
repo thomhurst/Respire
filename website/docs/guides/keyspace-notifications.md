@@ -46,7 +46,7 @@ await foreach (var message in subscription)
 Prefixes:
 
 - Factory prefixes and keys are physical. `WithKeyPrefix` and `WithPubSubPrefix` do not change notification descriptors.
-- The parser's prefix argument filters and strips that prefix. With configured or nested key prefixes, pass the full physical prefix, not just the last part. For text prefixes, get it from the view with `Encoding.UTF8.GetBytes(view.ResolveKey(RespireKey.Empty).ToString())`, and resolve descriptor keys through the same view.
+- The parser's prefix argument filters and strips that prefix. With configured or nested key prefixes, pass the full physical prefix, not just the last part. For text prefixes, get it from the view with `Encoding.UTF8.GetBytes(((IRespireNameResolver)view).ResolveKey(RespireKey.Empty).ToString())`, and resolve descriptor keys through the same view.
 - `Key`/`KeyBytes` are the stripped key; `KeyStartsWith` and `TryCopyKey` work on it. `Channel` and `RawValue` keep the original physical message.
 
 | Factory | Match | Command |

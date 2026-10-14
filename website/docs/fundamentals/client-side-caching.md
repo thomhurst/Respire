@@ -242,8 +242,8 @@ created and deleted before the `SET` runs, the computed value is stored.
 - **No lock or exactly-once guarantee.** Another writer can change the key right afterward.
 - **No capability check.** On an unsupported server or proxy, the factory can run before the write
   fails. Keep factories safe to run without a following write.
-- `IRespireClient` implementations other than `RespireClient` throw `NotSupportedException` unless
-  they implement or forward the method.
+- `GetOrSetAsync` is a required `IRespireClient` member. Custom implementations and decorators
+  must implement or forward it; omitting it is a compile error.
 - **Expiry** uses `RespireExpiry`: pass a `TimeSpan` for a relative TTL or a `DateTimeOffset` /
   `RespireExpiry.At(instant)` for an absolute deadline. Relative TTLs must be at least 1 ms, are
   truncated to whole milliseconds, and start at the successful server write. Absolute deadlines
@@ -411,8 +411,8 @@ event log, distributed lock, or cross-process correctness guarantee. For correct
 coordination, combine authoritative Redis commands with cancellation and periodic reconciliation; an
 undetected network partition can delay notifications indefinitely.
 
-Custom `IRespireClientSideCache` implementations that do not override `SubscribeInvalidations`
-throw `NotSupportedException`.
+`SubscribeInvalidations` is a required `IRespireClientSideCache` member. Custom implementations
+and decorators must implement or forward it; omitting it is a compile error.
 
 ## ASP.NET Core registration
 

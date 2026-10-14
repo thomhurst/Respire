@@ -31,7 +31,7 @@ public interface IRespireCommandQueue
     IBatchKeyCommands Keys { get; }
 
     /// <summary>Server flush commands affecting only the execution node.</summary>
-    IBatchServerCommands Server => throw new NotSupportedException("This queue does not support server flush commands.");
+    IBatchServerCommands Server { get; }
 
     /// <summary>Hash (field → value map) commands.</summary>
     IBatchHashCommands Hashes { get; }
@@ -40,8 +40,7 @@ public interface IRespireCommandQueue
     IBatchListCommands Lists { get; }
 
     /// <summary>Redis sparse array commands.</summary>
-    /// <remarks>The default getter throws NotSupportedException when an implementation does not support arrays.</remarks>
-    IBatchArrayCommands Arrays => throw new NotSupportedException("This queue does not support Redis arrays.");
+    IBatchArrayCommands Arrays { get; }
 
     /// <summary>Set (unordered, unique members) commands.</summary>
     IBatchSetCommands Sets { get; }
@@ -65,7 +64,7 @@ public interface IRespireCommandQueue
     IBatchScriptCommands Scripts { get; }
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
-    IBatchFunctionCommands Functions => throw new NotSupportedException("This queue does not support Redis Functions.");
+    IBatchFunctionCommands Functions { get; }
 
     /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
     IBatchStreamCommands Streams { get; }

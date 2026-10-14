@@ -72,8 +72,7 @@ public partial interface IBatchKeyCommands
     /// <summary>Queues one owned Valkey CLUSTERSCAN page. Requires a Cluster client.</summary>
     /// <remarks>The cursor and SLOT are physical routing values. Resume only after executing this page.</remarks>
     RespirePending<RespireValkeyClusterScanPage> ScanValkeyClusterPage(string cursor = "0",
-        string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null)
-        => throw new NotSupportedException("This implementation does not support CLUSTERSCAN.");
+        string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null);
 }
 
 internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands

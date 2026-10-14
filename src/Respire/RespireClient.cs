@@ -18,7 +18,7 @@ namespace Respire;
 /// intentionally block (BLPOP-style waits) transparently run on dedicated pooled connections
 /// instead, so they are fully supported.
 /// </summary>
-public sealed partial class RespireClient : IRespireClient
+public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 {
     private readonly ClientCore _core;
     private readonly KeyPrefix? _keyPrefix;

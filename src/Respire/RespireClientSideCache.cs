@@ -153,10 +153,9 @@ public interface IRespireClientSideCache
     /// subscription, with one coalesced pending notification. Recheck application state after every
     /// notification. Cancellation, subscription disposal, or client disposal stops future delivery;
     /// a callback already selected for execution may finish. The subscription snapshots binary key storage.
-    /// Third-party cache implementations that do not support observation throw NotSupportedException.</remarks>
+    /// Implementations must provide invalidation observation.</remarks>
     IRespireClientCacheInvalidationSubscription SubscribeInvalidations(
-        RespireKey key, Action<RespireClientCacheInvalidation> observer, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This client-side cache does not support invalidation observation.");
+        RespireKey key, Action<RespireClientCacheInvalidation> observer, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Per-client RESP3 server-assisted cache shared by the root client and its key-prefixed views.</summary>

@@ -25,7 +25,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         TestContext.Current!.Metadata.TestDetails.Categories.Contains(ClientPause) ? PausableServer : fixture;
 
     [Test]
-    public async Task ExistingDecoratorRejectsUnsupportedCacheAsideWithoutRunningFactory()
+    public async Task DecoratorForwardsCacheAsideConfigurationErrorWithoutRunningFactory()
     {
         IRespireClient decorator = new ScriptInterceptingClient(Client, static (_, send) => send());
         var calls = 0;
@@ -33,8 +33,30 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         {
             calls++;
             return ValueTask.FromResult<string?>("unused");
-        }, TimeSpan.FromSeconds(1))).ThrowsExactly<NotSupportedException>();
+        }, TimeSpan.FromSeconds(1))).ThrowsExactly<InvalidOperationException>();
         await Assert.That(calls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DecoratorForwardsCacheAsideToEnabledClient()
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Server.ConnectionString) with
+        {
+            ClientSideCache = new RespireClientSideCacheOptions()
+        });
+        IRespireClient decorator = new ScriptInterceptingClient(client, static (_, send) => send());
+        var calls = 0;
+        var key = $"decorator-cache-aside:{Guid.NewGuid():N}";
+
+        var value = await decorator.GetOrSetAsync<string>(key, _ =>
+        {
+            calls++;
+            return ValueTask.FromResult<string?>("created");
+        }, TimeSpan.FromMinutes(1));
+
+        await Assert.That(value).IsEqualTo("created");
+        await Assert.That(calls).IsEqualTo(1);
+        await Assert.That(await Client.GetStringAsync(key)).IsEqualTo("created");
     }
 
     private RespireClient? _client;
@@ -1410,7 +1432,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
         IKeyCommands? keys = null,
         bool ignoreScriptCancellation = false,
-        TimeSpan? setDelay = null) : IRespireClient
+        TimeSpan? setDelay = null) : IRespireClient, IRespireNameResolver
     {
         private int _scriptCalls;
         private int _setCalls;
@@ -1677,7 +1699,15 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public IRespireClient WithReadFrom(RespireReadFrom readFrom) => inner.WithReadFrom(readFrom);
         public IRespireClient WithoutClientCache() => inner.WithoutClientCache();
 
+        public IRespireClient WithKeyPrefix(RespireKey prefix) => inner.WithKeyPrefix(prefix);
+        public IRespireClient WithPubSubPrefix(string prefix) => inner.WithPubSubPrefix(prefix);
+        public IRespireClient WithPubSubPrefix(RespireKey prefix) => inner.WithPubSubPrefix(prefix);
+        public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
+            RespireExpiry expiry, CancellationToken cancellationToken = default)
+            => inner.GetOrSetAsync(key, factory, expiry, cancellationToken);
+
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
+        public RespireChannel ResolveChannel(RespireChannel channel) => inner.ResolveChannel(channel);
 
         // The test owns the wrapped client's lifetime.
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

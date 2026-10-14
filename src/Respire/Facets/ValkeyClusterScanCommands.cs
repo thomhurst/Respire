@@ -23,8 +23,7 @@ public partial interface IKeyCommands
     /// Older servers return their unsupported-command error; no legacy SCAN fallback is performed here.</remarks>
     ValueTask<RespireValkeyClusterScanPage> ScanValkeyClusterPageAsync(string cursor = "0",
         string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null,
-        CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This implementation does not support CLUSTERSCAN.");
+        CancellationToken cancellationToken = default);
 }
 
 internal sealed partial class KeyCommands
