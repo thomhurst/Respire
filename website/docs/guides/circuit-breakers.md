@@ -5,6 +5,8 @@ description: Opt-in endpoint admission, bounded recovery probes, and command hea
 
 # Endpoint circuit breakers
 
+For Polly v8 and Microsoft.Extensions.Resilience, see [circuit breaker ownership](./external-resilience#circuit-breaker-ownership).
+
 Set `RespireOptions.CircuitBreaker` to stop new standalone, Sentinel or Redis Cluster commands from
 reaching an unhealthy endpoint. The default is `null`, which adds no per-command work.
 

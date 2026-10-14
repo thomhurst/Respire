@@ -17,6 +17,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ## Available now
 
+- [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) integration
+  through the optional `Respire.Resilience` package, with a sample proving one retry layer.
+
 - [Source-generated logging with stable event IDs](integrations/log-events.md) across shipping
   packages, with duplicate-ID and logging-contract regression checks.
 

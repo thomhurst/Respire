@@ -4,6 +4,7 @@
     "projects": [
       "tests/Respire.Tests/Respire.Tests.csproj",
       "tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj",
+      "tests/Respire.Resilience.Tests/Respire.Resilience.Tests.csproj",
       "tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj",
       "tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj",
       "tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj",

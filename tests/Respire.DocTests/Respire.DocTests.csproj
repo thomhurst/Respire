@@ -43,6 +43,7 @@
     <PackageReference Include="Respire.AI" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.TimeSeries" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Probabilistic" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Resilience" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.13" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.13" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.13" />

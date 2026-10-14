@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Run Respire operations through Polly v8 resilience pipelines with one command retry owner.</Description>
+    <PackageTags>$(PackageTags);polly;resilience</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="Polly.Core" />
+  </ItemGroup>
+</Project>

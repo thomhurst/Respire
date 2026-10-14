@@ -5,6 +5,9 @@ title: Command retry policy
 Set `RespireOptions.RetryPolicy` to retry buffered immediate commands on standalone,
 Sentinel and Cluster clients. The default is `null`: no automatic retries.
 
+When composing with Polly v8 or Microsoft.Extensions.Resilience, [choose one retry
+owner](./external-resilience) to avoid multiplying attempts.
+
 ```csharp
 await using var client = await RespireClient.ConnectAsync(new RespireOptions
 {

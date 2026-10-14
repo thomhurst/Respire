@@ -9,6 +9,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Run resilience sample with one retry layer
+      shell: bash
+      run: dotnet run --project samples/Respire.Samples.Resilience -c Release -f ${{ inputs.framework }} --no-build
+
     - name: Run testing package sample
       shell: bash
       run: |
