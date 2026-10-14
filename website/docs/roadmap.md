@@ -17,6 +17,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ## Available now
 
+- [Source-generated logging with stable event IDs](integrations/log-events.md) across shipping
+  packages, with duplicate-ID and logging-contract regression checks.
+
 - [Public API baselines and deprecation policy](packages.md#public-api-review-and-deprecation)
   cover all shipping packages, with build failures for undeclared API changes.
 

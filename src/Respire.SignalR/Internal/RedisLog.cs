@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Respire.SignalR.Internal;
 
 // Keep logger definitions shared across closed hub types.
-// We'd end up creating separate instances of all the LoggerMessage.Define values for each Hub.
+// We'd end up creating separate instances of all the generated logging callbacks for each Hub.
 internal static partial class RedisLog
 {
     [LoggerMessage(3, LogLevel.Trace, "Subscribing to channel: {Channel}.", EventName = "Subscribing")]

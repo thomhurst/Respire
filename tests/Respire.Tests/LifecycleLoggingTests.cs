@@ -50,8 +50,13 @@ public partial class LifecycleLoggingTests
             var expected = Capture(legacy);
             var actual = Capture(typed);
             await Assert.That(actual.Level).IsEqualTo(expected.Level);
-            await Assert.That(actual.EventId.Id).IsEqualTo(expected.EventId.Id);
-            await Assert.That(actual.EventId.Name).IsEqualTo(expected.EventId.Name);
+            // Previously named events retain their identities; formerly unnamed events
+            // now have explicit identities, exhaustively checked by the contract snapshot.
+            if (expected.EventId.Id != 0)
+            {
+                await Assert.That(actual.EventId.Id).IsEqualTo(expected.EventId.Id);
+                await Assert.That(actual.EventId.Name).IsEqualTo(expected.EventId.Name);
+            }
             await Assert.That(ReferenceEquals(actual.Error, expected.Error)).IsTrue();
             await Assert.That(actual.Message).IsEqualTo(expected.Message);
             await Assert.That(actual.State).IsEquivalentTo(expected.State);
@@ -66,15 +71,15 @@ public partial class LifecycleLoggingTests
     [Arguments(LogLevel.Error)]
     [Arguments(LogLevel.Critical)]
     [Arguments(LogLevel.None)]
-    public async Task SentinelEventsPreserveDynamicLevelAndUnnamedEvent(LogLevel level)
+    public async Task SentinelEventsPreserveDynamicLevelAndStableIdentity(LogLevel level)
     {
         var endpoint = new RespireEndpoint("sentinel.example", 26379);
         var expected = Capture(logger => logger.Log(level,
             "Sentinel {Channel} event for service {Service} from {Sentinel}: {Event}", "switch-master", "service", endpoint, "details"));
         var actual = Capture(logger => logger.SentinelEvent(level, "switch-master", "service", endpoint, "details"));
         await Assert.That(actual.Level).IsEqualTo(expected.Level);
-        await Assert.That(actual.EventId.Id).IsEqualTo(0);
-        await Assert.That(actual.EventId.Name).IsNull();
+        await Assert.That(actual.EventId.Id).IsEqualTo(139);
+        await Assert.That(actual.EventId.Name).IsEqualTo("SentinelEvent");
         await Assert.That(actual.Message).IsEqualTo(expected.Message);
         await Assert.That(actual.State).IsEquivalentTo(expected.State);
     }

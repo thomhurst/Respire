@@ -157,7 +157,7 @@ internal sealed partial class SentinelDiscoveryState
         { /* Diagnostic providers must not prevent failover. */ }
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.")]
+    [LoggerMessage(EventId = 140, Level = LogLevel.Warning, Message = "Sentinel {Sentinel} did not provide a configuration epoch. Discovery relies on ROLE and switch evidence; any previously observed epoch remains enforced.")]
     private static partial void LogMissingEpoch(ILogger logger, RespireEndpoint sentinel);
 
     internal void AcceptConfiguration(RespireEndpoint primary, long? epoch, string[]? addresses = null,

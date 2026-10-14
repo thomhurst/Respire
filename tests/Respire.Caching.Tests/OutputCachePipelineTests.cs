@@ -70,8 +70,8 @@ public class OutputCachePipelineTests
         {
             var entry = logger.Events.Single();
             await Assert.That(entry.Level).IsEqualTo(LogLevel.Debug);
-            await Assert.That(entry.EventId.Id).IsEqualTo(0);
-            await Assert.That(entry.EventId.Name).IsNull();
+            await Assert.That(entry.EventId.Id).IsEqualTo(2);
+            await Assert.That(entry.EventId.Name).IsEqualTo("OutputCacheCleanupLockLost");
             await Assert.That(entry.Error).IsNull();
             await Assert.That(entry.State.Single().Key).IsEqualTo("{OriginalFormat}");
             await Assert.That(entry.State.Single().Value).IsEqualTo(

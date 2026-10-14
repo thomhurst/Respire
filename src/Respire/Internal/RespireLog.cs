@@ -3,433 +3,433 @@ using Respire.Protocol;
 
 namespace Respire;
 
-// Keep legacy EventId values and names, including unnamed event zero.
-// Cached typed delegates check IsEnabled before boxing or creating log state.
+// Event IDs and names are stable within this package; see website/docs/integrations/log-events.md.
+// Keep expensive formatting behind IsEnabled in the helper methods below.
 internal static partial class RespireLog
 {
-    private static readonly Action<ILogger, int, Exception?> StreamReadRetryMessage =
-        LoggerMessage.Define<int>(LogLevel.Warning, default, "Stream read failed; retrying after {DelayMilliseconds} ms.");
+    [LoggerMessage(1, LogLevel.Warning, "Stream read failed; retrying after {DelayMilliseconds} ms.", EventName = "StreamReadRetry")]
+    private static partial void StreamReadRetryMessage(ILogger logger, int delayMilliseconds, Exception? exception);
 
     internal static void StreamReadRetry(this ILogger logger, int delayMilliseconds, Exception? error)
         => StreamReadRetryMessage(logger, delayMilliseconds, error);
 
-    private static readonly Action<ILogger, int, string, int, Exception?> DeadConnectionReplacedMessage =
-        LoggerMessage.Define<int, string, int>(LogLevel.Information, default, "Replaced dead connection {Slot} to {Host}:{Port}");
+    [LoggerMessage(2, LogLevel.Information, "Replaced dead connection {Slot} to {Host}:{Port}", EventName = "DeadConnectionReplaced")]
+    private static partial void DeadConnectionReplacedMessage(ILogger logger, int slot, string host, int port, Exception? exception);
 
     internal static void DeadConnectionReplaced(this ILogger logger, int slot, string host, int port)
         => DeadConnectionReplacedMessage(logger, slot, host, port, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> RejectedReplacementDisposalFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Failed to dispose rejected replacement connection to {Host}:{Port}");
+    [LoggerMessage(3, LogLevel.Warning, "Failed to dispose rejected replacement connection to {Host}:{Port}", EventName = "RejectedReplacementDisposalFailed")]
+    private static partial void RejectedReplacementDisposalFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void RejectedReplacementDisposalFailed(this ILogger logger, string host, int port, Exception? error)
         => RejectedReplacementDisposalFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, int, Exception?> ReconnectKeptHealthyConnectionMessage =
-        LoggerMessage.Define<int>(LogLevel.Debug, default, "Reconnect of slot {Slot} failed after a healthy connection was published; keeping it");
+    [LoggerMessage(4, LogLevel.Debug, "Reconnect of slot {Slot} failed after a healthy connection was published; keeping it", EventName = "ReconnectKeptHealthyConnection")]
+    private static partial void ReconnectKeptHealthyConnectionMessage(ILogger logger, int slot, Exception? exception);
 
     internal static void ReconnectKeptHealthyConnection(this ILogger logger, int slot, Exception? error)
         => ReconnectKeptHealthyConnectionMessage(logger, slot, error);
 
-    private static readonly Action<ILogger, string, int, int, Exception?> ReconnectExhaustedMessage =
-        LoggerMessage.Define<string, int, int>(LogLevel.Warning, default, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts");
+    [LoggerMessage(5, LogLevel.Warning, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", EventName = "ReconnectExhausted")]
+    private static partial void ReconnectExhaustedMessage(ILogger logger, string host, int port, int attempts, Exception? exception);
 
     internal static void ReconnectExhausted(this ILogger logger, string host, int port, int attempts, Exception? error)
         => ReconnectExhaustedMessage(logger, host, port, attempts, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ReconnectBackoffDeferredMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff");
+    [LoggerMessage(6, LogLevel.Warning, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", EventName = "ReconnectBackoffDeferred")]
+    private static partial void ReconnectBackoffDeferredMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ReconnectBackoffDeferred(this ILogger logger, string host, int port, Exception? error)
         => ReconnectBackoffDeferredMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ReconnectDeferredMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Reconnect to {Host}:{Port} failed; will retry on next use");
+    [LoggerMessage(7, LogLevel.Warning, "Reconnect to {Host}:{Port} failed; will retry on next use", EventName = "ReconnectDeferred")]
+    private static partial void ReconnectDeferredMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ReconnectDeferred(this ILogger logger, string host, int port, Exception? error)
         => ReconnectDeferredMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, Exception?> ConnectionStateObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Connection state-change handler threw");
+    [LoggerMessage(8, LogLevel.Warning, "Connection state-change handler threw", EventName = "ConnectionStateObserverFailed")]
+    private static partial void ConnectionStateObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ConnectionStateObserverFailed(this ILogger logger, Exception? error)
         => ConnectionStateObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> ConnectionSlotObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Connection slot state-change handler threw");
+    [LoggerMessage(9, LogLevel.Warning, "Connection slot state-change handler threw", EventName = "ConnectionSlotObserverFailed")]
+    private static partial void ConnectionSlotObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ConnectionSlotObserverFailed(this ILogger logger, Exception? error)
         => ConnectionSlotObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> ReconnectMetricObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Reconnect metrics listener threw");
+    [LoggerMessage(10, LogLevel.Warning, "Reconnect metrics listener threw", EventName = "ReconnectMetricObserverFailed")]
+    private static partial void ReconnectMetricObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ReconnectMetricObserverFailed(this ILogger logger, Exception? error)
         => ReconnectMetricObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> MaintenanceBarrierAbortFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}");
+    [LoggerMessage(11, LogLevel.Debug, "Connection abort after maintenance barrier failure also failed at {Host}:{Port}", EventName = "MaintenanceBarrierAbortFailed")]
+    private static partial void MaintenanceBarrierAbortFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void MaintenanceBarrierAbortFailed(this ILogger logger, string host, int port, Exception? error)
         => MaintenanceBarrierAbortFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> MaintenanceBarrierFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection");
+    [LoggerMessage(12, LogLevel.Debug, "Maintenance drain barrier failed at {Host}:{Port}; retiring connection", EventName = "MaintenanceBarrierFailed")]
+    private static partial void MaintenanceBarrierFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void MaintenanceBarrierFailed(this ILogger logger, string host, int port, Exception? error)
         => MaintenanceBarrierFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> RetirementDisposalFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Retirement did not finish cleanly before disposal of {Host}:{Port}");
+    [LoggerMessage(13, LogLevel.Debug, "Retirement did not finish cleanly before disposal of {Host}:{Port}", EventName = "RetirementDisposalFailed")]
+    private static partial void RetirementDisposalFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void RetirementDisposalFailed(this ILogger logger, string host, int port, Exception? error)
         => RetirementDisposalFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, string, int, Exception?> MovingSupersededMessage =
-        LoggerMessage.Define<string, int, string, int>(LogLevel.Debug, default, "MOVING to {Host}:{Port} supersedes the handoff to {PreviousHost}:{PreviousPort}");
+    [LoggerMessage(14, LogLevel.Debug, "MOVING to {Host}:{Port} supersedes the handoff to {PreviousHost}:{PreviousPort}", EventName = "MovingSuperseded")]
+    private static partial void MovingSupersededMessage(ILogger logger, string host, int port, string previousHost, int previousPort, Exception? exception);
 
     internal static void MovingSuperseded(this ILogger logger, string host, int port, string previousHost, int previousPort)
         => MovingSupersededMessage(logger, host, port, previousHost, previousPort, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> MovingFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "MOVING handoff to {Host}:{Port} failed");
+    [LoggerMessage(15, LogLevel.Warning, "MOVING handoff to {Host}:{Port} failed", EventName = "MovingFailed")]
+    private static partial void MovingFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void MovingFailed(this ILogger logger, string host, int port, Exception? error)
         => MovingFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, Exception?> MovingRetirementStoppedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "MOVING handoff stopped by multiplexer retirement");
+    [LoggerMessage(16, LogLevel.Debug, "MOVING handoff stopped by multiplexer retirement", EventName = "MovingRetirementStopped")]
+    private static partial void MovingRetirementStoppedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingRetirementStopped(this ILogger logger, Exception? error)
         => MovingRetirementStoppedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> MovingGraceAttemptFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "MOVING handoff to {Host}:{Port} failed within its grace period; keeping current connections");
+    [LoggerMessage(17, LogLevel.Warning, "MOVING handoff to {Host}:{Port} failed within its grace period; keeping current connections", EventName = "MovingGraceAttemptFailed")]
+    private static partial void MovingGraceAttemptFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void MovingGraceAttemptFailed(this ILogger logger, string host, int port, Exception? error)
         => MovingGraceAttemptFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> MovingRetryMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "MOVING handoff to {Host}:{Port} failed; retrying");
+    [LoggerMessage(18, LogLevel.Debug, "MOVING handoff to {Host}:{Port} failed; retrying", EventName = "MovingRetry")]
+    private static partial void MovingRetryMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void MovingRetry(this ILogger logger, string host, int port, Exception? error)
         => MovingRetryMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> MovingPublicationSupersededMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "MOVING handoff to {Host}:{Port} superseded before publication");
+    [LoggerMessage(19, LogLevel.Debug, "MOVING handoff to {Host}:{Port} superseded before publication", EventName = "MovingPublicationSuperseded")]
+    private static partial void MovingPublicationSupersededMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void MovingPublicationSuperseded(this ILogger logger, string host, int port)
         => MovingPublicationSupersededMessage(logger, host, port, null);
 
-    private static readonly Action<ILogger, string, int, long, Exception?> MovingPublishedLateMessage =
-        LoggerMessage.Define<string, int, long>(LogLevel.Warning, default, "MOVING handoff to {Host}:{Port} published {LateMilliseconds} ms after its grace period; aborting old sockets, so commands they had accepted may fail");
+    [LoggerMessage(20, LogLevel.Warning, "MOVING handoff to {Host}:{Port} published {LateMilliseconds} ms after its grace period; aborting old sockets, so commands they had accepted may fail", EventName = "MovingPublishedLate")]
+    private static partial void MovingPublishedLateMessage(ILogger logger, string host, int port, long lateMilliseconds, Exception? exception);
 
     internal static void MovingPublishedLate(this ILogger logger, string host, int port, long lateMilliseconds)
         => MovingPublishedLateMessage(logger, host, port, lateMilliseconds, null);
 
-    private static readonly Action<ILogger, Exception?> MovingCacheFenceObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "MOVING retirement cache fence observer failed");
+    [LoggerMessage(21, LogLevel.Debug, "MOVING retirement cache fence observer failed", EventName = "MovingCacheFenceObserverFailed")]
+    private static partial void MovingCacheFenceObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingCacheFenceObserverFailed(this ILogger logger, Exception? error)
         => MovingCacheFenceObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> ContinuityFlushObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Continuity flush metrics observer failed");
+    [LoggerMessage(22, LogLevel.Debug, "Continuity flush metrics observer failed", EventName = "ContinuityFlushObserverFailed")]
+    private static partial void ContinuityFlushObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ContinuityFlushObserverFailed(this ILogger logger, Exception? error)
         => ContinuityFlushObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> MovingSocketFenceFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Fencing old MOVING sockets failed");
+    [LoggerMessage(23, LogLevel.Warning, "Fencing old MOVING sockets failed", EventName = "MovingSocketFenceFailed")]
+    private static partial void MovingSocketFenceFailedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingSocketFenceFailed(this ILogger logger, Exception? error)
         => MovingSocketFenceFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> MovingSocketDrainStoppedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Old MOVING socket drain stopped by multiplexer retirement");
+    [LoggerMessage(24, LogLevel.Debug, "Old MOVING socket drain stopped by multiplexer retirement", EventName = "MovingSocketDrainStopped")]
+    private static partial void MovingSocketDrainStoppedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingSocketDrainStopped(this ILogger logger, Exception? error)
         => MovingSocketDrainStoppedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> MovingDrainGraceExceededMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets");
+    [LoggerMessage(25, LogLevel.Warning, "MOVING handoff drain exceeded its advertised grace period; aborting remaining old sockets", EventName = "MovingDrainGraceExceeded")]
+    private static partial void MovingDrainGraceExceededMessage(ILogger logger, Exception? exception);
 
     internal static void MovingDrainGraceExceeded(this ILogger logger)
         => MovingDrainGraceExceededMessage(logger, null);
 
-    private static readonly Action<ILogger, Exception?> MovingDrainDisposalStoppedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Disposal ended the MOVING handoff drain; aborting remaining old sockets");
+    [LoggerMessage(26, LogLevel.Debug, "Disposal ended the MOVING handoff drain; aborting remaining old sockets", EventName = "MovingDrainDisposalStopped")]
+    private static partial void MovingDrainDisposalStoppedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingDrainDisposalStopped(this ILogger logger)
         => MovingDrainDisposalStoppedMessage(logger, null);
 
-    private static readonly Action<ILogger, Exception?> MovingDrainFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "MOVING handoff drain of old sockets failed; aborting remaining old sockets");
+    [LoggerMessage(27, LogLevel.Warning, "MOVING handoff drain of old sockets failed; aborting remaining old sockets", EventName = "MovingDrainFailed")]
+    private static partial void MovingDrainFailedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingDrainFailed(this ILogger logger, Exception? error)
         => MovingDrainFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> MovingSocketAbortFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Aborting an old MOVING socket failed");
+    [LoggerMessage(28, LogLevel.Debug, "Aborting an old MOVING socket failed", EventName = "MovingSocketAbortFailed")]
+    private static partial void MovingSocketAbortFailedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingSocketAbortFailed(this ILogger logger, Exception? error)
         => MovingSocketAbortFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> MovingSocketDrainCleanupCompletedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Old MOVING sockets completed after drain cleanup");
+    [LoggerMessage(29, LogLevel.Debug, "Old MOVING sockets completed after drain cleanup", EventName = "MovingSocketDrainCleanupCompleted")]
+    private static partial void MovingSocketDrainCleanupCompletedMessage(ILogger logger, Exception? exception);
 
     internal static void MovingSocketDrainCleanupCompleted(this ILogger logger, Exception? error)
         => MovingSocketDrainCleanupCompletedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> DedicatedMovingCleanupFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Dedicated connection cleanup after MOVING failed");
+    [LoggerMessage(30, LogLevel.Warning, "Dedicated connection cleanup after MOVING failed", EventName = "DedicatedMovingCleanupFailed")]
+    private static partial void DedicatedMovingCleanupFailedMessage(ILogger logger, Exception? exception);
 
     internal static void DedicatedMovingCleanupFailed(this ILogger logger, Exception? error)
         => DedicatedMovingCleanupFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, long, long, Exception?> ClusterUnknownEndpointSkippedMessage =
-        LoggerMessage.Define<long, long>(LogLevel.Debug, default, "Skipping Redis Cluster slots {Start}-{End}: the preferred endpoint is unknown ('?').");
+    [LoggerMessage(31, LogLevel.Debug, "Skipping Redis Cluster slots {Start}-{End}: the preferred endpoint is unknown ('?').", EventName = "ClusterUnknownEndpointSkipped")]
+    private static partial void ClusterUnknownEndpointSkippedMessage(ILogger logger, long start, long end, Exception? exception);
 
     internal static void ClusterUnknownEndpointSkipped(this ILogger logger, long start, long end)
         => ClusterUnknownEndpointSkippedMessage(logger, start, end, null);
 
-    private static readonly Action<ILogger, Exception?> ClusterDiscoveryObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Cluster discovery observer threw");
+    [LoggerMessage(32, LogLevel.Warning, "Cluster discovery observer threw", EventName = "ClusterDiscoveryObserverFailed")]
+    private static partial void ClusterDiscoveryObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ClusterDiscoveryObserverFailed(this ILogger logger, Exception? error)
         => ClusterDiscoveryObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> ClusterMigrationDropMetricFailedMessage =
-        LoggerMessage.Define(LogLevel.Error, default, "Error recording clustered migration-drop metric.");
+    [LoggerMessage(33, LogLevel.Error, "Error recording clustered migration-drop metric.", EventName = "ClusterMigrationDropMetricFailed")]
+    private static partial void ClusterMigrationDropMetricFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ClusterMigrationDropMetricFailed(this ILogger logger, Exception? error)
         => ClusterMigrationDropMetricFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, long, Exception?> ClusterMigrationQueueFullMessage =
-        LoggerMessage.Define<long>(LogLevel.Warning, default, "Cluster SMIGRATED queue is full; {Dropped} notifications dropped so far. MOVED handling and topology discovery will correct the affected slots.");
+    [LoggerMessage(34, LogLevel.Warning, "Cluster SMIGRATED queue is full; {Dropped} notifications dropped so far. MOVED handling and topology discovery will correct the affected slots.", EventName = "ClusterMigrationQueueFull")]
+    private static partial void ClusterMigrationQueueFullMessage(ILogger logger, long dropped, Exception? exception);
 
     internal static void ClusterMigrationQueueFull(this ILogger logger, long dropped)
         => ClusterMigrationQueueFullMessage(logger, dropped, null);
 
-    private static readonly Action<ILogger, Exception?> ClusterMigrationMetricObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Cluster slot migration metric listener threw.");
+    [LoggerMessage(35, LogLevel.Warning, "Cluster slot migration metric listener threw.", EventName = "ClusterMigrationMetricObserverFailed")]
+    private static partial void ClusterMigrationMetricObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ClusterMigrationMetricObserverFailed(this ILogger logger, Exception? error)
         => ClusterMigrationMetricObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ClusterMigrationApplyFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Error, default, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.");
+    [LoggerMessage(36, LogLevel.Error, "Failed to apply Cluster SMIGRATED notification from {Host}:{Port}.", EventName = "ClusterMigrationApplyFailed")]
+    private static partial void ClusterMigrationApplyFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ClusterMigrationApplyFailed(this ILogger logger, string host, int port, Exception? error)
         => ClusterMigrationApplyFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, long, string, int, Exception?> ClusterMigrationSequenceIgnoredMessage =
-        LoggerMessage.Define<long, string, int>(LogLevel.Debug, default, "Ignored duplicate Cluster SMIGRATED sequence {Sequence} from {Host}:{Port}.");
+    [LoggerMessage(37, LogLevel.Debug, "Ignored duplicate Cluster SMIGRATED sequence {Sequence} from {Host}:{Port}.", EventName = "ClusterMigrationSequenceIgnored")]
+    private static partial void ClusterMigrationSequenceIgnoredMessage(ILogger logger, long sequence, string host, int port, Exception? exception);
 
     internal static void ClusterMigrationSequenceIgnored(this ILogger logger, long sequence, string host, int port)
         => ClusterMigrationSequenceIgnoredMessage(logger, sequence, host, port, null);
 
-    private static readonly Action<ILogger, int, Exception?> ClusterReplicaRouteRefreshFailedMessage =
-        LoggerMessage.Define<int>(LogLevel.Warning, default, "Replica route refresh for Redis Cluster slot {Slot} failed");
+    [LoggerMessage(38, LogLevel.Warning, "Replica route refresh for Redis Cluster slot {Slot} failed", EventName = "ClusterReplicaRouteRefreshFailed")]
+    private static partial void ClusterReplicaRouteRefreshFailedMessage(ILogger logger, int slot, Exception? exception);
 
     internal static void ClusterReplicaRouteRefreshFailed(this ILogger logger, int slot, Exception? error)
         => ClusterReplicaRouteRefreshFailedMessage(logger, slot, error);
 
-    private static readonly Action<ILogger, int, string, RespireReadFrom, Exception?> ClusterReadRoleRetryMessage =
-        LoggerMessage.Define<int, string, RespireReadFrom>(LogLevel.Debug, default, "Redis Cluster slot {Slot} returned {Code} on the preferred role; {ReadFrom} read retries on the other role");
+    [LoggerMessage(39, LogLevel.Debug, "Redis Cluster slot {Slot} returned {Code} on the preferred role; {ReadFrom} read retries on the other role", EventName = "ClusterReadRoleRetry")]
+    private static partial void ClusterReadRoleRetryMessage(ILogger logger, int slot, string code, RespireReadFrom readFrom, Exception? exception);
 
     internal static void ClusterReadRoleRetry(this ILogger logger, int slot, string code, RespireReadFrom readFrom)
         => ClusterReadRoleRetryMessage(logger, slot, code, readFrom, null);
 
-    private static readonly Action<ILogger, int, string, int, RespireReadFrom, string, Exception?> ClusterReplicaRedirectRefreshFailedMessage =
-        LoggerMessage.Define<int, string, int, RespireReadFrom, string>(LogLevel.Warning, default, "Unable to refresh replica routes for Redis Cluster slot {Slot} from {Host}:{Port} after a redirect; {ReadFrom} read uses {Fallback}");
+    [LoggerMessage(40, LogLevel.Warning, "Unable to refresh replica routes for Redis Cluster slot {Slot} from {Host}:{Port} after a redirect; {ReadFrom} read uses {Fallback}", EventName = "ClusterReplicaRedirectRefreshFailed")]
+    private static partial void ClusterReplicaRedirectRefreshFailedMessage(ILogger logger, int slot, string host, int port, RespireReadFrom readFrom, string fallback, Exception? exception);
 
     internal static void ClusterReplicaRedirectRefreshFailed(this ILogger logger, int slot, string host, int port, RespireReadFrom readFrom, string fallback)
         => ClusterReplicaRedirectRefreshFailedMessage(logger, slot, host, port, readFrom, fallback, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> ClusterRetirementCorrectionNeededMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Cluster generation retirement needs correction cleanup at {Host}:{Port}");
+    [LoggerMessage(41, LogLevel.Debug, "Cluster generation retirement needs correction cleanup at {Host}:{Port}", EventName = "ClusterRetirementCorrectionNeeded")]
+    private static partial void ClusterRetirementCorrectionNeededMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ClusterRetirementCorrectionNeeded(this ILogger logger, string host, int port, Exception? error)
         => ClusterRetirementCorrectionNeededMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, int, int, Exception?> ClusterFenceUnavailableMessage =
-        LoggerMessage.Define<string, int, int, int>(LogLevel.Warning, default, "Cluster fence still unavailable at {Host}:{Port}; retrying in {DelaySeconds}s; {RetiringGenerationCount} generations remain in retirement");
+    [LoggerMessage(42, LogLevel.Warning, "Cluster fence still unavailable at {Host}:{Port}; retrying in {DelaySeconds}s; {RetiringGenerationCount} generations remain in retirement", EventName = "ClusterFenceUnavailable")]
+    private static partial void ClusterFenceUnavailableMessage(ILogger logger, string host, int port, int delaySeconds, int retiringGenerationCount, Exception? exception);
 
     internal static void ClusterFenceUnavailable(this ILogger logger, string host, int port, int delaySeconds, int retiringGenerationCount, Exception? error)
         => ClusterFenceUnavailableMessage(logger, host, port, delaySeconds, retiringGenerationCount, error);
 
-    private static readonly Action<ILogger, string, int, int, Exception?> ClusterFenceRetryMessage =
-        LoggerMessage.Define<string, int, int>(LogLevel.Debug, default, "Cluster fence retry failed at {Host}:{Port}; retrying in {DelaySeconds}s");
+    [LoggerMessage(43, LogLevel.Debug, "Cluster fence retry failed at {Host}:{Port}; retrying in {DelaySeconds}s", EventName = "ClusterFenceRetry")]
+    private static partial void ClusterFenceRetryMessage(ILogger logger, string host, int port, int delaySeconds, Exception? exception);
 
     internal static void ClusterFenceRetry(this ILogger logger, string host, int port, int delaySeconds, Exception? error)
         => ClusterFenceRetryMessage(logger, host, port, delaySeconds, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ClusterRetirementFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Cluster generation retirement failed at {Host}:{Port}");
+    [LoggerMessage(44, LogLevel.Warning, "Cluster generation retirement failed at {Host}:{Port}", EventName = "ClusterRetirementFailed")]
+    private static partial void ClusterRetirementFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ClusterRetirementFailed(this ILogger logger, string host, int port, Exception? error)
         => ClusterRetirementFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ClusterGenerationCleanupFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Cluster generation cleanup failed at {Host}:{Port}");
+    [LoggerMessage(45, LogLevel.Warning, "Cluster generation cleanup failed at {Host}:{Port}", EventName = "ClusterGenerationCleanupFailed")]
+    private static partial void ClusterGenerationCleanupFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ClusterGenerationCleanupFailed(this ILogger logger, string host, int port, Exception? error)
         => ClusterGenerationCleanupFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, Exception?> ClusterRetiredPoolCleanupFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "A retired Cluster pool reported a cleanup failure");
+    [LoggerMessage(46, LogLevel.Warning, "A retired Cluster pool reported a cleanup failure", EventName = "ClusterRetiredPoolCleanupFailed")]
+    private static partial void ClusterRetiredPoolCleanupFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ClusterRetiredPoolCleanupFailed(this ILogger logger, Exception? error)
         => ClusterRetiredPoolCleanupFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> DedicatedPoolDisposalFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Failed to dispose a dedicated pool for {Host}:{Port}");
+    [LoggerMessage(47, LogLevel.Warning, "Failed to dispose a dedicated pool for {Host}:{Port}", EventName = "DedicatedPoolDisposalFailed")]
+    private static partial void DedicatedPoolDisposalFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void DedicatedPoolDisposalFailed(this ILogger logger, string host, int port, Exception? error)
         => DedicatedPoolDisposalFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> DedicatedConnectionCloseFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Failed to close a dedicated connection to {Host}:{Port}");
+    [LoggerMessage(48, LogLevel.Warning, "Failed to close a dedicated connection to {Host}:{Port}", EventName = "DedicatedConnectionCloseFailed")]
+    private static partial void DedicatedConnectionCloseFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void DedicatedConnectionCloseFailed(this ILogger logger, string host, int port, Exception? error)
         => DedicatedConnectionCloseFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, Exception?> DedicatedRecoveryObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Dedicated connection recovery observer threw");
+    [LoggerMessage(49, LogLevel.Warning, "Dedicated connection recovery observer threw", EventName = "DedicatedRecoveryObserverFailed")]
+    private static partial void DedicatedRecoveryObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void DedicatedRecoveryObserverFailed(this ILogger logger, Exception? error)
         => DedicatedRecoveryObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, long, string, int, Exception?> MaintenanceNotificationReceivedMessage =
-        LoggerMessage.Define<string, long, string, int>(LogLevel.Information, default, "Redis maintenance {Kind} ({SequenceId}) on {Host}:{Port}");
+    [LoggerMessage(50, LogLevel.Information, "Redis maintenance {Kind} ({SequenceId}) on {Host}:{Port}", EventName = "MaintenanceNotificationReceived")]
+    private static partial void MaintenanceNotificationReceivedMessage(ILogger logger, string kind, long sequenceId, string host, int port, Exception? exception);
 
     internal static void MaintenanceNotificationReceived(this ILogger logger, string kind, long sequenceId, string host, int port)
         => MaintenanceNotificationReceivedMessage(logger, kind, sequenceId, host, port, null);
 
-    private static readonly Action<ILogger, Exception?> MaintenanceDiagnosticObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Maintenance diagnostic listener threw");
+    [LoggerMessage(51, LogLevel.Warning, "Maintenance diagnostic listener threw", EventName = "MaintenanceDiagnosticObserverFailed")]
+    private static partial void MaintenanceDiagnosticObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void MaintenanceDiagnosticObserverFailed(this ILogger logger, Exception? error)
         => MaintenanceDiagnosticObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> ReadReplicaDrainFailedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Debug, default, "Draining a removed read replica at {Endpoint} failed");
+    [LoggerMessage(52, LogLevel.Debug, "Draining a removed read replica at {Endpoint} failed", EventName = "ReadReplicaDrainFailed")]
+    private static partial void ReadReplicaDrainFailedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void ReadReplicaDrainFailed(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => ReadReplicaDrainFailedMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, Exception?> ReadReplicaCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a removed read replica failed");
+    [LoggerMessage(53, LogLevel.Debug, "Closing a removed read replica failed", EventName = "ReadReplicaCloseFailed")]
+    private static partial void ReadReplicaCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ReadReplicaCloseFailed(this ILogger logger, Exception? error)
         => ReadReplicaCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> SentinelReplicaBackgroundRefreshFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Background Sentinel replica refresh failed");
+    [LoggerMessage(54, LogLevel.Debug, "Background Sentinel replica refresh failed", EventName = "SentinelReplicaBackgroundRefreshFailed")]
+    private static partial void SentinelReplicaBackgroundRefreshFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SentinelReplicaBackgroundRefreshFailed(this ILogger logger, Exception? error)
         => SentinelReplicaBackgroundRefreshFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, int, Exception?> SentinelReplicaDiscoveryFailedMessage =
-        LoggerMessage.Define<int>(LogLevel.Warning, default, "Sentinel replica discovery failed; serving the last known {Count} replica endpoint(s) until Sentinel answers");
+    [LoggerMessage(55, LogLevel.Warning, "Sentinel replica discovery failed; serving the last known {Count} replica endpoint(s) until Sentinel answers", EventName = "SentinelReplicaDiscoveryFailed")]
+    private static partial void SentinelReplicaDiscoveryFailedMessage(ILogger logger, int count, Exception? exception);
 
     internal static void SentinelReplicaDiscoveryFailed(this ILogger logger, int count, Exception? error)
         => SentinelReplicaDiscoveryFailedMessage(logger, count, error);
 
-    private static readonly Action<ILogger, Exception?> SentinelReplicaRefreshFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Sentinel replica refresh failed; retaining current endpoints");
+    [LoggerMessage(56, LogLevel.Debug, "Sentinel replica refresh failed; retaining current endpoints", EventName = "SentinelReplicaRefreshFailed")]
+    private static partial void SentinelReplicaRefreshFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SentinelReplicaRefreshFailed(this ILogger logger, Exception? error)
         => SentinelReplicaRefreshFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, int, Exception?> SentinelReplicaDiscoveryRecoveredMessage =
-        LoggerMessage.Define<int>(LogLevel.Information, default, "Sentinel replica discovery recovered with {Count} replica endpoint(s)");
+    [LoggerMessage(57, LogLevel.Information, "Sentinel replica discovery recovered with {Count} replica endpoint(s)", EventName = "SentinelReplicaDiscoveryRecovered")]
+    private static partial void SentinelReplicaDiscoveryRecoveredMessage(ILogger logger, int count, Exception? exception);
 
     internal static void SentinelReplicaDiscoveryRecovered(this ILogger logger, int count)
         => SentinelReplicaDiscoveryRecoveredMessage(logger, count, null);
 
-    private static readonly Action<ILogger, string, string, int, Exception?> CredentialRefreshFailedMessage =
-        LoggerMessage.Define<string, string, int>(LogLevel.Warning, new EventId(4001, "CredentialRefreshFailed"), "Credential renewal failed at {Stage} for {Host}:{Port}");
+    [LoggerMessage(4001, LogLevel.Warning, "Credential renewal failed at {Stage} for {Host}:{Port}", EventName = "CredentialRefreshFailed")]
+    private static partial void CredentialRefreshFailedMessage(ILogger logger, string stage, string host, int port, Exception? exception);
 
     internal static void CredentialRefreshFailed(this ILogger logger, string stage, string host, int port)
         => CredentialRefreshFailedMessage(logger, stage, host, port, null);
 
-    private static readonly Action<ILogger, string, string, string, Exception?> CoordinationCleanupAbandonedMessage =
-        LoggerMessage.Define<string, string, string>(LogLevel.Warning, new EventId(4101, "CoordinationCleanupAbandoned"), "Background {Primitive} cleanup stopped at its {Stage} step ({Reason}); the owner may stay on Redis until it expires or is removed manually");
+    [LoggerMessage(4101, LogLevel.Warning, "Background {Primitive} cleanup stopped at its {Stage} step ({Reason}); the owner may stay on Redis until it expires or is removed manually", EventName = "CoordinationCleanupAbandoned")]
+    private static partial void CoordinationCleanupAbandonedMessage(ILogger logger, string primitive, string stage, string reason, Exception? exception);
 
     internal static void CoordinationCleanupAbandoned(this ILogger logger, string primitive, string stage, string reason)
         => CoordinationCleanupAbandonedMessage(logger, primitive, stage, reason, null);
 
-    private static readonly Action<ILogger, string, Exception?> ReconnectTelemetryObserverFailedMessage =
-        LoggerMessage.Define<string>(LogLevel.Warning, default, "Reconnect telemetry listener threw for {Scope}");
+    [LoggerMessage(58, LogLevel.Warning, "Reconnect telemetry listener threw for {Scope}", EventName = "ReconnectTelemetryObserverFailed")]
+    private static partial void ReconnectTelemetryObserverFailedMessage(ILogger logger, string scope, Exception? exception);
 
     internal static void ReconnectTelemetryObserverFailed(this ILogger logger, string scope, Exception? error)
         => ReconnectTelemetryObserverFailedMessage(logger, scope, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelMonitorRestartingMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Warning, default, "Restarting an unexpectedly completed Sentinel event monitor at {Endpoint}");
+    [LoggerMessage(59, LogLevel.Warning, "Restarting an unexpectedly completed Sentinel event monitor at {Endpoint}", EventName = "SentinelMonitorRestarting")]
+    private static partial void SentinelMonitorRestartingMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelMonitorRestarting(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelMonitorRestartingMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelMonitorFailedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Warning, default, "Sentinel event monitor failed at {Endpoint}");
+    [LoggerMessage(60, LogLevel.Warning, "Sentinel event monitor failed at {Endpoint}", EventName = "SentinelMonitorFailed")]
+    private static partial void SentinelMonitorFailedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelMonitorFailed(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelMonitorFailedMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelMonitorCleanupFailedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Debug, default, "Sentinel event monitor cleanup failed at {Endpoint}");
+    [LoggerMessage(61, LogLevel.Debug, "Sentinel event monitor cleanup failed at {Endpoint}", EventName = "SentinelMonitorCleanupFailed")]
+    private static partial void SentinelMonitorCleanupFailedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelMonitorCleanupFailed(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelMonitorCleanupFailedMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelMonitorExhaustedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Warning, default, "Sentinel event monitor exhausted reconnect attempts at {Endpoint}; failover events from this "
-                    + "Sentinel are not observed until a new primary is published, and discovery runs on demand");
+    [LoggerMessage(62, LogLevel.Warning, "Sentinel event monitor exhausted reconnect attempts at {Endpoint}; failover events from this "
+                    + "Sentinel are not observed until a new primary is published, and discovery runs on demand", EventName = "SentinelMonitorExhausted")]
+    private static partial void SentinelMonitorExhaustedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelMonitorExhausted(this ILogger logger, RespireEndpoint endpoint)
         => SentinelMonitorExhaustedMessage(logger, endpoint, null);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelMonitorResumedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Information, default, "Sentinel event monitor at {Endpoint} resumes after a new primary was published");
+    [LoggerMessage(63, LogLevel.Information, "Sentinel event monitor at {Endpoint} resumes after a new primary was published", EventName = "SentinelMonitorResumed")]
+    private static partial void SentinelMonitorResumedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelMonitorResumed(this ILogger logger, RespireEndpoint endpoint)
         => SentinelMonitorResumedMessage(logger, endpoint, null);
 
-    private static readonly Action<ILogger, string, Exception?> SentinelSwitchSourceResolutionFailedMessage =
-        LoggerMessage.Define<string>(LogLevel.Debug, default, "Could not resolve Sentinel switch source {Host}");
+    [LoggerMessage(64, LogLevel.Debug, "Could not resolve Sentinel switch source {Host}", EventName = "SentinelSwitchSourceResolutionFailed")]
+    private static partial void SentinelSwitchSourceResolutionFailedMessage(ILogger logger, string host, Exception? exception);
 
     internal static void SentinelSwitchSourceResolutionFailed(this ILogger logger, string host, Exception? error)
         => SentinelSwitchSourceResolutionFailedMessage(logger, host, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelMalformedReplicasMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Debug, default, "Sentinel {Endpoint} returned a malformed SENTINEL REPLICAS reply");
+    [LoggerMessage(65, LogLevel.Debug, "Sentinel {Endpoint} returned a malformed SENTINEL REPLICAS reply", EventName = "SentinelMalformedReplicas")]
+    private static partial void SentinelMalformedReplicasMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelMalformedReplicas(this ILogger logger, RespireEndpoint endpoint)
         => SentinelMalformedReplicasMessage(logger, endpoint, null);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelReplicaDiscoveryUnavailableMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Debug, default, "Optional Sentinel replica discovery failed at {Endpoint}");
+    [LoggerMessage(66, LogLevel.Debug, "Optional Sentinel replica discovery failed at {Endpoint}", EventName = "SentinelReplicaDiscoveryUnavailable")]
+    private static partial void SentinelReplicaDiscoveryUnavailableMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelReplicaDiscoveryUnavailable(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelReplicaDiscoveryUnavailableMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> SentinelPrimaryDiscoveryFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Redis Sentinel discovery or primary connection failed through {Host}:{Port}");
+    [LoggerMessage(67, LogLevel.Warning, "Redis Sentinel discovery or primary connection failed through {Host}:{Port}", EventName = "SentinelPrimaryDiscoveryFailed")]
+    private static partial void SentinelPrimaryDiscoveryFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void SentinelPrimaryDiscoveryFailed(this ILogger logger, string host, int port, Exception? error)
         => SentinelPrimaryDiscoveryFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, RespireEndpoint, Exception?> SentinelOptionalDiscoveryFailedMessage =
-        LoggerMessage.Define<string, RespireEndpoint>(LogLevel.Debug, default, "Optional Sentinel {Stage} discovery failed at {Sentinel}");
+    [LoggerMessage(68, LogLevel.Debug, "Optional Sentinel {Stage} discovery failed at {Sentinel}", EventName = "SentinelOptionalDiscoveryFailed")]
+    private static partial void SentinelOptionalDiscoveryFailedMessage(ILogger logger, string stage, RespireEndpoint sentinel, Exception? exception);
 
     internal static void SentinelOptionalDiscoveryFailed(this ILogger logger, string stage, RespireEndpoint sentinel, Exception? error)
         => SentinelOptionalDiscoveryFailedMessage(logger, stage, sentinel, error);
 
-    private static readonly Action<ILogger, string, Exception?> SentinelPeerDiscoveryUnavailableMessage =
-        LoggerMessage.Define<string>(LogLevel.Debug, default, "Sentinel peer discovery was unavailable: {Error}");
+    [LoggerMessage(69, LogLevel.Debug, "Sentinel peer discovery was unavailable: {Error}", EventName = "SentinelPeerDiscoveryUnavailable")]
+    private static partial void SentinelPeerDiscoveryUnavailableMessage(ILogger logger, string error, Exception? exception);
 
     internal static void SentinelPeerDiscoveryUnavailable(this ILogger logger, in RespValue reply)
     {
@@ -437,38 +437,38 @@ internal static partial class RespireLog
             SentinelPeerDiscoveryUnavailableMessage(logger, reply.GetErrorMessage(), null);
     }
 
-    private static readonly Action<ILogger, Exception?> SentinelRetiredPrimaryProbeFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Sentinel primary probe failed on a retired generation; rediscovering");
+    [LoggerMessage(70, LogLevel.Debug, "Sentinel primary probe failed on a retired generation; rediscovering", EventName = "SentinelRetiredPrimaryProbeFailed")]
+    private static partial void SentinelRetiredPrimaryProbeFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SentinelRetiredPrimaryProbeFailed(this ILogger logger, Exception? error)
         => SentinelRetiredPrimaryProbeFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> SentinelStateObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Sentinel state observer failed");
+    [LoggerMessage(71, LogLevel.Warning, "Sentinel state observer failed", EventName = "SentinelStateObserverFailed")]
+    private static partial void SentinelStateObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SentinelStateObserverFailed(this ILogger logger, Exception? error)
         => SentinelStateObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelRetirementDrainFailedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Debug, default, "Sentinel transport retirement reported an error after draining at {Endpoint}");
+    [LoggerMessage(72, LogLevel.Debug, "Sentinel transport retirement reported an error after draining at {Endpoint}", EventName = "SentinelRetirementDrainFailed")]
+    private static partial void SentinelRetirementDrainFailedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelRetirementDrainFailed(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelRetirementDrainFailedMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelCorrectionFenceUnacknowledgedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Warning, default, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence");
+    [LoggerMessage(73, LogLevel.Warning, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", EventName = "SentinelCorrectionFenceUnacknowledged")]
+    private static partial void SentinelCorrectionFenceUnacknowledgedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelCorrectionFenceUnacknowledged(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelCorrectionFenceUnacknowledgedMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, RespireEndpoint, Exception?> SentinelGenerationCleanupFailedMessage =
-        LoggerMessage.Define<RespireEndpoint>(LogLevel.Warning, default, "Sentinel generation cleanup failed at {Endpoint}; retained until client disposal");
+    [LoggerMessage(74, LogLevel.Warning, "Sentinel generation cleanup failed at {Endpoint}; retained until client disposal", EventName = "SentinelGenerationCleanupFailed")]
+    private static partial void SentinelGenerationCleanupFailedMessage(ILogger logger, RespireEndpoint endpoint, Exception? exception);
 
     internal static void SentinelGenerationCleanupFailed(this ILogger logger, RespireEndpoint endpoint, Exception? error)
         => SentinelGenerationCleanupFailedMessage(logger, endpoint, error);
 
-    private static readonly Action<ILogger, TimeSpan, int, Exception?> SentinelMonitorShutdownTimedOutMessage =
-        LoggerMessage.Define<TimeSpan, int>(LogLevel.Warning, default, "Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running");
+    [LoggerMessage(75, LogLevel.Warning, "Sentinel event monitoring did not stop within {Timeout}; {Count} task(s) still running", EventName = "SentinelMonitorShutdownTimedOut")]
+    private static partial void SentinelMonitorShutdownTimedOutMessage(ILogger logger, TimeSpan timeout, int count, Exception? exception);
 
     internal static void SentinelMonitorShutdownTimedOut(this ILogger logger, TimeSpan timeout, Task[] tasks)
     {
@@ -476,90 +476,90 @@ internal static partial class RespireLog
             SentinelMonitorShutdownTimedOutMessage(logger, timeout, tasks.Count(static task => !task.IsCompleted), null);
     }
 
-    private static readonly Action<ILogger, Exception?> SentinelMovingUploadCleanupFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Sentinel upload pool cleanup after MOVING failed");
+    [LoggerMessage(76, LogLevel.Warning, "Sentinel upload pool cleanup after MOVING failed", EventName = "SentinelMovingUploadCleanupFailed")]
+    private static partial void SentinelMovingUploadCleanupFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SentinelMovingUploadCleanupFailed(this ILogger logger, Exception? error)
         => SentinelMovingUploadCleanupFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> SentinelSwitchPrimaryRetirementFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Could not retire the primary named by a Sentinel switch event");
+    [LoggerMessage(77, LogLevel.Debug, "Could not retire the primary named by a Sentinel switch event", EventName = "SentinelSwitchPrimaryRetirementFailed")]
+    private static partial void SentinelSwitchPrimaryRetirementFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SentinelSwitchPrimaryRetirementFailed(this ILogger logger, Exception? error)
         => SentinelSwitchPrimaryRetirementFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, int, Exception?> SentinelNotificationDiscoveryRecoveredMessage =
-        LoggerMessage.Define<int>(LogLevel.Information, default, "Sentinel notification-triggered primary discovery succeeded after {Failures} failed attempt(s)");
+    [LoggerMessage(78, LogLevel.Information, "Sentinel notification-triggered primary discovery succeeded after {Failures} failed attempt(s)", EventName = "SentinelNotificationDiscoveryRecovered")]
+    private static partial void SentinelNotificationDiscoveryRecoveredMessage(ILogger logger, int failures, Exception? exception);
 
     internal static void SentinelNotificationDiscoveryRecovered(this ILogger logger, int failures)
         => SentinelNotificationDiscoveryRecoveredMessage(logger, failures, null);
 
-    private static readonly Action<ILogger, double, bool, int, int, long, Exception?> ThreadPoolSchedulingDelayedMessage =
-        LoggerMessage.Define<double, bool, int, int, long>(LogLevel.Warning, default, "Thread-pool scheduling delayed by {SchedulingDelayMs} ms (probe pending: {ProbePending}); workers busy/min: {BusyWorkers}/{MinWorkers}; queued work: {PendingWorkItems}. " +
-                    "Inspect synchronous blocking and long-running work; use asynchronous I/O and diagnose runtime counters before changing minimum worker threads.");
+    [LoggerMessage(79, LogLevel.Warning, "Thread-pool scheduling delayed by {SchedulingDelayMs} ms (probe pending: {ProbePending}); workers busy/min: {BusyWorkers}/{MinWorkers}; queued work: {PendingWorkItems}. " +
+                    "Inspect synchronous blocking and long-running work; use asynchronous I/O and diagnose runtime counters before changing minimum worker threads.", EventName = "ThreadPoolSchedulingDelayed")]
+    private static partial void ThreadPoolSchedulingDelayedMessage(ILogger logger, double schedulingDelayMs, bool probePending, int busyWorkers, int minWorkers, long pendingWorkItems, Exception? exception);
 
     internal static void ThreadPoolSchedulingDelayed(this ILogger logger, double schedulingDelayMs, bool probePending, int busyWorkers, int minWorkers, long pendingWorkItems)
         => ThreadPoolSchedulingDelayedMessage(logger, schedulingDelayMs, probePending, busyWorkers, minWorkers, pendingWorkItems, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> ConnectionConnectedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Connected to {Host}:{Port}");
+    [LoggerMessage(80, LogLevel.Debug, "Connected to {Host}:{Port}", EventName = "ConnectionConnected")]
+    private static partial void ConnectionConnectedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ConnectionConnected(this ILogger logger, string host, int port)
         => ConnectionConnectedMessage(logger, host, port, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> HelloResp2FallbackMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Information, default, "HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection");
+    [LoggerMessage(81, LogLevel.Information, "HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", EventName = "HelloResp2Fallback")]
+    private static partial void HelloResp2FallbackMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void HelloResp2Fallback(this ILogger logger, string host, int port)
         => HelloResp2FallbackMessage(logger, host, port, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> HelloResp3NegotiatedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Negotiated RESP3 with {Host}:{Port}");
+    [LoggerMessage(82, LogLevel.Debug, "Negotiated RESP3 with {Host}:{Port}", EventName = "HelloResp3Negotiated")]
+    private static partial void HelloResp3NegotiatedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void HelloResp3Negotiated(this ILogger logger, string host, int port)
         => HelloResp3NegotiatedMessage(logger, host, port, null);
 
-    private static readonly Action<ILogger, string, int, Exception?> ConnectionSendFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Send failed for {Host}:{Port}; aborting connection");
+    [LoggerMessage(83, LogLevel.Debug, "Send failed for {Host}:{Port}; aborting connection", EventName = "ConnectionSendFailed")]
+    private static partial void ConnectionSendFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ConnectionSendFailed(this ILogger logger, string host, int port, Exception? error)
         => ConnectionSendFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ConnectionCloseObserverFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Connection close observer threw for {Host}:{Port}");
+    [LoggerMessage(84, LogLevel.Warning, "Connection close observer threw for {Host}:{Port}", EventName = "ConnectionCloseObserverFailed")]
+    private static partial void ConnectionCloseObserverFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ConnectionCloseObserverFailed(this ILogger logger, string host, int port, Exception? error)
         => ConnectionCloseObserverFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ConnectionFailureObserverFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Connection failure observer threw for {Host}:{Port}");
+    [LoggerMessage(85, LogLevel.Warning, "Connection failure observer threw for {Host}:{Port}", EventName = "ConnectionFailureObserverFailed")]
+    private static partial void ConnectionFailureObserverFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ConnectionFailureObserverFailed(this ILogger logger, string host, int port, Exception? error)
         => ConnectionFailureObserverFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ConnectionPushHandlerFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Push handler threw for {Host}:{Port}; message dropped");
+    [LoggerMessage(86, LogLevel.Warning, "Push handler threw for {Host}:{Port}; message dropped", EventName = "ConnectionPushHandlerFailed")]
+    private static partial void ConnectionPushHandlerFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ConnectionPushHandlerFailed(this ILogger logger, string host, int port, Exception? error)
         => ConnectionPushHandlerFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, string, int, long, Exception?> ConnectionQueuedDeliveryDelayedMessage =
-        LoggerMessage.Define<string, int, long>(LogLevel.Warning, default, "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
-                        + "finishing disposal while their delivery runner waits for a thread-pool thread.");
+    [LoggerMessage(87, LogLevel.Warning, "Replies for {Host}:{Port} were still queued for delivery {Milliseconds} ms after the connection closed; "
+                        + "finishing disposal while their delivery runner waits for a thread-pool thread.", EventName = "ConnectionQueuedDeliveryDelayed")]
+    private static partial void ConnectionQueuedDeliveryDelayedMessage(ILogger logger, string host, int port, long milliseconds, Exception? exception);
 
     internal static void ConnectionQueuedDeliveryDelayed(this ILogger logger, string host, int port, long milliseconds)
         => ConnectionQueuedDeliveryDelayedMessage(logger, host, port, milliseconds, null);
 
-    private static readonly Action<ILogger, string, int, long, Exception?> ConnectionContinuationDeliveryBlockedMessage =
-        LoggerMessage.Define<string, int, long>(LogLevel.Warning, default, "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
+    [LoggerMessage(88, LogLevel.Warning, "Reply delivery for {Host}:{Port} was blocked by a continuation for over {Milliseconds} ms; "
                 + "delivering the remaining replies on another thread. Avoid blocking on Respire results "
-                + "inside continuations.");
+                + "inside continuations.", EventName = "ConnectionContinuationDeliveryBlocked")]
+    private static partial void ConnectionContinuationDeliveryBlockedMessage(ILogger logger, string host, int port, long milliseconds, Exception? exception);
 
     internal static void ConnectionContinuationDeliveryBlocked(this ILogger logger, string host, int port, long milliseconds)
         => ConnectionContinuationDeliveryBlockedMessage(logger, host, port, milliseconds, null);
 
-    private static readonly Action<ILogger, int, string, int, string, Exception?> ConnectionInflightFailedMessage =
-        LoggerMessage.Define<int, string, int, string>(LogLevel.Debug, default, "Failed {Count} in-flight commands on {Host}:{Port}: {Reason}");
+    [LoggerMessage(89, LogLevel.Debug, "Failed {Count} in-flight commands on {Host}:{Port}: {Reason}", EventName = "ConnectionInflightFailed")]
+    private static partial void ConnectionInflightFailedMessage(ILogger logger, int count, string host, int port, string reason, Exception? exception);
 
     internal static void ConnectionInflightFailed(this ILogger logger, int count, string host, int port, Exception failure)
     {
@@ -567,38 +567,38 @@ internal static partial class RespireLog
             ConnectionInflightFailedMessage(logger, count, host, port, failure.Message, null);
     }
 
-    private static readonly Action<ILogger, string, int, Exception?> ConnectionDisconnectedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Disconnected from {Host}:{Port}");
+    [LoggerMessage(90, LogLevel.Debug, "Disconnected from {Host}:{Port}", EventName = "ConnectionDisconnected")]
+    private static partial void ConnectionDisconnectedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ConnectionDisconnected(this ILogger logger, string host, int port)
         => ConnectionDisconnectedMessage(logger, host, port, null);
 
-    private static readonly Action<ILogger, Exception?> ShardedSubscriptionReceiveFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Sharded subscription connection closed with a receive failure");
+    [LoggerMessage(91, LogLevel.Warning, "Sharded subscription connection closed with a receive failure", EventName = "ShardedSubscriptionReceiveFailed")]
+    private static partial void ShardedSubscriptionReceiveFailedMessage(ILogger logger, Exception? exception);
 
     internal static void ShardedSubscriptionReceiveFailed(this ILogger logger, Exception? error)
         => ShardedSubscriptionReceiveFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> ShardedSubscriptionCloseFailedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Debug, default, "Closing sharded subscription connection {Host}:{Port} after SUNSUBSCRIBE failed");
+    [LoggerMessage(92, LogLevel.Debug, "Closing sharded subscription connection {Host}:{Port} after SUNSUBSCRIBE failed", EventName = "ShardedSubscriptionCloseFailed")]
+    private static partial void ShardedSubscriptionCloseFailedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void ShardedSubscriptionCloseFailed(this ILogger logger, string host, int port, Exception? error)
         => ShardedSubscriptionCloseFailedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, int, Exception?> ShardedSubscriptionRecoveryFailedMessage =
-        LoggerMessage.Define<int>(LogLevel.Warning, default, "Sharded pub/sub recovery attempt {Attempt} failed");
+    [LoggerMessage(93, LogLevel.Warning, "Sharded pub/sub recovery attempt {Attempt} failed", EventName = "ShardedSubscriptionRecoveryFailed")]
+    private static partial void ShardedSubscriptionRecoveryFailedMessage(ILogger logger, int attempt, Exception? exception);
 
     internal static void ShardedSubscriptionRecoveryFailed(this ILogger logger, int attempt, Exception? error)
         => ShardedSubscriptionRecoveryFailedMessage(logger, attempt, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationRollbackCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a rolled back cluster notification connection failed");
+    [LoggerMessage(94, LogLevel.Debug, "Closing a rolled back cluster notification connection failed", EventName = "NotificationRollbackCloseFailed")]
+    private static partial void NotificationRollbackCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationRollbackCloseFailed(this ILogger logger, Exception? error)
         => NotificationRollbackCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, string, int, Exception?> NotificationRouteRejectedMessage =
-        LoggerMessage.Define<string, string, int>(LogLevel.Warning, default, "Cluster notification route {Route} was rejected by {Host}:{Port}");
+    [LoggerMessage(95, LogLevel.Warning, "Cluster notification route {Route} was rejected by {Host}:{Port}", EventName = "NotificationRouteRejected")]
+    private static partial void NotificationRouteRejectedMessage(ILogger logger, string route, string host, int port, Exception? exception);
 
     internal static void NotificationRouteRejected(this ILogger logger, RespireChannel route, string host, int port, Exception? error)
     {
@@ -606,161 +606,161 @@ internal static partial class RespireLog
             NotificationRouteRejectedMessage(logger, route.ToString(), host, port, error);
     }
 
-    private static readonly Action<ILogger, Exception?> NotificationReplacementCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a failed cluster notification replacement failed");
+    [LoggerMessage(96, LogLevel.Debug, "Closing a failed cluster notification replacement failed", EventName = "NotificationReplacementCloseFailed")]
+    private static partial void NotificationReplacementCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationReplacementCloseFailed(this ILogger logger, Exception? error)
         => NotificationReplacementCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationRetiredReplacementCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a replacement for a retired cluster notification node failed");
+    [LoggerMessage(97, LogLevel.Debug, "Closing a replacement for a retired cluster notification node failed", EventName = "NotificationRetiredReplacementCloseFailed")]
+    private static partial void NotificationRetiredReplacementCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationRetiredReplacementCloseFailed(this ILogger logger, Exception? error)
         => NotificationRetiredReplacementCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationSupersededCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a superseded cluster notification connection failed");
+    [LoggerMessage(98, LogLevel.Debug, "Closing a superseded cluster notification connection failed", EventName = "NotificationSupersededCloseFailed")]
+    private static partial void NotificationSupersededCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationSupersededCloseFailed(this ILogger logger, Exception? error)
         => NotificationSupersededCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, Exception?> NotificationRecoveryStoppedMessage =
-        LoggerMessage.Define<string, int>(LogLevel.Warning, default, "Cluster notification recovery for {Host}:{Port} stopped unexpectedly");
+    [LoggerMessage(99, LogLevel.Warning, "Cluster notification recovery for {Host}:{Port} stopped unexpectedly", EventName = "NotificationRecoveryStopped")]
+    private static partial void NotificationRecoveryStoppedMessage(ILogger logger, string host, int port, Exception? exception);
 
     internal static void NotificationRecoveryStopped(this ILogger logger, string host, int port, Exception? error)
         => NotificationRecoveryStoppedMessage(logger, host, port, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationReconnectTelemetryFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Cluster notification reconnect telemetry listener threw");
+    [LoggerMessage(100, LogLevel.Warning, "Cluster notification reconnect telemetry listener threw", EventName = "NotificationReconnectTelemetryFailed")]
+    private static partial void NotificationReconnectTelemetryFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationReconnectTelemetryFailed(this ILogger logger, Exception? error)
         => NotificationReconnectTelemetryFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, string, int, TimeSpan, Exception?> NotificationReconnectRetryMessage =
-        LoggerMessage.Define<string, int, TimeSpan>(LogLevel.Warning, default, "Cluster notification reconnect failed for {Host}:{Port}; retrying in {Delay}");
+    [LoggerMessage(101, LogLevel.Warning, "Cluster notification reconnect failed for {Host}:{Port}; retrying in {Delay}", EventName = "NotificationReconnectRetry")]
+    private static partial void NotificationReconnectRetryMessage(ILogger logger, string host, int port, TimeSpan delay, Exception? exception);
 
     internal static void NotificationReconnectRetry(this ILogger logger, string host, int port, TimeSpan delay, Exception? error)
         => NotificationReconnectRetryMessage(logger, host, port, delay, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationReconnectExhaustionTelemetryFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Cluster notification reconnect exhaustion telemetry listener threw");
+    [LoggerMessage(102, LogLevel.Warning, "Cluster notification reconnect exhaustion telemetry listener threw", EventName = "NotificationReconnectExhaustionTelemetryFailed")]
+    private static partial void NotificationReconnectExhaustionTelemetryFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationReconnectExhaustionTelemetryFailed(this ILogger logger, Exception? error)
         => NotificationReconnectExhaustionTelemetryFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationExhaustionUnsubscribeFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Cluster notification unsubscribe failed during exhaustion cleanup");
+    [LoggerMessage(103, LogLevel.Debug, "Cluster notification unsubscribe failed during exhaustion cleanup", EventName = "NotificationExhaustionUnsubscribeFailed")]
+    private static partial void NotificationExhaustionUnsubscribeFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationExhaustionUnsubscribeFailed(this ILogger logger, Exception? error)
         => NotificationExhaustionUnsubscribeFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationExhaustionCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing an exhausted cluster notification connection failed");
+    [LoggerMessage(104, LogLevel.Debug, "Closing an exhausted cluster notification connection failed", EventName = "NotificationExhaustionCloseFailed")]
+    private static partial void NotificationExhaustionCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationExhaustionCloseFailed(this ILogger logger, Exception? error)
         => NotificationExhaustionCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationUnsubscribeFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Cluster notification unsubscribe failed");
+    [LoggerMessage(105, LogLevel.Debug, "Cluster notification unsubscribe failed", EventName = "NotificationUnsubscribeFailed")]
+    private static partial void NotificationUnsubscribeFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationUnsubscribeFailed(this ILogger logger, Exception? error)
         => NotificationUnsubscribeFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationUncertainCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing an uncertain cluster notification connection failed");
+    [LoggerMessage(106, LogLevel.Debug, "Closing an uncertain cluster notification connection failed", EventName = "NotificationUncertainCloseFailed")]
+    private static partial void NotificationUncertainCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationUncertainCloseFailed(this ILogger logger, Exception? error)
         => NotificationUncertainCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationRetiredCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a retired cluster notification connection failed");
+    [LoggerMessage(107, LogLevel.Debug, "Closing a retired cluster notification connection failed", EventName = "NotificationRetiredCloseFailed")]
+    private static partial void NotificationRetiredCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationRetiredCloseFailed(this ILogger logger, Exception? error)
         => NotificationRetiredCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationTopologyReconciliationFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Cluster notification topology reconciliation failed");
+    [LoggerMessage(108, LogLevel.Warning, "Cluster notification topology reconciliation failed", EventName = "NotificationTopologyReconciliationFailed")]
+    private static partial void NotificationTopologyReconciliationFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationTopologyReconciliationFailed(this ILogger logger, Exception? error)
         => NotificationTopologyReconciliationFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationSubscribeFailureCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a cluster notification connection after a failed subscribe failed");
+    [LoggerMessage(109, LogLevel.Debug, "Closing a cluster notification connection after a failed subscribe failed", EventName = "NotificationSubscribeFailureCloseFailed")]
+    private static partial void NotificationSubscribeFailureCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationSubscribeFailureCloseFailed(this ILogger logger, Exception? error)
         => NotificationSubscribeFailureCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationExhaustedSubscriptionReleaseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Releasing an exhausted cluster notification subscription failed");
+    [LoggerMessage(110, LogLevel.Debug, "Releasing an exhausted cluster notification subscription failed", EventName = "NotificationExhaustedSubscriptionReleaseFailed")]
+    private static partial void NotificationExhaustedSubscriptionReleaseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationExhaustedSubscriptionReleaseFailed(this ILogger logger, Exception? error)
         => NotificationExhaustedSubscriptionReleaseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> SubscriptionGapObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Subscription delivery-gap observer threw");
+    [LoggerMessage(111, LogLevel.Warning, "Subscription delivery-gap observer threw", EventName = "SubscriptionGapObserverFailed")]
+    private static partial void SubscriptionGapObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SubscriptionGapObserverFailed(this ILogger logger, Exception? error)
         => SubscriptionGapObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> SubscriptionCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a failed subscription connection failed");
+    [LoggerMessage(112, LogLevel.Debug, "Closing a failed subscription connection failed", EventName = "SubscriptionCloseFailed")]
+    private static partial void SubscriptionCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SubscriptionCloseFailed(this ILogger logger, Exception? error)
         => SubscriptionCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, TimeSpan, Exception?> SubscriptionReconnectRetryMessage =
-        LoggerMessage.Define<TimeSpan>(LogLevel.Warning, default, "Pub/sub reconnect failed; retrying in {Delay}");
+    [LoggerMessage(113, LogLevel.Warning, "Pub/sub reconnect failed; retrying in {Delay}", EventName = "SubscriptionReconnectRetry")]
+    private static partial void SubscriptionReconnectRetryMessage(ILogger logger, TimeSpan delay, Exception? exception);
 
     internal static void SubscriptionReconnectRetry(this ILogger logger, TimeSpan delay, Exception? error)
         => SubscriptionReconnectRetryMessage(logger, delay, error);
 
-    private static readonly Action<ILogger, Exception?> SubscriptionRecoveryMetricFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Pub/sub recovery metric observer threw");
+    [LoggerMessage(114, LogLevel.Warning, "Pub/sub recovery metric observer threw", EventName = "SubscriptionRecoveryMetricFailed")]
+    private static partial void SubscriptionRecoveryMetricFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SubscriptionRecoveryMetricFailed(this ILogger logger, Exception? error)
         => SubscriptionRecoveryMetricFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NotificationConnectionCloseFailedMessage =
-        LoggerMessage.Define(LogLevel.Debug, default, "Closing a cluster notification connection failed");
+    [LoggerMessage(115, LogLevel.Debug, "Closing a cluster notification connection failed", EventName = "NotificationConnectionCloseFailed")]
+    private static partial void NotificationConnectionCloseFailedMessage(ILogger logger, Exception? exception);
 
     internal static void NotificationConnectionCloseFailed(this ILogger logger, Exception? error)
         => NotificationConnectionCloseFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> SubscriptionRecoveryEpisodeObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Pub/sub recovery episode observer threw");
+    [LoggerMessage(116, LogLevel.Warning, "Pub/sub recovery episode observer threw", EventName = "SubscriptionRecoveryEpisodeObserverFailed")]
+    private static partial void SubscriptionRecoveryEpisodeObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SubscriptionRecoveryEpisodeObserverFailed(this ILogger logger, Exception? error)
         => SubscriptionRecoveryEpisodeObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, int, Exception?> SubscriptionRecoveryAttemptFailedMessage =
-        LoggerMessage.Define<int>(LogLevel.Warning, default, "Pub/sub recovery attempt {Attempt} failed");
+    [LoggerMessage(117, LogLevel.Warning, "Pub/sub recovery attempt {Attempt} failed", EventName = "SubscriptionRecoveryAttemptFailed")]
+    private static partial void SubscriptionRecoveryAttemptFailedMessage(ILogger logger, int attempt, Exception? exception);
 
     internal static void SubscriptionRecoveryAttemptFailed(this ILogger logger, int attempt, Exception? error)
         => SubscriptionRecoveryAttemptFailedMessage(logger, attempt, error);
 
-    private static readonly Action<ILogger, Exception?> SubscriptionReplacementCleanupFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Failed to clean up a pub/sub replacement");
+    [LoggerMessage(118, LogLevel.Warning, "Failed to clean up a pub/sub replacement", EventName = "SubscriptionReplacementCleanupFailed")]
+    private static partial void SubscriptionReplacementCleanupFailedMessage(ILogger logger, Exception? exception);
 
     internal static void SubscriptionReplacementCleanupFailed(this ILogger logger, Exception? error)
         => SubscriptionReplacementCleanupFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> NativeLockFencingUnavailableMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Lock releases run without connection fencing because CLIENT ID or CLIENT KILL was denied. " +
+    [LoggerMessage(119, LogLevel.Warning, "Lock releases run without connection fencing because CLIENT ID or CLIENT KILL was denied. " +
                 "An uncertain release still treats ownership as lost, but its delete may run later. " +
-                "Grant the client and client|id/client|kill permissions to restore fencing.");
+                "Grant the client and client|id/client|kill permissions to restore fencing.", EventName = "NativeLockFencingUnavailable")]
+    private static partial void NativeLockFencingUnavailableMessage(ILogger logger, Exception? exception);
 
     internal static void NativeLockFencingUnavailable(this ILogger logger, Exception? error)
         => NativeLockFencingUnavailableMessage(logger, error);
 
-    private static readonly Action<ILogger, long, RespireEndpoint, string, Exception?> NativeLockFenceFailedMessage =
-        LoggerMessage.Define<long, RespireEndpoint, string>(LogLevel.Warning, default, "Could not fence Redis client {ServerClientId} at {Endpoint} after an uncertain {Operation}; " +
-                "the command may still execute. Ownership was already treated as lost.");
+    [LoggerMessage(120, LogLevel.Warning, "Could not fence Redis client {ServerClientId} at {Endpoint} after an uncertain {Operation}; " +
+                "the command may still execute. Ownership was already treated as lost.", EventName = "NativeLockFenceFailed")]
+    private static partial void NativeLockFenceFailedMessage(ILogger logger, long serverClientId, RespireEndpoint endpoint, string operation, Exception? exception);
 
     internal static void NativeLockFenceFailed(this ILogger logger, long serverClientId, RespireEndpoint endpoint, string operation, Exception? error)
         => NativeLockFenceFailedMessage(logger, serverClientId, endpoint, operation, error);
 
-    private static readonly Action<ILogger, string, string, Exception?> FailoverDuplicateDeploymentMessage =
-        LoggerMessage.Define<string, string>(LogLevel.Warning, default, "Failover candidate {Endpoint} was marked unhealthy because it duplicates another candidate's deployment: {Reason}");
+    [LoggerMessage(121, LogLevel.Warning, "Failover candidate {Endpoint} was marked unhealthy because it duplicates another candidate's deployment: {Reason}", EventName = "FailoverDuplicateDeployment")]
+    private static partial void FailoverDuplicateDeploymentMessage(ILogger logger, string endpoint, string reason, Exception? exception);
 
     internal static void FailoverDuplicateDeployment(this ILogger logger, RespireEndpoint endpoint, string reason)
     {
@@ -768,8 +768,8 @@ internal static partial class RespireLog
             FailoverDuplicateDeploymentMessage(logger, endpoint.ToString(), reason, null);
     }
 
-    private static readonly Action<ILogger, string, string, string, Exception?> FailoverEndpointSwitchedMessage =
-        LoggerMessage.Define<string, string, string>(LogLevel.Information, default, "Failover group switched from {PreviousEndpoint} to {CurrentEndpoint} ({Reason})");
+    [LoggerMessage(122, LogLevel.Information, "Failover group switched from {PreviousEndpoint} to {CurrentEndpoint} ({Reason})", EventName = "FailoverEndpointSwitched")]
+    private static partial void FailoverEndpointSwitchedMessage(ILogger logger, string previousEndpoint, string currentEndpoint, string reason, Exception? exception);
 
     internal static void FailoverEndpointSwitched(this ILogger logger, RespireEndpoint? previousEndpoint, RespireEndpoint? currentEndpoint, string reason)
     {
@@ -777,14 +777,14 @@ internal static partial class RespireLog
             FailoverEndpointSwitchedMessage(logger, previousEndpoint?.ToString() ?? "none", currentEndpoint?.ToString() ?? "none", reason, null);
     }
 
-    private static readonly Action<ILogger, Exception?> FailoverSwitchObserverFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Failover group EndpointSwitched handler threw");
+    [LoggerMessage(123, LogLevel.Warning, "Failover group EndpointSwitched handler threw", EventName = "FailoverSwitchObserverFailed")]
+    private static partial void FailoverSwitchObserverFailedMessage(ILogger logger, Exception? exception);
 
     internal static void FailoverSwitchObserverFailed(this ILogger logger, Exception? error)
         => FailoverSwitchObserverFailedMessage(logger, error);
 
-    private static readonly Action<ILogger, Exception?> FailoverMonitorFailedMessage =
-        LoggerMessage.Define(LogLevel.Warning, default, "Failover group health monitor round failed");
+    [LoggerMessage(124, LogLevel.Warning, "Failover group health monitor round failed", EventName = "FailoverMonitorFailed")]
+    private static partial void FailoverMonitorFailedMessage(ILogger logger, Exception? exception);
 
     internal static void FailoverMonitorFailed(this ILogger logger, Exception? error)
         => FailoverMonitorFailedMessage(logger, error);

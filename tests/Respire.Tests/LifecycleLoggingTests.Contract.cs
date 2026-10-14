@@ -6,9 +6,9 @@ namespace Respire.Tests;
 
 public partial class LifecycleLoggingTests
 {
-    // The checked-in snapshot records the pre-conversion templates, levels and event IDs.
-    // Reflection exercises every cached delegate without deriving expectations from its state.
-    public sealed record LogContract(string Field, string Level, int EventId, string? EventName,
+    // The snapshot preserves the original templates and levels, with stable event IDs.
+    // Exercise each generated method independently of its attribute metadata.
+    public sealed record LogContract(string Method, string Level, int EventId, string? EventName,
         string Template, string LegacySource);
 
     private sealed record LogCatalog(string LegacyCommit, LogContract[] Messages);
@@ -22,29 +22,27 @@ public partial class LifecycleLoggingTests
     }
 
     [Test]
-    public async Task LoggingContractSnapshotCoversEveryCachedMessage()
+    public async Task LoggingContractSnapshotCoversEveryGeneratedMessage()
     {
-        // Generated callbacks belong to pre-existing [LoggerMessage] methods. The dynamic
-        // Sentinel event array has a separate test covering all seven levels.
-        var fields = typeof(RespireLog).GetFields(BindingFlags.Static | BindingFlags.NonPublic)
-            .Where(field => typeof(Delegate).IsAssignableFrom(field.FieldType)
-                && !field.Name.StartsWith("__", StringComparison.Ordinal))
-            .Select(field => field.Name).ToArray();
-        await Assert.That(CatalogMessages().Select(message => message.Field).ToArray()).IsEquivalentTo(fields);
+        // Dynamic-level Sentinel events are covered separately.
+        var methods = typeof(RespireLog).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Where(method => method.GetCustomAttribute<LoggerMessageAttribute>() is not null
+                && method.Name != nameof(RespireLog.SentinelEvent))
+            .Select(method => method.Name).ToArray();
+        await Assert.That(CatalogMessages().Select(message => message.Method).ToArray()).IsEquivalentTo(methods);
     }
 
     [Test]
     [MethodDataSource(nameof(CatalogMessages))]
-    public async Task EveryCachedMessagePreservesLegacyContract(LogContract contract)
+    public async Task EveryGeneratedMessagePreservesStructuredContract(LogContract contract)
     {
-        var field = typeof(RespireLog).GetField(contract.Field, BindingFlags.Static | BindingFlags.NonPublic)!;
-        var log = (Delegate)field.GetValue(null)!;
-        var types = field.FieldType.GenericTypeArguments;
-        var values = types.Skip(1).SkipLast(1).Select(SampleLogValue).ToArray();
+        var method = typeof(RespireLog).GetMethod(contract.Method, BindingFlags.Static | BindingFlags.NonPublic)!;
+        var values = method.GetParameters().Skip(1).SkipLast(1)
+            .Select((parameter, index) => SampleLogValue(parameter.ParameterType, index)).ToArray();
         var error = new InvalidOperationException("Original diagnostic cause.");
         var expected = Capture(logger => logger.Log(Enum.Parse<LogLevel>(contract.Level),
             new EventId(contract.EventId, contract.EventName), error, contract.Template, values));
-        var actual = Capture(logger => log.DynamicInvoke([logger, .. values, error]));
+        var actual = Capture(logger => method.Invoke(null, [logger, .. values, error]));
         await Assert.That(actual.Level).IsEqualTo(expected.Level);
         await Assert.That(actual.EventId.Id).IsEqualTo(expected.EventId.Id);
         await Assert.That(actual.EventId.Name).IsEqualTo(expected.EventId.Name);
@@ -52,7 +50,7 @@ public partial class LifecycleLoggingTests
         await Assert.That(actual.Message).IsEqualTo(expected.Message);
         await Assert.That(actual.State).IsEquivalentTo(expected.State);
         using var disabled = new ProbeFactory(enabled: false);
-        log.DynamicInvoke([disabled.CreateLogger("Respire.Lifecycle"), .. values, error]);
+        method.Invoke(null, [disabled.CreateLogger("Respire.Lifecycle"), .. values, error]);
         await Assert.That(disabled.LogCalls).IsEqualTo(0);
     }
 

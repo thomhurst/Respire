@@ -312,6 +312,6 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         catch (ObjectDisposedException) { } // Stop/Dispose can be called after the execution task has completed.
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}).")]
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Stream handler or serializer failed ({ExceptionType}).")]
     private static partial void HandlerFailed(ILogger logger, string exceptionType);
 }

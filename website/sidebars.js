@@ -143,6 +143,7 @@ const sidebars = {
         'integrations/signalr',
         'integrations/health-checks',
         'integrations/observability',
+        'integrations/log-events',
         'integrations/aspire-sample',
       ],
     },
