@@ -86,11 +86,11 @@ public class SortedSetQueryCommandTests
         });
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{a}:one", "{b}:two"];
-        await Assert.That(async () => await view.SortedSets.IntersectCountAsync(keys)).ThrowsExactly<RespireServerException>();
+        await Assert.That(async () => await view.SortedSets.IntersectCountAsync(keys)).ThrowsExactly<RespireCrossSlotException>();
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
-        await Assert.That(() => batch.SortedSets.IntersectCount(keys)).ThrowsExactly<RespireServerException>();
-        await Assert.That(() => transaction.SortedSets.IntersectCount(keys)).ThrowsExactly<RespireServerException>();
+        await Assert.That(() => batch.SortedSets.IntersectCount(keys)).ThrowsExactly<RespireCrossSlotException>();
+        await Assert.That(() => transaction.SortedSets.IntersectCount(keys)).ThrowsExactly<RespireCrossSlotException>();
         _ = transaction.SortedSets.IntersectCount("{c}:one", "{c}:two");
         await Assert.That(() => transaction.SortedSets.CountByLex("{a}:one", RespireLexRange.All)).ThrowsExactly<InvalidOperationException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);

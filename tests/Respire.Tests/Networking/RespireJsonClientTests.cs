@@ -190,7 +190,7 @@ public partial class RespireJsonClientTests
         ];
 
         var error = await Assert.That(async () => await json.MultiSetAsync(entries, JsonTestContext.Default.Profile))
-            .Throws<RespireServerException>();
+            .Throws<RespireCrossSlotException>();
         await Assert.That(error!.Message).Contains("CROSSSLOT");
     }
 

@@ -52,7 +52,7 @@ internal static class DeferredRawCommands
                 throw new InvalidOperationException("The deferred command key has no Cluster slot.");
             if (slot.HasValue && slot.Value != current)
                 // Match typed multi-key commands, including their locally detected CROSSSLOT contract.
-                throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
+                throw RespireCrossSlotException.Create(sink.Client.Core.Options.IncludeCrossSlotKeyContext, operation, slot.Value, current, resolved);
             slot = current;
         }
     }

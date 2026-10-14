@@ -131,12 +131,12 @@ public class ListMoveManyTests
         var view = client.WithKeyPrefix("tenant:");
         foreach (var wait in new TimeSpan?[] { null, TimeSpan.Zero })
             await Assert.That(() => { _ = view.Lists.MoveManyAsync("{a}:s", "{b}:d", waitFor: wait); })
-                .Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+                .Throws<RespireCrossSlotException>();
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
         foreach (var lists in new[] { batch.Lists, transaction.Lists })
         {
-            await Assert.That(() => lists.MoveMany("{a}:s", "{b}:d")).Throws<RespireServerException>();
+            await Assert.That(() => lists.MoveMany("{a}:s", "{b}:d")).Throws<RespireCrossSlotException>();
             _ = lists.MoveMany("{a}:s", "{a}:d");
         }
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);

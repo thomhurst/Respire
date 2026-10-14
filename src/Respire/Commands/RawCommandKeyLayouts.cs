@@ -302,26 +302,26 @@ internal static class RawCommandKeyLayouts
         return false;
     }
 
-    internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)
+    internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args, bool includeKeyContext = false)
     {
         if (!TryGetLayout(operation, args, out var layout)) return default;
         int? slot = null;
         for (var index = 0; index < layout.Count; index++)
-            ValidateKey(args[layout.Start + index * layout.Stride], operation, ref slot);
+            ValidateKey(args[layout.Start + index * layout.Stride], operation, ref slot, includeKeyContext);
         if (layout.Extra >= 0)
         {
-            ValidateKey(args[layout.Extra], operation, ref slot);
+            ValidateKey(args[layout.Extra], operation, ref slot, includeKeyContext);
             return new(true, layout.Extra);
         }
         return layout.Count > 0 ? new(true, layout.Start) : KeyRouting.NoKeys;
     }
 
-    private static void ValidateKey(RespireValue key, string operation, ref int? slot)
+    private static void ValidateKey(RespireValue key, string operation, ref int? slot, bool includeKeyContext)
     {
         RespireValue.ThrowIfNull(key, "args");
         key.TryGetClusterSlot(out var current);
         if (slot.HasValue && slot.Value != current)
-            throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
+            throw RespireCrossSlotException.Create(includeKeyContext, operation, slot.Value, current, key);
         slot = current;
     }
 

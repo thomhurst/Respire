@@ -98,7 +98,7 @@ With `UseCluster`, immediate catalog, string, interpolated, and fire-and-forget 
 
 | Problem | Cluster | Standalone |
 |---|---|---|
-| Keys in different slots | `RespireServerException` with code `CROSSSLOT`, even with `NoRedirect`. Requests are never split across nodes. | Sent; the server validates. |
+| Keys in different slots | `RespireCrossSlotException`, even with `NoRedirect`. Requests are never split across nodes. See [local cross-slot diagnostics](../fundamentals/connections.md#client-side-cross-slot-validation). | Sent; the server validates. |
 | Malformed arguments for a known layout (missing GET key, bad EVAL key count) | `ArgumentException`, locally. | Sent; can produce `RespireServerException`. |
 | Null declared key | `ArgumentNullException` before I/O. | — |
 

@@ -97,15 +97,15 @@ public class StringLcsIndexErrorMetricsTests
                 _ = transaction.Strings.LcsIndex("{a}:first", "{b}:second", options);
             }
         }
-        if (crossSlot) await Assert.That(Invoke).ThrowsExactly<RespireServerException>();
+        if (crossSlot) await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>();
         else await Assert.That(Invoke).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         var tags = capture.Items.Single();
         await Assert.That(tags["error.type"]).IsEqualTo(
-            crossSlot ? typeof(RespireServerException).FullName : typeof(ArgumentOutOfRangeException).FullName);
+            crossSlot ? typeof(RespireCrossSlotException).FullName : typeof(ArgumentOutOfRangeException).FullName);
         await Assert.That((bool)tags["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
-        if (crossSlot) await Assert.That(tags["db.response.status_code"]).IsEqualTo("CROSSSLOT");
+        if (crossSlot) await Assert.That(tags.ContainsKey("db.response.status_code")).IsFalse();
         await Assert.That(server.ReceivedCommands.Where(command => command != "CLUSTER SLOTS")).IsEmpty();
     }
 

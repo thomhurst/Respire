@@ -1208,7 +1208,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
-        => _core.Cluster is null ? default : RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments);
+        => _core.Cluster is null ? default : RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments, _core.Options.IncludeCrossSlotKeyContext);
 
     private int GetRawRoutingKeyIndex(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {
@@ -2038,8 +2038,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var keySlot = key.ClusterSlot;
         if (clusterSlot is { } expectedSlot && keySlot != expectedSlot)
         {
-            throw new RespireServerException(
-                "CROSSSLOT Keys in request don't hash to the same slot", "MGET");
+            throw RespireCrossSlotException.Create(
+                _core.Options.IncludeCrossSlotKeyContext, "MGET", expectedSlot, keySlot, key.AsValue());
         }
 
         clusterSlot = keySlot;

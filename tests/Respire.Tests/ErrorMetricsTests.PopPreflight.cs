@@ -51,15 +51,21 @@ public partial class ErrorMetricsTests
                 case "BLMOVEM": await client.Lists.MoveManyAsync(keys[0], keys[1], waitFor: TimeSpan.Zero, cancellationToken: guard.Token); break;
             }
         }
-        var error = await Assert.That(Execute).ThrowsExactly<RespireServerException>();
-        await Assert.That(error!.Code).IsEqualTo(crossSlot ? "CROSSSLOT" : "WRONGTYPE");
+        if (crossSlot) await Assert.That(Execute).ThrowsExactly<RespireCrossSlotException>();
+        else
+        {
+            var error = await Assert.That(Execute).ThrowsExactly<RespireServerException>();
+            await Assert.That(error!.Code).IsEqualTo("WRONGTYPE");
+        }
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled ? 1 : 0);
         if (enabled)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
-            await Assert.That(items[0].Tags["error.type"]).IsEqualTo(typeof(RespireServerException).FullName);
-            await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo(error.Code);
+            await Assert.That(items[0].Tags["error.type"]).IsEqualTo((crossSlot ? typeof(RespireCrossSlotException) : typeof(RespireServerException)).FullName);
+            await Assert.That(items[0].Tags["redis.client.errors.category"]).IsEqualTo(crossSlot ? "validation" : "server");
+            if (crossSlot) await Assert.That(items[0].Tags.ContainsKey("db.response.status_code")).IsFalse();
+            else await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo("WRONGTYPE");
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
         var operation = route.Replace("generic-", "", StringComparison.Ordinal);

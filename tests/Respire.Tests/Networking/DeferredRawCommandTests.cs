@@ -157,12 +157,12 @@ public class DeferredRawCommandTests
             UseCluster = true, Connections = 1, Endpoints = [new("localhost", 1)],
         });
         await using var transaction = client.CreateTransaction();
-        await Assert.That(() => transaction.Execute("MGET", "{a}:one", "{b}:two")).Throws<RespireServerException>();
+        await Assert.That(() => transaction.Execute("MGET", "{a}:one", "{b}:two")).Throws<RespireCrossSlotException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", -1)).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", RespireValue.Null)).Throws<ArgumentNullException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", long.MaxValue)).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", 2, "only-one-key")).Throws<ArgumentException>();
-        await Assert.That(() => transaction.Execute("ZINTERSTORE", "{a}:dest", 1, "{b}:source")).Throws<RespireServerException>();
+        await Assert.That(() => transaction.Execute("ZINTERSTORE", "{a}:dest", 1, "{b}:source")).Throws<RespireCrossSlotException>();
         await Assert.That(() => transaction.Execute("MSET", "key")).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("GET")).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("SET", "key", RespireValue.Null)).Throws<ArgumentNullException>();

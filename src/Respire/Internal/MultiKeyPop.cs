@@ -19,7 +19,7 @@ internal static class MultiKeyPop
             {
                 if (slot is { } expected && keySlot != expected)
                 {
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
+                    throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, operation, expected, keySlot, key);
                 }
                 slot = keySlot;
             }

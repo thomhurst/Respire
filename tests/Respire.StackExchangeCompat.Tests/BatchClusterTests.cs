@@ -45,7 +45,7 @@ public class BatchClusterTests
 
         batch.Execute();
 
-        Assert.Equal("CROSSSLOT", (await Assert.ThrowsAsync<RespireServerException>(() => move)).Code);
+        Assert.Equal("RPOPLPUSH", (await Assert.ThrowsAsync<RespireCrossSlotException>(() => move)).CommandName);
         Assert.True(await write);
         Assert.Equal("value", (string?)await read);
         Assert.Equal(new[] { "HSET {a}:hash field value", "HGET {a}:hash field" },

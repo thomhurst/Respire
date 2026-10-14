@@ -369,7 +369,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             tail[1].TryGetClusterSlot(out var expected);
             for (var i = 2; i <= keys.Length; i++)
                 if (tail[i].TryGetClusterSlot(out var slot) && slot != expected)
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", function.Operation);
+                    throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, function.Operation, expected, slot, tail[i]);
         }
         // A retried call must resend the bytes of its first attempt.
         if (client.CanRetryDeclared(function.RetryCategory))

@@ -17,6 +17,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ## Available now
 
+- [Local cross-slot diagnostics](fundamentals/connections.md#client-side-cross-slot-validation)
+  distinguish client validation from Redis replies, with slot details and opt-in key context.
+
 - [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) integration
   through the optional `Respire.Resilience` package, with a sample proving one retry layer.
 

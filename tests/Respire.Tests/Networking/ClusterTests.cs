@@ -2572,9 +2572,9 @@ public class ClusterTests
 
         var error = await Assert.That(async () =>
                 await client.Strings.GetManyAsync("{first}key", "{second}key"))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
 
-        await Assert.That(error!.Code).IsEqualTo("CROSSSLOT");
+        await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
         await Assert.That(error.CommandName).IsEqualTo("MGET");
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }

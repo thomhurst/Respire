@@ -106,6 +106,8 @@ public sealed class CommandRetryPolicyTests
             new RespireProtocolException("invalid frame"),
             new RespireConfigurationException("invalid options"),
             new OperationCanceledException(), new TimeoutException(), new ObjectDisposedException("client"),
+            new RespireCrossSlotException("MGET", 1, 2),
+            new RespireServerException("CROSSSLOT server validation"),
             new RespireServerException("ERR invalid argument"), new RespireServerException("WRONGTYPE wrong kind"),
             new RespireServerException("BUSY script running"), new RespireServerException("CLUSTERDOWN unavailable"),
             new RespireServerException("MOVED 1 redis.test:6379"), new RespireServerException("ASK 1 redis.test:6379"),

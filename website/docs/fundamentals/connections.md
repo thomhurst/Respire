@@ -260,6 +260,31 @@ var failure = new RespireConnectionException("Redis connection failed.")
 };
 ```
 
+### Client-side cross-slot validation
+
+In Cluster mode, keys in one multi-key command must share a slot after key prefixing.
+A local mismatch throws `RespireCrossSlotException` before sending or enqueueing the
+command, including raw commands and MGET cache hits. `CommandName`, `ExpectedSlot`,
+and `ConflictingSlot` identify the rejected command and first detected slot conflict.
+Give every key the same nonempty hash tag, such as `{order:42}:items` and
+`{order:42}:total`; a hash tag in the client prefix also affects placement.
+A rejected command does not occupy a batch/transaction entry or pin its slot.
+
+The exception retains no keys by default. For a diagnostic session, explicitly set
+`RespireOptions.IncludeCrossSlotKeyContext = true` to capture `ConflictingKeyHex`:
+an owned hex representation of the conflicting physical key (including its prefix).
+Hex is reversible and may reveal secrets or personal data. This property stays out
+of the exception message and telemetry tags; keep it out of general application logs.
+Respire's existing telemetry does not collect command text, and this opt-in does not
+enable command logging.
+
+Catch `RespireCrossSlotException` separately when handling local input validation.
+It is not a `RespireServerException` and built-in retries do not retry it. Genuine
+Redis `CROSSSLOT` replies still throw `RespireServerException` with
+`Code == RespireErrorCodes.CrossSlot`. Error metrics classify local rejection as
+`validation`, omit the server endpoint and `db.response.status_code`, and continue
+to classify server replies as `server` with the `CROSSSLOT` status code.
+
 ## Independent liveness bounds
 
 `ConnectionIdleReadTimeout` aborts a connection when replies are pending and no bytes arrive (`null` disables it). `GatheredWriteStallTimeout` bounds how long a large binary SET that sends caller memory directly can stall.

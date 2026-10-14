@@ -46,7 +46,7 @@ public class TimeSeriesReadTests
         await Assert.That(layout.Count).IsEqualTo(2);
         await Assert.That(RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments).Index).IsEqualTo(1);
         await Assert.That(() => RawCommandKeyLayouts.ValidateClusterKeys(operation, [2, "{a}:one", "{b}:two", 0, 100]))
-            .ThrowsExactly<RespireServerException>();
+            .ThrowsExactly<RespireCrossSlotException>();
     }
 
     [Test]

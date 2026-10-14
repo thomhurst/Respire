@@ -258,8 +258,8 @@ public partial class ErrorMetricsTests
                     using (await pending) { }
                     break;
             }
-        }).Throws<RespireServerException>();
-        await Assert.That(error!.Code).IsEqualTo("CROSSSLOT");
+        }).Throws<RespireCrossSlotException>();
+        await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
         if (surface == "raw") await Assert.That(rawCallReturned).IsFalse();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FCALL ", StringComparison.Ordinal))).IsFalse();
         var items = capture.Items.ToArray();
@@ -267,7 +267,8 @@ public partial class ErrorMetricsTests
         if (errorsEnabled)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
-            await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo("CROSSSLOT");
+            await Assert.That(items[0].Tags.ContainsKey("db.response.status_code")).IsFalse();
+            await Assert.That(items[0].Tags["redis.client.errors.category"]).IsEqualTo("validation");
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
         // A later successful operation must neither inherit the final flag nor emit an error.

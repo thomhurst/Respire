@@ -173,11 +173,11 @@ public class StringLcsIndexTests
         });
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(async () => await client.Strings.LcsIndexAsync("{a}:first", "{b}:second"))
-            .Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+            .Throws<RespireCrossSlotException>();
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
-        await Assert.That(() => batch.Strings.LcsIndex("{a}:first", "{b}:second")).Throws<RespireServerException>();
-        await Assert.That(() => transaction.Strings.LcsIndex("{a}:first", "{b}:second")).Throws<RespireServerException>();
+        await Assert.That(() => batch.Strings.LcsIndex("{a}:first", "{b}:second")).Throws<RespireCrossSlotException>();
+        await Assert.That(() => transaction.Strings.LcsIndex("{a}:first", "{b}:second")).Throws<RespireCrossSlotException>();
         _ = transaction.Strings.LcsIndex("{same}:first", "{same}:second");
         await Assert.That(server.ReceivedCommands.Where(command => command != "CLUSTER SLOTS")).IsEmpty();
     }

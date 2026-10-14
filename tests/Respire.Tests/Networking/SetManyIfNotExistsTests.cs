@@ -68,11 +68,11 @@ public class SetManyIfNotExistsTests
         var view = client.WithKeyPrefix("tenant:");
         (RespireKey Key, RespireValue Value)[] pairs = [("{a}:one", "first"), ("{b}:two", "second")];
         await Assert.That(async () => await view.Strings.SetManyIfNotExistsAsync(pairs))
-            .Throws<RespireServerException>().WithMessage("CROSSSLOT Keys in request don't hash to the same slot");
+            .Throws<RespireCrossSlotException>();
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
-        await Assert.That(() => batch.Strings.SetManyIfNotExists(pairs)).Throws<RespireServerException>();
-        await Assert.That(() => transaction.Strings.SetManyIfNotExists(pairs)).Throws<RespireServerException>();
+        await Assert.That(() => batch.Strings.SetManyIfNotExists(pairs)).Throws<RespireCrossSlotException>();
+        await Assert.That(() => transaction.Strings.SetManyIfNotExists(pairs)).Throws<RespireCrossSlotException>();
         // Rejected pairs must not pin the transaction to either rejected slot.
         _ = transaction.Strings.SetManyIfNotExists(("{c}:one", "first"), ("{c}:two", "second"));
         await Assert.That(server.ReceivedCommands.Where(c => c != "CLUSTER SLOTS")).IsEmpty();

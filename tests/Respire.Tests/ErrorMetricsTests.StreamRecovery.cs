@@ -49,15 +49,16 @@ public partial class ErrorMetricsTests
         }
         if (crossSlot)
         {
-            var error = await Assert.That(Execute).Throws<RespireServerException>();
-            await Assert.That(error!.Code).IsEqualTo("CROSSSLOT");
+            var error = await Assert.That(Execute).Throws<RespireCrossSlotException>();
+            await Assert.That(error!.ExpectedSlot).IsNotEqualTo(error.ConflictingSlot);
         }
         else await Execute();
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled && crossSlot ? 1 : 0);
         if (enabled && crossSlot)
         {
-            await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo("CROSSSLOT");
+            await Assert.That(items[0].Tags.ContainsKey("db.response.status_code")).IsFalse();
+            await Assert.That(items[0].Tags["redis.client.errors.category"]).IsEqualTo("validation");
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(items[0].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }

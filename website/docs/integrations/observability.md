@@ -413,7 +413,7 @@ exception elsewhere emits nothing.
 
 | Attribute | Value |
 | --- | --- |
-| `redis.client.errors.category` | `network`, `tls`, `auth`, `server`, `cancelled`, or `other` |
+| `redis.client.errors.category` | `network`, `tls`, `auth`, `server`, `validation`, `cancelled`, or `other` |
 | `error.type` | Full exception type name; first 128 distinct names per process, then `_OTHER` |
 | `db.response.status_code` | A recognized Redis error prefix, such as `WRONGTYPE` or `NOSCRIPT`; unknown prefixes are omitted |
 | `redis.client.errors.internal` | `true` for a handled error, `false` for a failure delivered to a caller |

@@ -47,7 +47,7 @@ internal sealed partial class StringCommands
             + (options?.IncludeMatchLength == true ? 1 : 0)];
         args[0] = client.Key(in firstKey);
         args[1] = client.Key(in secondKey);
-        if (client.Core.Cluster is not null) EnsureSameSlot(args.AsSpan(0, 2), stride: 1, operation: "LCS");
+        if (client.Core.Cluster is not null) EnsureSameSlot(client, args.AsSpan(0, 2), stride: 1, operation: "LCS");
         args[2] = "IDX";
         var index = 3;
         if (options?.MinimumMatchLength is { } minimumMatchLength)
