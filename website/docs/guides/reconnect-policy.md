@@ -1,5 +1,7 @@
 # Connection recovery
 
+Endpoint-specific recovery failures expose `RespireReconnectLimitException.Endpoint` and retain their underlying causes. Recovery across several Cluster discovery candidates leaves the endpoint null; inspect the inner exceptions for candidate context. See [exception endpoint context](../fundamentals/connections.md#exception-endpoint-context).
+
 `RespireOptions.ReconnectPolicy` adds backoff and attempt limits to connection recovery:
 command connection replacement (including Cluster node connections), dedicated connection
 acquisitions, pub/sub recovery, and Cluster and Sentinel discovery fallback.

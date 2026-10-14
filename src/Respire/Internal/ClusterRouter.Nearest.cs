@@ -36,7 +36,7 @@ internal sealed partial class ClusterRouter
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                lastError = error;
+                lastError = ConnectionFailures.Combine(lastError, error);
                 if (owner is not null) sampler.ConnectionFailed(owner);
             }
         }
@@ -64,7 +64,7 @@ internal sealed partial class ClusterRouter
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     ReadEndpointRouter.RecordCandidateFailure(observation, error);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, error);
                 }
             }
         }
@@ -100,7 +100,7 @@ internal sealed partial class ClusterRouter
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, node.ActiveConnectionEndpoint));
                     sampler.ConnectionFailed(node);
                     continue;
                 }

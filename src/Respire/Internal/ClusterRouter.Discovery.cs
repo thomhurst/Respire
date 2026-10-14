@@ -212,7 +212,7 @@ internal sealed partial class ClusterRouter
                         appliedPartialTopology = true;
                         continue;
                     }
-                    round?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a topology."));
+                    round?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a topology.") { Endpoint = node.ActiveConnectionEndpoint });
                 }
                 catch (OperationCanceledException) when (candidateDeadline.IsCancellationRequested && !linked.IsCancellationRequested)
                 {
@@ -482,6 +482,7 @@ internal sealed partial class ClusterRouter
         // Only the sequential consumer reads or writes retry/outcome fields. The lifecycle gate
         // excludes overlapping consumers and hands a concurrent Finish to the active transition.
         private Exception? _failure;
+        private Exception? _previousFailures;
         private bool _failureIsRedirect;
         private HashSet<RespireConnectionMultiplexer>? _rejectedNodes;
         internal bool HasRejected(RespireConnectionMultiplexer node) => _rejectedNodes?.Contains(node) == true;
@@ -593,11 +594,14 @@ internal sealed partial class ClusterRouter
                 {
                     if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
                     Exhaustion = new RespireReconnectLimitException(
-                        $"Redis Cluster discovery exhausted {_attempts} fallback attempts.", _failure);
+                        $"Redis Cluster discovery exhausted {_attempts} fallback attempts. Check candidate endpoints and RespireOptions.ReconnectPolicy.",
+                        ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(_failure, _endpoint))!);
                     Publish(RespireConnectionState.Disconnected, _failure, exhausted: true);
                     throw Exhaustion;
                 }
                 var failure = _failure;
+                if (policy.MaxAttempts is not null)
+                    _previousFailures = ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(failure, _endpoint));
                 var immediateRedirect = _failureIsRedirect && _attempts == 0;
                 _failure = null;
                 _failureIsRedirect = false;

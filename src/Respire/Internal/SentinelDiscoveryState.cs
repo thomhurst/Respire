@@ -168,9 +168,9 @@ internal sealed partial class SentinelDiscoveryState
             var rejection = _epochEvidence.Accept(primary, epoch, addresses, validatedPeer, out var next);
             _epochEvidence = next;
             if (rejection == SentinelConfigurationRejection.Superseded)
-                throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.");
+                throw new RespireConnectionException($"Sentinel configuration for {primary} was superseded during validation.") { Endpoint = primary };
             if (rejection == SentinelConfigurationRejection.DifferentPeer)
-                throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.");
+                throw new RespireConnectionException($"Sentinel configuration for {primary} connected to a different owner at the same epoch.") { Endpoint = primary };
         }
     }
 

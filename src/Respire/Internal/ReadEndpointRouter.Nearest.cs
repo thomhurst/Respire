@@ -33,7 +33,8 @@ internal sealed partial class ReadEndpointRouter
             {
                 RecordCandidateFailure(observation, error,
                     Core.Sentinel is null ? primaryCandidate.ActiveConnectionEndpoint : observation.Endpoint);
-                lastError = error;
+                lastError = ConnectionFailures.Combine(lastError, Core.Sentinel is null
+                    ? ConnectionFailures.AtEndpoint(error, primaryCandidate.ActiveConnectionEndpoint) : error);
                 sampler.ConnectionFailed(primaryCandidate);
             }
         }
@@ -44,7 +45,7 @@ internal sealed partial class ReadEndpointRouter
         {
             RecordCandidateFailure(observation, error);
             // Failed Sentinel discovery does not remove a usable primary or already-known replica.
-            lastError = error;
+            lastError = ConnectionFailures.Combine(lastError, error);
         }
         var start = (uint)Interlocked.Increment(ref _nextReplica);
         var best = new NearestReadSelection<Selection>(start, endpoints.Length + 1);
@@ -75,7 +76,7 @@ internal sealed partial class ReadEndpointRouter
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     RecordCandidateFailure(observation, error, entry.Endpoint);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, entry.Endpoint));
                     TryRecordFailure(entry, error, nearest: true);
                     continue;
                 }
@@ -113,7 +114,7 @@ internal sealed partial class ReadEndpointRouter
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 RecordCandidateFailure(observation, error);
-                lastError = error;
+                lastError = ConnectionFailures.Combine(lastError, error);
             }
         }
         if (retry)
@@ -124,7 +125,7 @@ internal sealed partial class ReadEndpointRouter
             // Exclusions alone preserve the original exception. A later selection or
             // discovery failure remains visible alongside that acquisition failure.
             if (lastError is null || ReferenceEquals(lastError, original)) attempt.ThrowFirstFailure();
-            lastError = new AggregateException(original, lastError);
+            lastError = ConnectionFailures.Combine(original, lastError);
         }
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));

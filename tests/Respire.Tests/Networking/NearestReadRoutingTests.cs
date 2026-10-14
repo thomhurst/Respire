@@ -966,7 +966,15 @@ public class NearestReadRoutingTests
         var failure = await Assert.That(async () =>
             await client.WithReadFrom(RespireReadFrom.Nearest).GetStringAsync("key"))
             .Throws<RespireConnectionException>();
-        await Assert.That(failure!.InnerException).IsSameReferenceAs(refused);
+        await Assert.That(failure!.Endpoint).IsNull();
+        var failures = await Assert.That(failure.InnerException).IsTypeOf<AggregateException>();
+        var candidates = failures!.InnerExceptions.Cast<RespireConnectionException>().ToArray();
+        await Assert.That(candidates.Length).IsEqualTo(2);
+        foreach (var candidate in candidates)
+        {
+            await Assert.That(candidate.InnerException).IsSameReferenceAs(refused);
+            await Assert.That(candidate.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("unavailable.test", 6379));
+        }
         await Assert.That(attempts).IsEqualTo(2);
     }
 

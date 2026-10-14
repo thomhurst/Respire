@@ -175,7 +175,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 {
                     ObjectDisposedException.ThrowIf(_disposed, this);
                     if (replacement.IsRetired || !ReferenceEquals(Current, replacement))
-                        throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.");
+                        throw new RespireConnectionException("Sentinel primary changed while it was being revalidated.") { Endpoint = replacement.Multiplexer.ActiveConnectionEndpoint };
                     if (acceptedReporter is { } validatedReporter) Monitoring.Validated(validatedReporter, subscriptionVersion);
                 }
                 observation.UseEndpoint(replacement.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
@@ -187,7 +187,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 linked.Token.ThrowIfCancellationRequested();
                 if (replacement.IsRetired)
-                    throw new RespireConnectionException("Sentinel primary changed before its generation was published.");
+                    throw new RespireConnectionException("Sentinel primary changed before its generation was published.") { Endpoint = replacement.Multiplexer.ActiveConnectionEndpoint };
                 var old = Current;
                 if (forceDiscovery && old is { IsRetired: false } && old.Multiplexer.IsConnected
                     && SameEndpoint(old.Endpoint, replacement.Endpoint)
@@ -304,7 +304,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         // of every validated socket must be distinct from a differently named switch source.
         if (candidate.FindSwitchSourcePeer(target, in evidence) is not { } peer) return;
         Invalidate(candidate);
-        throw new RespireConnectionException($"Sentinel target {target} connected to a demoted switch source at {peer}.");
+        throw new RespireConnectionException($"Sentinel target {target} connected to a demoted switch source at {peer}.") { Endpoint = peer };
     }
 
     // The supervisor wakes when discovery learns a Sentinel. Monitors complete only when the
@@ -637,12 +637,16 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (!IsPrimary(in reply))
             {
                 _owner.Invalidate(this);
-                throw new RespireConnectionException($"Sentinel candidate at {Endpoint} did not confirm a valid primary ROLE.");
+                var message = $"Sentinel candidate at {Endpoint} did not confirm a valid primary ROLE. Check the Sentinel service name and failover state.";
+                var endpoint = new RespireEndpoint(connection.Host, connection.Port);
+                throw reply.IsError
+                    ? new RespireConnectionException(message, new RespireServerException(reply.GetErrorMessage(), "ROLE") { Endpoint = endpoint }) { Endpoint = endpoint }
+                    : new RespireConnectionException(message) { Endpoint = endpoint };
             }
             lock (_connectionsGate)
             {
                 if (IsRetired || !connection.IsConnected)
-                    throw new RespireConnectionException($"Sentinel candidate at {Endpoint} closed before validation completed.");
+                    throw new RespireConnectionException($"Sentinel candidate at {Endpoint} closed before validation completed.") { Endpoint = new(connection.Host, connection.Port) };
                 _connections.Add(connection);
                 Volatile.Write(ref _validatedConnection, connection);
             }

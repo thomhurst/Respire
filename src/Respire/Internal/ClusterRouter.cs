@@ -382,7 +382,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                     || ex is RespireCircuitOpenException && !cancellationToken.IsCancellationRequested
                         && discovery?.Exhaustion is null && Volatile.Read(ref _disposed) == 0)
                 {
-                    lastError = ex;
+                    var failure = ConnectionFailures.AtEndpoint(ex, node.ActiveConnectionEndpoint);
+                    lastError = ConnectionFailures.Combine(lastError, failure);
+                    // Recovery events and retry classification retain the original type.
+                    // The endpoint wrapper belongs only to the diagnostic cause tree.
                     discovery?.FailedNode(node, ex);
                 }
             }
@@ -390,7 +393,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             throw new RespireConnectionException(
                 $"Unable to connect to any Redis Cluster seed. Configured seeds: {string.Join(", ", _seeds)}. " +
                 "Check the seed addresses, network reachability, TLS settings, and credentials. " +
-                "Inspect the inner exception for the last failure.", lastError!);
+                "Inspect the inner exception for candidate failures.", lastError!);
         }
         catch (Exception error)
         {
@@ -1264,7 +1267,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 return replacement;
             }
             if (discovery is not null && !discovery.HasPendingFailure)
-                discovery.Failed(Endpoint(candidate), new RespireConnectionException("Cluster candidate did not provide a replacement owner."));
+                discovery.Failed(Endpoint(candidate), new RespireConnectionException("Cluster candidate did not provide a replacement owner.") { Endpoint = candidate.ActiveConnectionEndpoint });
             unavailableOwner = discovered.Unavailable ?? unavailableOwner;
         }
         return null;
@@ -1297,7 +1300,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             await EnsureRouteNodeConnectedAsync(candidate, attemptToken, discovery).ConfigureAwait(false);
             if (!(await TryLoadSlotsAsync(candidate, attemptToken, snapshotBatch: snapshotBatch).ConfigureAwait(false)).Loaded)
-                discovery?.Failed(Endpoint(candidate), new RespireConnectionException("Cluster candidate did not provide topology."));
+                discovery?.Failed(Endpoint(candidate), new RespireConnectionException("Cluster candidate did not provide topology.") { Endpoint = candidate.ActiveConnectionEndpoint });
             return true;
         }
         catch (Exception exception) when (discovery?.Exhaustion is null && !roundToken.IsCancellationRequested
@@ -1425,18 +1428,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 streamingRoute, observation.Attempts);
 
         return CheckAskingReplyAsync(connection.SendValidatedPrefixedAsync(in Asking, in command,
-            cancellationToken, commandName ?? "(command)", preferredZone, pinToConnection, commandDeadline, observation), commandName);
+            cancellationToken, commandName ?? "(command)", preferredZone, pinToConnection, commandDeadline, observation), commandName,
+            pinToConnection ? new RespireEndpoint(connection.Host, connection.Port) : (RespireEndpoint?)null);
     }
 
     private static async ValueTask<Respire.Protocol.RespValue> CheckAskingReplyAsync(
-        ValueTask<Respire.Protocol.RespValue> pending, string? commandName)
+        ValueTask<Respire.Protocol.RespValue> pending, string? commandName, RespireEndpoint? endpoint)
     {
         var reply = await pending.ConfigureAwait(false);
         if (reply.IsError)
         {
             var message = reply.GetErrorMessage();
             reply.Dispose();
-            throw new RespireServerException(message, commandName);
+            throw new RespireServerException(message, commandName) { Endpoint = endpoint };
         }
         return reply;
     }
@@ -1665,7 +1669,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 replicaRefresh: replicaRefresh, rejectedOwner: rejectedOwner).ConfigureAwait(false);
             // Retained owners are not evidence that this reply revalidated the requested slot.
             var complete = load.Loaded && (requiredSlot.HasValue ? load.CoversRequiredSlot : HasCompleteTopology());
-            if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
+            if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology.") { Endpoint = node.ActiveConnectionEndpoint });
             return complete;
         }
         // Rejection of an unrelated topology source must not reject the selected data endpoint.

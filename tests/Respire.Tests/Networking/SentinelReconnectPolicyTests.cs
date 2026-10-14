@@ -29,7 +29,9 @@ public class SentinelReconnectPolicyTests
         };
         var error = await Assert.That(async () => await RespireClient.ConnectAsync(options))
             .ThrowsExactly<RespireConnectionException>();
-        await Assert.That(error!.InnerException is RespireServerException { Code: "NOPERM" }).IsTrue();
+        await Assert.That(error!.Endpoint).IsNull();
+        var failures = await Assert.That(error.InnerException).IsTypeOf<AggregateException>();
+        await Assert.That(failures!.Flatten().InnerExceptions.Last() is RespireServerException { Code: "NOPERM" }).IsTrue();
         await Assert.That(first.CommandsSeen).IsEqualTo(2);
         await Assert.That(second.CommandsSeen).IsEqualTo(2);
         await Assert.That(metrics.Attempts.ToArray()).IsEquivalentTo(new long[] { 1 });
@@ -53,7 +55,9 @@ public class SentinelReconnectPolicyTests
         };
         var error = await Assert.That(async () => await RespireClient.ConnectAsync(options))
             .ThrowsExactly<RespireConnectionException>();
-        await Assert.That(error!.InnerException is RespireServerException { Code: "NOPERM" }).IsTrue();
+        await Assert.That(error!.Endpoint).IsNull();
+        var failures = await Assert.That(error.InnerException).IsTypeOf<AggregateException>();
+        await Assert.That(failures!.Flatten().InnerExceptions.Last() is RespireServerException { Code: "NOPERM" }).IsTrue();
         await Assert.That(first.CommandsSeen).IsEqualTo(2);
         await Assert.That(second.CommandsSeen).IsEqualTo(2);
         await Assert.That(last.CommandsSeen).IsEqualTo(0);
