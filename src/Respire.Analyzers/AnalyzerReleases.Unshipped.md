@@ -7,3 +7,4 @@ Rule ID | Category | Severity | Notes
 --------|----------|----------|------------------------------------------------------------
 RESP007 | Respire | Disabled | StackExchangeMigrationAnalyzer: migrate supported database methods
 RESP008 | Respire | Disabled | StackExchangeMigrationAnalyzer: manual migration required
+RESP009 | Respire | Warning | SyncOverAsyncAnalyzer: await Respire operations

@@ -27,5 +27,8 @@ public static class DiagnosticIds
     /// <summary>A StackExchange.Redis call requires manual migration.</summary>
     public const string StackExchangeManualMigration = "RESP008";
 
+    /// <summary>A Respire task is synchronously consumed instead of awaited.</summary>
+    public const string SyncOverAsync = "RESP009";
+
     internal const string Category = "Respire";
 }

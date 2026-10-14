@@ -119,7 +119,9 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     private void ThrowIfClosed() => ObjectDisposedException.ThrowIf(_closeTask is not null, this);
 
     /// <inheritdoc />
+#pragma warning disable RESP009 // IConnectionMultiplexer requires this synchronous compatibility helper.
     public void Wait(Task task) => WaitCoreAsync(task).GetAwaiter().GetResult();
+#pragma warning restore RESP009
     /// <inheritdoc />
     public T Wait<T>(Task<T> task)
     {
@@ -154,7 +156,9 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     }
 
     /// <inheritdoc />
+#pragma warning disable RESP009 // IConnectionMultiplexer requires a synchronous Close contract.
     public void Close(bool allowCommandsToComplete = true) => CloseAsync(allowCommandsToComplete).GetAwaiter().GetResult();
+#pragma warning restore RESP009
 
     /// <inheritdoc />
     public Task CloseAsync(bool allowCommandsToComplete = true)
