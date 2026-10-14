@@ -25,8 +25,9 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private bool _disposed;
     private long _nextConnectionId;
     private long _commandTime;
+    private DateTimeOffset _commandTimestamp;
 
-    /// <summary>Creates an isolated server. Supply RespireFakeClock to control expiry; otherwise wall-clock UTC is used.</summary>
+    /// <summary>Creates an isolated server. Supply RespireFakeClock to control server time and expiry; otherwise wall-clock UTC is used.</summary>
     public RespireFakeServer(TimeProvider? clock = null) : this(clock, createConsumersOnEmptyReads: false) { }
 
     /// <summary>Creates a server with explicit stream consumer-registration semantics.</summary>
@@ -199,7 +200,8 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             {
                 scope?.ObserveExecution();
                 // EXEC and all its commands share one server-time sample.
-                _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+                _commandTimestamp = _clock.GetUtcNow();
+                _commandTime = _commandTimestamp.ToUnixTimeMilliseconds();
                 var result = Execute(connection, arguments);
                 if (allowListMoveWait && ReferenceEquals(result, FakeReply.NullArray))
                 {

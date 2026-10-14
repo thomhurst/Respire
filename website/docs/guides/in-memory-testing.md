@@ -52,7 +52,8 @@ uses one response slot, so later commands still work.
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
 | Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XAUTOCLAIM` with `COUNT` and `JUSTID`; `XDEL`; `XINFO GROUPS`; `EVAL`/`EVALSHA` for the built-in [stream worker](stream-workers.md) scripts only |
-| Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
+| Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST`, `KEYS`, `SCAN` with `MATCH` and `COUNT` |
+| Server time | `TIME`, using the supplied `TimeProvider` with microsecond precision |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
 | Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
@@ -61,6 +62,8 @@ uses one response slot, so later commands still work.
 
 | Area | Unsupported |
 | --- | --- |
+| Key enumeration | `SCAN TYPE` |
+| Scripting | General `EVAL`/`EVALSHA`, `SCRIPT LOAD`, `cjson`, and functions; see [testing script-heavy code](#testing-script-heavy-code) |
 | Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD`, `HSCAN` |
 | Sets | `SPOP`, `SRANDMEMBER`, `SSCAN` |
 | Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH`. Use the nonblocking typed overloads without `waitFor`. |
@@ -75,6 +78,34 @@ uses one response slot, so later commands still work.
 - String commands reject other types with `WRONGTYPE`. Exceptions: `MGET` returns null for non-string keys, and plain `SET`/`MSET` replace the type.
 - `UNLINK` deletes synchronously.
 - `INCREX BYFLOAT` uses .NET `double`; Redis uses platform-dependent `long double`, so rounding near bounds can differ. Values outside the finite `double` range fail before mutation. Use real Redis to test floating-point precision or extreme values.
+
+### Enumerating keys
+
+`KEYS` and `SCAN MATCH` support byte-based, case-sensitive Redis glob patterns: `*`, `?`,
+character classes such as `[a-z]` and `[^a-z]`, and backslash escaping. Both enumerate all
+supported key types and exclude expired keys.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.SetAsync("coordinator:job", "pending");
+
+await foreach (var key in client.Keys.ScanAsync("coordinator:*", countHint: 10))
+    await client.DeleteAsync(key);
+
+await foreach (var key in client.Keys.ScanAsync("coordinator:*"))
+    throw new InvalidOperationException($"Cleanup left key {key} behind.");
+```
+
+As with [Redis SCAN](https://redis.io/docs/latest/commands/scan/), `COUNT` is a positive work
+hint, not a page-size guarantee. Raw callers start with cursor `0` and pass back the returned
+cursor until it is `0` again, even after an empty page. The fake uses fixed hash buckets so
+deleting returned keys does not skip surviving keys. Order, cursor values, and page boundaries
+are unspecified and differ from Redis. Each call examines an in-memory key snapshot; this
+does not model Redis performance. Glob matching has a shared one-million-step limit per command;
+patterns that exceed it return an explicit error.
 
 ### Hashes
 
@@ -239,10 +270,11 @@ Behavior follows [Redis transactions](https://redis.io/docs/latest/develop/using
 
 ## Expiry and determinism
 
-- Without an injected clock, expiry uses `TimeProvider.System`.
+- Without an injected clock, expiry and `TIME` use `TimeProvider.System`.
 - `RespireFakeClock` starts at the Unix epoch and moves only when you call `Advance`. Each command reads the time once; keys expire on access at or after their deadline.
 - `TTL` rounds to the nearest second; `PTTL` is in milliseconds. Missing and persistent keys return `-2` and `-1`.
-- The clock controls server expiry only. It does not advance client timeouts or order concurrent callers; await operations or use batches when order matters.
+- `Server.TimeAsync()` uses the same injected clock as expiry. `TIME` returns Unix seconds and the microsecond fraction, truncating sub-microsecond ticks. Commands within `EXEC` share its execution-time sample.
+- The clock controls server time, expiry, and pending stream idle times. It does not advance client timeouts or order concurrent callers; await operations or use batches when order matters.
 - There are no expiry notifications or background expiry.
 - Cancellation only stops waiting. Do not assume a cancelled mutation did not run.
 
@@ -256,6 +288,35 @@ Behavior follows [Redis transactions](https://redis.io/docs/latest/develop/using
 
 Run real-server integration tests for version compatibility, unsupported commands, and operational behavior.
 The [shared testing sample](testing-sample.md) runs the same scenarios against the fake and real servers.
+
+## Testing script-heavy code
+
+The fake recognizes only Respire's built-in stream worker scripts. It does not embed a Lua
+interpreter: arbitrary `RespireScript` execution, `SCRIPT LOAD`, `redis.call`/`redis.pcall`, and
+`cjson` require a real server. An embedded interpreter alone would not reproduce Redis's Lua
+environment, conversion rules, and command behavior.
+
+Use `Respire.Testing` for storage and fault-handling tests that stay within its supported
+commands. Run coordinator contract tests (claims, lease renewal/requeueing, and atomic result
+publication) with the production scripts against a [container fixture](testing-containers.md):
+
+```csharp
+using Respire.Testing.Containers;
+
+await using var fixture = await RespireContainerFixture.StartAsync();
+await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
+var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
+await client.SetAsync("coordinator:result", "done");
+var result = await client.Scripts.ExecuteStringAsync(script, ["coordinator:result"]);
+if (result != "done") throw new InvalidOperationException("Script result did not match.");
+```
+
+Pass this client into the same application code exercised by the fake tests. Pin the fixture's
+Redis or Valkey image to your deployed version, isolate each test's keys (or use one fixture per
+test), and dispose clients before the fixture. Container server time follows its real clock;
+`RespireFakeClock` cannot advance Lua `TIME` or expiry there. Keep Docker-enabled contract tests
+in a separate test project or CI job so they run alongside fast fake tests instead of remaining
+silently skipped.
 
 ## Controlled faults
 
