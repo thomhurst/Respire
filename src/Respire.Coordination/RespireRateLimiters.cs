@@ -10,6 +10,33 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
 {
     private readonly RespireCoordination _coordination = coordination ?? throw new ArgumentNullException(nameof(coordination));
 
+    /// <summary>Changes a standalone limiter's settings while retaining its usage and local queue.</summary>
+    /// <remarks>The algorithm cannot change. Active Redis attempts finish before migration; later attempts use
+    /// the new settings. Coordinate updates across all processes sharing the key. See the coordination guide
+    /// for each algorithm's migration semantics. Queue capacity and order remain unchanged.</remarks>
+    public ValueTask UpdateAsync(RateLimiter limiter, RespireRateLimit settings,
+        RespireRateLimitUpdateMode mode = RespireRateLimitUpdateMode.Migrate, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return GetOwnedLimiter(limiter).UpdateAsync([settings], composite: false, mode, cancellationToken);
+    }
+
+    /// <summary>Changes a composite limiter's settings, preserving component count, order, algorithms and usage.</summary>
+    /// <remarks>Coordinate all processes sharing the key. Fixed-window deadlines are retained; sliding history
+    /// is retained without resurrecting expired usage; buckets settle old refill before changing settings.
+    /// Queue capacity and order remain unchanged. Acquisitions pause locally during migration.</remarks>
+    public ValueTask UpdateAsync(RateLimiter limiter, IReadOnlyList<RespireRateLimit> settings,
+        RespireRateLimitUpdateMode mode = RespireRateLimitUpdateMode.Migrate, CancellationToken cancellationToken = default)
+        => GetOwnedLimiter(limiter).UpdateAsync(settings, composite: true, mode, cancellationToken);
+
+    private RedisRateLimiter GetOwnedLimiter(RateLimiter limiter)
+    {
+        ArgumentNullException.ThrowIfNull(limiter);
+        if (limiter is not RedisRateLimiter redis || !ReferenceEquals(redis.Coordination, _coordination))
+            throw new ArgumentException("The limiter must belong to this coordination instance.", nameof(limiter));
+        return redis;
+    }
+
     /// <summary>Combines one to 32 limits on a dedicated key, consuming permits only when every limit allows them.</summary>
     /// <remarks>Supports fixed windows, segmented sliding windows, and token buckets. Each Redis attempt uses one
     /// EVAL, including on a cold server. RetryAfter is the longest component delay. All clients must use identical
@@ -163,7 +190,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
                 redis.call('ZREM', KEYS[1], current[1])
             end
             redis.call('ZADD', KEYS[1], bucketEnd, bucket .. ':' .. (segmentCount + requested))
-            redis.call('PEXPIRE', KEYS[1], width * 2)
+            local latest = math.max(bucketEnd, tonumber(entries[#entries]) or bucketEnd)
+            redis.call('PEXPIRE', KEYS[1], math.max(width * 2, latest + width - now))
             return {1, 0, limit - count - requested}
         end
         local needed = count + requested - limit
@@ -210,14 +238,14 @@ internal sealed partial class RedisRateLimiter : RateLimiter
 
     private readonly RespireCoordination _coordination;
     private readonly RespireKey _key;
-    private readonly int _permitLimit;
+    private int _permitLimit;
     private readonly int _queueLimit;
     private readonly QueueProcessingOrder _queueOrder;
     private readonly RedisRateLimiterKind _kind;
-    private readonly long _periodMs;
-    private readonly int _segments;
-    private readonly int _tokensPerPeriod;
-    private readonly long _tokenBucketExpiryMs;
+    private long _periodMs;
+    private int _segments;
+    private int _tokensPerPeriod;
+    private long _tokenBucketExpiryMs;
     private readonly Lock _queueGate = new();
     private readonly LinkedList<QueuedRequest> _queue = [];
     private readonly SemaphoreSlim _queueChanged = new(0, 1);
@@ -226,6 +254,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
     private volatile bool _disposed;
     private readonly RespireScript _script;
     internal bool IncrexUnsupported => _coordination.IncrexUnsupported;
+    internal RespireCoordination Coordination => _coordination;
     private int _activeAcquisitions;
     private long _lastActivity = Stopwatch.GetTimestamp();
     private long _availablePermits;
@@ -282,6 +311,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
     // PartitionedRateLimiter may dispose an idle limiter safely; a replacement resumes from Redis state.
     public override TimeSpan? IdleDuration
         => Volatile.Read(ref _activeAcquisitions) != 0 || Volatile.Read(ref _queuedPermits) != 0
+            || Volatile.Read(ref _redisReaders) != 0
             ? null
             : Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActivity));
 
@@ -327,20 +357,52 @@ internal sealed partial class RedisRateLimiter : RateLimiter
 
     private async ValueTask<RateLimitLease> AcquireCoreAsync(int permitCount, CancellationToken cancellationToken)
     {
-        if (permitCount > _permitLimit) return new RedisRateLimitLease(false, null);
+        var settingsVersion = Volatile.Read(ref _settingsVersion);
         if (permitCount == 0) return await AcquireFromRedisAsync(0, cancellationToken).ConfigureAwait(false);
         if (Volatile.Read(ref _queuedPermits) != 0)
         {
             if (_queueLimit == 0) return new RedisRateLimitLease(false, null);
-            return await QueueAsync(permitCount, new RedisRateLimitLease(false, null), cancellationToken)
+            return await QueueAsync(permitCount, new RedisRateLimitLease(false, null), settingsVersion, cancellationToken)
                 .ConfigureAwait(false);
         }
         var lease = await AcquireFromRedisAsync(permitCount, cancellationToken).ConfigureAwait(false);
         if (lease.IsAcquired || _queueLimit == 0) return lease;
-        return await QueueAsync(permitCount, lease, cancellationToken).ConfigureAwait(false);
+        return await QueueAsync(permitCount, lease, settingsVersion, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<RateLimitLease> AcquireFromRedisAsync(int permitCount, CancellationToken cancellationToken)
+    {
+        await EnterRedisAttemptAsync(cancellationToken).ConfigureAwait(false);
+        var attempt = ExecuteRegisteredAttemptAsync(permitCount, cancellationToken);
+        if (!cancellationToken.CanBeCanceled) return await attempt.ConfigureAwait(false);
+        var task = attempt.AsTask();
+        try { return await task.WaitAsync(cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _ = DisposeAbandonedAttemptAsync(task);
+            throw;
+        }
+    }
+
+    private async ValueTask<RateLimitLease> ExecuteRegisteredAttemptAsync(int permitCount, CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (permitCount > _permitLimit) return new RedisRateLimitLease(false, null);
+            // Caller cancellation may stop waiting, but migration must still drain the server reply.
+            return await ExecuteAcquisitionAsync(permitCount, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally { ExitRedisAttempt(); }
+    }
+
+    private static async Task DisposeAbandonedAttemptAsync(Task<RateLimitLease> attempt)
+    {
+        try { (await attempt.ConfigureAwait(false)).Dispose(); }
+        catch { /* The canceled caller has left; observe a later transport failure. */ }
+    }
+
+    private async ValueTask<RateLimitLease> ExecuteAcquisitionAsync(int permitCount, CancellationToken cancellationToken)
     {
         RespireValue[] args = _kind switch
         {
@@ -364,7 +426,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         return new RedisRateLimitLease(granted, TimeSpan.FromMilliseconds(retry));
     }
 
-    private async ValueTask<RateLimitLease> QueueAsync(int permitCount, RateLimitLease denied, CancellationToken cancellationToken)
+    private async ValueTask<RateLimitLease> QueueAsync(int permitCount, RateLimitLease denied, long settingsVersion, CancellationToken cancellationToken)
     {
         var request = new QueuedRequest(permitCount, ReadRetryAfter(denied), cancellationToken);
         var startPump = false;
@@ -372,6 +434,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
+            if (permitCount > _permitLimit) return new RedisRateLimitLease(false, null);
+            if (settingsVersion != _settingsVersion) request.SetRetryAfter(TimeSpan.Zero);
             if (permitCount > _queueLimit || (_queueOrder == QueueProcessingOrder.OldestFirst
                 && permitCount > _queueLimit - _queuedPermits))
                 return _queuedPermits == 0 ? denied : new RedisRateLimitLease(false, null);
@@ -443,7 +507,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
                 request = _queue.First.Value;
             }
             using var wakeCancellation = new CancellationTokenSource();
-            var remaining = request.RemainingRetryAfter;
+            TimeSpan remaining;
+            lock (_queueGate) remaining = request.RemainingRetryAfter;
             var delay = remaining <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1)
                 : remaining > MaxQueueDelay ? MaxQueueDelay : remaining;
             var timer = Task.Delay(delay, wakeCancellation.Token);
@@ -461,6 +526,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
             {
                 if (request.Node?.List is null || request.Node != _queue.First) continue;
                 request.IsProcessing = true;
+                request.SettingsVersion = _settingsVersion;
             }
             if (request.CancellationToken.IsCancellationRequested)
             {
@@ -479,12 +545,13 @@ internal sealed partial class RedisRateLimiter : RateLimiter
                 FailQueued(request, error);
                 continue;
             }
-            if (!lease.IsAcquired)
+            if (!lease.IsAcquired && lease.TryGetMetadata(MetadataName.RetryAfter, out _))
             {
                 lock (_queueGate)
                 {
                     request.IsProcessing = false;
-                    request.SetRetryAfter(ReadRetryAfter(lease));
+                    // Updates wake the queue; do not restore retry metadata from older settings.
+                    request.SetRetryAfter(request.SettingsVersion == _settingsVersion ? ReadRetryAfter(lease) : TimeSpan.Zero);
                 }
                 continue;
             }
@@ -584,6 +651,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         public CancellationTokenRegistration Registration { get; set; }
         public LinkedListNode<QueuedRequest>? Node { get; set; }
         public bool IsProcessing { get; set; }
+        public long SettingsVersion { get; set; }
     }
 
     private sealed class RedisRateLimitLease(bool acquired, TimeSpan? retryAfter) : RateLimitLease

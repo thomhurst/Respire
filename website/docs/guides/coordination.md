@@ -428,6 +428,71 @@ if (!lease.IsAcquired
 To use these limiters with ASP.NET Core rate-limiting middleware, return them from your
 rate-limiting configuration. Dispose each limiter when its owner stops; you own the client.
 
+### Updating settings at runtime
+
+Keep the same limiter and update it through the `RateLimiters` factory that owns it:
+
+```csharp
+var factory = client.Coordination.RateLimiters;
+await using var limiter = factory.FixedWindow(
+    "limits:checkout", permitLimit: 100, window: TimeSpan.FromMinutes(1), queueLimit: 20);
+
+await factory.UpdateAsync(limiter,
+    RespireRateLimit.FixedWindow(200, TimeSpan.FromMinutes(2)),
+    cancellationToken: cancellationToken);
+```
+
+`RespireRateLimit` definitions are immutable. Use `FixedWindow`, `SlidingWindow`, `TokenBucket`,
+or `Gcra` to describe standalone settings; pass an ordered list to update a composite. Updates
+cannot change the key, algorithm, queue capacity or queue order. Composite updates also retain
+the number and algorithm of each indexed component. GCRA remains standalone-only. Durations in
+update definitions round up to whole milliseconds, with the same bounds as composite definitions;
+GCRA's full burst refill duration must fit in a `TimeSpan`.
+
+An update stops new local Redis attempts, lets active attempts finish, migrates Redis state in one
+script, then publishes the complete settings together. Ordinary Redis acquisitions remain concurrent.
+Each attempt uses one consistent settings set; an acquisition queued across an update retries with
+the new settings. Updates on one instance are serialized. Successful updates wake the local queue
+immediately to reconsider old retry delays. Requests larger than the new capacity complete with an
+unacquired lease without `RetryAfter`; other requests retain their queue order and cancellation.
+Already granted leases stay consumed. Statistics continue to describe the latest acquisition reply.
+
+| Algorithm | Treatment of existing usage |
+| --- | --- |
+| Fixed window | Retain the count and existing deadline. Capacity changes apply immediately; the new window width applies when the next window starts. A decrease below used capacity denies requests until that deadline. |
+| Sliding window | Keep segment-end timestamps and counts still active under both the old and new windows. The new window determines their remaining lifetime; new requests use the new segmentation. Previously expired history is never recovered. A larger old segment can continue to delay permit expiry after reducing the segment width. |
+| Token bucket | Settle complete refill periods at the old rate, clamp available tokens to the new capacity, and start the new refill period at migration time. Discard the old partial period. A capacity increase adds room to refill, without granting extra tokens immediately. |
+| GCRA | Preserve outstanding permit debt, including a partial permit, and rescale its time by the new emission interval, rounding up to milliseconds. A capacity decrease can leave debt above capacity; acquisitions wait for it to drain. Migration rejects debt beyond the `TimeSpan` range. |
+| Composite | Apply the corresponding rule to each component atomically and update the stored configuration signature. The lowest component availability still controls admission. |
+
+An absent or expired key stays absent during migration: its first subsequent acquisition starts
+with full capacity under the new settings. An identical settings update is a no-op. To intentionally
+reset usage or change algorithms, coordinate a separate key migration instead.
+
+**Coordinate every process sharing a key.** Respire does not distribute settings or elect an updater.
+For a single limiter instance, the local update barrier is sufficient. For multiple instances:
+
+1. Pause acquisitions everywhere, including local queue pumps (cancel/drain queued work first), and
+   wait for active attempts to finish. Use your application's configuration rollout barrier.
+2. Elect exactly one instance to call `UpdateAsync` with the default `RespireRateLimitUpdateMode.Migrate`.
+3. After it succeeds, have every other existing instance call `UpdateAsync` with the same definitions
+   and `RespireRateLimitUpdateMode.Adopt`. Adopt changes only local settings and does no Redis I/O.
+   New instances can instead be constructed with the new settings.
+4. Resume traffic only after every contender acknowledges the new settings.
+
+Do not migrate the same change once per process: token refill and GCRA debt conversion would be
+applied repeatedly. `Adopt` trusts the caller's coordination; it does not verify server settings.
+Mixed configurations are unsupported. Composites reject mismatched signatures; standalone layouts
+do not record a configuration signature. These rules apply equally to clients with key prefixes and
+Cluster routing; migration uses the limiter's original binary key and the same single Cluster slot.
+
+Cancellation is honored while waiting to start migration. After the migration command is submitted,
+the update observes its result even if the cancellation token is canceled. If submission or its reply
+fails, the limiter fails closed and its queued requests fail: Redis may already have changed. Reconcile
+shared state under the rollout barrier before constructing replacement instances; do not blindly retry
+`Migrate`. Cancellation before submission leaves the original settings usable. As with ordinary
+acquisitions, a disconnect or canceled in-flight command can have consumed permits on the server.
+
 ### Fixed window
 
 ```csharp
@@ -552,7 +617,8 @@ and indexed component fields. Binary keys and client prefixes are preserved, and
 extra hash tag or derived keys. The hash expires after every component can return to full capacity.
 Standalone limiters use different state layouts and cannot share this key. Every process must use
 the same ordered definitions; a configuration mismatch raises a Redis error without consuming
-permits. To change definitions, use a new key or stop all contenders before deleting the old state.
+permits. Use the [runtime update protocol](#updating-settings-at-runtime) to change settings while
+retaining usage, or coordinate a new key when changing the component count or algorithms.
 
 Optional `queueLimit` and `queueProcessingOrder` use the same local queue behavior as the other
 limiters. Queued retries each make another single atomic attempt after the composite retry delay.
