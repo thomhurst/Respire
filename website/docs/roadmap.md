@@ -20,6 +20,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - [Source-generated logging with stable event IDs](integrations/log-events.md) across shipping
   packages, with duplicate-ID and logging-contract regression checks.
 
+- [Span formatting and parsing](fundamentals/values-and-serialization.md#span-formatting-and-parsing)
+  for keys and values, including allocation-free UTF-8 interpolation.
 - [Public API baselines and deprecation policy](packages.md#public-api-review-and-deprecation)
   cover all shipping packages, with build failures for undeclared API changes.
 
