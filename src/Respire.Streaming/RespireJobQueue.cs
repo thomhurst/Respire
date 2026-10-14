@@ -119,11 +119,13 @@ public sealed class RespireJobQueue<T>
         var deduplicationKey = StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(jobId)));
         string[] keys = [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey];
         JobQueueScheduling.ValidateKeys(_client, keys);
+        using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         using var result = await _client.Scripts.ExecuteAsync(JobQueueScheduling.Enqueue, [.. keys],
             [jobId, bytes, (long)Math.Ceiling(options.DeduplicationWindow.TotalMilliseconds),
                 (long)Math.Ceiling(options.Delay.TotalMilliseconds), options.Priority,
-                (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0)], cancellationToken).ConfigureAwait(false);
+                (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
+        trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }
 

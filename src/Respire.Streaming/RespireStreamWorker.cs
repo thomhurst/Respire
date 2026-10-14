@@ -243,10 +243,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             RespireStreamWorkerResult result;
             var reason = "nack";
             var failureType = "";
-            TMessage? message = default;
+            TimeSpan? retryDelay = null;
             try
             {
-                message = deserialize(delivery.Entry);
+                var message = deserialize(delivery.Entry);
                 if (options.JobEventsStream is { } events && message is IJobDelivery job)
                     job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt));
                 result = await handler.HandleAsync(message, _handlers.Token).ConfigureAwait(false);
@@ -254,6 +254,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     throw new InvalidOperationException("The stream handler returned an unknown completion result.");
                 if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
                     throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
+                retryDelay = (message as IJobRetry)?.RetryDelay;
             }
             catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
             { observation.Outcome = "canceled"; return; }
@@ -287,7 +288,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             else if (options.DeliveryLimit is { } deliveryLimit && totalAttempts >= deliveryLimit)
                 observation.Outcome = await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
             else if (options.JobQueue is { } queue
-                && ((message as IJobRetry)?.RetryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
+                && (retryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
             {
                 var retried = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Retry, [.. JobQueueScheduling.Keys(stream)],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, (long)Math.Ceiling(delay.TotalMilliseconds),

@@ -77,9 +77,14 @@ internal static class JobQueueScheduling
         permit('SET', KEYS[4], '0-0', 'PX', ARGV[3])
         local clock = now()
         local expires = tonumber(ARGV[6]) > 0 and clock + tonumber(ARGV[6]) or 0
-        local id = stage({'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2],
+        local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2],
             '_respire.job.priority', ARGV[5], '_respire.job.expires', tostring(expires),
-            '_respire.job.attempts', '0'}, clock + tonumber(ARGV[4]))
+            '_respire.job.attempts', '0'}
+        if ARGV[7] and ARGV[7] ~= '' then
+            table.insert(fields, 'traceparent'); table.insert(fields, ARGV[7])
+            if ARGV[8] and ARGV[8] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[8]) end
+        end
+        local id = stage(fields, clock + tonumber(ARGV[4]))
         if type(id) == 'table' then return id end
         local recorded = redis.pcall('SET', KEYS[4], id, 'PX', ARGV[3])
         if type(recorded) == 'table' and recorded.err then
@@ -133,6 +138,7 @@ internal static class JobQueueScheduling
         local delete = ARGV[6] == '1' and supports(2)
         if delete then
             local command = redis.pcall('COMMAND', 'INFO', 'XACKDEL')
+            if type(command) == 'table' and command.err then error(command.err) end
             delete = type(command) == 'table' and not command.err and command[1] and true or false
         end
         -- Preflight the selected acknowledgement before staging any retry body.

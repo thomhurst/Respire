@@ -1,6 +1,6 @@
 ---
 title: Typed job queues
-description: Enqueue deduplicated jobs and process them with scoped handlers, visibility recovery and dead letters.
+description: Schedule deduplicated jobs with priority, retry backoff, progress, durable completion events and tracing.
 ---
 
 # Typed job queues
@@ -57,12 +57,14 @@ internal partial class JobJson : JsonSerializerContext { }
 
 public sealed class EmailHandler : IRespireStreamHandler<RespireJob<EmailJob>>
 {
-    public ValueTask<RespireStreamWorkerResult> HandleAsync(
+    public async ValueTask<RespireStreamWorkerResult> HandleAsync(
         RespireJob<EmailJob> job, CancellationToken cancellationToken)
     {
         // Perform an idempotent application operation using job.Id before returning Ack.
         // job.Payload is EmailJob; job.EntryId identifies this ready-stream entry.
-        return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+        if (!await job.ReportProgressAsync(50, cancellationToken))
+            return RespireStreamWorkerResult.Nack; // Another delivery already owns this job.
+        return RespireStreamWorkerResult.Ack;
     }
 }
 ```
@@ -131,7 +133,8 @@ var queueOptions = new RespireJobQueueOptions
 
 Pass this as the final argument after `RespireStreamWorkerOptions` in `AddRespireJobQueue`.
 For total delivery attempt `n`, the delay is `min(MaximumRetryBackoff, RetryBackoff * 2^(n-1))`.
-Handler exceptions use this policy too. `job.RetryAfter(TimeSpan.FromSeconds(30))` overrides
+Handler exceptions use this policy too, discarding any explicit retry delay set before the exception.
+Returning `job.RetryAfter(TimeSpan.FromSeconds(30))` overrides
 the delay, including the backoff cap, but never the delivery limit or job TTL. Zero requests
 an immediate retry. Delays round up to whole milliseconds and must be at most `Int32.MaxValue`
 milliseconds. Retry delays start when Redis commits the retry transition, after the handler returns.
@@ -216,6 +219,8 @@ cancellation deadline for a running handler; it cannot undo external side effect
 bodies are removed on a scheduling pass after their due time. Expired ready bodies follow normal
 stream retention. With `DeleteAcknowledgedEntries`, retries and expiry use the same Redis 8.2+
 group-aware `XACKDEL ACKED` deletion policy as successful completion (and require that permission).
+On Redis 8.2+, these transitions also require `COMMAND INFO` to detect `XACKDEL` before staging
+or acknowledging. Denied discovery fails the transition and leaves the original delivery pending.
 Older servers retain acknowledged entries for trimming. Expiry does not remove the deduplication record.
 
 ## Progress and completion observers
@@ -226,7 +231,9 @@ has been acknowledged, recovered by another attempt, or its body has been remove
 are fenced by both consumer name and delivery count, including recovery with the same name.
 Await reports before returning. Progress neither extends the visibility timeout nor completes
 the job; returning `Ack` is what publishes success. A retry may start progress again from zero,
-so observers should compare the event's `Attempt`. Progress need not be monotonic.
+so observers should compare the event's `EntryId` and `Attempt`. The attempt counter is scoped
+to a ready-stream entry; a durable retry creates a new entry with a fresh counter. Progress
+need not be monotonic.
 
 Each queue has an independent event stream at `queue.EventsStreamKey`. A producer-only client
 can observe it without registering a hosted worker:
@@ -250,8 +257,10 @@ await foreach (var update in queue.ReadEventsAsync(cursor, shutdown.Token))
 `Kind` is `progress`, `completed`, or `dead-letter`. Every event contains `JobId`, `EntryId`,
 `Attempt`, and its own cursor `Id`; only progress includes `Percent`, and only dead letters
 include `Reason` (`explicit`, `nack`, `processing-failed`, or `delivery-limit`). Events omit
-the payload and exception message. Match terminal events to the enqueue result's `EntryId`,
-since an application job ID can be reused after its deduplication window expires. Deserialization
+the payload and exception message. Immediate jobs without durable retries retain the enqueue
+result's `EntryId`. Scheduling promotion and durable retries create new ready-stream IDs;
+use a unique application `JobId` per logical job to correlate events across those transitions.
+Expired jobs produce no terminal event. Deserialization
 errors can dead-letter without invoking a handler and still produce a terminal event.
 
 Each enumeration sees all events after its cursor; observers do not compete for events.

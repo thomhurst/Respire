@@ -92,6 +92,34 @@ public class JobSchedulingIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DeniedDeletionDiscoveryLeavesDeliveryPending(bool expiry)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        var info = await admin.Server.InfoAsync("server");
+        var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
+        if (Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]) < new Version(8, 2)) return;
+        var queue = Queue(admin);
+        var initial = await queue.EnqueueAsync("job", "payload");
+        await admin.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+        await admin.Streams.ReadGroupOnceAsync(queue.StreamKey, Group, "owner");
+        var user = "discovery-" + Guid.NewGuid().ToString("N");
+        await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-command|info"]);
+        try
+        {
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+                with { Username = user, Password = "password" });
+            await Assert.That(async () => await restricted.Scripts.ExecuteIntegerAsync(Script(expiry ? "CheckExpiry" : "Retry"),
+                [.. Keys(queue)], [Group, "owner", initial.EntryId.Value, 1, expiry ? 1 : 0, 1])).Throws<RespireServerException>();
+            await Assert.That(await admin.Streams.CountAsync(Keys(queue)[1])).IsEqualTo(0);
+            await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
+            await Assert.That((await admin.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count).IsEqualTo(1);
+        }
+        finally { await admin.Server.AclDeleteUsersAsync([user]); }
+    }
+
+    [Test]
     public async Task MissingStagedBodyDoesNotBlockLaterJobs()
     {
         await using var client = await ConnectAsync();
@@ -112,7 +140,8 @@ public class JobSchedulingIntegrationTests(RedisTestContainer redis)
         var queue = Queue(admin);
         await queue.EnqueueAsync("immediate", "payload");
         var user = "immediate-" + Guid.NewGuid().ToString("N");
-        await admin.Server.AclSetUserAsync(user, ["on", ">password", "~" + queue.StreamKey, "~" + queue.DeadLetterStreamKey, "+@all"]);
+        await admin.Server.AclSetUserAsync(user, ["on", ">password", "~" + queue.StreamKey,
+            "~" + queue.DeadLetterStreamKey, "~" + queue.EventsStreamKey, "+@all"]);
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
@@ -416,6 +445,92 @@ public class JobSchedulingIntegrationTests(RedisTestContainer redis)
             await Assert.That(dead.GetString("_respire.job.attempts")).IsEqualTo("2");
         }
         finally { await worker.StopAsync(deadline.Token); }
+    }
+
+    [Test]
+    public async Task HandlerExceptionDiscardsExplicitRetryDelay()
+    {
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        await queue.EnqueueAsync("retry", "payload");
+        var state = new HandlerState
+        {
+            Handle = job =>
+            {
+                job.RetryAfter(TimeSpan.FromHours(1));
+                throw new InvalidOperationException("Handler failed before returning its result.");
+            },
+        };
+        await using var provider = Worker(client, state, new() { RetryBackoff = TimeSpan.FromMinutes(1) });
+        var worker = provider.GetServices<IHostedService>().Single();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var before = await ServerMilliseconds(client);
+        await worker.StartAsync(deadline.Token);
+        try
+        {
+            await Until(async () => await client.Streams.CountAsync(Keys(queue)[1]) == 1
+                && (await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count == 0, deadline.Token);
+            var after = await ServerMilliseconds(client);
+            var staged = (await client.Streams.ReadAsync(Keys(queue)[1])).Single();
+            using var score = await client.ExecuteAsync("ZSCORE", [Keys(queue)[2], staged.Id.Value]);
+            var due = long.Parse(score.AsString(), System.Globalization.CultureInfo.InvariantCulture);
+            await Assert.That(due).IsGreaterThanOrEqualTo(before + 60000);
+            await Assert.That(due).IsLessThanOrEqualTo(after + 60000);
+            await Assert.That(state.Jobs.Count).IsEqualTo(1);
+        }
+        finally { await worker.StopAsync(deadline.Token); }
+    }
+
+    [Test, NotInParallel]
+    public async Task ScheduledEnqueueTracingSurvivesPromotionRetryAndCompletion()
+    {
+        var stopped = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireStreamWorkerTelemetry.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        using var parent = new Activity("request").SetIdFormat(ActivityIdFormat.W3C).Start();
+        parent.TraceStateString = "vendor=value";
+        await queue.EnqueueScheduledAsync("traced", "payload", new());
+        var producer = stopped.Single(activity => activity.OperationName == "job enqueue");
+        await queue.EnqueueScheduledAsync("traced", "replacement", new());
+        var calls = 0;
+        var state = new HandlerState
+        {
+            Handle = job => ++calls == 1 ? job.RetryAfter(TimeSpan.Zero) : RespireStreamWorkerResult.Ack,
+        };
+        await using var provider = Worker(client, state, new() { SchedulingPollInterval = TimeSpan.FromMilliseconds(5) });
+        var worker = provider.GetServices<IHostedService>().Single();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await worker.StartAsync(deadline.Token);
+        try
+        {
+            await Until(() => Task.FromResult(stopped.Count(activity => activity.OperationName == "job process") == 2), deadline.Token);
+            foreach (var attempt in stopped.Where(activity => activity.OperationName == "job process"))
+            {
+                var link = attempt.Links.Single().Context;
+                await Assert.That(link.TraceId).IsEqualTo(producer.TraceId);
+                await Assert.That(link.SpanId).IsEqualTo(producer.SpanId);
+                await Assert.That(link.TraceState).IsEqualTo("vendor=value");
+            }
+            var jobs = state.Jobs.ToArray();
+            await Assert.That(jobs[0].Job.EntryId).IsNotEqualTo(jobs[1].Job.EntryId);
+            var completion = (await client.Streams.ReadAsync(queue.EventsStreamKey)).Single();
+            await Assert.That(completion.GetString("kind")).IsEqualTo("completed");
+            await Assert.That(completion.GetString("entry_id")).IsEqualTo(jobs[1].Job.EntryId.Value);
+        }
+        finally { await worker.StopAsync(deadline.Token); }
+    }
+
+    private static async Task<long> ServerMilliseconds(IRespireClient client)
+    {
+        using var time = await client.ExecuteAsync("TIME");
+        return long.Parse(time[0].AsString()) * 1000 + long.Parse(time[1].AsString()) / 1000;
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol = 3)
