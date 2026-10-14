@@ -376,7 +376,7 @@ set.
 
 ## Redis-backed rate limits
 
-`RespireCoordination.RateLimiters` creates fixed-window, sliding-window, token-bucket and GCRA
+`RespireCoordination.RateLimiters` creates fixed-window, sliding-window, token-bucket, GCRA and composite
 `System.Threading.RateLimiting.RateLimiter` implementations. Scripts use Redis server time and
 decide each permit atomically. Fixed windows use `INCREX` on Redis 8.8+ and an equivalent Lua
 counter on older servers; after a rejection, Respire re-probes `INCREX` every five minutes.
@@ -501,3 +501,60 @@ milliseconds. The full burst refill duration must fit in a `TimeSpan`. State exp
 the full burst is available again. Disposing and recreating a limiter does not reset capacity.
 Use identical settings in every process sharing a key, and dedicate that key to this algorithm.
 Optional `queueLimit` and `queueProcessingOrder` behave like the other Redis-backed limiters.
+
+### Composite limits
+
+Use `Composite` to apply several limits to the same logical key. For example, combine a short
+burst allowance with a longer rolling quota:
+
+```csharp
+using System.Threading.RateLimiting;
+using Respire.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+await using var limiter = client.WithKeyPrefix("tenant:42:").Coordination.RateLimiters.Composite(
+    "limits:checkout",
+    [
+        RespireRateLimit.TokenBucket(tokenLimit: 10, tokensPerPeriod: 2,
+            replenishmentPeriod: TimeSpan.FromSeconds(1)),
+        RespireRateLimit.SlidingWindow(permitLimit: 100, window: TimeSpan.FromMinutes(1), segments: 10),
+        RespireRateLimit.FixedWindow(permitLimit: 1000, window: TimeSpan.FromHours(1))
+    ]);
+
+using var lease = await limiter.AcquireAsync(1, cancellationToken);
+if (!lease.IsAcquired && lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry))
+{
+    Console.WriteLine($"Every limit can next admit this request in {retry}.");
+}
+```
+
+Each attempt sends one `EVAL` command, including the first call on a server with an empty script
+cache. Connection setup and Cluster redirects can require additional network exchanges. The script
+uses one Redis server timestamp, evaluates **every** component, and consumes the requested permits
+from every component only if all allow it. A rejection or `AcquireAsync(0)` probe writes no state.
+Disposing an acquired lease does not return permits. `RetryAfter` is the maximum delay across all
+components for the entire requested batch; competing callers can still consume that capacity first.
+Requests above any component's capacity are rejected locally without retry metadata.
+
+Components support fixed windows, segmented sliding windows, and token buckets; GCRA is not a
+composite component. Definitions are immutable and the ordered list is copied at construction.
+Specify one to 32 components and one to 1024 segments per sliding window. Durations must be at
+least one millisecond and round up to whole milliseconds. State retention must fit in a `TimeSpan`
+(twice the window for sliding windows, or the full refill duration for token buckets).
+
+Fixed windows start at their first successful acquisition. Sliding permits expire at their segment
+end plus a full window, so they can remain charged for up to one extra segment. Token buckets start
+full and retain elapsed partial refill periods. `GetStatistics().CurrentAvailablePermits` reports
+the minimum component availability in the last response, not a fresh global observation.
+
+All state lives in a **single dedicated Redis hash** at the supplied key: a configuration signature
+and indexed component fields. Binary keys and client prefixes are preserved, and Cluster needs no
+extra hash tag or derived keys. The hash expires after every component can return to full capacity.
+Standalone limiters use different state layouts and cannot share this key. Every process must use
+the same ordered definitions; a configuration mismatch raises a Redis error without consuming
+permits. To change definitions, use a new key or stop all contenders before deleting the old state.
+
+Optional `queueLimit` and `queueProcessingOrder` use the same local queue behavior as the other
+limiters. Queued retries each make another single atomic attempt after the composite retry delay.
+Cancellation or a disconnect after Redis accepts an attempt can leave permits consumed without
+a returned lease. As with the other limiters, asynchronous failover can lose recent state.

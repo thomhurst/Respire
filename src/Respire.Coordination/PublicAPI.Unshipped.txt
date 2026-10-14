@@ -1,2 +1,7 @@
 #nullable enable
+Respire.Coordination.RespireRateLimit
+Respire.Coordination.RespireRateLimiters.Composite(Respire.RespireKey key, System.Collections.Generic.IReadOnlyList<Respire.Coordination.RespireRateLimit!>! limits, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!
+static Respire.Coordination.RespireRateLimit.FixedWindow(int permitLimit, System.TimeSpan window) -> Respire.Coordination.RespireRateLimit!
+static Respire.Coordination.RespireRateLimit.SlidingWindow(int permitLimit, System.TimeSpan window, int segments) -> Respire.Coordination.RespireRateLimit!
+static Respire.Coordination.RespireRateLimit.TokenBucket(int tokenLimit, int tokensPerPeriod, System.TimeSpan replenishmentPeriod) -> Respire.Coordination.RespireRateLimit!
 Respire.Coordination.RespireRateLimiters.Gcra(Respire.RespireKey key, int burstLimit, System.TimeSpan emissionInterval, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!
