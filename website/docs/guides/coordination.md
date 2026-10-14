@@ -373,7 +373,7 @@ set.
 
 ## Redis-backed rate limits
 
-`RespireCoordination.RateLimiters` creates fixed-window, sliding-window and token-bucket
+`RespireCoordination.RateLimiters` creates fixed-window, sliding-window, token-bucket and GCRA
 `System.Threading.RateLimiting.RateLimiter` implementations. Scripts use Redis server time and
 decide each permit atomically. Fixed windows use `INCREX` on Redis 8.8+ and an equivalent Lua
 counter on older servers; after a rejection, Respire re-probes `INCREX` every five minutes.
@@ -463,3 +463,33 @@ using var limiter = coordination.RateLimiters.TokenBucket(
     "limits:api", tokenLimit: 100, tokensPerPeriod: 10,
     replenishmentPeriod: TimeSpan.FromSeconds(1));
 ```
+
+### GCRA
+
+The Generic Cell Rate Algorithm allows an initial burst and then restores one permit per
+emission interval. It stores a single theoretical arrival timestamp in Redis and uses Redis
+server time to admit requests atomically across clients. For example, this permits up to 20
+requests at once, then sustains 10 requests per second:
+
+```csharp
+using var limiter = coordination.RateLimiters.Gcra(
+    "limits:api", burstLimit: 20, emissionInterval: TimeSpan.FromMilliseconds(100));
+
+using var lease = await limiter.AcquireAsync(1, cancellationToken);
+if (!lease.IsAcquired && lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retry))
+{
+    // Retry no earlier than this delay; another caller may consume capacity first.
+}
+```
+
+`burstLimit` is the total burst capacity, not an extra allowance above the steady rate.
+Bulk acquisitions consume every requested permit or none. `AcquireAsync(0)` checks whether
+one permit is available without changing the stored timestamp. Rejected requests also leave
+it unchanged. `RetryAfter` includes the time needed for the entire requested batch; requests
+larger than the burst are rejected without retry metadata.
+
+The emission interval must be at least one millisecond and is rounded **up** to whole
+milliseconds. The full burst refill duration must fit in a `TimeSpan`. State expires once
+the full burst is available again. Disposing and recreating a limiter does not reset capacity.
+Use identical settings in every process sharing a key, and dedicate that key to this algorithm.
+Optional `queueLimit` and `queueProcessingOrder` behave like the other Redis-backed limiters.

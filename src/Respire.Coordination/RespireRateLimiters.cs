@@ -36,15 +36,51 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
         => new RedisRateLimiter(_coordination, key, tokenLimit, queueLimit, queueProcessingOrder,
             RedisRateLimiterKind.TokenBucket, replenishmentPeriod, tokensPerPeriod: tokensPerPeriod);
+
+    /// <summary>Creates a Generic Cell Rate Algorithm (GCRA) limiter with an initial burst and a steady refill rate.</summary>
+    /// <param name="key">The Redis key, before the client's key prefix. All users of this key must use identical settings.</param>
+    /// <param name="burstLimit">The maximum permits available at once, including the initial burst.</param>
+    /// <param name="emissionInterval">Time to restore one permit; at least one millisecond, rounded up to whole milliseconds.
+    /// The time to restore the entire burst must fit in a <see cref="TimeSpan"/>.</param>
+    /// <param name="queueLimit">Maximum permits queued locally while awaiting capacity.</param>
+    /// <param name="queueProcessingOrder">The order in which local queued requests are retried.</param>
+    /// <remarks>Use <c>AcquireAsync</c>; synchronous attempts return an unacquired lease without retry metadata.
+    /// A zero-permit acquisition probes for one available permit without consuming it. Requests above
+    /// <paramref name="burstLimit"/> are rejected without retry metadata. Redis server time controls refill.</remarks>
+    public RateLimiter Gcra(RespireKey key, int burstLimit, TimeSpan emissionInterval,
+        int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
+        => new RedisRateLimiter(_coordination, key, burstLimit, queueLimit, queueProcessingOrder,
+            RedisRateLimiterKind.Gcra, emissionInterval);
 }
 
-internal enum RedisRateLimiterKind { FixedWindow, SlidingWindow, TokenBucket }
+internal enum RedisRateLimiterKind { FixedWindow, SlidingWindow, TokenBucket, Gcra }
 
 internal sealed class RedisRateLimiter : RateLimiter
 {
     private static readonly TimeSpan MaxQueueDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
     private const long MaxExactLuaInteger = 9_007_199_254_740_991;
     private static readonly long MaxTimeSpanMilliseconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond;
+    private static readonly RespireScript GcraScript = RespireScript.Create("""
+        local time = redis.call('TIME')
+        local now = time[1] * 1000 + math.floor(time[2] / 1000)
+        local interval = tonumber(ARGV[1])
+        local limit = tonumber(ARGV[2])
+        local requested = tonumber(ARGV[3])
+        local capacity = interval * limit
+        local tat = math.max(now, tonumber(redis.call('GET', KEYS[1]) or now))
+        local debt = tat - now
+        local available = math.max(0, math.floor((capacity - debt) / interval))
+        -- Probes and denied requests must not advance the theoretical arrival time (TAT).
+        local cost = math.max(1, requested) * interval
+        local retry = debt + cost - capacity
+        if retry > 0 then return {0, retry, available} end
+        if requested == 0 then return {1, 0, available} end
+        tat = tat + cost
+        -- Lua's default number-to-string conversion can round large integer timestamps.
+        redis.call('SET', KEYS[1], string.format('%.0f', tat), 'PX', string.format('%.0f', tat - now))
+        return {1, 0, available - requested}
+        """);
+
     private static readonly RespireScript FixedWindowScript = RespireScript.Create("""
         local width = tonumber(ARGV[1])
         local requested = tonumber(ARGV[2])
@@ -207,15 +243,21 @@ internal sealed class RedisRateLimiter : RateLimiter
         _queueLimit = queueLimit;
         _queueOrder = queueOrder;
         _kind = kind;
-        _periodMs = checked((long)period.TotalMilliseconds);
+        _periodMs = kind == RedisRateLimiterKind.Gcra
+            ? (period.Ticks - 1) / TimeSpan.TicksPerMillisecond + 1
+            : checked((long)period.TotalMilliseconds);
         _segments = segments;
         _tokensPerPeriod = tokensPerPeriod;
         _script = kind switch
         {
             RedisRateLimiterKind.FixedWindow => FixedWindowScript,
             RedisRateLimiterKind.SlidingWindow => SlidingWindowScript,
+            RedisRateLimiterKind.Gcra => GcraScript,
             _ => TokenBucketScript,
         };
+        // Bounds the retry/expiry horizon and keeps timestamp arithmetic within Lua's exact integer range.
+        if (kind == RedisRateLimiterKind.Gcra && _periodMs > MaxTimeSpanMilliseconds / permitLimit)
+            throw new ArgumentOutOfRangeException(nameof(period), "GCRA burst refill duration exceeds the TimeSpan range.");
         if (kind == RedisRateLimiterKind.TokenBucket)
         {
             var periodsToFull = ((long)permitLimit + tokensPerPeriod - 1) / tokensPerPeriod;
@@ -294,6 +336,7 @@ internal sealed class RedisRateLimiter : RateLimiter
         {
             RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit, _coordination.IncrexUnsupported ? 0 : 1],
             RedisRateLimiterKind.SlidingWindow => [_periodMs, _segments, permitCount, _permitLimit],
+            RedisRateLimiterKind.Gcra => [_periodMs, _permitLimit, permitCount],
             _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount, _tokenBucketExpiryMs],
         };
         using var result = await _coordination.ExecuteRateLimitScriptAsync(_script, _key, args, cancellationToken)
