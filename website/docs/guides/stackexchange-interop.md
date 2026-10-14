@@ -27,10 +27,10 @@ Verify other versions yourself. It does not provide general StackExchange.Redis 
 
 | Library | Pinned version | Status | Native replacement |
 | --- | --- | --- | --- |
-| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.12 | Supported (upstream cache, expiration, and registration tests) | `Respire.Caching` via `AddRespireDistributedCache` |
-| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.12 | Supported (upstream repository and builder tests) | `Respire.DataProtection` via `PersistKeysToRespire` |
+| `Microsoft.Extensions.Caching.StackExchangeRedis` | 10.0.13 | Supported (upstream cache, expiration, and registration tests) | `Respire.Caching` via `AddRespireDistributedCache` |
+| `Microsoft.AspNetCore.DataProtection.StackExchangeRedis` | 10.0.13 | Supported (upstream repository and builder tests) | `Respire.DataProtection` via `PersistKeysToRespire` |
 | `Hangfire.Redis.StackExchange` | 1.12.0 | Supported; see [exclusions](./hangfire-acceptance) | Keep the adapter at the Hangfire boundary |
-| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.31 / 10.0.12 | **Not supported** | `Respire.SignalR` via `AddRespire` |
+| `Microsoft.AspNetCore.SignalR.StackExchangeRedis` | 8.0.32 / 10.0.13 | **Not supported** | `Respire.SignalR` via `AddRespire` |
 | Orleans Redis providers | 10.2.2 | Supported; see [Orleans compatibility](./orleans-compatibility) | |
 
 SignalR's backplane needs queue-returning `ISubscriber` overloads (`ChannelMessageQueue`), which depend on
