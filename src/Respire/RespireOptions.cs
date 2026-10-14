@@ -343,6 +343,10 @@ public sealed record RespireOptions
     // Test seam: ceiling on replica missing-function retries, before any shorter CommandTimeout.
     internal TimeSpan FunctionPropagationLimit { get; init; } = FunctionCommands.DefaultFunctionPropagationLimit;
 
+    /// <summary>Optional hook around every physical connection attempt, including reconnects and topology connections.</summary>
+    /// <remarks>Null adds no hook context, delegate or async-wrapper allocations. Callbacks may run concurrently.</remarks>
+    public RespireConnectionHook? ConnectionHook { get; init; }
+
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
 
@@ -710,6 +714,7 @@ public sealed record RespireOptions
             MaintenanceRelaxedTimeout = MaintenanceRelaxedTimeout,
             MaintenanceWindowTimeout = MaintenanceWindowTimeout,
             TestingStreamFactory = TestingStreamFactory,
+            ConnectionHook = ConnectionHook,
             ConnectTimeout = ConnectTimeout,
             ReconnectPolicy = ReconnectPolicy,
             ResponseTimeout = ConnectionIdleReadTimeout,

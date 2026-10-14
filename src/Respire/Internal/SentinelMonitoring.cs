@@ -429,6 +429,7 @@ internal sealed class SentinelMonitoring(
         {
             Endpoints = [endpoint],
             TestingStreamFactory = options.TestingStreamFactory,
+            ConnectionHook = options.ConnectionHook,
             LoggerFactory = options.LoggerFactory,
             ConnectTimeout = options.ConnectTimeout,
             CommandTimeout = options.CommandTimeout,
