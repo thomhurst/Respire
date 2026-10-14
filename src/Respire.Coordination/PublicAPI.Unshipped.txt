@@ -1,1 +1,2 @@
 #nullable enable
+Respire.Coordination.RespireRateLimiters.Gcra(Respire.RespireKey key, int burstLimit, System.TimeSpan emissionInterval, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!

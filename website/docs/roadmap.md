@@ -80,7 +80,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
   [Keyspace, keyevent, and Redis 8.8 subkey notifications](guides/keyspace-notifications.md) work
   on Cluster. Reconnects can lose notifications; topology changes can lose or duplicate them.
 - [Distributed locks](guides/distributed-locks.md) and [coordination](guides/coordination.md):
-  fencing tokens, leases, semaphores, and rate limiting.
+  fencing tokens, leases, semaphores, and fixed-window, sliding-window, token-bucket and
+  [GCRA rate limiting](guides/coordination.md#gcra).
 - Typed [JSON](guides/json.md), [Search](guides/search.md), [TimeSeries](guides/timeseries.md),
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
 - Source-generated [JSON mappers](guides/generated-json-mappers.md),
