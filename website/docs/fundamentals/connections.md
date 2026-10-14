@@ -254,7 +254,7 @@ Timeout exceptions take their endpoint from `Diagnostics.Endpoint`, or from a di
 Other server, protocol, authentication, reconnect, and connection failures may still have a null endpoint. General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only the last failed candidate. Application code can attach known context when constructing an exception:
 
 ```csharp
-var failure = new RespireConnectionException("Redis connection failed.", cause)
+var failure = new RespireConnectionException("Redis connection failed.")
 {
     Endpoint = new RespireEndpoint("redis.example", 6380)
 };
