@@ -4,7 +4,6 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Formatting;
 
 namespace Respire.Analyzers;
@@ -29,29 +28,41 @@ public sealed class StackExchangeMigrationCodeFixProvider : CodeFixProvider
             var method = root.FindNode(diagnostic.Location.SourceSpan).FirstAncestorOrSelf<MethodDeclarationSyntax>();
             var plan = MigrationPlan.Create(method, model, cancellationToken);
             if (plan is null) continue;
-            var symbol = (IMethodSymbol)model.GetDeclaredSymbol(plan.Method, cancellationToken)!;
-            if (await HasReferencedOverloadsAsync(symbol, context.Document.Project.Solution, cancellationToken).ConfigureAwait(false)) continue;
+            if (await HasPotentialCallersAsync(plan.Method.Identifier.ValueText, context.Document.Project, cancellationToken).ConfigureAwait(false)) continue;
             var updated = context.Document.WithSyntaxRoot(root.ReplaceNode(plan.Method,
                 plan.Rewrite().WithAdditionalAnnotations(Formatter.Annotation)));
 
-            // Only diagnose the changed document and its partial type. Reference searches protect callers
+            // Only diagnose the changed document and its partial type. The name scan protects callers
             // without forcing a semantic diagnostics pass over every dependent project.
             if (!await CompilesAsync(updated, cancellationToken).ConfigureAwait(false)) continue;
             context.RegisterCodeFix(CodeAction.Create(Title, _ => Task.FromResult(updated), Title), diagnostic);
         }
     }
 
-    private static async Task<bool> HasReferencedOverloadsAsync(IMethodSymbol method, Solution solution, CancellationToken cancellationToken)
+    private static async Task<bool> HasPotentialCallersAsync(string methodName, Project project, CancellationToken cancellationToken)
     {
-        // Even successful compilation cannot prove a caller retained its binding: a call
-        // can fall back to object, or a new RespireClient overload can steal an existing call.
-        // Keep referenced overload groups (including inherited methods) manual for now.
-        for (var type = method.ContainingType; type is not null; type = type.BaseType)
+        // References to the current symbol miss calls that bind elsewhere before migration:
+        // using-static imports and inherited overloads can become ambiguous or change binding.
+        // Conservatively reject any use of the name, without diagnosing entire compilations.
+        // Declaration identifiers are tokens, not SimpleNameSyntax, so unused overloads remain eligible.
+        var solution = project.Solution;
+        var projectIds = solution.GetProjectDependencyGraph()
+            .GetProjectsThatTransitivelyDependOnThisProject(project.Id).Prepend(project.Id);
+        foreach (var projectId in projectIds)
         {
-            foreach (var overload in type.GetMembers(method.Name).OfType<IMethodSymbol>())
+            var candidateProject = solution.GetProject(projectId)!;
+            if (candidateProject.Language != LanguageNames.CSharp) return true;
+            var documents = candidateProject.Documents.Concat(
+                await candidateProject.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false));
+            foreach (var document in documents)
             {
-                var references = await SymbolFinder.FindReferencesAsync(overload, solution, cancellationToken).ConfigureAwait(false);
-                if (references.Any(r => r.Locations.Any())) return true;
+                var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+                if (root is null) return true;
+                foreach (var name in root.DescendantNodes().OfType<SimpleNameSyntax>())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (name.Identifier.ValueText == methodName) return true;
+                }
             }
         }
         return false;

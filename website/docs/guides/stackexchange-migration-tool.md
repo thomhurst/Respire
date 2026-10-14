@@ -72,12 +72,15 @@ instance methods, database aliases, batches, transactions, and other commands. A
 StackExchange.Redis SET value can delete a key; the tool never rewrites it to a native SET
 that rejects null. It never drops an option to make a call fit.
 
-The fix checks compiler diagnostics in the edited document and its partial-type declarations,
-and searches references in the
-loaded solution. Methods with references to any member of their overload group (including
-inherited overloads) require manual migration. This protects both calls and method groups
-from silently selecting a different overload after the signature changes. The fix is also
-withheld if those documents have compiler errors or a Respire reference is missing;
+The fix checks compiler diagnostics in the edited document and its partial-type declarations.
+It also scans syntax in the project and its transitive dependents, including generated source,
+for uses of the method's name. Any matching name use requires manual migration, even if it
+currently refers to a different method or another kind of symbol. This conservative check
+protects calls and method groups from silently selecting a different overload or becoming
+ambiguous through `using static` after the signature changes. Non-C# dependent projects also
+require manual migration. The fix does not run a full compiler diagnostic pass across dependent
+projects. It is also withheld if the edited document or its partial-type declarations have
+compiler errors or a Respire reference is missing;
 unrelated errors in other documents do not suppress it. RESP007
 can therefore appear without an available fix. Address relevant compilation errors and migrate
 callers/boundaries first, or migrate that method manually. External callers outside the

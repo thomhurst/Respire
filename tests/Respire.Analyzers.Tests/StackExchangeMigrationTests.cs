@@ -80,6 +80,7 @@ public sealed class StackExchangeMigrationTests
     [Arguments("return await db.KeyExistsAsync(key);", "Task<bool>", "Keys.ExistsAsync")]
     [Arguments("return await db.KeyDeleteAsync(key);", "Task<bool>", "!= 0")]
     [Arguments("await db.KeyDeleteAsync(key);", "Task", "Keys.DeleteAsync")]
+    [Arguments("await db.KeyDeleteAsync(key).ConfigureAwait(false);", "Task", "Keys.DeleteAsync(key, cancellationToken: default).ConfigureAwait(false)")]
     [Arguments("return await db.StringSetAsync(value: \"v\", key: key);", "Task<bool>", "value: \"v\", key: key")]
     [Arguments("return (string?)await db.StringGetAsync(key);", "Task<string?>", "Strings.GetStringAsync")]
     [Arguments("return (byte[]?)await db.StringGetAsync(key);", "Task<byte[]?>", "Strings.GetBytesAsync")]
@@ -219,6 +220,80 @@ public sealed class StackExchangeMigrationTests
         var updated = solution.GetDocument(document.Id)!;
         await AssertCompiles(updated.Project);
         await Assert.That((await updated.GetTextAsync()).ToString().Contains("RespireClient? db")).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    public async Task ImportedStaticCaller_RequiresManualMigration(bool dependentProject, bool methodGroup, bool generated)
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, Wrap("return await db.KeyExistsAsync(key);", "Task<bool>"));
+        var caller = $$"""
+            using System.Threading.Tasks;
+            using Respire;
+            using static C;
+            using static Other;
+            public static class Other {
+                public static Task<bool> Run(RespireClient db, string key) => Task.FromResult(false);
+            }
+            class Caller {
+                {{(methodGroup
+                    ? "System.Func<RespireClient, string, Task<bool>> Call() => Run;"
+                    : "Task<bool> Call(RespireClient db) => Run(db, \"k\");")}}
+            }
+            """;
+        var solution = document.Project.Solution;
+        var callerProjectId = document.Project.Id;
+        if (dependentProject)
+        {
+            callerProjectId = ProjectId.CreateNewId();
+            solution = solution.AddProject(callerProjectId, "Caller", "Caller", LanguageNames.CSharp)
+                .WithProjectCompilationOptions(callerProjectId, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary))
+                .AddMetadataReferences(callerProjectId, References)
+                .AddProjectReference(callerProjectId, new ProjectReference(document.Project.Id));
+        }
+        solution = generated
+            ? solution.AddAnalyzerReference(callerProjectId, new CallerGeneratorReference(caller))
+            : solution.AddDocument(DocumentId.CreateNewId(callerProjectId), "Caller.cs", caller);
+        document = solution.GetDocument(document.Id)!;
+        await AssertCompiles(solution.GetProject(callerProjectId)!);
+
+        // This caller binds to Other.Run, so searching references to C.Run cannot find it.
+        var diagnostic = (await Analyze(document)).Single();
+        await Assert.That((await Actions(document, diagnostic)).Count).IsEqualTo(0);
+        var provider = new StackExchangeMigrationCodeFixProvider();
+        foreach (var scope in new[] { FixAllScope.Document, FixAllScope.Project, FixAllScope.Solution })
+        {
+            var context = new FixAllContext(document, provider, scope,
+                "Migrate method and IDatabase parameter to RespireClient", provider.FixableDiagnosticIds,
+                new MigrationDiagnosticProvider(), CancellationToken.None);
+            await Assert.That(await provider.GetFixAllProvider().GetFixAsync(context)).IsNull();
+        }
+    }
+
+    [Test]
+    public async Task DerivedTypeCaller_RequiresManualMigration()
+    {
+        using var workspace = new AdhocWorkspace();
+        var document = CreateDocument(workspace, """
+            using System.Threading.Tasks;
+            using StackExchange.Redis;
+            using Respire;
+            public class C {
+                public static async Task<bool> Run(IDatabase db, string key) => await db.KeyExistsAsync(key);
+            }
+            public class Derived : C {
+                public static Task<bool> Run(object db, string key) => Task.FromResult(false);
+            }
+            class Caller { Task<bool> Call(RespireClient db) => Derived.Run(db, "k"); }
+            """);
+        await AssertCompiles(document.Project);
+        await Assert.That((await Actions(document, (await Analyze(document)).Single())).Count).IsEqualTo(0);
     }
 
     [Test]
@@ -436,5 +511,23 @@ public sealed class StackExchangeMigrationTests
             foreach (var document in project.Documents) diagnostics.AddRange(await Analyze(document));
             return diagnostics;
         }
+    }
+
+    private sealed class CallerGeneratorReference(string source) : AnalyzerReference
+    {
+        private readonly ImmutableArray<ISourceGenerator> _generators = [new CallerGenerator(source)];
+        public override string? FullPath => null;
+        public override object Id => this;
+        public override ImmutableArray<DiagnosticAnalyzer> GetAnalyzers(string language) => [];
+        public override ImmutableArray<DiagnosticAnalyzer> GetAnalyzersForAllLanguages() => [];
+        public override ImmutableArray<ISourceGenerator> GetGenerators(string language)
+            => language == LanguageNames.CSharp ? _generators : [];
+        public override ImmutableArray<ISourceGenerator> GetGeneratorsForAllLanguages() => _generators;
+    }
+
+    private sealed class CallerGenerator(string source) : ISourceGenerator
+    {
+        public void Initialize(GeneratorInitializationContext context) { }
+        public void Execute(GeneratorExecutionContext context) => context.AddSource("Caller.g.cs", source);
     }
 }
