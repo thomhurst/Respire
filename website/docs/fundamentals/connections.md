@@ -17,6 +17,8 @@ await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379
 
 `ConnectAsync` connects before returning, so an unreachable server fails here. Standalone clients throw the underlying error, such as `SocketException` (refused) or `RespireTimeoutException` (`ConnectTimeout` expired). Cluster clients wrap seed failures in `RespireConnectionException`.
 
+When all Cluster seeds fail, the exception message lists the configured seed endpoints, and `InnerException` preserves the last failure. Check those addresses from the application's network, then check TLS settings and credentials against the inner error. IPv6 addresses are bracketed so the port is unambiguous. Caller cancellation still throws `OperationCanceledException` rather than a seed-exhaustion error.
+
 ## Lazy creation
 
 Use `Create` when the application must start before Redis:
