@@ -10,6 +10,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Respire.IntegrationTests" />
     <InternalsVisibleTo Include="Respire.Coordination.Tests" />
+    <InternalsVisibleTo Include="Orleans.Redis.Tests" />
     <ProjectReference Include="../Respire/Respire.csproj" />
     <PackageReference Include="Testcontainers" />
   </ItemGroup>

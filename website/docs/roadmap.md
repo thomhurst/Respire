@@ -169,8 +169,10 @@ Public interface compatibility and the post-2.0 extension policy are described i
 - Microsoft's SignalR Redis backplane does not run on the adapter, and support is not planned. Use
   [`Respire.SignalR`](./integrations/signalr).
 - The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) runs the Orleans Redis
-  clustering, grain storage, and reminder providers on the adapter. Full silo integration,
-  Cluster routing, and failover are not validated.
+  clustering, grain storage, and reminder providers on the adapter. Real silo/client scenarios cover
+  activation, persistent state, reminder delivery, graceful restart, shared and provider-owned shutdown,
+  stable three-primary Cluster routing, socket reconnect, and Sentinel primary promotion on .NET 8/10
+  with RESP2/RESP3. Cluster resharding/failover, abrupt silo death and multi-host partitions remain unvalidated.
 
 ### Retries and write outcomes
 

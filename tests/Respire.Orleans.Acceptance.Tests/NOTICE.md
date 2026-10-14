@@ -10,7 +10,8 @@ see `LICENSE.upstream`.
 repository's Redis Testcontainers fixture. The production providers come from
 the pinned NuGet packages: no provider implementation is copied or replaced.
 
-The project updates all three central `PackageVersion` items to **10.2.2**.
+The project updates all three central provider `PackageVersion` items to **10.2.2**
+and pins `Microsoft.Orleans.Server` to **10.2.2**, including its runtime, SDK and grain code generator.
 Repository defaults are **10.4.0**, but those defaults do not change this
 assessment's provider or runtime versions. Renovate excludes these project pins;
 changing them requires a new source inventory and compatibility assessment.
@@ -53,8 +54,31 @@ without waiting for expiration. Byte-array state exercises binary write/read;
 byte-list state exercises both clear modes because the upstream activator cannot
 create an empty byte array after clear.
 
+`SiloScenarios.cs` and `LifecycleGrain.cs` add five original adapter-only integration
+cases (not ports of upstream tests). They use real Orleans silo/client hosts and
+the existing `RespireContainerFixture` with Redis 7.0.15:
+
+- Standalone shared and provider-owned connections: Redis membership, persisted
+  integer state, actual reminder callbacks, graceful shutdown, restart under the
+  same service/cluster IDs, and reminder-driven reactivation. Provider-owned shutdown
+  checks that both adapter and native client reject further use; the client host's
+  gateway provider remains usable after the silo has been disposed.
+- Three-primary Cluster, database 0: the same shared lifecycle, with native routing.
+- Standalone reconnect: kill actual Redis client sockets, reuse the same adapter,
+  and verify state writes, reminder callbacks, a second silo joining, and persisted
+  state in a new activation.
+- Sentinel: fence replication, stop the primary, observe connection to the promoted
+  replica, continue provider operations, join a second silo, return the old primary
+  as a replica, and read persisted state from a new activation.
+
+Every deployment is owned by Testcontainers and disposed even on failure. The
+administrative fault/fence connection does not execute any provider operations.
+The suite now has **23 cases per framework/protocol combination**: 18 provider
+cases and five real-host cases. CI runs all cases on net8.0/net10.0 and RESP2/RESP3.
+
 This is selected upstream acceptance with additional adapter regressions, not the
-full upstream suite. Parallel membership updates, sustained parallel stress,
-large hash-ring distributions, all persistence datasets/serializers, silo
-integration, provider-owned multiplexer shutdown, reconnect/failover, and Cluster
-routing remain unvalidated.
+full upstream suite. Sustained parallel stress, large hash-ring distributions,
+all persistence datasets/serializers, abrupt silo death, multi-host partitions,
+Cluster resharding/replica failover, and provider-owned topology recovery remain
+unvalidated. Nonzero Cluster databases and combined Cluster/Sentinel configuration
+are unsupported. See the website guide for the exact topology and recovery limits.
