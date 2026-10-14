@@ -9,7 +9,19 @@ public class RespireException : Exception
     /// submitted or executed. General-purpose wrappers do not infer it from their inner exception,
     /// which may describe only one of several failed candidates.
     /// </remarks>
-    public RespireEndpoint? Endpoint { get; init; }
+    public RespireEndpoint? Endpoint { get => _endpoint; init => _endpoint = value; }
+
+    private RespireEndpoint? _endpoint;
+
+    // Populate only at a boundary that knows the failed attempt. Never replace an origin
+    // with a later retry's selection or a MOVED/ASK destination, and never wrap the error.
+    internal static void PopulateEndpoint(Exception error, RespireEndpoint? endpoint)
+    {
+        if (error is RespireException failure && endpoint.HasValue)
+        {
+            lock (failure) failure._endpoint ??= endpoint;
+        }
+    }
 
     internal bool IsCommandNotSubmitted { get; set; }
 

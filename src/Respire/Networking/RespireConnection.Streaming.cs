@@ -509,7 +509,7 @@ internal sealed partial class RespireConnection
     private void ThrowIfStreamingUnavailable(bool rejectRetired)
     {
         if (rejectRetired) ThrowIfRetired();
-        if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+        if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.") { Endpoint = new(Host, Port) };
     }
 
     internal static async ValueTask ObserveStreamedSetResponseAsync(PendingResponseSource source)
@@ -598,7 +598,7 @@ internal sealed partial class RespireConnection
 
     private RespireConnectionException ClosedDuringStreamedSet(OperationCanceledException error)
         => new($"Connection to {Host}:{Port} closed before the streamed SET completed.",
-            Volatile.Read(ref _abortReason) ?? error);
+            Volatile.Read(ref _abortReason) ?? error) { Endpoint = new(Host, Port) };
 
     private async Task DrainBufferedWritesAsync(CancellationToken cancellationToken)
     {

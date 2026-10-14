@@ -185,6 +185,7 @@ public sealed class RespirePending<T> : IDispatchObservation
         EnterObservationGate();
         try
         {
+            RespireException.PopulateEndpoint(error, _errorEndpoint);
             if (_failure is RetryObservation retry) retry.Error = error;
             else _failure = error;
         }

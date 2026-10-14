@@ -455,6 +455,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
+            RespireException.PopulateEndpoint(error, new(host, port));
             var peerClosed = physicalConnected && !isUnixSocket
                 && ConnectionTelemetry.IsHandshakePeerClose(socket, error);
             try { if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false); }
@@ -518,6 +519,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
+            RespireException.PopulateEndpoint(error, new(host, port));
             try { if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the factory cancellation or connection failure. */ }
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
@@ -866,7 +868,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step, string? hint = null)
-        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}{hint}", ResponseReader.ServerError(in reply, step));
+        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}{hint}", ResponseReader.ServerError(in reply, step, new(Host, Port))) { Endpoint = new(Host, Port) };
 
     private enum HelloErrorKind { Unsupported, Authentication, Other }
     private static readonly string[] HelloCredentialWording = ["auth", "password", "credential", "permission", "ACL"];
@@ -909,7 +911,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var message = $"HELLO 3 failed for {Host}:{Port}: server did not confirm RESP3 (expected map field 'proto' = 3).";
         // Preserve the connection exception contract while exposing the permanent protocol
         // failure to acquisition retry classification.
-        throw new RespireConnectionException(message, new RespireProtocolException(message));
+        throw new RespireConnectionException(message, new RespireProtocolException(message) { Endpoint = new(Host, Port) }) { Endpoint = new(Host, Port) };
     }
 
     private void CaptureHelloAvailabilityZone(in RespValue reply)
@@ -962,7 +964,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             var message = reply.GetErrorMessage();
             reply.Dispose();
-            throw new RespireServerException(message, "CLIENT ID");
+            throw new RespireServerException(message, "CLIENT ID") { Endpoint = new(Host, Port) };
         }
 
         var id = reply.AsInteger();
@@ -2735,7 +2737,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (Exception ex)
         {
             _logger?.ConnectionSendFailed(Host, Port, ex);
-            var failure = new RespireConnectionException($"Send failed for {Host}:{Port}: {ex.Message}", ex);
+            var failure = new RespireConnectionException($"Send failed for {Host}:{Port}: {ex.Message}", ex) { Endpoint = new(Host, Port) };
             sending?.FailWrite(failure);
             Abort(failure);
         }
@@ -4057,13 +4059,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private bool Abort(Exception? reason = null, bool publishConnectionMetrics = true, bool observeErrors = true)
     {
+        if (reason is not null) RespireException.PopulateEndpoint(reason, new(Host, Port));
         _credentialSession?.RequestStop();
         // A late Abort can race disposal of the source; the wake below must still happen.
         try { _watchdogCancellation.Cancel(); }
         catch (ObjectDisposedException) { }
         _completions.WakeStallWatcher();
         var writeFailure = reason
-            ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
+            ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.") { Endpoint = new(Host, Port) };
         lock (_writeGate)
         {
             if (_dead)
@@ -4123,6 +4126,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     private void FailAllPending(Exception exception)
     {
+        RespireException.PopulateEndpoint(exception, new(Host, Port));
         var failed = 0;
         while (_inflight.TryDequeue(out var source))
         {
@@ -4156,7 +4160,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var reason = Volatile.Read(ref _abortReason);
         if (reason is null)
         {
-            return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null);
+            return new RespireConnectionClosedBeforeSendException($"Connection to {Host}:{Port} is closed.", null) { Endpoint = new(Host, Port) };
         }
 
         Exception failure = reason switch
@@ -4168,6 +4172,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 => new RespireConnectionClosedBeforeSendException(connection.Message, connection.InnerException),
             _ => new RespireConnectionClosedBeforeSendException(reason.Message, reason),
         };
+
+        RespireException.PopulateEndpoint(failure, (reason as RespireException)?.Endpoint ?? new(Host, Port));
 
         // Keep physical observation ownership on the per-command copy. A handshake
         // can enqueue its next step after the receive loop has already closed the socket.
