@@ -157,6 +157,7 @@ const sidebars = {
       label: 'StackExchange.Redis compatibility',
       items: [
         'guides/stackexchange-interop',
+        'guides/stackexchange-migration-tool',
         'guides/orleans-compatibility',
         'guides/hangfire-acceptance',
       ],

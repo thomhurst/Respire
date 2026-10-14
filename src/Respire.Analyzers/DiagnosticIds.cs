@@ -21,5 +21,11 @@ public static class DiagnosticIds
     /// <summary>A generated Search schema has an incompatible model, field or option.</summary>
     public const string InvalidGeneratedSearch = "RESP006";
 
+    /// <summary>A StackExchange.Redis method can be migrated to Respire.</summary>
+    public const string StackExchangeMigration = "RESP007";
+
+    /// <summary>A StackExchange.Redis call requires manual migration.</summary>
+    public const string StackExchangeManualMigration = "RESP008";
+
     internal const string Category = "Respire";
 }
