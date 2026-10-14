@@ -116,8 +116,24 @@ internal sealed record GitVersionDetails(
     {
         var repositoryRoot = await GitCommand.RunAsync(Directory.GetCurrentDirectory(), cancellationToken, "rev-parse", "--show-toplevel");
         var branchName = await GetBranchNameAsync(repositoryRoot, cancellationToken);
+        return await CreateAsync(settings, repositoryRoot, branchName, cancellationToken, logger);
+    }
+
+    internal static async Task<GitVersionDetails> CreateAsync(
+        GitVersioningSettings settings,
+        string repositoryRoot,
+        string branchName,
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
+    {
         var commitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "HEAD");
         var shortCommitHash = await GitCommand.RunAsync(repositoryRoot, cancellationToken, "rev-parse", "--short=8", "HEAD");
+        if (settings.ReleaseVersion is not null)
+        {
+            return await CreateReleaseVersionAsync(settings, repositoryRoot, branchName,
+                commitHash, shortCommitHash, cancellationToken);
+        }
+
         var latestVersionTag = await GetLatestStableVersionTagAsync(repositoryRoot, cancellationToken, logger);
 
         var baseVersion = ParseVersion(latestVersionTag) ?? ParseVersion(settings.BaseVersion);
@@ -143,6 +159,34 @@ internal sealed record GitVersionDetails(
             shortCommitHash,
             commitHeight,
             versionIncrement.Increment.ToString().ToLowerInvariant());
+    }
+
+    private static async Task<GitVersionDetails> CreateReleaseVersionAsync(
+        GitVersioningSettings settings, string repositoryRoot, string branchName,
+        string commitHash, string shortCommitHash, CancellationToken cancellationToken)
+    {
+        var target = ParseVersion(settings.ReleaseVersion);
+        if (target is null || target.ToString() != settings.ReleaseVersion)
+        {
+            throw new InvalidOperationException("Versioning:ReleaseVersion must be a canonical X.Y.Z version without a prefix or suffix.");
+        }
+
+        // Only this explicitly configured tag can end the RC phase. Historical,
+        // stray and automatically generated RC tags cannot select a release line.
+        var releaseTag = $"v{target}";
+        var reachableTag = await GitCommand.RunAsync(repositoryRoot, cancellationToken,
+            "tag", "--merged", "HEAD", "--list", releaseTag);
+        var released = reachableTag == releaseTag;
+        var height = await GetCommitHeightAsync(repositoryRoot,
+            released ? $"{releaseTag}..HEAD" : "HEAD", cancellationToken);
+        var core = released ? target with { Patch = checked(target.Patch + height) } : target;
+        var isReleaseBranch = settings.ReleaseBranches.Contains(branchName, StringComparer.OrdinalIgnoreCase);
+        var version = !isReleaseBranch
+            ? CreatePrereleaseVersion(core.ToString(), branchName, height, shortCommitHash)
+            : released ? core.ToString() : string.Create(CultureInfo.InvariantCulture, $"{target}-rc.{height}");
+
+        return new GitVersionDetails(version, target.ToString(), branchName, commitHash,
+            shortCommitHash, height, released ? "patch" : "rc");
     }
 
     private static async Task<int> GetCommitHeightAsync(

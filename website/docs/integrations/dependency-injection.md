@@ -10,11 +10,15 @@ services. Startup does not wait for Redis.
 
 ## Register a default client
 
-Install [Respire.DependencyInjection](https://www.nuget.org/packages/Respire.DependencyInjection) (include prerelease versions). It brings in `Respire`:
+Install the latest stable [Respire.DependencyInjection](https://www.nuget.org/packages/Respire.DependencyInjection) package. It brings in `Respire`:
 
 ```bash
 dotnet add package Respire.DependencyInjection
 ```
+
+To try a published `2.0.0-rc.N` candidate, add `--prerelease`, or pin the exact
+version shown in its GitHub release. See [release candidates](../getting-started.md#release-candidates)
+for the channel and version policy.
 
 Register a connection string, then inject `IRespireClient`:
 

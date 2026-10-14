@@ -30,6 +30,7 @@ Configure the pipeline through `appsettings.json`:
   },
   "Versioning": {
     "BaseVersion": "0.1.0",
+    "ReleaseVersion": "2.0.0",
     "ReleaseBranches": [
       "main",
       "master"
@@ -56,6 +57,7 @@ You can also use environment variables:
 - `GitHub__Token` or `GitHub__AccessToken`: GitHub personal access token
 - `GitHub__Owner`: GitHub repository owner
 - `Versioning__BaseVersion`: fallback base version when no version tag exists
+- `Versioning__ReleaseVersion`: explicit release target, currently `2.0.0`
 
 ## Usage
 
@@ -129,7 +131,34 @@ The pipeline uses ModularPipelines with the following packages:
 
 ## Versioning Strategy
 
-The pipeline generates versions automatically:
+The repository pins `Versioning:ReleaseVersion` to **2.0.0**. This skips the 1.x line,
+which contains the unlisted, permanently occupied NuGet version `Respire 1.0.116`.
+The stray `v1.0.116` Git tag has been removed. With an explicit target, unrelated
+tags and `+semver:` commit markers cannot change the release line.
+
+- Before `v2.0.0` is reachable, `main`/`master` generate `2.0.0-rc.N`, where `N` is
+  the total reachable commit count. RC tags do not reset the count. Use full Git history
+  (`fetch-depth: 0`, as in the workflow) and do not rewrite the release branch.
+- At `v2.0.0`, release branches generate `2.0.0`. Later commits generate `2.0.N`,
+  with the patch increment counted from that tag. Both lightweight and annotated tags work.
+- Feature branches always generate `-ci.<branch>.<height>.g<hash>` packages.
+- To prepare another minor or major, change `ReleaseVersion` to the next unused
+  target through a PR. This starts another RC phase until its exact `vX.Y.Z` tag is reachable.
+
+### Publishing candidates and cutting stable
+
+1. Merge the intended changes to `main`, then manually run **Modular Pipeline** on
+   `main` with `publish-packages: true`. Before the stable tag, this publishes RC
+   packages and marks the GitHub release as a prerelease. Pushes only validate.
+2. After validating an RC and completing the release gates, tag its commit with
+   `v2.0.0` and push that tag. Run the same manual workflow on `main` while that commit
+   is still its tip to publish exactly `2.0.0`. A tag push alone does not publish.
+3. Later manual runs on `main` publish stable patch versions. Do not move or delete
+   a release tag after publishing; NuGet versions cannot be reused.
+
+### Legacy versioning
+
+When `ReleaseVersion` is omitted, the pipeline retains the previous tag/marker strategy:
 
 - **Main/Master Branch**: `0.1.266` from base version plus commit height
 - **Minor Marker**: `0.2.0` when the latest highest marker is `+semver:minor`

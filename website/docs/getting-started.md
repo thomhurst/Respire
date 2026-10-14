@@ -18,7 +18,23 @@ cd RespireQuickstart
 dotnet add package Respire.DependencyInjection
 ```
 
-`Respire.DependencyInjection` brings in the core `Respire` package. No other Respire package is needed here. The API may change before 1.0; see [packages](./packages) for optional integrations.
+`Respire.DependencyInjection` brings in the core `Respire` package. No other Respire package is needed here. This command selects the latest stable package. The API may change before the first supported major release; see [packages](./packages) for optional integrations.
+
+### Release candidates
+
+The next supported major targets **2.0.0**, skipping the 1.x line because NuGet already
+contains an unlisted `Respire 1.0.116` package. Release candidates use `2.0.0-rc.N`
+and are published manually as they become ready. After a candidate is published,
+opt in with:
+
+```bash
+dotnet add package Respire.DependencyInjection --prerelease
+```
+
+Without `--prerelease`, NuGet continues to select stable packages. To reproduce a
+particular candidate, use the exact `--version` command from its
+[GitHub release](https://github.com/thomhurst/Respire/releases). All Respire packages
+in an application should use the same version.
 
 If you do not already have a local server, start one:
 
