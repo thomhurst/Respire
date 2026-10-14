@@ -298,3 +298,51 @@ static Respire.RespireValue.Parse(System.ReadOnlySpan<char> s, System.IFormatPro
 static Respire.RespireValue.Parse(string! s, System.IFormatProvider? provider) -> Respire.RespireValue
 static Respire.RespireValue.TryParse(System.ReadOnlySpan<char> s, System.IFormatProvider? provider, out Respire.RespireValue result) -> bool
 static Respire.RespireValue.TryParse(string? s, System.IFormatProvider? provider, out Respire.RespireValue result) -> bool
+Respire.RespireMap<TKey, TValue>
+Respire.RespireMap<TKey, TValue>.ClearLocalCachesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.RespireMap<TKey, TValue>.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.RespireMap<TKey, TValue>.FlushAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.RespireMap<TKey, TValue>.GetAsync(TKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireGet<TValue>>
+Respire.RespireMap<TKey, TValue>.LastWriterError.get -> System.Exception?
+Respire.RespireMap<TKey, TValue>.PreloadAsync(System.Collections.Generic.IEnumerable<TKey>! keys, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<int>
+Respire.RespireMap<TKey, TValue>.PreloadAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.RespireMap<TKey, TValue>.RemoveAsync(TKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.RespireMap<TKey, TValue>.RespireMap(Respire.IRespireClient! client, Respire.RespireKey key, System.Func<TKey, string!>! formatKey, System.Func<TValue, byte[]!>! encode, System.Func<System.ReadOnlyMemory<byte>, TValue>! decode, Respire.RespireMapOptions<TKey, TValue>? options = null) -> void
+Respire.RespireMap<TKey, TValue>.SetAsync(TKey key, TValue value, System.TimeSpan? expiration = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.RespireMapChange<TKey, TValue>
+Respire.RespireMapChange<TKey, TValue>.Deconstruct(out TKey Key, out Respire.RespireGet<TValue> Entry) -> void
+Respire.RespireMapChange<TKey, TValue>.Entry.get -> Respire.RespireGet<TValue>
+Respire.RespireMapChange<TKey, TValue>.Entry.init -> void
+Respire.RespireMapChange<TKey, TValue>.Equals(Respire.RespireMapChange<TKey, TValue> other) -> bool
+Respire.RespireMapChange<TKey, TValue>.Key.get -> TKey
+Respire.RespireMapChange<TKey, TValue>.Key.init -> void
+Respire.RespireMapChange<TKey, TValue>.RespireMapChange() -> void
+Respire.RespireMapChange<TKey, TValue>.RespireMapChange(TKey Key, Respire.RespireGet<TValue> Entry) -> void
+Respire.RespireMapOptions<TKey, TValue>
+Respire.RespireMapOptions<TKey, TValue>.<Clone>$() -> Respire.RespireMapOptions<TKey, TValue>!
+Respire.RespireMapOptions<TKey, TValue>.BatchSize.get -> int
+Respire.RespireMapOptions<TKey, TValue>.BatchSize.init -> void
+Respire.RespireMapOptions<TKey, TValue>.EntryExpiration.get -> System.TimeSpan?
+Respire.RespireMapOptions<TKey, TValue>.EntryExpiration.init -> void
+Respire.RespireMapOptions<TKey, TValue>.Equals(Respire.RespireMapOptions<TKey, TValue>? other) -> bool
+Respire.RespireMapOptions<TKey, TValue>.FlushInterval.get -> System.TimeSpan
+Respire.RespireMapOptions<TKey, TValue>.FlushInterval.init -> void
+Respire.RespireMapOptions<TKey, TValue>.Loader.get -> System.Func<TKey, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<Respire.RespireGet<TValue>>>?
+Respire.RespireMapOptions<TKey, TValue>.Loader.init -> void
+Respire.RespireMapOptions<TKey, TValue>.MaxPendingWrites.get -> int
+Respire.RespireMapOptions<TKey, TValue>.MaxPendingWrites.init -> void
+Respire.RespireMapOptions<TKey, TValue>.RespireMapOptions() -> void
+Respire.RespireMapOptions<TKey, TValue>.WriteBehind.get -> bool
+Respire.RespireMapOptions<TKey, TValue>.WriteBehind.init -> void
+Respire.RespireMapOptions<TKey, TValue>.Writer.get -> System.Func<System.Collections.Generic.IReadOnlyList<Respire.RespireMapChange<TKey, TValue>>!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>?
+Respire.RespireMapOptions<TKey, TValue>.Writer.init -> void
+override Respire.RespireMapChange<TKey, TValue>.GetHashCode() -> int
+override Respire.RespireMapOptions<TKey, TValue>.Equals(object? obj) -> bool
+override Respire.RespireMapOptions<TKey, TValue>.GetHashCode() -> int
+override Respire.RespireMapOptions<TKey, TValue>.ToString() -> string!
+static Respire.RespireMapChange<TKey, TValue>.operator !=(Respire.RespireMapChange<TKey, TValue> left, Respire.RespireMapChange<TKey, TValue> right) -> bool
+static Respire.RespireMapChange<TKey, TValue>.operator ==(Respire.RespireMapChange<TKey, TValue> left, Respire.RespireMapChange<TKey, TValue> right) -> bool
+static Respire.RespireMapOptions<TKey, TValue>.operator !=(Respire.RespireMapOptions<TKey, TValue>? left, Respire.RespireMapOptions<TKey, TValue>? right) -> bool
+static Respire.RespireMapOptions<TKey, TValue>.operator ==(Respire.RespireMapOptions<TKey, TValue>? left, Respire.RespireMapOptions<TKey, TValue>? right) -> bool
+~override Respire.RespireMapChange<TKey, TValue>.Equals(object obj) -> bool
+~override Respire.RespireMapChange<TKey, TValue>.ToString() -> string

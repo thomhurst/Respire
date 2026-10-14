@@ -26,6 +26,7 @@ const sidebars = {
         'guides/unix-sockets',
         'fundamentals/values-and-serialization',
         'fundamentals/client-side-caching',
+        'guides/near-cache-map',
       ],
     },
     {
