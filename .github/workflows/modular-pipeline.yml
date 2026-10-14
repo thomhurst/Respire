@@ -87,6 +87,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Verify-DocSnippets.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
 
+      - name: Compile getting-started app on .NET 8 and .NET 10
+        shell: pwsh
+        run: ./scripts/Verify-GettingStarted.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
+
       - name: Upload unit test diagnostics
         if: always()
         uses: actions/upload-artifact@v7
