@@ -9,8 +9,8 @@ namespace Respire.ComparisonBenchmarks;
 
 /// <summary>
 /// Compares Respire client-cache hits with ordinary server reads from Respire and
-/// StackExchange.Redis. StackExchange.Redis does not provide an equivalent
-/// server-assisted local-cache API, so its methods are network-read baselines.
+/// StackExchange.Redis. These methods always use uncached network-read baselines;
+/// ClientCacheComparisonBenchmarks separately compares both clients' local hits on 4.0.
 /// </summary>
 /// <remarks>
 /// The Redis endpoint is taken from the REDIS_HOST / REDIS_PORT environment variables when set;
