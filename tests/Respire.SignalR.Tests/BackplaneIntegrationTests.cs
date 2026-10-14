@@ -400,6 +400,91 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task HealthyServerKeepsSlowClientResultAlive(bool microsoftOwner, bool sharded)
+    {
+        var prefix = Guid.NewGuid().ToString("N");
+        await using var first = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, sharded);
+        await using var second = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, microsoftOwner, sharded);
+        await using var remote = await second.ConnectAsync("remote", false);
+        using var handler = remote.Connection.On("slow", [], async (_, _) =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(7));
+            return (object?)42;
+        }, null!);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await Assert.That(await first.Manager.InvokeConnectionAsync<int>(remote.Id, "slow", [], cancellation.Token)).IsEqualTo(42);
+        await Assert.That(PendingClientResults(first.Manager)).IsEqualTo(0);
+        using var next = remote.Connection.On("next", [], static (_, _) => Task.FromResult<object?>(7), null!);
+        await Assert.That(await first.Manager.InvokeConnectionAsync<int>(remote.Id, "next", [], cancellation.Token)).IsEqualTo(7);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task LosingOwningServerFailsPendingClientResult(bool sharded, bool messagePack)
+        => await AssertOwningServerLossAsync(fixture.ConnectionString, sharded, messagePack);
+
+    internal static async Task AssertOwningServerLossAsync(string connectionString, bool sharded, bool messagePack, bool cluster = false)
+    {
+        var prefix = Guid.NewGuid().ToString("N");
+        await using var first = await BackplaneHost.StartAsync(connectionString, prefix, false, sharded, cluster: cluster);
+        await using var second = await BackplaneHost.StartAsync(connectionString, prefix, false, sharded,
+            remoteResultTimeout: TimeSpan.FromMinutes(1), cluster: cluster);
+        await using var remote = await second.ConnectAsync("remote", messagePack);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var handler = remote.Connection.On("pending", [], (_, _) => { entered.TrySetResult(); return release.Task; }, null!);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var pending = first.Manager.InvokeConnectionAsync<int>(remote.Id, "pending", [], cancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // Client delivery no longer waits for the first heartbeat. Establish that
+            // the caller has enabled failure detection before simulating owner loss.
+            await WaitForClientResultHeartbeatAsync(first.Manager, cancellation.Token);
+            // Sever the backplane before stopping the host: no disconnect, disposal, or
+            // timeout completion can reach the caller, just as with an abrupt process exit.
+            await second.Application.Services.GetRequiredService<RespireClient>().DisposeAsync();
+            await second.Application.StopAsync();
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+                .ThrowsExactly<HubException>();
+            await Assert.That(error!.Message).Contains("server is unavailable");
+            await Assert.That(PendingClientResults(first.Manager)).IsEqualTo(0);
+            await Assert.That(cancellation.IsCancellationRequested).IsFalse();
+        }
+        finally { cancellation.Cancel(); release.TrySetResult(1); }
+    }
+
+    private static async Task WaitForClientResultHeartbeatAsync(HubLifetimeManager<BackplaneTestHub> manager,
+        CancellationToken cancellationToken)
+    {
+        var heartbeats = manager.GetType().GetField("_clientResultHeartbeats", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(manager)!;
+        var pending = (IDictionary)heartbeats.GetType().GetField("_pending", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(heartbeats)!;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            foreach (var entry in pending.Values)
+            {
+                var gate = entry!.GetType().GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(entry)!;
+                lock ((System.Threading.Lock)gate)
+                {
+                    if (entry.GetType().GetField("_lastSeen", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(entry) is not null)
+                        return;
+                }
+            }
+            await Task.Delay(10, deadline.Token);
+        }
+    }
+
+    [Test]
     public async Task DisposingManagerSettlesPendingClientResult()
     {
         var prefix = Guid.NewGuid().ToString("N");

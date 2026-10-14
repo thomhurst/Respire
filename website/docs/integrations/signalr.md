@@ -114,6 +114,14 @@ Pending operations:
   gap, the outcome can be unknown.
 - Always pass client-result invocations a cancellation token with a deadline. A remote server can
   disappear, a completion can be lost, and Microsoft's provider sends no cancellation.
+- Respire peers exchange a heartbeat each second while a remote client result is pending. Once
+  the caller receives the first heartbeat, five seconds without one faults the invocation with
+  `HubException` on the next heartbeat check. This detects an owning server crash or an extended
+  backplane outage without waiting for the client-result deadline. A slow client handler on a
+  healthy server continues to receive heartbeats. Microsoft and older Respire peers do not send
+  heartbeats, so calls to them still need a caller deadline; the same applies if the owner fails
+  before its first heartbeat arrives. The extension uses a separate channel and works with
+  regular and sharded pub/sub.
 - The receiving server drops forwarded client-result state after `RemoteClientResultTimeout` and
   sends an error completion if it can. This does not stop the client handler. Debug event
   `RemoteResultExpired` (18) logs the invocation ID and `timeout` or `disconnect`.

@@ -22,6 +22,12 @@ public sealed class SignalRClusterFixture : IAsyncInitializer, IAsyncDisposable
 public class ClusterBackplaneTests(SignalRClusterFixture fixture)
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LosingOwningServerFailsPendingClientResult(bool sharded)
+        => await BackplaneIntegrationTests.AssertOwningServerLossAsync(fixture.ConnectionString, sharded, false, cluster: true);
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
