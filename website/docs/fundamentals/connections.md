@@ -245,6 +245,21 @@ catch (RespireTimeoutException error)
 
 Redis error replies throw `RespireServerException` with `Code`, `CommandName`, and `IsTransient` (true for `LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, `MASTERDOWN`). Use `RespireErrorCodes` in retry policies.
 
+### Exception endpoint context
+
+Every public Respire exception inherits `RespireException.Endpoint`, a nullable `RespireEndpoint` containing the host and port (or Unix socket address). Use this property instead of parsing an exception message. `null` means no single endpoint is known; failures covering several connection candidates do not select one candidate's endpoint. A populated endpoint does not prove that a command was submitted or executed.
+
+Timeout exceptions take their endpoint from `Diagnostics.Endpoint`, or from a directly wrapped Respire exception when no snapshot endpoint is available. Transaction-retry exceptions retain the rejecting server's endpoint when the original server error has one. Circuit-open and scripting-engine-unavailable exceptions expose their known endpoint through both the base property and their existing non-nullable `Endpoint` property.
+
+Other server, protocol, authentication, reconnect, and connection failures may still have a null endpoint. General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only the last failed candidate. Application code can attach known context when constructing an exception:
+
+```csharp
+var failure = new RespireConnectionException("Redis connection failed.")
+{
+    Endpoint = new RespireEndpoint("redis.example", 6380)
+};
+```
+
 ## Independent liveness bounds
 
 `ConnectionIdleReadTimeout` aborts a connection when replies are pending and no bytes arrive (`null` disables it). `GatheredWriteStallTimeout` bounds how long a large binary SET that sends caller memory directly can stall.

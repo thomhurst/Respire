@@ -20,8 +20,11 @@ namespace Respire.Networking;
 /// SCAN keeps weak iteration semantics; its cursor does not survive resharding. Dedicated rentals
 /// retry through <see cref="Respire.Internal.DedicatedLeaseAcquisition"/>.</para>
 /// </remarks>
-internal sealed class RespireConnectionRetiredException(string host, int port)
-    : RespireException($"Connection to {host}:{port} is retired; the command was not accepted.")
+internal sealed class RespireConnectionRetiredException : RespireException
 {
-    internal RespireEndpoint Endpoint { get; } = new(host, port);
+    internal RespireConnectionRetiredException(string host, int port)
+        : base($"Connection to {host}:{port} is retired; the command was not accepted.")
+        => base.Endpoint = new(host, port);
+
+    internal new RespireEndpoint Endpoint => base.Endpoint!.Value;
 }
