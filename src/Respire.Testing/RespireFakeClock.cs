@@ -1,6 +1,6 @@
 namespace Respire.Testing;
 
-/// <summary>A manually advanced UTC clock for fake-server key expiry. It does not control client I/O deadlines.</summary>
+/// <summary>A manually advanced UTC clock for fake-server TIME, key expiry, and stream idle times. It does not control client I/O deadlines.</summary>
 /// <remarks>Only GetUtcNow is overridden. CreateTimer and monotonic timestamps retain system-clock behavior.</remarks>
 public sealed class RespireFakeClock : TimeProvider
 {
@@ -12,7 +12,7 @@ public sealed class RespireFakeClock : TimeProvider
     /// <inheritdoc />
     public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
 
-    /// <summary>Moves expiry time forward. Negative intervals and dates outside DateTimeOffset's range are rejected.</summary>
+    /// <summary>Moves server time forward. Negative intervals and dates outside DateTimeOffset's range are rejected.</summary>
     public void Advance(TimeSpan elapsed)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(elapsed, TimeSpan.Zero);
