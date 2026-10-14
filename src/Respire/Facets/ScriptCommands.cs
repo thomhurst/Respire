@@ -247,7 +247,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
-        => RespireResult.MaterializeAsync(ExecuteLeaseSpanAsync(script, keys, args, cancellationToken));
+        => ExecuteCoreAsync(script, keys, args, cancellationToken, owned: true);
 
     public ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -255,19 +255,25 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
 
     public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteCoreAsync(script, keys, args, cancellationToken, owned: false);
+
+    private ValueTask<RespireResult> ExecuteCoreAsync(RespireScript script, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken, bool owned)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
         if (borrowed.IsOpen)
         {
             ArgumentNullException.ThrowIfNull(script);
-            return client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
+            var response = client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
+            return owned ? RespireResult.MaterializeAsync(response) : response;
         }
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
             ArgumentNullException.ThrowIfNull(script);
             var tail = client.BuildScriptTailFromSpans(keys, args);
-            return owner.Attach(client.ExecuteScriptAsync(script, tail, cancellationToken, owner.Observation));
+            var response = client.ExecuteScriptAsync(script, tail, cancellationToken, owner.Observation);
+            return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }

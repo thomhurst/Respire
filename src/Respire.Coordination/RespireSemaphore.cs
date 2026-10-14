@@ -119,7 +119,7 @@ public sealed class RespireSemaphore
             RespireValue[] args = [Capacity, owner.Bytes, milliseconds];
             if (concreteClient is null)
             {
-                using var response = await _client.Scripts.ExecuteAsync(
+                using var response = await _client.Scripts.ExecuteLeaseAsync(
                     AcquireScript, [Key], args, cancellationToken).ConfigureAwait(false);
                 acquired = response.AsInteger() == 1;
             }
@@ -270,7 +270,7 @@ public sealed class RespireSemaphore
         {
             using var response = await (client is RespireClient wire
                 ? wire.ExecuteScriptBorrowedAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken, observation)
-                : client.Scripts.ExecuteAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken)).ConfigureAwait(false);
+                : client.Scripts.ExecuteLeaseAsync(ReleaseScript, [key], [owner.Bytes], cancellationToken)).ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -616,7 +616,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         // because renewal updates existing members only (ZADD XX).
         using var response = await (_client is RespireClient wire
             ? wire.ExecuteScriptBorrowedAsync(RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken, observation)
-            : _client.Scripts.ExecuteAsync(RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken))
+            : _client.Scripts.ExecuteLeaseAsync(RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken))
             .ConfigureAwait(false);
         var held = response.AsInteger() == 1;
         if (!held) Set(PermitState.Released);
@@ -703,7 +703,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     // conservative and prevents a delayed shortening renewal from outliving the
                     // local validity reported by this handle.
                     ClampLocalLeaseForPendingRenewal(requestedExpiry, started, confirmedLease);
-                    response = await _client.Scripts.ExecuteAsync(
+                    response = await _client.Scripts.ExecuteLeaseAsync(
                         RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 }
 
@@ -899,7 +899,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         {
             using var response = await (_client is RespireClient wire && !observation.IsEmpty
                 ? wire.ExecuteScriptBorrowedAsync(RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken, observation)
-                : _client.Scripts.ExecuteAsync(RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken))
+                : _client.Scripts.ExecuteLeaseAsync(RespireSemaphore.ReleaseScript, [Key], [_owner.Bytes], cancellationToken))
                 .ConfigureAwait(false);
             var removed = response.AsInteger() == 1;
             Set(PermitState.Released);

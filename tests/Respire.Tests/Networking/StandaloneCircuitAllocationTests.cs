@@ -125,7 +125,9 @@ public class StandaloneCircuitAllocationTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         pending = raw ? default : client.Strings.LengthAsync("measured");
-        rawPending = raw ? client.ExecuteAsync(RespireCommands.String.STRLEN, arguments) : default;
+        // The leased raw path retains the allocation-free dispatch contract. The owned
+        // default adds result materialization, which is separate from disabled telemetry.
+        rawPending = raw ? client.ExecuteLeaseAsync(RespireCommands.String.STRLEN, arguments) : default;
         if (control) GC.KeepAlive(new byte[37]);
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }

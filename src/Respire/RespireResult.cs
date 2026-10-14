@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Protocol;
 using Respire.Serialization;
@@ -37,6 +38,9 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     }
 
     /// <summary>Copies a completed lease and releases it before publishing the owned result.</summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     internal static async ValueTask<RespireResult> MaterializeAsync(ValueTask<RespireResult> response)
     {
         using var lease = await response.ConfigureAwait(false);

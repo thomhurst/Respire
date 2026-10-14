@@ -400,7 +400,7 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     /// <remarks>Cluster execution validates all keys in known raw layouts before I/O. Unknown layouts remain server-validated.</remarks>
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
-        => RespireResult.MaterializeAsync(ExecuteLeaseAsync(command, args));
+        => ExecuteAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
     /// Sends a command with optional policy flags and cancellation. Blocking commands use a
@@ -412,7 +412,10 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
-        => RespireResult.MaterializeAsync(ExecuteLeaseAsync(command, args, flags, cancellationToken));
+        => DispatchResponseSource<RespireResult>.Run(
+            (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken),
+            static (state, owner) => RespireResult.MaterializeAsync(state.Client.ExecuteCommandAsync(
+                state.Command, state.Args, state.Flags, state.Token, owner)));
 
     /// <summary>Sends a command and returns a pooled result. Dispose the root result after reading it.</summary>
     public ValueTask<RespireResult> ExecuteLeaseAsync(RespireCommand command, params RespireValue[] args)
@@ -907,7 +910,10 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
-        => RespireResult.MaterializeAsync(ExecuteLeaseAsync(command, flags, cancellationToken));
+        => DispatchResponseSource<RespireResult>.Run(
+            (Client: this, Command: command, Flags: flags, Token: cancellationToken),
+            static (state, owner) => RespireResult.MaterializeAsync(state.Client.ExecuteInterpolatedAsync(
+                state.Command, state.Flags, state.Token, owner)));
 
     /// <summary>Sends an interpolated command and returns a pooled result that must be disposed. Each hole is one argument.</summary>
     public ValueTask<RespireResult> ExecuteLeaseAsync(

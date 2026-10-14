@@ -121,7 +121,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
-        => RespireResult.MaterializeAsync(ExecuteLeaseSpanAsync(function, keys, args, cancellationToken));
+        => ExecuteCoreAsync(function, keys, args, cancellationToken, owned: true);
 
     public ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -129,12 +129,17 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 
     public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteCoreAsync(function, keys, args, cancellationToken, owned: false);
+
+    private ValueTask<RespireResult> ExecuteCoreAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken, bool owned)
     {
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
             var command = CallCommand(client, function, keys, args, deferred: false);
-            return owner.Attach(ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation));
+            var response = ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation);
+            return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
         }
         catch (Exception error)
         {

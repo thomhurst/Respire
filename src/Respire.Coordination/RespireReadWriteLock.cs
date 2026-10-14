@@ -91,7 +91,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         try
         {
             if (IsReleased) return false;
-            using var response = await _client.Scripts.ExecuteAsync(
+            using var response = await _client.Scripts.ExecuteLeaseAsync(
                 RespireCoordination.VerifyReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
             if (response.AsInteger() == 1) return Volatile.Read(ref _released) == 0;
             MarkOwnershipUnavailable();
@@ -125,7 +125,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 Volatile.Write(ref _snapshot, new LeaseSnapshot(renewedTicks, started));
             try
             {
-                using var response = await _client.Scripts.ExecuteAsync(
+                using var response = await _client.Scripts.ExecuteLeaseAsync(
                     RespireCoordination.RenewReadWriteLock, [Key], [OwnerBytes(), Role, milliseconds], cancellationToken).ConfigureAwait(false);
                 var completed = Stopwatch.GetTimestamp();
                 var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
@@ -188,7 +188,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             fallbackTimeout = _client is RespireClient client && client.Core.Options.CommandTimeout is null
                 ? new CancellationTokenSource(ReleaseFallbackTimeout)
                 : null;
-            using var response = await _client.Scripts.ExecuteAsync(
+            using var response = await _client.Scripts.ExecuteLeaseAsync(
                 RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role],
                 fallbackTimeout?.Token ?? CancellationToken.None).ConfigureAwait(false);
             var released = response.AsInteger() == 1;

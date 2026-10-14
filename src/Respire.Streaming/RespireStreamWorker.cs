@@ -159,7 +159,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private async Task<(RespireStreamId Cursor, Delivery[] Deliveries)> ReadPageAsync(
         RespireScript script, RespireValue[] arguments, CancellationToken token)
     {
-        using var reply = await client.Scripts.ExecuteAsync(script, [stream], arguments, token).ConfigureAwait(false);
+        using var reply = await client.Scripts.ExecuteLeaseAsync(script, [stream], arguments, token).ConfigureAwait(false);
         var rows = reply[1];
         var deliveries = new Delivery[rows.Count];
         for (var i = 0; i < deliveries.Length; i++)

@@ -114,7 +114,7 @@ internal sealed class CompatCondition(RespireKey key, RespireCommand command, Re
             // as WATCH does, then use raw execution's physical-key contract to avoid catalog
             // prefix-layout restrictions or applying the prefix twice.
             RespireValue[] resolvedArguments = [client.ResolveKey(Key).AsValue(), .. arguments.AsSpan(1)];
-            using var reply = await client.ExecuteAsync(command.Name, resolvedArguments, cancellationToken: token).ConfigureAwait(false);
+            using var reply = await client.ExecuteLeaseAsync(command.Name, resolvedArguments, cancellationToken: token).ConfigureAwait(false);
             satisfied = evaluate(reply.ToStackExchangeResult());
         }
         catch (RespireServerException) { /* Upstream condition errors are unsatisfied conditions. */ }

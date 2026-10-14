@@ -718,7 +718,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             {
                 removal = ExecuteWrappedCommandAsync(
                         (Client: _client, Key: key, Lease: lease, Token: cancellationToken), errors,
-                        static state => state.Client.Scripts.ExecuteAsync(
+                        static state => state.Client.Scripts.ExecuteLeaseAsync(
                             RespireClient.LeasedUnlinkScript, [state.Key, state.Lease],
                             cancellationToken: state.Token))
                     .AsTask();
@@ -827,7 +827,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireTelemetry.ErrorObservation observation)
         => DispatchResponseSource.InvokeDecorated(
             (Client: _client, Script: script, Keys: keys, Args: args, Token: token), observation,
-            static state => state.Client.Scripts.ExecuteAsync(state.Script, state.Keys, state.Args, state.Token));
+            static state => state.Client.Scripts.ExecuteLeaseAsync(state.Script, state.Keys, state.Args, state.Token));
 
     // A bounded removal wait can leave its command running. Retain the independent owner
     // until that command finishes, then report its failure internally if foreground ended.

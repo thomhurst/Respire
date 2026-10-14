@@ -97,7 +97,7 @@ This relies on C# 13 or later, as do the library's `params` span APIs. Older com
 
 Both queue types implement `IRespireCommandQueue`, which covers every deferred facet and the root shortcuts. A helper can queue work without choosing a batch or transaction:
 
-<!-- doc-test-declaration: split-before=using var batch -->
+<!-- doc-test-declaration: split-before=await using var batch -->
 ```csharp
 static void QueueUserUpdate(IRespireCommandQueue queue, string userId)
 {
