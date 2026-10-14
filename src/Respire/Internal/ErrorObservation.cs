@@ -32,6 +32,8 @@ internal static class ErrorObservation
     internal static void FinishFinal(FinalOwner owner, Exception? error, bool observeErrors = true, int retryAttempts = 0,
         RespireEndpoint? endpoint = null)
     {
+        // Attribution is part of the result contract, even when metric publication is disabled.
+        if (error is not null) RespireException.PopulateEndpoint(error, endpoint);
         try
         {
             if (error is not null && observeErrors)
@@ -120,6 +122,7 @@ internal static class ErrorObservation
                 if (!IsOpen) return false;
                 if (!ErrorPublication.TryRecordHandled(ref observation.RetryAttempts, observation.FinalPublished, out retryAttempts)) return false;
             }
+            RespireException.PopulateEndpoint(error, endpoint);
             // Never invoke an exporter while holding the ownership gate. The captured count
             // remains this event's count even if another retry, final inspection or reuse wins.
             RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts, endpoint);

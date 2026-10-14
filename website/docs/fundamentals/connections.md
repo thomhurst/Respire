@@ -253,9 +253,13 @@ Timeout exceptions take their endpoint from `Diagnostics.Endpoint`, or from a di
 
 Connection owners populate context for unavailable connections, reconnect limits, and replica `ROLE` validation. A rejected `ROLE` reply retains its server exception and the same endpoint as its connection wrapper. Sentinel query failures identify the reporting Sentinel; primary connection and validation failures identify the resolved data candidate. A redirect destination is not the endpoint of the server that rejected a command.
 
-Cluster seed, replica-selection, and Sentinel discovery failures covering multiple candidates leave the outer endpoint null. Inspect their inner causes, including nested `AggregateException` instances, for individual candidate failures. Reconnect exhaustion retains its underlying failures; cluster discovery exhaustion has no single endpoint. Physical transport, authentication, and reply-conversion failures can still have null context where their originating layer has not supplied it.
+Server and protocol failures from physical replies carry the originating endpoint, including typed, byte and streamed replies, deferred batch conversions, retained transaction queue errors, and individual EXEC results. Connection receive/send failures, authentication and handshake failures, and failures rejected before admission also carry context when the physical connection knows its endpoint. This does not require enabling telemetry.
 
-General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only one failed candidate. Application code can attach known context when constructing an exception:
+Retries preserve the endpoint of the failed attempt. A MOVED or ASK error identifies the server that returned the redirect; its destination is not the failure origin. Exception types, underlying causes, and pre-admission classification are preserved. Native framework exceptions such as cancellation or socket errors retain their existing types and do not acquire a Respire property.
+
+Cluster seed, replica-selection, and Sentinel discovery failures covering multiple candidates leave the outer endpoint null. Inspect their inner causes, including nested `AggregateException` instances, for individual candidate failures. Reconnect exhaustion retains its underlying failures; cluster discovery exhaustion has no single endpoint.
+
+Failures without a known single endpoint, including locally constructed errors, may still have a null endpoint. General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only one failed candidate. Application code can attach known context when constructing an exception:
 
 ```csharp
 var failure = new RespireConnectionException("Redis connection failed.")

@@ -170,6 +170,7 @@ internal abstract partial class PendingResponse
         // Completion has been claimed, and the caller still owns a reference. Capture
         // observations now: queue latency must not replace the timeout with recovered state.
         exception = PrepareException(exception);
+        RespireException.PopulateEndpoint(exception, ErrorEndpoint);
         ThreadPool.UnsafeQueueUserWorkItem(
             static state => state.Self.SetExceptionCore(state.Exception),
             (Self: this, Exception: exception),
@@ -533,7 +534,7 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
                 return response;
             }
 
-            var error = ResponseReader.ServerError(in response, _commandName);
+            var error = ResponseReader.ServerError(in response, _commandName, ErrorEndpoint);
             try { response.Dispose(); }
             catch { /* Preserve the original server error if response cleanup also fails. */ }
             throw error;
@@ -660,7 +661,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
             try
             {
                 _core.GetResult(token);
-                if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName);
+                if (_response.IsError) throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
             }
             catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             // Telemetry ends at the response, before user conversion and its failures.
@@ -824,7 +825,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
             {
                 _core.GetResult(token);
                 if (!_hasDirectResult && _response.IsError)
-                    throw ResponseReader.ServerError(in _response, _commandName);
+                    throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
             }
             catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             _duration.Complete(_commandName);

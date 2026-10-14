@@ -86,7 +86,7 @@ internal sealed class BytesPendingResponseSource : PendingResponse, IValueTaskSo
             {
                 _core.GetResult(token);
                 if (!_hasDirectResult && _response.IsError)
-                    throw ResponseReader.ServerError(in _response, _commandName);
+                    throw ResponseReader.ServerError(in _response, _commandName, ErrorEndpoint);
             }
             catch (Exception error) { _duration.Complete(_commandName, error); throw; }
             _duration.Complete(_commandName);

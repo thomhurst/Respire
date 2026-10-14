@@ -8,10 +8,41 @@ public class RespireException : Exception
     /// Null means no single endpoint is known. An endpoint does not prove that a command was
     /// submitted or executed. General-purpose wrappers do not infer it from their inner exception,
     /// which may describe only one of several failed candidates.
+    /// Once populated, the origin is retained. Reusing the same exception instance across
+    /// connections preserves the first origin rather than identifying each later failure.
     /// </remarks>
-    public RespireEndpoint? Endpoint { get; init; }
+    public RespireEndpoint? Endpoint
+    {
+        get => Volatile.Read(ref _endpoint)?.Value;
+        init => Volatile.Write(ref _endpoint, value is { } endpoint ? new EndpointHolder(endpoint) : null);
+    }
+
+    // Publish an immutable reference so readers cannot observe a torn nullable struct.
+    private EndpointHolder? _endpoint;
+
+    private sealed class EndpointHolder(RespireEndpoint value)
+    {
+        internal RespireEndpoint Value { get; } = value;
+    }
+
+    // Populate only at a boundary that knows the failed attempt. Never replace an origin
+    // with a later retry's selection or a MOVED/ASK destination, and never wrap the error.
+    // Connection establishment/abort supplies the physical origin; response sources and
+    // deferred conversions use their captured endpoint. Observation completion is the fallback.
+    internal static void PopulateEndpoint(Exception error, RespireEndpoint? endpoint)
+    {
+        if (error is RespireException { HasAmbiguousEndpoint: false } failure && endpoint.HasValue
+            && Volatile.Read(ref failure._endpoint) is null)
+        {
+            Interlocked.CompareExchange(ref failure._endpoint, new EndpointHolder(endpoint.Value), null);
+        }
+    }
 
     internal bool IsCommandNotSubmitted { get; set; }
+
+    // Candidate-selection failures have no single origin, even when observation still
+    // remembers the last candidate. Keep their individual endpoints on the inner causes.
+    internal bool HasAmbiguousEndpoint { get; init; }
 
     // Only a transparent wrapper opts into classification through its cause.
     // Meaningful wrappers retain their own category and canonical exception type.

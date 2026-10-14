@@ -1320,8 +1320,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         var scope = requiredSlot is { } exhaustedSlot ? $"required slot {exhaustedSlot}" : "all slots";
         var message = $"Reconnect policy exhausted for {Host}:{Port} ({scope}) after {policy.MaxAttempts} attempts per connection slot. Recreate the client to start a new recovery episode.";
         throw failure is null
-            ? new RespireReconnectLimitException(message) { Endpoint = multipleEndpoints ? null : endpoint }
-            : new RespireReconnectLimitException(message, failure) { Endpoint = multipleEndpoints ? null : endpoint };
+            ? new RespireReconnectLimitException(message) { Endpoint = multipleEndpoints ? null : endpoint, HasAmbiguousEndpoint = multipleEndpoints }
+            : new RespireReconnectLimitException(message, failure) { Endpoint = multipleEndpoints ? null : endpoint, HasAmbiguousEndpoint = multipleEndpoints };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

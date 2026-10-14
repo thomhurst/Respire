@@ -345,7 +345,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
             if (result.IsError)
             {
-                var error = ResponseReader.ServerError(in result, "MULTI/EXEC");
+                var error = ResponseReader.ServerError(in result, "MULTI/EXEC", connection is null ? null : new(connection.Host, connection.Port));
                 operationError = error;
                 result.Dispose();
                 foreach (var op in _ops)
@@ -403,7 +403,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 if (element.IsError && connection is not null
                     && ScriptingEngineInfo.IsScriptingCommand(_ops[i].Operation))
                 {
-                    var serverError = ResponseReader.ServerError(in element, _ops[i].Operation);
+                    var serverError = ResponseReader.ServerError(in element, _ops[i].Operation, new(connection.Host, connection.Port));
                     var engine = ScriptingEngineInfo.MissingEngine(serverError, _ops[i].ExpectedEngine);
                     itemError = serverError;
                     if (engine is not null)
@@ -658,7 +658,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     finally { admission.Dispose(); }
                     Exception? unitResponseError = null;
                     if (retryUnit && retryDelay is null && !(reply.IsError && cluster is not null
-                        && ClusterRouter.CanRecover(ResponseReader.ServerError(in reply, "MULTI/EXEC"), slot)))
+                        && ClusterRouter.CanRecover(ResponseReader.ServerError(in reply, "MULTI/EXEC", new(connection.Host, connection.Port)), slot)))
                     {
                         // EXEC can contain both successful members and transient errors. Apply the
                         // whole frame's write evidence and every member's category before publishing any result.
@@ -701,7 +701,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         continue;
                     }
                     var redirect = reply.IsError && cluster is not null
-                        ? ResponseReader.ServerError(in reply, "MULTI/EXEC") : null;
+                        ? ResponseReader.ServerError(in reply, "MULTI/EXEC", new(connection.Host, connection.Port)) : null;
                     // EXEC result arrays can contain partial success. Only top-level routing
                     // rejections stay inside this attempt; all other replies finish the unit.
                     if (cluster is null || redirect is null || !ClusterRouter.CanRecover(redirect, slot))
@@ -803,7 +803,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 responseError = null;
                 if (reply.IsError)
                 {
-                    responseError = ResponseReader.ServerError(in reply, "MULTI/EXEC");
+                    responseError = ResponseReader.ServerError(in reply, "MULTI/EXEC", connection is null ? null : new(connection.Host, connection.Port));
                     return TryGetUnitRetryDelay(responseError, outcome, out delay);
                 }
                 if (reply.Type != RespDataType.Array) return false;
@@ -812,7 +812,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 {
                     ref readonly var element = ref elements[i];
                     if (!element.IsError) continue;
-                    var error = ResponseReader.ServerError(in element, _ops[i].Operation);
+                    var error = ResponseReader.ServerError(in element, _ops[i].Operation, connection is null ? null : new(connection.Host, connection.Port));
                     responseError ??= error;
                     if (!TryGetUnitRetryDelay(error, outcome, out delay)) continue;
                     responseError = error;

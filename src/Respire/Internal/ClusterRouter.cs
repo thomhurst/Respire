@@ -393,7 +393,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             throw new RespireConnectionException(
                 $"Unable to connect to any Redis Cluster seed. Configured seeds: {string.Join(", ", _seeds)}. " +
                 "Check the seed addresses, network reachability, TLS settings, and credentials. " +
-                "Inspect the inner exception for candidate failures.", lastError!);
+                "Inspect the inner exception for candidate failures.", lastError!) { HasAmbiguousEndpoint = true };
         }
         catch (Exception error)
         {

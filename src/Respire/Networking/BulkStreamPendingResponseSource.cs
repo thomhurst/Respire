@@ -68,7 +68,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     {
         if (!_hasPrefixReply || Volatile.Read(ref _prefixReceived) != 0) return;
         if (result.IsError)
-            Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName));
+            Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint));
         Volatile.Write(ref _prefixReceived, 1);
     }
 
@@ -150,7 +150,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
             if (result.IsError)
             {
-                Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName));
+                Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint));
             }
 
             result.Dispose();
@@ -192,7 +192,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
         if (result.IsError)
         {
-            var exception = ResponseReader.ServerError(in result, _commandName);
+            var exception = ResponseReader.ServerError(in result, _commandName, ErrorEndpoint);
             result.Dispose();
             _core.SetException(exception);
             return;
@@ -200,7 +200,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
         result.Dispose();
         _core.SetException(new RespireProtocolException(
-            $"{_commandName ?? "GET"} expected a bulk string or null reply."));
+            $"{_commandName ?? "GET"} expected a bulk string or null reply.") { Endpoint = ErrorEndpoint });
     }
 
     protected override void SetExceptionCore(Exception exception)
@@ -214,6 +214,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
         // The abort reason explains why the socket stopped. A subsequent read may surface
         // SocketException or cancellation from that same abort; do not let it mask the cause.
         var completionError = Volatile.Read(ref _payloadAbortError) ?? exception;
+        if (completionError is not null) RespireException.PopulateEndpoint(completionError, ErrorEndpoint);
         Volatile.Read(ref _payload)?.Complete(completionError);
         DisposeStreamCancellationRegistration();
         _onFrameCompleted?.Invoke(

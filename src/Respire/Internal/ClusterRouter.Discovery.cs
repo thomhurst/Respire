@@ -595,7 +595,7 @@ internal sealed partial class ClusterRouter
                     if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
                     Exhaustion = new RespireReconnectLimitException(
                         $"Redis Cluster discovery exhausted {_attempts} fallback attempts. Check candidate endpoints and RespireOptions.ReconnectPolicy.",
-                        ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(_failure, _endpoint))!);
+                        ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(_failure, _endpoint))!) { HasAmbiguousEndpoint = true };
                     Publish(RespireConnectionState.Disconnected, _failure, exhausted: true);
                     throw Exhaustion;
                 }

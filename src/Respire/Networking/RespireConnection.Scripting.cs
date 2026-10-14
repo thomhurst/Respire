@@ -29,7 +29,7 @@ internal sealed partial class RespireConnection
             throw classified;
         }
         if (!value.IsError) return value;
-        var serverError = ResponseReader.ServerError(in value, commandName);
+        var serverError = ResponseReader.ServerError(in value, commandName, new(Host, Port));
         Exception classifiedError;
         try
         {

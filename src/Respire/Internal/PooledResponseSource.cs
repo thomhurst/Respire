@@ -178,6 +178,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
     private static void FinishObservation(ErrorObservation.FinalOwner observation,
         RespireTelemetry.ErrorObservation legacyObservation, Exception? error, bool observeErrors)
     {
+        if (error is not null) RespireException.PopulateEndpoint(error, legacyObservation.Endpoint);
         if (legacyObservation.IsEmpty)
         {
             ErrorObservation.FinishFinal(observation, error, observeErrors);

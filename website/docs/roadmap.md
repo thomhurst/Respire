@@ -47,8 +47,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - [Independent liveness bounds](fundamentals/connections.md#independent-liveness-bounds) for
   receive progress and large borrowed `SET` writes.
 - [Exception endpoint context](fundamentals/connections.md#exception-endpoint-context) through
-  the common exception base, populated by timeout snapshots and endpoint-aware wrappers;
-  other failure paths may still report an unknown endpoint.
+  the common exception base, populated by physical connection and reply failures, deferred
+  batch/transaction conversions, timeout snapshots, and endpoint-aware wrappers; routing
+  failures without a known single endpoint may still report an unknown endpoint.
 - [RESP3 preference](fundamentals/connections.md#protocol-negotiation) with RESP2 fallback and
   explicit protocol overrides.
 - [Redis Cluster](fundamentals/connections.md#redis-cluster-endpoint-identity) routing with

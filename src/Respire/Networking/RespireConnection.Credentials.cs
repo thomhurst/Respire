@@ -59,7 +59,7 @@ internal sealed partial class RespireConnection
         lock (_writeGate)
         {
             ThrowIfRetired();
-            if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.") { Endpoint = new(Host, Port) };
             _credentialRenewalPending = true;
         }
         // The renewal's token already carries its connection/credential deadline.
@@ -114,10 +114,10 @@ internal sealed partial class RespireConnection
             ObserveProviderFailure(providerTask);
             // Provider-owned messages and inner exceptions can contain tokens, including
             // exceptions already typed as RespireAuthenticationException. Do not retain them.
-            throw new RespireAuthenticationException($"Credential acquisition failed for {host}:{port}.");
+            throw new RespireAuthenticationException($"Credential acquisition failed for {host}:{port}.") { Endpoint = new(host, port) };
         }
         if (credentials is null || credentials.ExpiresAt <= options.CredentialTimeProvider.GetUtcNow())
-            throw new RespireAuthenticationException($"Credential provider returned null or expired credentials for {host}:{port}.");
+            throw new RespireAuthenticationException($"Credential provider returned null or expired credentials for {host}:{port}.") { Endpoint = new(host, port) };
         return credentials;
     }
 

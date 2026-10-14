@@ -573,9 +573,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     && fallback.Replica is { } fallbackEntry && IsCurrent(fallbackEntry)) return fallback;
             throw attempted
                 ? new RespireConnectionException("No healthy, role-validated read replicas are available.",
-                    lastError ?? new InvalidOperationException("No replica connection attempt was completed."))
+                    lastError ?? new InvalidOperationException("No replica connection attempt was completed.")) { HasAmbiguousEndpoint = true }
                 : new RespireConnectionException(
-                    "Every read replica failed recently and is skipped until its ReplicaRefreshInterval cooldown ends.");
+                    "Every read replica failed recently and is skipped until its ReplicaRefreshInterval cooldown ends.") { HasAmbiguousEndpoint = true };
         }
         finally { candidates.Dispose(); }
     }

@@ -236,11 +236,13 @@ internal static partial class RespireTelemetry
                 if (!ErrorPublication.TryRecordHandled(ref _state.Attempts, _state.Final, out attempt)) return false;
                 if (!overrideEndpoint) endpoint = _state.Endpoint;
             }
+            RespireException.PopulateEndpoint(error, endpoint);
             RecordError(error, internallyHandled: true, attempt, endpoint);
             return true;
         }
         internal void Final(Exception error)
         {
+            RespireException.PopulateEndpoint(error, Endpoint);
             // DispatchResponseSource publishes after all response parsing and cleanup.
             if (_dispatch is not null) return;
             if (_state is null) return;

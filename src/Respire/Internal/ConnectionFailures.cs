@@ -6,8 +6,9 @@ internal static class ConnectionFailures
 {
     // Diagnostic context only: callers must retain the original exception for retry
     // decisions, lifecycle events, and other type-based classification.
+    // Ambiguous failures span candidates, so a later endpoint cannot describe their origin.
     internal static Exception AtEndpoint(Exception error, RespireEndpoint? endpoint)
-        => endpoint is null || error is RespireException { Endpoint: not null } or OperationCanceledException
+        => endpoint is null || error is RespireException { Endpoint: not null } or RespireException { HasAmbiguousEndpoint: true } or OperationCanceledException
             or AggregateException or RespireException { InnerException: AggregateException }
             ? error : new RespireConnectionException(error.Message, error)
             {

@@ -237,6 +237,7 @@ internal static class ResponseReader
         return result;
     }
 
-    public static RespireServerException ServerError(in RespValue value, string? commandName = null)
-        => new(value.GetErrorMessage(), commandName);
+    public static RespireServerException ServerError(in RespValue value, string? commandName = null,
+        RespireEndpoint? endpoint = null)
+        => new(value.GetErrorMessage(), commandName) { Endpoint = endpoint };
 }
