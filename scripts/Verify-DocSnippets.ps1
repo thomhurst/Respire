@@ -57,6 +57,7 @@ $requiredPackages = @(
     'Respire.StackExchangeCompat'
     'Respire.Streaming'
     'Respire.Probabilistic'
+    'Respire.Resilience'
     'Respire.DependencyInjection'
     'Respire.DataProtection'
     'Respire.HealthChecks'

@@ -31,6 +31,11 @@ breakers, are preserved. Disposing the adapter disposes its client, not the pipe
 Reuse the adapter and pipeline across operations; constructing them per request
 would discard connection pools and circuit history.
 
+Configured `RespireOptions.HedgedReads` are also preserved. Hedging can send a read
+more than once within each Polly callback, so pipeline attempt counts are not a
+bound on command sends. Leave `HedgedReads = null` when Polly should own all retry
+and hedging strategies.
+
 ```csharp
 using Polly;
 using Respire;
@@ -129,7 +134,10 @@ result or provides exactly-once execution.
 
 Do not nest failover-group retries, watched-transaction retry helpers, or your own
 retry loops inside a retrying pipeline. Respire's WATCH-conflict callback retries
-are separate from `RetryPolicy`. If replaying a batch or transaction is safe, create
+use `RespireTransactionRetryOptions.MaxAttempts` independently of `RetryPolicy`,
+so disabling the command policy does not disable conflict retries. Transient
+transaction retries do use `RetryPolicy` and are disabled by the adapter.
+If replaying a batch or transaction is safe, create
 and dispose a fresh complete unit inside each callback. Do not retry stream
 enumeration or server-local cursor continuations as ordinary callbacks. Do not
 retain or dispose the client passed to the callback, and do not wrap the adapter
