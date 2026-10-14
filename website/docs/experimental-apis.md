@@ -4,7 +4,7 @@ title: Experimental APIs
 
 # Experimental APIs
 
-Respire uses `System.Diagnostics.CodeAnalysis.ExperimentalAttribute` to identify public APIs whose contracts are still settling. These APIs are available to try, but are outside the 1.0 compatibility promise. They may change or be removed in a later release, including a minor or patch release.
+Respire uses `System.Diagnostics.CodeAnalysis.ExperimentalAttribute` to identify public APIs whose contracts are still settling. These APIs are available to try, but are outside the compatibility promise for the first supported major release, targeted at 2.0.0. They may change or be removed in a later release, including a minor or patch release.
 
 The compiler reports an error when you use one of these APIs, even without warnings-as-errors enabled. Opt in by suppressing that feature's diagnostic ID with `NoWarn` in your project or a scoped `#pragma warning disable`. Each diagnostic page shows the exact opt-in. Suppression acknowledges the compatibility risk; it does not change runtime behavior or server requirements.
 

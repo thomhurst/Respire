@@ -38,33 +38,33 @@ test checks this metadata without making network requests; reviewers verify that
 
 | Package, assembly, and root namespace | Purpose |
 | --- | --- |
-| `Respire` | Core RESP client, commands, connections, serialization, and built-in compression abstractions |
-| `Respire.Json` | Redis JSON documents |
-| `Respire.Search` | Redis Search, indexing, aggregation, and vector queries |
-| `Respire.VectorData` | Explicit AOT-friendly VectorData hash/JSON collections, KNN and hybrid search |
-| `Respire.AI` | Semantic response caching for Microsoft.Extensions.AI chat clients |
-| `Respire.TimeSeries` | Redis time series |
-| `Respire.Probabilistic` | Bloom, Cuckoo, Count-Min Sketch, Top-K, and t-digest |
-| `Respire.Aws` | AWS IAM credentials for ElastiCache and MemoryDB |
-| `Respire.Azure` | Microsoft Entra credentials for Azure Managed Redis |
-| `Respire.Caching` | `IDistributedCache` and `IBufferDistributedCache` integration |
-| `Respire.Caching.Hybrid` | Redis-backed L2 storage for `HybridCache` |
-| `Respire.OutputCaching` | ASP.NET Core output caching store |
-| `Respire.DataProtection` | ASP.NET Core DataProtection key storage |
-| `Respire.FusionCache` | FusionCache backplane and distributed locker sharing an existing Respire client |
-| `Respire.SignalR` | SignalR scale-out sharing an existing Respire client |
-| `Respire.Streaming` | Hosted stream consumers with bounded concurrency and scoped handlers |
-| `Respire.StackExchangeCompat` | Binary-safe value conversion, native command bridge, and a limited `IConnectionMultiplexer` adapter for incremental StackExchange.Redis migration |
-| `Respire.Coordination` | Rate limiters, semaphores, read-write locks, latches, leases, and Redlock |
-| `Respire.DependencyInjection` | .NET dependency injection registration |
-| `Respire.HealthChecks` | ASP.NET Core health checks using existing client connections |
-| `Respire.Resilience` | [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) with one command retry owner |
-| `Aspire.Respire` | .NET Aspire client registration, configuration, health checks, and telemetry |
-| `Aspire.Respire.DistributedCaching`, `Aspire.Respire.HybridCaching`, `Aspire.Respire.OutputCaching` | `IDistributedCache`, `HybridCache`, and output caching on an Aspire-registered client |
-| `Respire.Compression.Lz4` | Optional LZ4 value codec |
-| `Respire.Compression.Zstd` | Optional Zstandard value codec |
-| `Respire.Testing` | In-memory RESP test server |
-| `Respire.Testing.Containers` | Redis and Valkey container fixtures |
+| [`Respire`](getting-started.md) | Core RESP client, commands, connections, serialization, and built-in compression abstractions |
+| [`Respire.Json`](guides/json.md) | Redis JSON documents |
+| [`Respire.Search`](guides/search.md) | Redis Search, indexing, aggregation, and vector queries |
+| [`Respire.VectorData`](guides/vector-data.md) | Explicit AOT-friendly VectorData hash/JSON collections, KNN and hybrid search |
+| [`Respire.AI`](guides/semantic-cache.md) | Semantic response caching for Microsoft.Extensions.AI chat clients |
+| [`Respire.TimeSeries`](guides/timeseries.md) | Redis time series |
+| [`Respire.Probabilistic`](guides/probabilistic.md) | Bloom, Cuckoo, Count-Min Sketch, Top-K, and t-digest |
+| [`Respire.Aws`](guides/aws-iam-credentials.md) | AWS IAM credentials for ElastiCache and MemoryDB |
+| [`Respire.Azure`](guides/azure-managed-redis.md) | Microsoft Entra credentials for Azure Managed Redis |
+| [`Respire.Caching`](integrations/caching.md) | `IDistributedCache` and `IBufferDistributedCache` integration |
+| [`Respire.Caching.Hybrid`](integrations/caching.md) | Redis-backed L2 storage for `HybridCache` |
+| [`Respire.OutputCaching`](integrations/output-caching.md) | ASP.NET Core output caching store |
+| [`Respire.DataProtection`](integrations/data-protection.md) | ASP.NET Core DataProtection key storage |
+| [`Respire.FusionCache`](integrations/fusioncache.md) | FusionCache backplane and distributed locker sharing an existing Respire client |
+| [`Respire.SignalR`](integrations/signalr.md) | SignalR scale-out sharing an existing Respire client |
+| [`Respire.Streaming`](guides/stream-workers.md) | Hosted stream consumers with bounded concurrency and scoped handlers |
+| [`Respire.StackExchangeCompat`](guides/stackexchange-interop.md) | Binary-safe value conversion, native command bridge, and a limited `IConnectionMultiplexer` adapter for incremental StackExchange.Redis migration |
+| [`Respire.Coordination`](guides/coordination.md) | Rate limiters, semaphores, read-write locks, latches, leases, and Redlock |
+| [`Respire.DependencyInjection`](integrations/dependency-injection.md) | .NET dependency injection registration |
+| [`Respire.HealthChecks`](integrations/health-checks.md) | ASP.NET Core health checks using existing client connections |
+| [`Respire.Resilience`](guides/external-resilience.md) | [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) with one command retry owner |
+| [`Aspire.Respire`](integrations/aspire.md) | .NET Aspire client registration, configuration, health checks, and telemetry |
+| [`Aspire.Respire.DistributedCaching`](integrations/aspire.md), [`Aspire.Respire.HybridCaching`](integrations/aspire.md), [`Aspire.Respire.OutputCaching`](integrations/aspire.md) | `IDistributedCache`, `HybridCache`, and output caching on an Aspire-registered client |
+| [`Respire.Compression.Lz4`](guides/value-codecs.md) | Optional LZ4 value codec |
+| [`Respire.Compression.Zstd`](guides/value-codecs.md) | Optional Zstandard value codec |
+| [`Respire.Testing`](guides/in-memory-testing.md) | In-memory RESP test server |
+| [`Respire.Testing.Containers`](guides/testing-containers.md) | Redis and Valkey container fixtures |
 
 - `Respire.Analyzers` ships inside the core `Respire` package, not as its own package.
 - Subnamespaces such as `Respire.Serialization` and `Respire.Compression` belong to the core package. `Respire.Compression` holds the shared codec options; import `Respire.Compression.Lz4` or `Respire.Compression.Zstd` for a codec.
@@ -81,12 +81,6 @@ test checks this metadata without making network requests; reviewers verify that
 
 The name `Respire.Extensions.<ModuleName>` is reserved for custom, separately installed Redis modules; no current package uses it. For custom commands, use the [raw command API](./guides/raw-commands) or [command generator](./guides/generated-commands).
 
-## Updating references from earlier versions
+<a id="updating-references-from-earlier-versions" />
 
-Some packages were named `Respire.Extensions.*`. The rename changes namespaces and assembly identities, so rebuild consuming applications and libraries together.
-
-- Replace `Respire.Extensions.` with `Respire.` in package references, project paths, and `using` directives.
-- JSON, Search, TimeSeries, and Probabilistic package IDs are unchanged.
-- Replace `using Redis.Search;` with `using Respire.Search;`.
-- Import `Respire.Compression.Lz4` for `Lz4ValueCodec` and `Respire.Compression.Zstd` for `ZstdValueCodec`.
-- Update assembly-qualified type names, reflection configuration, and explicit DLL references. Do not mix old and renamed packages in one dependency graph.
+For older `Respire.Extensions.*` references, see the [package migration guide](guides/package-migration.md).

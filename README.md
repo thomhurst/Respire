@@ -13,6 +13,11 @@ Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 dotnet add package Respire
 ```
 
+This command selects the latest stable NuGet package. The public API may change
+before the first supported major release, targeted at **2.0.0**, including APIs
+without an experimental opt-in. To try a published `2.0.0-rc.N` candidate, follow
+the [release candidate installation instructions](https://thomhurst.github.io/Respire/docs/getting-started#release-candidates).
+
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
@@ -20,8 +25,9 @@ await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** pre-release; the API may change. See the
-> [roadmap](https://thomhurst.github.io/Respire/docs/roadmap).
+See the [roadmap](https://thomhurst.github.io/Respire/docs/roadmap) for supported features
+and the [experimental API policy](https://thomhurst.github.io/Respire/docs/experimental-apis)
+for surfaces that require an explicit opt-in.
 
 ## Why Respire?
 

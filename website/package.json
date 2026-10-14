@@ -16,6 +16,8 @@
   "packageManager": "npm@12.2.0",
   "scripts": {
     "start": "docusaurus start",
+    "test": "node --test scripts/*.test.mjs",
+    "prebuild": "npm test",
     "build": "docusaurus build",
     "postbuild": "node scripts/fix-llms-links.mjs",
     "serve": "docusaurus serve",
