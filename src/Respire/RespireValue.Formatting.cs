@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Globalization;
 using Respire.Internal;
 
@@ -73,10 +74,27 @@ public readonly partial struct RespireValue
             return true;
         }
 
-        bytesWritten = 0;
-        if (GetWireLength() > utf8Destination.Length) return false;
-        bytesWritten = WriteWirePayload(utf8Destination);
-        return true;
+        // Format scalars once: measuring the wire length first formats them twice.
+        switch (_kind)
+        {
+            case Kind.Integer:
+                return Utf8Formatter.TryFormat(_number, utf8Destination, out bytesWritten);
+            case Kind.UnsignedInteger:
+                return Utf8Formatter.TryFormat(unchecked((ulong)_number), utf8Destination, out bytesWritten);
+            case Kind.Single:
+                return Utf8Formatter.TryFormat(BitConverter.Int32BitsToSingle((int)_number), utf8Destination, out bytesWritten);
+            case Kind.Double:
+                return Utf8Formatter.TryFormat(BitConverter.Int64BitsToDouble(_number), utf8Destination, out bytesWritten);
+            case Kind.Boolean:
+                bytesWritten = 0;
+                if (utf8Destination.IsEmpty) return false;
+                utf8Destination[0] = _number != 0 ? (byte)'1' : (byte)'0';
+                bytesWritten = 1;
+                return true;
+            default:
+                bytesWritten = 0;
+                return true;
+        }
     }
 
     /// <summary>Creates a text argument, preserving the input verbatim and ignoring the provider.</summary>

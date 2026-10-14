@@ -20,6 +20,7 @@ public class ArgumentFormattingTests
         new RespireKey(new byte[] { 0x98, 0x80, 0xff }).Prepend(new KeyPrefix(new byte[] { 0xf0, 0x9f })),
         new RespireKey("\uD800tail").Prepend(new KeyPrefix(new byte[] { 0xff, 0xe2 })),
         new RespireKey("\uD800tail").Prepend(new KeyPrefix("text:")),
+        new RespireKey("\uD800tail").Prepend(new KeyPrefix("\uDC00prefix:")),
         new RespireKey(new byte[] { 0xff }).Prepend(new KeyPrefix("text:")),
     ];
 
