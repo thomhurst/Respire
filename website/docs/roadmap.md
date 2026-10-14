@@ -209,9 +209,10 @@ described above. They are not release commitments.
 
 ## Validation and performance follow-ups
 
-- [Healthy-path retry and transport performance acceptance](https://github.com/thomhurst/Respire/issues/1693):
-  enabled retries allocate and add work even when commands succeed. Published comparisons
-  establish measured overhead, not universal performance acceptance.
+- [Completed healthy-path retry and transport performance audit](https://github.com/thomhurst/Respire/issues/1693):
+  enabled retries allocate and add work even when commands succeed. The audit documents
+  remaining acceptance gaps and targets for future optimization; its closure does not
+  establish universal performance acceptance.
 - [Retry-owner lifetime races and reclamation](https://github.com/thomhurst/Respire/issues/1694):
   audit coverage beyond existing cancellation, disposal, and reuse tests; retention snapshots
   alone do not prove every race is safe.

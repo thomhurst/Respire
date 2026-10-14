@@ -271,7 +271,8 @@ The client never resends:
 
 ## Performance
 
-Remaining performance acceptance is tracked in [#1693](https://github.com/thomhurst/Respire/issues/1693).
+The completed [#1693](https://github.com/thomhurst/Respire/issues/1693) audit below
+records the remaining performance acceptance gaps and targets for future optimization.
 The separate [lifetime validation follow-up](https://github.com/thomhurst/Respire/issues/1694)
 covers gaps beyond existing cancellation and pooled-reuse tests; allocation and retention
 measurements alone do not prove race safety.

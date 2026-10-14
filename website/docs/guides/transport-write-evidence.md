@@ -14,6 +14,10 @@ This is an engineering evidence log, not a usage guide. **Application developers
 
 Write evidence never retries anything by itself. An ambiguous outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.
 
+The separate [lifetime validation follow-up](https://github.com/thomhurst/Respire/issues/1694)
+covers gaps beyond existing cancellation and pooled-reuse tests; allocation and retention
+measurements alone do not prove race safety.
+
 ## Healthy-path disposition: 14 October 2026
 
 This [#1693](https://github.com/thomhurst/Respire/issues/1693) audit checks the recorded
