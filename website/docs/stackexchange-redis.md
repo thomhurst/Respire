@@ -15,6 +15,10 @@ for the official distributed cache, DataProtection, and [Hangfire](./guides/hang
 It is not a general StackExchange.Redis replacement. It does not support Microsoft's SignalR
 backplane; use [`Respire.SignalR`](./integrations/signalr).
 
+For applications using RedLock.net or madelson's DistributedLock.Redis, see
+[migrating Redis coordination libraries](./guides/coordination-migration.md) for API mappings,
+renewal and timeout handling, and the differences between quorum leases and fenced locks.
+
 Verified on **14 October 2026** against StackExchange.Redis
 [3.4.5 (latest stable release)](https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.4.5)
 and [4.0.127-alpha (latest published 4.0 preview)](https://www.nuget.org/packages/StackExchange.Redis/4.0.127-alpha).
