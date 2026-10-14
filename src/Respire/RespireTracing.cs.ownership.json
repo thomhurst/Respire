@@ -1,0 +1,10 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireTracing.Configure(RespireTracingOptions):void",
+      "Reason": "Process-wide trace configuration; no command dispatch."
+    }
+  ]
+}
