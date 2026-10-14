@@ -1,0 +1,42 @@
+# Respire.AI
+
+Semantic response caching for Microsoft.Extensions.AI chat clients, backed by Redis vector search.
+
+## Install
+
+```sh
+dotnet add package Respire.AI
+```
+
+## Usage
+
+<!-- doc-test-declaration -->
+```csharp
+using Microsoft.Extensions.AI;
+using Respire;
+using Respire.AI;
+
+public static class ChatSetup
+{
+    public static IChatClient Build(
+        IChatClient provider,
+        IRespireClient redis,
+        IEmbeddingGenerator<string, Embedding<float>> embeddings)
+        => new ChatClientBuilder(provider)
+            .UseRespireSemanticCache(redis, embeddings, new()
+            {
+                CacheName = "support:model-v1:deployment-v1",
+                Dimensions = 1536,
+                DistanceThreshold = 0.1,
+                TimeToLive = TimeSpan.FromMinutes(30),
+                ScopeSelector = (_, options) =>
+                    options?.AdditionalProperties?.TryGetValue("UserId", out var user) == true
+                        ? user as string : null,
+            })
+            .Build();
+}
+```
+
+Supply your chat provider and embedding generator, and match Dimensions to its output. Requires standalone Redis Query Engine. Set UserId in request AdditionalProperties to isolate users; see the guide for scope, bypass, and cache lifetime behavior.
+
+[Read the guide](https://thomhurst.github.io/Respire/docs/guides/semantic-cache) for configuration, requirements, and further examples.
