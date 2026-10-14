@@ -19,6 +19,9 @@ jobs:
       event-base-sha: ${{ github.event.pull_request.base.sha }}
       candidate-sha: ${{ github.sha }}
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      # The current main baseline has unrelated API declaration failures. This last
+      # buildable control has identical RespireKey/RespireValue implementations.
+      control-sha: 1e708aac6a5db19555b8352a6816c4f3d42dbff4
       fixture: benchmarks/Respire.Benchmarks/ArgumentFormattingBenchmarks.cs
       filter: '*ArgumentFormattingBenchmarks*'
       expected-case-count: 6
