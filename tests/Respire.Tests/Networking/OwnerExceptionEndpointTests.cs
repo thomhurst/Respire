@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Commands;
 using Respire.Infrastructure;
@@ -11,6 +12,57 @@ namespace Respire.Tests.Networking;
 
 public class OwnerExceptionEndpointTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReconnectExhaustionPreservesEndpointScopeThroughObservation(bool multipleEndpoints)
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        var firstEndpoint = new RespireEndpoint("first.example", 6380);
+        var secondEndpoint = multipleEndpoints ? new RespireEndpoint("second.example", 6381) : firstEndpoint;
+        RespireConnectionException[] failures =
+        [
+            new("first replacement failed") { Endpoint = firstEndpoint },
+            new("second replacement failed") { Endpoint = secondEndpoint },
+        ];
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 2, Endpoints = [new("127.0.0.1", server.Port)],
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
+        });
+        var multiplexer = client.Core.Multiplexer;
+        var first = multiplexer.GetConnection(0);
+        var second = multiplexer.GetConnection(1);
+        // Seed completed recovery episodes from before/after an endpoint migration.
+        // This isolates attribution from the handoff/reconnect scheduling machinery.
+        Array.Fill(ReconnectAttempts(multiplexer)!, 1);
+        failures.CopyTo(ReconnectErrors(multiplexer)!, 0);
+        await first.DisposeAsync();
+        await second.DisposeAsync();
+        var error = await Assert.That(async () => await client.PingAsync())
+            .ThrowsExactly<RespireReconnectLimitException>();
+        await Assert.That(error!.Endpoint).IsEqualTo(multipleEndpoints ? null : (RespireEndpoint?)firstEndpoint);
+        // A retry can retain the active endpoint from its preceding attempt.
+        var owner = DispatchResponseSource<long>.Start();
+        var observation = owner.Observation;
+        observation.UseEndpoint(multiplexer.ActiveConnectionEndpoint);
+        observation.Handled(error!);
+        owner.Fail(error!);
+        await Assert.That(error!.Endpoint).IsEqualTo(multipleEndpoints ? null : (RespireEndpoint?)firstEndpoint);
+        var aggregate = (AggregateException)error.InnerException!;
+        await Assert.That(aggregate.InnerExceptions.Count).IsEqualTo(2);
+        await Assert.That(aggregate.InnerExceptions.Contains(failures[0])).IsTrue();
+        await Assert.That(aggregate.InnerExceptions.Contains(failures[1])).IsTrue();
+        await Assert.That(failures[0].Endpoint).IsEqualTo((RespireEndpoint?)firstEndpoint);
+        await Assert.That(failures[1].Endpoint).IsEqualTo((RespireEndpoint?)secondEndpoint);
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_reconnectAttempts")]
+    private static extern ref int[]? ReconnectAttempts(RespireConnectionMultiplexer multiplexer);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_reconnectErrors")]
+    private static extern ref Exception?[]? ReconnectErrors(RespireConnectionMultiplexer multiplexer);
+
     [Test]
     public async Task CombinedCandidateFailuresAreFlatAndKeepEncounterOrder()
     {

@@ -8,6 +8,8 @@ public class RespireException : Exception
     /// Null means no single endpoint is known. An endpoint does not prove that a command was
     /// submitted or executed. General-purpose wrappers do not infer it from their inner exception,
     /// which may describe only one of several failed candidates.
+    /// Once populated, the origin is retained. Reusing the same exception instance across
+    /// connections preserves the first origin rather than identifying each later failure.
     /// </remarks>
     public RespireEndpoint? Endpoint
     {
