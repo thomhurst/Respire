@@ -1,0 +1,6 @@
+#nullable enable
+Respire.Resilience.RespireResilienceClient
+Respire.Resilience.RespireResilienceClient.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Respire.Resilience.RespireResilienceClient.ExecuteAsync(System.Func<Respire.RespireClient!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! operation, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Resilience.RespireResilienceClient.ExecuteAsync<TResult>(System.Func<Respire.RespireClient!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TResult>>! operation, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TResult>
+Respire.Resilience.RespireResilienceClient.RespireResilienceClient(Respire.RespireOptions! options, Polly.ResiliencePipeline! pipeline) -> void

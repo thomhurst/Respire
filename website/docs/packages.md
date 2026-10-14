@@ -58,6 +58,7 @@ test checks this metadata without making network requests; reviewers verify that
 | `Respire.Coordination` | Rate limiters, semaphores, read-write locks, latches, leases, and Redlock |
 | `Respire.DependencyInjection` | .NET dependency injection registration |
 | `Respire.HealthChecks` | ASP.NET Core health checks using existing client connections |
+| `Respire.Resilience` | [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) with one command retry owner |
 | `Aspire.Respire` | .NET Aspire client registration, configuration, health checks, and telemetry |
 | `Aspire.Respire.DistributedCaching`, `Aspire.Respire.HybridCaching`, `Aspire.Respire.OutputCaching` | `IDistributedCache`, `HybridCache`, and output caching on an Aspire-registered client |
 | `Respire.Compression.Lz4` | Optional LZ4 value codec |

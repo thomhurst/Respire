@@ -40,6 +40,7 @@ jobs:
           for project in \
             tests/Respire.Tests \
             tests/Respire.HealthChecks.Tests \
+            tests/Respire.Resilience.Tests \
             tests/Respire.IntegrationTests \
             tests/Respire.Coordination.Tests \
             tests/Respire.Azure.Tests \

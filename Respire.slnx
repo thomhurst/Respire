@@ -16,6 +16,7 @@
     <Project Path="samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj" />
     <Project Path="samples/Respire.Samples.Mappers/Respire.Samples.Mappers.csproj" />
     <Project Path="samples/Respire.Samples.Observability/Respire.Samples.Observability.csproj" />
+    <Project Path="samples/Respire.Samples.Resilience/Respire.Samples.Resilience.csproj" />
     <Project Path="samples/Respire.Samples.Sentinel/Respire.Samples.Sentinel.csproj" />
     <Project Path="samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj" />
     <Project Path="samples/Respire.Samples.VectorData/Respire.Samples.VectorData.csproj" />
@@ -37,6 +38,7 @@
     <Project Path="src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
     <Project Path="src/Respire.DataProtection/Respire.DataProtection.csproj" />
     <Project Path="src/Respire.HealthChecks/Respire.HealthChecks.csproj" />
+    <Project Path="src/Respire.Resilience/Respire.Resilience.csproj" />
     <Project Path="src/Respire.Json/Respire.Json.csproj" />
     <Project Path="src/Respire.OutputCaching/Respire.OutputCaching.csproj" />
     <Project Path="src/Respire.Search/Respire.Search.csproj" />
@@ -59,6 +61,7 @@
     <Project Path="tests/Aspire.Respire.IntegrationTests/Aspire.Respire.IntegrationTests.csproj" />
     <Project Path="tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj" />
     <Project Path="tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj" />
+    <Project Path="tests/Respire.Resilience.Tests/Respire.Resilience.Tests.csproj" />
     <Project Path="tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj" />
     <Project Path="tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj" />
     <Project Path="tests/Respire.Caching.Hybrid.Tests/Respire.Caching.Hybrid.Tests.csproj" />

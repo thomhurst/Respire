@@ -41,6 +41,7 @@
       Respire.Json;
       Respire.OutputCaching;
       Respire.Probabilistic;
+      Respire.Resilience;
       Respire.Search;
       Respire.SignalR;
       Respire.Streaming;

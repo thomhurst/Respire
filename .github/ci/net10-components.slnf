@@ -4,6 +4,7 @@
     "projects": [
       "tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj",
       "tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj",
+      "tests/Respire.Resilience.Tests/Respire.Resilience.Tests.csproj",
       "tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj",
       "tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj",
       "tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj",
@@ -13,6 +14,7 @@
       "tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj",
       "tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj",
       "samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj",
+      "samples/Respire.Samples.Resilience/Respire.Samples.Resilience.csproj",
       "samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj",
       "samples/Respire.Samples.Sentinel/Respire.Samples.Sentinel.csproj",
       "samples/Respire.Samples.Azure/Respire.Samples.Azure.csproj"

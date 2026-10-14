@@ -89,6 +89,7 @@ const sidebars = {
       label: 'Resilience',
       items: [
         'guides/command-retries',
+        'guides/external-resilience',
         'guides/reconnect-policy',
         'guides/circuit-breakers',
         'guides/failover-groups',
