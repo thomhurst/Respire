@@ -682,6 +682,9 @@ Both methods accept cancellation and have no queued form. See [CREATECONSUMER](h
 
 ## Bitmaps, HyperLogLogs, and geo indexes
 
+See the dedicated [bitmap](bitmaps.md), [HyperLogLog](hyperloglog.md), and
+[geospatial](geo.md) guides for commands, result shapes, and server requirements.
+
 ```csharp
 bool wasActive = await redis.Bitmaps.SetAsync("active:2026-08-09", userId, true);
 long active = await redis.Bitmaps.SetBitCountAsync("active:2026-08-09");

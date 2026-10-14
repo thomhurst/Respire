@@ -20,8 +20,9 @@ await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** pre-release; the API may change. See the
-> [roadmap](https://thomhurst.github.io/Respire/docs/roadmap).
+See the [roadmap](https://thomhurst.github.io/Respire/docs/roadmap) for supported features
+and the [experimental API policy](https://thomhurst.github.io/Respire/docs/experimental-apis)
+for surfaces that require an explicit opt-in.
 
 ## Why Respire?
 

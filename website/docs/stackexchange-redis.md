@@ -29,9 +29,8 @@ The 4.0 column describes that preview, not a stable 4.0 release or a promise abo
 Earlier 3.x releases may lack features added in 3.4. The published [benchmarks](./benchmarks)
 used 3.3.1 and do not measure 4.0.
 
-:::note Pre-release
-Respire's public API may still change before a stable release. See the [roadmap](./roadmap).
-:::
+See the [roadmap](./roadmap) for supported features and the
+[experimental API policy](./experimental-apis) for compatibility limits.
 
 ## Why switch
 

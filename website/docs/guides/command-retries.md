@@ -271,6 +271,11 @@ The client never resends:
 
 ## Performance
 
+Remaining performance acceptance is tracked in [#1693](https://github.com/thomhurst/Respire/issues/1693).
+The separate [lifetime validation follow-up](https://github.com/thomhurst/Respire/issues/1694)
+covers gaps beyond existing cancellation and pooled-reuse tests; allocation and retention
+measurements alone do not prove race safety.
+
 With `RetryPolicy = null`, commands take the ordinary dispatch path. An enabled policy adds
 work and can allocate on retry-eligible commands, even when nothing fails. Do not assume
 zero-allocation dispatch for raw, catalog, script, function or cache paths with a policy enabled.

@@ -6,7 +6,7 @@ description: Run Lua scripts through the script cache and call Redis Functions, 
 # Lua scripts and functions
 
 - `client.Scripts` runs `RespireScript` objects with `EVALSHA`/`EVAL`. Use it for server-side logic that ships with your application.
-- `client.Functions` calls named Redis 7+ functions with `FCALL` and manages libraries. Use it when the logic is deployed to the server as a named library.
+- `client.Functions` calls named Redis 7+ functions with `FCALL` and manages libraries. Start with the [Redis Functions command guide](../commands/functions.md) when the logic is deployed to the server as a named library.
 
 ## Run a script
 

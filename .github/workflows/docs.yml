@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - 'website/**'
+      - 'Directory.Build.props'
       - 'samples/Respire.Samples.Recipes/**'
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [main]
     paths:
       - 'website/**'
+      - 'Directory.Build.props'
       - 'samples/Respire.Samples.Recipes/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:

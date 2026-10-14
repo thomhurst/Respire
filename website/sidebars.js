@@ -5,6 +5,7 @@ const sidebars = {
     'getting-started',
     'guides/recipes',
     'packages',
+    'guides/package-migration',
     'stackexchange-redis',
     {
       type: 'category',
@@ -39,6 +40,10 @@ const sidebars = {
         'commands/strings-and-keys',
         'commands/collections',
         'commands/arrays',
+        'commands/bitmaps',
+        'commands/hyperloglog',
+        'commands/geo',
+        'commands/functions',
         'guides/batches-and-transactions',
         'guides/hash-import',
         'guides/scripting',

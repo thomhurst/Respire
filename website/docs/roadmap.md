@@ -1,11 +1,11 @@
 ---
 title: Status and roadmap
-description: What Respire supports today and what remains before a stable release.
+description: What Respire supports today and where further work is tracked.
 ---
 
 # Status and roadmap
 
-Respire is pre-release. Everything below is implemented, but public APIs may change.
+The features below are implemented; planned work and validation gaps are listed separately.
 Each linked guide lists its server and protocol requirements.
 
 The next supported major targets **2.0.0** to avoid the occupied NuGet 1.x line.
@@ -79,7 +79,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - [Queued result diagnostics](guides/batches-and-transactions.md#ignoring-queued-results):
   CS4014 suppression for ignored pending results, with RESP002 checks for premature reads and awaits.
 
-- Typed facets for strings, keys, collections, streams, bitmaps, HyperLogLog, geo, scripts, and
+- Typed facets for strings, keys, collections, streams, [bitmaps](commands/bitmaps.md),
+  [HyperLogLog](commands/hyperloglog.md), [geo](commands/geo.md), [scripts](guides/scripting.md),
+  [functions](commands/functions.md), and
   server commands; a [command catalog with raw and interpolated execution](guides/raw-commands.md);
   and [source-generated custom commands](guides/generated-commands.md).
 - [Typed Redis 8.10 / Valkey 9.1 commands](guides/raw-commands.md#finding-typed-apis), including
@@ -196,13 +198,26 @@ consistency contract. See the [field-level caching decision](guides/keyspace-not
 
 ## Planned work
 
-These epics track the work before 1.0. They are not release commitments.
+These epics retain their original 1.0 planning titles; the release target is 2.0.0 as
+described above. They are not release commitments.
 
 - [1.0 release gate](https://github.com/thomhurst/Respire/issues/1567)
 - [API breaks before 1.0](https://github.com/thomhurst/Respire/issues/1576)
 - [Onboarding, docs, and developer experience](https://github.com/thomhurst/Respire/issues/1585)
 - [Features from other Redis clients](https://github.com/thomhurst/Respire/issues/1594),
   including a [reliable job queue on `Respire.Streaming`](https://github.com/thomhurst/Respire/issues/1595)
+
+## Validation and performance follow-ups
+
+- [Healthy-path retry and transport performance acceptance](https://github.com/thomhurst/Respire/issues/1693):
+  enabled retries allocate and add work even when commands succeed. Published comparisons
+  establish measured overhead, not universal performance acceptance.
+- [Retry-owner lifetime races and reclamation](https://github.com/thomhurst/Respire/issues/1694):
+  audit coverage beyond existing cancellation, disposal, and reuse tests; retention snapshots
+  alone do not prove every race is safe.
+- [Orleans silo lifecycle and recovery](https://github.com/thomhurst/Respire/issues/1695):
+  provider conformance is covered, while full silo activation, provider-owned shutdown,
+  Cluster, and failover still need validation.
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison and the
 [introduction](./intro.md#design-bets) for the design bets. Report issues on

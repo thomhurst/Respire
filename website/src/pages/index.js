@@ -335,7 +335,7 @@ function Closing() {
       <div className={clsx('container', styles.closingInner)}>
         <p className={styles.ok} aria-hidden="true"><b>+</b>OK<i>\r\n</i></p>
         <div className={styles.closingCopy}>
-          <Heading as="h2">Respire is pre-release. Try it, and tell us what breaks.</Heading>
+          <Heading as="h2">Try Respire in your next .NET application.</Heading>
           <InstallCommand className={styles.installDark} />
           <div className={styles.actions}>
             <Link className={styles.primaryButton} to="/docs/getting-started">Get started</Link>

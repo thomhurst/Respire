@@ -16,11 +16,8 @@ await redis.SetAsync("greeting", "hello", expiry: TimeSpan.FromMinutes(5));
 string? greeting = await redis.GetStringAsync("greeting");
 ```
 
-:::warning Pre-release
-
-The public API may change before 1.0. See the [roadmap](./roadmap).
-
-:::
+See the [roadmap](./roadmap) for supported features and the
+[experimental API policy](./experimental-apis) for surfaces that require an explicit opt-in.
 
 ## Why Respire
 

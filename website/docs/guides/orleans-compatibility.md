@@ -109,3 +109,7 @@ Not validated:
 - Full silo and grain activation, other serializers and datasets, provider-owned shutdown, sustained stress.
 - Redis Cluster, reconnect, and failover.
 - Grain directory, streaming, and journaling providers, and other Orleans versions.
+
+[Silo lifecycle and Redis recovery validation](https://github.com/thomhurst/Respire/issues/1695)
+tracks the first two gaps. The closed provider assessment does not establish support for
+these untested deployment scenarios.
