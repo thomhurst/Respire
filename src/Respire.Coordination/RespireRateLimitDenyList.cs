@@ -13,6 +13,8 @@ public sealed class RespireRateLimitDenyList
     private readonly int _cacheCapacity;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Entry> _cache = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _recency = new();
+    private readonly Dictionary<string, TaskCompletionSource<bool>> _pending = new(StringComparer.Ordinal);
     private long _generation;
 
     /// <summary>Creates a deny list stored in a dedicated Redis set, respecting client key prefixes.</summary>
@@ -67,30 +69,102 @@ public sealed class RespireRateLimitDenyList
     {
         ArgumentException.ThrowIfNullOrEmpty(identity);
         cancellationToken.ThrowIfCancellationRequested();
+        if (_cacheDuration == TimeSpan.Zero)
+            return await ReadUncachedAsync(identity, cancellationToken).ConfigureAwait(false);
+
+        TaskCompletionSource<bool>? pending;
         long generation;
         long started;
+        bool ownsRead;
         lock (_gate)
         {
             started = _time.GetTimestamp();
-            if (_cache.TryGetValue(identity, out var entry)
-                && _time.GetElapsedTime(entry.Started, started) < _cacheDuration)
-                return entry.Denied;
-            _cache.Remove(identity);
-            generation = _generation;
-        }
-        var denied = await _read(identity, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        lock (_gate)
-        {
-            // Never republish a read that overlapped invalidation, or extend staleness by network latency.
-            if (generation == _generation && _time.GetElapsedTime(started) < _cacheDuration)
+            if (_cache.TryGetValue(identity, out var entry))
             {
-                // Clearing on overflow bounds both entries and bookkeeping without an unbounded eviction queue.
-                if (_cache.Count >= _cacheCapacity && !_cache.ContainsKey(identity)) _cache.Clear();
-                _cache[identity] = new Entry(denied, started);
+                if (_time.GetElapsedTime(entry.Started, started) < _cacheDuration)
+                {
+                    _recency.Remove(entry.Node);
+                    _recency.AddLast(entry.Node);
+                    return entry.Denied;
+                }
+                RemoveEntry(identity);
+            }
+            generation = _generation;
+            ownsRead = !_pending.TryGetValue(identity, out pending);
+            if (ownsRead)
+            {
+                // Bound bookkeeping under distinct-identity floods. Excess reads remain caller-owned.
+                if (_pending.Count < _cacheCapacity)
+                {
+                    pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _pending.Add(identity, pending);
+                }
             }
         }
+        if (pending is null)
+            return await ReadUncachedAsync(identity, cancellationToken).ConfigureAwait(false);
+        // Start outside the gate: custom clients may run synchronous code before returning a ValueTask.
+        if (ownsRead) _ = ReadAndPublishAsync(identity, pending, generation, started);
+        return await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<bool> ReadUncachedAsync(string identity, CancellationToken cancellationToken)
+    {
+        var denied = await _read(identity, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         return denied;
+    }
+
+    private async Task ReadAndPublishAsync(string identity, TaskCompletionSource<bool> pending,
+        long generation, long started)
+    {
+        try
+        {
+            // Cancelling one waiter must not cancel the read used by other waiters.
+            var denied = await _read(identity, CancellationToken.None).ConfigureAwait(false);
+            lock (_gate)
+            {
+                // Never republish a read that overlapped invalidation or extend freshness by network latency.
+                if (generation == _generation && _time.GetElapsedTime(started) < _cacheDuration)
+                {
+                    if (_cache.Count >= _cacheCapacity)
+                    {
+                        // Expired entries can appear anywhere in the LRU list: hits do not renew expiry.
+                        var node = _recency.First;
+                        while (node is not null)
+                        {
+                            var next = node.Next;
+                            if (_time.GetElapsedTime(_cache[node.Value].Started) >= _cacheDuration)
+                                RemoveEntry(node.Value);
+                            node = next;
+                        }
+                        if (_cache.Count >= _cacheCapacity) RemoveEntry(_recency.First!.Value);
+                    }
+                    var added = _recency.AddLast(identity);
+                    _cache.Add(identity, new Entry(denied, started, added));
+                }
+                RemovePending(identity, pending);
+            }
+            pending.TrySetResult(denied);
+        }
+        catch (Exception exception)
+        {
+            lock (_gate) RemovePending(identity, pending);
+            pending.TrySetException(exception);
+            // Observe failures even when every waiter has cancelled.
+            _ = pending.Task.Exception;
+        }
+    }
+
+    private void RemovePending(string identity, TaskCompletionSource<bool> pending)
+    {
+        if (_pending.TryGetValue(identity, out var current) && ReferenceEquals(current, pending))
+            _pending.Remove(identity);
+    }
+
+    private void RemoveEntry(string identity)
+    {
+        if (_cache.Remove(identity, out var entry)) _recency.Remove(entry.Node);
     }
 
     /// <summary>Adds or removes an identity in Redis, then invalidates this instance's cache even on failure.</summary>
@@ -113,6 +187,8 @@ public sealed class RespireRateLimitDenyList
         {
             _generation++;
             _cache.Clear();
+            _recency.Clear();
+            _pending.Clear();
         }
     }
 
@@ -120,5 +196,5 @@ public sealed class RespireRateLimitDenyList
         => duration >= TimeSpan.Zero && duration <= TimeSpan.FromMinutes(1)
             ? duration : throw new ArgumentOutOfRangeException(nameof(duration));
 
-    private readonly record struct Entry(bool Denied, long Started);
+    private readonly record struct Entry(bool Denied, long Started, LinkedListNode<string> Node);
 }

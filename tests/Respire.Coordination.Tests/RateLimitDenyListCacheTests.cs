@@ -132,6 +132,94 @@ public class RateLimitDenyListCacheTests
         await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
     }
 
+    [Test]
+    public async Task ConcurrentMissesShareReadAndCancellationOnlyRemovesWaiter()
+    {
+        var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var readToken = new CancellationToken(true);
+        var list = new RespireRateLimitDenyList((_, token) =>
+            { reads++; readToken = token; return new ValueTask<bool>(pending.Task); },
+            (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.FromSeconds(1), 2);
+        using var cancelled = new CancellationTokenSource();
+        var first = list.IsDeniedAsync("a", cancelled.Token).AsTask();
+        var others = Enumerable.Range(0, 20).Select(_ => list.IsDeniedAsync("a").AsTask()).ToArray();
+        await cancelled.CancelAsync();
+        await Assert.That(async () => await first).Throws<OperationCanceledException>();
+        await Assert.That(readToken.CanBeCanceled).IsFalse();
+        await Assert.That(reads).IsEqualTo(1);
+        pending.SetResult(true);
+        await Assert.That((await Task.WhenAll(others)).All(value => value)).IsTrue();
+        await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
+        await Assert.That(reads).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task InvalidatedReadCannotJoinOrRemoveNewGenerationRead()
+    {
+        var old = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var current = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var list = new RespireRateLimitDenyList((_, _) => new ValueTask<bool>(++reads == 1 ? old.Task : current.Task),
+            (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.FromSeconds(1), 2);
+        var first = list.IsDeniedAsync("a").AsTask();
+        list.Invalidate();
+        var second = list.IsDeniedAsync("a").AsTask();
+        old.SetResult(false);
+        await Assert.That(await first).IsFalse();
+        var third = list.IsDeniedAsync("a").AsTask();
+        await Assert.That(reads).IsEqualTo(2);
+        current.SetResult(true);
+        await Assert.That(await second).IsTrue();
+        await Assert.That(await third).IsTrue();
+        await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
+        await Assert.That(reads).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task SharedFailuresAreRetriedAndPendingBookkeepingIsBounded()
+    {
+        var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var fail = true;
+        var list = new RespireRateLimitDenyList((_, _) =>
+            { reads++; return fail ? new ValueTask<bool>(pending.Task) : ValueTask.FromResult(true); },
+            (_, _, _) => ValueTask.CompletedTask, new ManualTime(), TimeSpan.FromSeconds(1), 1);
+        var first = list.IsDeniedAsync("a").AsTask();
+        var shared = list.IsDeniedAsync("a").AsTask();
+        var excess = list.IsDeniedAsync("b").AsTask();
+        var excessAgain = list.IsDeniedAsync("b").AsTask();
+        await Assert.That(reads).IsEqualTo(3);
+        pending.SetException(new IOException("offline"));
+        foreach (var task in new[] { first, shared, excess, excessAgain })
+            await Assert.That(async () => await task).Throws<IOException>();
+        fail = false;
+        await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
+        await Assert.That(reads).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task OverflowKeepsRecentlyUsedEntriesAndRemovesExpiredEntriesFirst()
+    {
+        var time = new ManualTime();
+        var reads = 0;
+        var list = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(true); },
+            (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 2);
+        await list.IsDeniedAsync("a");
+        time.Advance(TimeSpan.FromMilliseconds(500));
+        await list.IsDeniedAsync("b");
+        await list.IsDeniedAsync("a"); // Oldest by age, newest by usage.
+        time.Advance(TimeSpan.FromMilliseconds(500));
+        await list.IsDeniedAsync("c"); // Must evict expired a, not least-recently-used b.
+        await list.IsDeniedAsync("b");
+        await Assert.That(reads).IsEqualTo(3);
+        await list.IsDeniedAsync("d"); // Evicts c, preserving hot b.
+        await list.IsDeniedAsync("b");
+        await Assert.That(reads).IsEqualTo(4);
+        await list.IsDeniedAsync("c");
+        await Assert.That(reads).IsEqualTo(5);
+    }
+
     private sealed class ManualTime : TimeProvider
     {
         private long _timestamp;

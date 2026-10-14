@@ -672,9 +672,13 @@ Do not share the deny-list key with a limiter's state or another data type.
 
 The local cache holds at most `cacheCapacity` identities (default 1024). Both allowed and denied
 memberships are cached for a fixed `cacheDuration` from the start of the read, default one second,
-maximum one minute. Hits do not extend expiry. Zero disables caching. Overflow clears the cache
-before inserting the new entry; expired entries are removed when read and count toward the bound.
-Concurrent misses may issue separate Redis reads. Share the instance to bound the total cache;
+maximum one minute. Hits do not extend expiry. Zero disables caching. When full, the cache removes
+expired entries first, then the least recently used entry.
+Concurrent misses for an identity share a Redis read; cancelling a caller only cancels its wait.
+In-flight read bookkeeping is also bounded by `cacheCapacity`; excess distinct identities use
+independent, caller-cancellable reads without caching. Zero cache duration disables read sharing too.
+Invalidation detaches older reads, so subsequent calls cannot join a pre-invalidation read.
+Share the instance to bound the total cache;
 creating one per identity multiplies the bound. Identity length is application-controlled.
 
 Updates clear the calling instance's entire cache before and after the Redis write, even if the
