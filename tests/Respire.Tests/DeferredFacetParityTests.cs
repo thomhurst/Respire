@@ -33,10 +33,12 @@ public class DeferredFacetParityTests
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         // Single- and multi-key scalar list pops always block and cannot be queued.
         .. typeof(IListCommands).GetMethods().Where(method => method.Name == nameof(IListCommands.PopAsync)
-            && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(TimeSpan))),
+            && method.GetParameters().Any(parameter => parameter.Name == "waitFor"
+                && parameter.ParameterType == typeof(TimeSpan?) && !parameter.IsOptional)),
         // Both typed and string multi-key scalar sorted-set pops always block on a dedicated lease.
         .. typeof(ISortedSetCommands).GetMethods().Where(method => method.Name == nameof(ISortedSetCommands.PopAsync)
-            && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(TimeSpan))),
+            && method.GetParameters().Any(parameter => parameter.Name == "waitFor"
+                && parameter.ParameterType == typeof(TimeSpan?) && !parameter.IsOptional)),
         // A streamed reply owns a live network response and cannot be queued for batch completion.
         typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetStreamAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,

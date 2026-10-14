@@ -65,6 +65,15 @@ public class MultiItemCancellationOverloadTests
                     || type == typeof(RespireKey[]) || type == typeof(IReadOnlyList<RespireKey>));
                 if (index < 0) continue;
                 expected[index] = typeof(RespireKey);
+                // The single-key sorted-set overload already required every option and retains
+                // its positional contract. The multi-key overload moved the now-required wait
+                // ahead of optional count/descending. Still require the complete single-key shape.
+                if (type == typeof(ISortedSetCommands) && method.Name == nameof(ISortedSetCommands.PopManyAsync)
+                    && expected.SequenceEqual([typeof(RespireKey), typeof(TimeSpan?), typeof(long),
+                        typeof(bool), typeof(CancellationToken)]))
+                {
+                    expected = [typeof(RespireKey), typeof(long), typeof(bool), typeof(TimeSpan?), typeof(CancellationToken)];
+                }
                 if (!methods.Any(candidate => candidate.Name == method.Name
                     && candidate.GetGenericArguments().Length == method.GetGenericArguments().Length
                     && candidate.GetParameters().Length == expected.Length

@@ -77,6 +77,32 @@ public class NullableBlockingWaitTests
     [Arguments("stream")]
     [Arguments("streams")]
     [Arguments("stream-options")]
+    public async Task NegativeWaitsThrowSynchronouslyBeforeSending(string operation)
+    {
+        // ReadGroupOnceAsync has an existing async projection boundary; its validation is
+        // covered by NegativeWaitsFailBeforeSending without promising a synchronous throw.
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        // A void delegate observes only errors thrown before the command returns its task.
+        await Assert.That(() => { _ = Invoke(client, operation, TimeSpan.FromTicks(-1), default); })
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("left")]
+    [Arguments("right-typed")]
+    [Arguments("move")]
+    [Arguments("move-many")]
+    [Arguments("list-one")]
+    [Arguments("list-many")]
+    [Arguments("sorted-one")]
+    [Arguments("sorted-one-typed")]
+    [Arguments("sorted-many")]
+    [Arguments("sorted-many-typed")]
+    [Arguments("stream")]
+    [Arguments("streams")]
+    [Arguments("stream-options")]
     [Arguments("group")]
     public async Task NullWaitCanBeCancelledWithoutBlockingSharedTraffic(string operation)
     {
@@ -166,25 +192,24 @@ public class NullableBlockingWaitTests
         }
     }
 
-    private static async Task Invoke(IRespireClient client, string operation, TimeSpan? waitFor, CancellationToken cancellationToken)
-    {
-        switch (operation)
+    // Keep this helper synchronous so it cannot turn immediate validation errors into failed tasks.
+    private static Task Invoke(IRespireClient client, string operation, TimeSpan? waitFor, CancellationToken cancellationToken)
+        => operation switch
         {
-            case "left": await client.Lists.LeftPopAsync("key", waitFor, cancellationToken); break;
-            case "right-typed": await client.Lists.RightPopAsync<string>("key", waitFor, cancellationToken); break;
-            case "move": await client.Lists.MoveAsync("key", "destination", waitFor, cancellationToken: cancellationToken); break;
-            case "move-many": await client.Lists.MoveManyAsync("key", "destination", waitFor, cancellationToken: cancellationToken); break;
-            case "list-one": await client.Lists.PopAsync("key", waitFor, cancellationToken: cancellationToken); break;
-            case "list-many": await client.Lists.PopManyAsync("key", waitFor, cancellationToken: cancellationToken); break;
-            case "sorted-one": await client.SortedSets.PopAsync("key", waitFor, false, cancellationToken); break;
-            case "sorted-one-typed": await client.SortedSets.PopAsync<string>("key", waitFor, false, cancellationToken); break;
-            case "sorted-many": await client.SortedSets.PopManyAsync("key", 1, false, waitFor, cancellationToken); break;
-            case "sorted-many-typed": await client.SortedSets.PopManyAsync<string>(["key"], waitFor, cancellationToken: cancellationToken); break;
-            case "stream": await client.Streams.ReadAsync("key", waitFor, cancellationToken: cancellationToken); break;
-            case "streams": await client.Streams.ReadAsync([("key", RespireStreamId.Beginning)], waitFor, cancellationToken: cancellationToken); break;
-            case "stream-options": await client.Streams.ReadAsync(new StreamReadOptions { WaitFor = waitFor }, "key", cancellationToken: cancellationToken); break;
-            case "group": await client.Streams.ReadGroupOnceAsync("key", "group", "consumer", new StreamReadOptions { WaitFor = waitFor }, cancellationToken: cancellationToken); break;
-            default: throw new ArgumentException("Unknown operation", nameof(operation));
-        }
-    }
+            "left" => client.Lists.LeftPopAsync("key", waitFor, cancellationToken).AsTask(),
+            "right-typed" => client.Lists.RightPopAsync<string>("key", waitFor, cancellationToken).AsTask(),
+            "move" => client.Lists.MoveAsync("key", "destination", waitFor, cancellationToken: cancellationToken).AsTask(),
+            "move-many" => client.Lists.MoveManyAsync("key", "destination", waitFor, cancellationToken: cancellationToken).AsTask(),
+            "list-one" => client.Lists.PopAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
+            "list-many" => client.Lists.PopManyAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
+            "sorted-one" => client.SortedSets.PopAsync("key", waitFor, false, cancellationToken).AsTask(),
+            "sorted-one-typed" => client.SortedSets.PopAsync<string>("key", waitFor, false, cancellationToken).AsTask(),
+            "sorted-many" => client.SortedSets.PopManyAsync("key", 1, false, waitFor, cancellationToken).AsTask(),
+            "sorted-many-typed" => client.SortedSets.PopManyAsync<string>(["key"], waitFor, cancellationToken: cancellationToken).AsTask(),
+            "stream" => client.Streams.ReadAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
+            "streams" => client.Streams.ReadAsync([("key", RespireStreamId.Beginning)], waitFor, cancellationToken: cancellationToken).AsTask(),
+            "stream-options" => client.Streams.ReadAsync(new StreamReadOptions { WaitFor = waitFor }, "key", cancellationToken: cancellationToken).AsTask(),
+            "group" => client.Streams.ReadGroupOnceAsync("key", "group", "consumer", new StreamReadOptions { WaitFor = waitFor }, cancellationToken: cancellationToken).AsTask(),
+            _ => throw new ArgumentException("Unknown operation", nameof(operation)),
+        };
 }
