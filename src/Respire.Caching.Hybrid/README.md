@@ -6,6 +6,7 @@ Use Respire as the Redis L2 backend for HybridCache, with optional server-assist
 
 ```sh
 dotnet add package Respire.Caching.Hybrid
+dotnet add package Microsoft.Extensions.DependencyInjection
 ```
 
 ## Usage

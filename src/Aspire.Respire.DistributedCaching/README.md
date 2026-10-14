@@ -6,6 +6,7 @@ Use IDistributedCache with an Aspire-registered Respire client.
 
 ```sh
 dotnet add package Aspire.Respire.DistributedCaching
+dotnet add package Microsoft.Extensions.Hosting
 ```
 
 ## Usage

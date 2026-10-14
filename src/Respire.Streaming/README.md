@@ -7,6 +7,7 @@ Hosted Redis stream consumers with scoped handlers, bounded concurrency, recover
 ```sh
 dotnet add package Respire.Streaming
 dotnet add package Respire.DependencyInjection
+dotnet add package Microsoft.Extensions.Hosting
 ```
 
 ## Usage

@@ -11,6 +11,8 @@ dotnet add package Respire.DependencyInjection
 
 ## Usage
 
+Use this example in an ASP.NET Core project created with `dotnet new web`.
+
 ```csharp
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;

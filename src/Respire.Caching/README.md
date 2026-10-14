@@ -6,6 +6,7 @@ Redis-backed IDistributedCache and IBufferDistributedCache implementations.
 
 ```sh
 dotnet add package Respire.Caching
+dotnet add package Microsoft.Extensions.DependencyInjection
 ```
 
 ## Usage

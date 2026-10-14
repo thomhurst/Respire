@@ -6,6 +6,7 @@ Register Respire clients from Aspire connection strings, with health checks, log
 
 ```sh
 dotnet add package Aspire.Respire
+dotnet add package Microsoft.Extensions.Hosting
 ```
 
 ## Usage

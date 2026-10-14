@@ -6,6 +6,7 @@ Register shared Respire clients with .NET dependency injection.
 
 ```sh
 dotnet add package Respire.DependencyInjection
+dotnet add package Microsoft.Extensions.DependencyInjection
 ```
 
 ## Usage

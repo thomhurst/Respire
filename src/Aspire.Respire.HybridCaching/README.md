@@ -6,6 +6,7 @@ Use HybridCache with an Aspire-registered Respire client as its Redis L2 backend
 
 ```sh
 dotnet add package Aspire.Respire.HybridCaching
+dotnet add package Microsoft.Extensions.Hosting
 ```
 
 ## Usage

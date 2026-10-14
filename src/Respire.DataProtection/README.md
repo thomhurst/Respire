@@ -6,6 +6,7 @@ Persist ASP.NET Core DataProtection keys in Redis through a shared Respire clien
 
 ```sh
 dotnet add package Respire.DataProtection
+dotnet add package Microsoft.Extensions.DependencyInjection
 ```
 
 ## Usage

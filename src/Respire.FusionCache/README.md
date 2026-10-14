@@ -6,6 +6,7 @@ A FusionCache backplane and distributed locker that share an existing Respire cl
 
 ```sh
 dotnet add package Respire.FusionCache
+dotnet add package Microsoft.Extensions.DependencyInjection
 ```
 
 ## Usage
