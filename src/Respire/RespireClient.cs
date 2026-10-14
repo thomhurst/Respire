@@ -1665,6 +1665,21 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return (byte[])(object)value;
         }
 
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
+        {
+            return (ReadOnlyMemory<byte>)(object)value;
+        }
+
+        if (typeof(T) == typeof(Memory<byte>))
+        {
+            return (Memory<byte>)(object)value;
+        }
+
+        if (typeof(T) == typeof(ArraySegment<byte>))
+        {
+            return (ArraySegment<byte>)(object)value;
+        }
+
         if (typeof(T) == typeof(char))
         {
             return (char)(object)value;
@@ -1712,11 +1727,6 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return RespireValue.Null;
         }
 
-        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
-        {
-            return (ReadOnlyMemory<byte>)(object)value!;
-        }
-
         if (typeof(T) == typeof(float) && !float.IsFinite((float)(object)value!))
         {
             return (float)(object)value!;
@@ -1762,6 +1772,22 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         if (typeof(T) == typeof(byte[]))
         {
             return (T)(object)value.AsSpan().ToArray();
+        }
+
+        // Replies can borrow receive or cache storage. Return owned bytes just as byte[] reads do.
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
+        {
+            return (T)(object)new ReadOnlyMemory<byte>(value.AsSpan().ToArray());
+        }
+
+        if (typeof(T) == typeof(Memory<byte>))
+        {
+            return (T)(object)new Memory<byte>(value.AsSpan().ToArray());
+        }
+
+        if (typeof(T) == typeof(ArraySegment<byte>))
+        {
+            return (T)(object)new ArraySegment<byte>(value.AsSpan().ToArray());
         }
 
         if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))

@@ -112,11 +112,12 @@ A custom serializer must implement all four `IRespireSerializer` methods: generi
 
 What bypasses the serializer:
 
-- Typed `string`, `byte[]`, `char`, Boolean, and numeric primitives, including nullable forms with a value. Custom serializers do not control their encoding.
+- Typed `string`, `byte[]`, `ReadOnlyMemory<byte>`, `Memory<byte>`, `ArraySegment<byte>`, `char`, Boolean, and numeric primitives. Nullable scalar primitives with a value also bypass serialization. Custom serializers do not control their encoding.
+- Byte-memory values store only the selected slice as raw bytes, including empty slices. This applies to root and facet writes, batches, transactions, and `GetOrSetAsync<T>`. Typed reads of these byte-memory types return a copy that remains valid after the response is released.
 - Numbers use invariant Redis text. Booleans write `1`/`0` on every path (generic, raw, and collection members); reads also accept `true`/`false`.
 - Objects, enums, and other types use the configured serializer. Pass a `RespireValue` when an input must use raw Redis scalar conventions.
 
-Facets that take a single payload have a generic overload beside the `RespireValue` one: `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument typed as `RespireValue` selects the raw overload; anything else selects the generic one. On generic overloads, `ReadOnlyMemory<byte>`, `char`, and non-finite floating-point values keep their `RespireValue` encoding.
+Facets that take a single payload have a generic overload beside the `RespireValue` one: `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument typed as `RespireValue` selects the raw overload; anything else selects the generic one. Generic byte-memory and `char` writes keep their `RespireValue` encoding. Collection-member overloads also preserve raw non-finite floating-point values; generic string writes reject them.
 
 ## NativeAOT and trimming
 

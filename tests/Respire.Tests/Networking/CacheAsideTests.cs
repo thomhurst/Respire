@@ -13,6 +13,37 @@ public class CacheAsideTests
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(12);
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ByteMemoryFactoriesStoreRawSlicesAndReturnOwnedValues(bool bypassCache)
+    {
+        await using var server = new CacheServer();
+        await using var client = await server.ConnectAsync();
+        IRespireClient view = bypassCache ? client.WithoutClientCache() : client;
+        byte[] buffer = [99, 0, 255, 128, 13, 10, 98];
+        await CheckByteMemoryFactoryAsync(view, "readonly", (ReadOnlyMemory<byte>)buffer.AsMemory(1, 5));
+        await CheckByteMemoryFactoryAsync(view, "memory", buffer.AsMemory(1, 5));
+        await CheckByteMemoryFactoryAsync(view, "segment", new ArraySegment<byte>(buffer, 1, 5));
+        await CheckByteMemoryFactoryAsync(view, "empty", ReadOnlyMemory<byte>.Empty);
+    }
+
+    private static async Task CheckByteMemoryFactoryAsync<T>(IRespireClient client, string key, T value)
+    {
+        var expected = Serialization.ByteMemorySerializationTests.ToMemory(value).ToArray();
+        var created = await client.GetOrSetAsync<T>(key, _ => ValueTask.FromResult<T?>(value), Ttl);
+        var bytes = await client.GetBytesAsync(key);
+        await Assert.That(bytes).IsNotNull();
+        await Assert.That(bytes!.AsSpan().SequenceEqual(expected)).IsTrue();
+        await Assert.That(Serialization.ByteMemorySerializationTests.ToMemory(created).Span.SequenceEqual(expected)).IsTrue();
+        var existing = await client.GetOrSetAsync<T>(key, _ => throw new Exception("Factory must not run on a hit."), Ttl);
+        await Assert.That(Serialization.ByteMemorySerializationTests.ToMemory(existing).Span.SequenceEqual(expected)).IsTrue();
+        if (created is Memory<byte> mutable && mutable.Length > 0) mutable.Span[0] = 42;
+        if (created is ArraySegment<byte> segment && segment.Count > 0) segment[0] = 42;
+        await Assert.That(Serialization.ByteMemorySerializationTests.ToMemory(existing).Span.SequenceEqual(expected)).IsTrue();
+        await Assert.That((await client.GetBytesAsync(key))!.AsSpan().SequenceEqual(expected)).IsTrue();
+    }
+
+    [Test]
     [Arguments(false, 0)]
     [Arguments(false, 1)]
     [Arguments(false, 2)]
