@@ -28,8 +28,10 @@ GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
 ```
 
 `GeoSearchOrigin.FromMember` searches around an existing member. Use `GeoSearchShape.Box`
-for a rectangular area. `Count` limits results; `Any = true` lets the server stop early,
-so it does not guarantee the nearest matches. Distance uses the search shape's unit.
+for a rectangular area. `Count` limits results and must be positive. `Any = true`
+requires `Count` and `Sort = GeoSortOrder.Unsorted`; it cannot be combined with the
+ascending sort in the example above. It lets the server stop early, so it does not
+guarantee the nearest matches. Distance uses the search shape's unit.
 
 ## Commands and results
 
