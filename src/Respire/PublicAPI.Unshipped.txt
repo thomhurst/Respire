@@ -1,4 +1,18 @@
 #nullable enable
+Respire.RespireCommandContext
+Respire.RespireCommandContext.CancellationToken.get -> System.Threading.CancellationToken
+Respire.RespireCommandContext.Command.get -> string!
+Respire.RespireCommandHook
+Respire.RespireCommandHook.RespireCommandHook() -> void
+abstract Respire.RespireCommandHook.OnExecuting(Respire.RespireCommandContext! context) -> object?
+abstract Respire.RespireCommandHook.OnCompleted(Respire.RespireCommandContext! context, object? state, Respire.RespireCommandOutcome outcome, System.Exception? error) -> void
+Respire.RespireCommandOutcome
+Respire.RespireCommandOutcome.Succeeded = 0 -> Respire.RespireCommandOutcome
+Respire.RespireCommandOutcome.Failed = 1 -> Respire.RespireCommandOutcome
+Respire.RespireCommandOutcome.Canceled = 2 -> Respire.RespireCommandOutcome
+Respire.RespireCommandOutcome.Rejected = 3 -> Respire.RespireCommandOutcome
+Respire.RespireOptions.CommandHook.get -> Respire.RespireCommandHook?
+Respire.RespireOptions.CommandHook.init -> void
 Respire.RespirePipelineContext
 Respire.RespirePipelineContext.CancellationToken.get -> System.Threading.CancellationToken
 Respire.RespirePipelineContext.Commands.get -> System.Collections.Generic.IReadOnlyList<string!>!

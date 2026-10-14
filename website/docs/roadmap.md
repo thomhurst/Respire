@@ -139,8 +139,10 @@ Public interface compatibility and the post-2.0 extension policy are described i
   [command trace filters](integrations/observability.md#command-trace-filters) and a
   [Prometheus and Redis dashboard setup](integrations/observability.md#prometheus-and-the-published-redis-dashboard).
 - [Explicit pipeline and transaction hooks](guides/batches-and-transactions.md#observe-or-reject-explicit-executions)
-  for admission rejection, auditing, and completion timing. Individual command hooks remain tracked in
-  [#1685](https://github.com/thomhurst/Respire/issues/1685).
+  for admission rejection, auditing, and completion timing. [Logical command hooks](guides/command-hooks.md)
+  cover ordinary converted dispatch, single-key cached GET and non-interpolated Execute APIs.
+  Specialized coverage and the complete client-wide policy audit remain tracked in
+  [#1707](https://github.com/thomhurst/Respire/issues/1707) and [#1708](https://github.com/thomhurst/Respire/issues/1708).
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
   with a generated builder covering every client option and validation at host startup.
 - An [in-memory test server](guides/in-memory-testing.md) with controlled server time and `KEYS`/`SCAN` enumeration, [Redis/Valkey container fixtures](guides/testing-containers.md),

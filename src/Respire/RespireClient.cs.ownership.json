@@ -78,7 +78,7 @@
     {
       "Name": "cache-get-owner",
       "Role": "helper",
-      "Member": "Respire.RespireClient.CachedGetAsync`1(RespireKey,CancellationToken,ResponseConverter<RespireClient,TResult>,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Member": "Respire.RespireClient.CachedGetUnhookedAsync`1(RespireKey,CancellationToken,ResponseConverter<RespireClient,TResult>,bool,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Start before cache lookup and command construction unless supplied by the public route. Misses and peek conversion borrow the same failure-only owner through response disposal. Debug cached conversion preserves the explicit allocation-free struct."
     },

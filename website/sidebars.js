@@ -27,6 +27,7 @@ const sidebars = {
         'guides/async-only',
         'fundamentals/connections',
         'guides/connection-hooks',
+        'guides/command-hooks',
         'guides/unix-sockets',
         'fundamentals/values-and-serialization',
         'fundamentals/client-side-caching',

@@ -7,7 +7,7 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
-    internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
+    private ValueTask<TResult> ConvertResponseUnhookedAsync<TCommand, TState, TResult>(
         string operation, in TCommand command, CancellationToken ct, TState state,
         ResponseConverter<TState, TResult> converter, bool transferOwnership = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
@@ -26,7 +26,7 @@ public sealed partial class RespireClient
                 state.Command, state.Token, state.State, state.Converter, state.Transfer, observation));
     }
 
-    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
+    private ValueTask<string?> StringOrNullUnhookedAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty) return StringOrNullCoreAsync(operation, command, ct, observation);
@@ -39,7 +39,7 @@ public sealed partial class RespireClient
             static (state, observation) => state.Client.StringOrNullCoreAsync(state.Operation, state.Command, state.Token, observation));
     }
 
-    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
+    private ValueTask<byte[]?> BytesOrNullUnhookedAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty) return BytesOrNullCoreAsync(operation, command, ct, observation);
