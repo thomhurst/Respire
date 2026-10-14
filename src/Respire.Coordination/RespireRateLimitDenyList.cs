@@ -14,7 +14,7 @@ public sealed class RespireRateLimitDenyList
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Entry> _cache = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _recency = new();
-    private readonly Dictionary<string, TaskCompletionSource<bool>> _pending = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PendingRead> _pending = new(StringComparer.Ordinal);
     private long _generation;
 
     /// <summary>Creates a deny list stored in a dedicated Redis set, respecting client key prefixes.</summary>
@@ -72,7 +72,7 @@ public sealed class RespireRateLimitDenyList
         if (_cacheDuration == TimeSpan.Zero)
             return await ReadUncachedAsync(identity, cancellationToken).ConfigureAwait(false);
 
-        TaskCompletionSource<bool>? pending;
+        PendingRead? pending;
         long generation;
         long started;
         bool ownsRead;
@@ -90,13 +90,20 @@ public sealed class RespireRateLimitDenyList
                 RemoveEntry(identity);
             }
             generation = _generation;
-            ownsRead = !_pending.TryGetValue(identity, out pending);
+            if (_pending.TryGetValue(identity, out pending)
+                && _time.GetElapsedTime(pending.Started, started) >= _cacheDuration)
+            {
+                // Existing waiters keep their read, but later callers need a fresh membership decision.
+                _pending.Remove(identity);
+                pending = null;
+            }
+            ownsRead = pending is null;
             if (ownsRead)
             {
                 // Bound bookkeeping under distinct-identity floods. Excess reads remain caller-owned.
                 if (_pending.Count < _cacheCapacity)
                 {
-                    pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    pending = new(started);
                     _pending.Add(identity, pending);
                 }
             }
@@ -105,7 +112,7 @@ public sealed class RespireRateLimitDenyList
             return await ReadUncachedAsync(identity, cancellationToken).ConfigureAwait(false);
         // Start outside the gate: custom clients may run synchronous code before returning a ValueTask.
         if (ownsRead) _ = ReadAndPublishAsync(identity, pending, generation, started);
-        return await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await pending.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<bool> ReadUncachedAsync(string identity, CancellationToken cancellationToken)
@@ -115,7 +122,7 @@ public sealed class RespireRateLimitDenyList
         return denied;
     }
 
-    private async Task ReadAndPublishAsync(string identity, TaskCompletionSource<bool> pending,
+    private async Task ReadAndPublishAsync(string identity, PendingRead pending,
         long generation, long started)
     {
         try
@@ -145,18 +152,18 @@ public sealed class RespireRateLimitDenyList
                 }
                 RemovePending(identity, pending);
             }
-            pending.TrySetResult(denied);
+            pending.Completion.TrySetResult(denied);
         }
         catch (Exception exception)
         {
             lock (_gate) RemovePending(identity, pending);
-            pending.TrySetException(exception);
+            pending.Completion.TrySetException(exception);
             // Observe failures even when every waiter has cancelled.
-            _ = pending.Task.Exception;
+            _ = pending.Completion.Task.Exception;
         }
     }
 
-    private void RemovePending(string identity, TaskCompletionSource<bool> pending)
+    private void RemovePending(string identity, PendingRead pending)
     {
         if (_pending.TryGetValue(identity, out var current) && ReferenceEquals(current, pending))
             _pending.Remove(identity);
@@ -195,6 +202,12 @@ public sealed class RespireRateLimitDenyList
     private static TimeSpan ValidateDuration(TimeSpan duration)
         => duration >= TimeSpan.Zero && duration <= TimeSpan.FromMinutes(1)
             ? duration : throw new ArgumentOutOfRangeException(nameof(duration));
+
+    private sealed class PendingRead(long started)
+    {
+        public long Started { get; } = started;
+        public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     private readonly record struct Entry(bool Denied, long Started, LinkedListNode<string> Node);
 }

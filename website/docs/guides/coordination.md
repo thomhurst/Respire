@@ -674,7 +674,9 @@ The local cache holds at most `cacheCapacity` identities (default 1024). Both al
 memberships are cached for a fixed `cacheDuration` from the start of the read, default one second,
 maximum one minute. Hits do not extend expiry. Zero disables caching. When full, the cache removes
 expired entries first, then the least recently used entry.
-Concurrent misses for an identity share a Redis read; cancelling a caller only cancels its wait.
+Concurrent misses for an identity share a Redis read while its age is less than the cache duration;
+later callers start a fresh read once that window expires. Existing waiters still receive their
+original read's result. Cancelling a caller only cancels its wait.
 In-flight read bookkeeping is also bounded by `cacheCapacity`; excess distinct identities use
 independent, caller-cancellable reads without caching. Zero cache duration disables read sharing too.
 Invalidation detaches older reads, so subsequent calls cannot join a pre-invalidation read.

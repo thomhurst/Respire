@@ -220,6 +220,49 @@ public class RateLimitDenyListCacheTests
         await Assert.That(reads).IsEqualTo(5);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExpiredPendingReadCannotServeNewCallers(bool oldCompletesFirst)
+    {
+        var time = new ManualTime();
+        var old = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var current = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var list = new RespireRateLimitDenyList((_, _) => new ValueTask<bool>(++reads == 1 ? old.Task : current.Task),
+            (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 1);
+        var first = list.IsDeniedAsync("a").AsTask();
+        time.Advance(TimeSpan.FromMilliseconds(999));
+        var shared = list.IsDeniedAsync("a").AsTask();
+        await Assert.That(reads).IsEqualTo(1);
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        var second = list.IsDeniedAsync("a").AsTask();
+        try
+        {
+            await Assert.That(reads).IsEqualTo(2);
+            if (oldCompletesFirst)
+            {
+                old.SetResult(false);
+                await Assert.That(await first).IsFalse();
+            }
+            var third = list.IsDeniedAsync("a").AsTask();
+            await Assert.That(reads).IsEqualTo(2);
+            current.SetResult(true);
+            await Assert.That(await second).IsTrue();
+            await Assert.That(await third).IsTrue();
+            old.TrySetResult(false);
+            await Assert.That(await first).IsFalse();
+            await Assert.That(await shared).IsFalse();
+            await Assert.That(await list.IsDeniedAsync("a")).IsTrue();
+            await Assert.That(reads).IsEqualTo(2);
+        }
+        finally
+        {
+            old.TrySetResult(false);
+            current.TrySetResult(true);
+        }
+    }
+
     private sealed class ManualTime : TimeProvider
     {
         private long _timestamp;
