@@ -176,6 +176,34 @@ public sealed class RespireSearchGenerator : IIncrementalGenerator
             source.Append("        global::Respire.Search.RespireSearchVectorValidation.Validate").Append(json ? "Json" : "Hash")
                 .Append("(value.@").Append(property.Name).Append(", Fields.@").Append(property.Name).Append(".Vector!);\n");
         }
+        source.Append("    }\n");
+        var queryFields = "QueryFields";
+        while (properties.Any(property => property.Name == queryFields) || queryFields == fieldCollection) queryFields += "_";
+        source.Append("    public static global::Respire.Search.RespireTypedSearchQuery<").Append(queryFields)
+            .Append("> Query(string? indexName = null) => new(indexName ?? IndexName, new ").Append(queryFields).Append("());\n")
+            .Append("    public sealed class ").Append(queryFields).Append("\n    {\n        internal ").Append(queryFields).Append("() { }\n");
+        foreach (var property in properties)
+        {
+            var field = property.GetAttributes().First(candidate => candidate.AttributeClass?.ToDisplayString() == FieldAttribute);
+            var fieldType = (int)field.ConstructorArguments[0].Value!;
+            var selector = fieldType switch
+            {
+                0 => "RespireSearchTextField<" + queryFields + ">",
+                1 => "RespireSearchTagField<" + queryFields + ">",
+                2 => "RespireSearchNumericField<" + queryFields + ", " + (ScalarKind(property.Type) switch
+                {
+                    "Int32" => "int", "Int64" => "long", "Double" => "double", _ => "decimal",
+                }) + ">",
+                5 => "RespireSearchVectorField<" + queryFields + ">",
+                _ => "RespireSearchQueryField<" + queryFields + ">",
+            };
+            var hidesInheritedMember = objectType.GetMembers(property.Name)
+                .Any(member => member.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal
+                    && member is not IMethodSymbol { MethodKind: MethodKind.Destructor });
+            source.Append("        public ").Append(hidesInheritedMember ? "new " : "")
+                .Append("global::Respire.Search.").Append(selector).Append(" @").Append(property.Name)
+                .Append(" { get; } = new(").Append(name).Append(".Fields.@").Append(property.Name).Append(");\n");
+        }
         source.Append("    }\n}\n");
         if (!type.ContainingNamespace.IsGlobalNamespace) source.Append("}\n");
         return new GeneratedModel(type.ToDisplayString().Replace("@", "") + ".SearchSchema.g.cs", source.ToString(), null, "", default, default);

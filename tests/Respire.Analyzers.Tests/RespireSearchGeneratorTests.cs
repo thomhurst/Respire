@@ -50,7 +50,10 @@ public class RespireSearchGeneratorTests
         await Assert.That(diagnostics).IsEmpty();
         await Assert.That(source).Contains("IRespireSearchSchema<global::Model>");
         await Assert.That(source).Contains("Array.AsReadOnly");
+        await Assert.That(source).Contains("RespireTypedSearchQuery<QueryFields>");
+        await Assert.That(source).Contains("RespireSearchNumericField<QueryFields, int>");
         await Assert.That(source.Contains("Reflection")).IsFalse();
+        await Assert.That(source.Contains("System.Linq.Expressions")).IsFalse();
     }
 
     [Test]
@@ -100,7 +103,9 @@ public class RespireSearchGeneratorTests
             [RespireHash("m:{Id}"), RespireSearch("models", Prefixes = new[] { "m:" })]
             public partial record Model(string Id,
                 [property: RespireSearchField(RespireSearchFieldType.Text)] string Fields,
-                [property: RespireSearchField(RespireSearchFieldType.Text)] string SchemaFields);
+                [property: RespireSearchField(RespireSearchFieldType.Text)] string SchemaFields,
+                [property: RespireSearchField(RespireSearchFieldType.Tag)] string QueryFields,
+                [property: RespireSearchField(RespireSearchFieldType.Tag)] string QueryFields_);
             """);
         await Assert.That(valid).IsEmpty();
     }
@@ -125,6 +130,32 @@ public class RespireSearchGeneratorTests
             """);
         await Assert.That(valid).IsEmpty();
         await Assert.That(source).Contains("Fields.@event");
+    }
+
+    [Test]
+    public async Task QuerySelectorsCompileWithPropertyTypesAndRejectWrongNumericBounds()
+    {
+        const string model = """
+            [RespireJson("m:{Id}"), RespireSearch("models", Prefixes = new[] { "m:" })]
+            public partial record Model(string Id,
+                [property: RespireSearchField(RespireSearchFieldType.Numeric, Sortable = true)] decimal? Price,
+                [property: RespireSearchField(RespireSearchFieldType.Text, Alias = "display.name")] string Name);
+            """;
+        var (_, valid) = Generate(model + """
+            public class Queries
+            {
+                public object Build() => ModelSearchSchema.Query().Where(p => p.Price > 1.25m)
+                    .OrderBy(p => p.Price).Skip(2).Take(4).Select(p => new RespireSearchQueryField<ModelSearchSchema.QueryFields>[] { p.Name });
+            }
+            """);
+        await Assert.That(valid).IsEmpty();
+        var (_, invalid) = Generate(model + """
+            public class Queries
+            {
+                public object Build() => ModelSearchSchema.Query().Where(p => p.Price.GreaterThan("1.25"));
+            }
+            """);
+        await Assert.That(invalid.Any(item => item.Id == "CS1503")).IsTrue();
     }
 
     private static (string Source, Diagnostic[] Diagnostics) Generate(string declaration)

@@ -1,1 +1,41 @@
 #nullable enable
+Respire.Search.RespireSearchNumericField<TFields, TValue>
+Respire.Search.RespireSearchNumericField<TFields, TValue>.Between(TValue minimum, TValue maximum) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchNumericField<TFields, TValue>.EqualTo(TValue value) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchNumericField<TFields, TValue>.GreaterThan(TValue value) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchNumericField<TFields, TValue>.GreaterThanOrEqualTo(TValue value) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchNumericField<TFields, TValue>.LessThan(TValue value) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchNumericField<TFields, TValue>.LessThanOrEqualTo(TValue value) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchNumericField<TFields, TValue>.RespireSearchNumericField(Respire.Search.RespireSearchField! definition) -> void
+Respire.Search.RespireSearchQueryField<TFields>
+Respire.Search.RespireSearchQueryField<TFields>.Definition.get -> Respire.Search.RespireSearchField!
+Respire.Search.RespireSearchQueryField<TFields>.Name.get -> string!
+Respire.Search.RespireSearchQueryField<TFields>.RespireSearchQueryField(Respire.Search.RespireSearchField! definition) -> void
+Respire.Search.RespireSearchTagField<TFields>
+Respire.Search.RespireSearchTagField<TFields>.EqualTo(string! value) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchTagField<TFields>.RespireSearchTagField(Respire.Search.RespireSearchField! definition) -> void
+Respire.Search.RespireSearchTextField<TFields>
+Respire.Search.RespireSearchTextField<TFields>.Matches(string! text) -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireSearchTextField<TFields>.RespireSearchTextField(Respire.Search.RespireSearchField! definition) -> void
+Respire.Search.RespireSearchVectorField<TFields>
+Respire.Search.RespireSearchVectorField<TFields>.RespireSearchVectorField(Respire.Search.RespireSearchField! definition) -> void
+Respire.Search.RespireTypedSearchQuery<TFields>
+Respire.Search.RespireTypedSearchQuery<TFields>.AggregateAsync(Respire.Search.RespireSearchClient! client, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchAggregateResult!>
+Respire.Search.RespireTypedSearchQuery<TFields>.Expression.get -> Respire.Search.RespireSearchExpression
+Respire.Search.RespireTypedSearchQuery<TFields>.IndexName.get -> string!
+Respire.Search.RespireTypedSearchQuery<TFields>.OrderBy(System.Func<TFields!, Respire.Search.RespireSearchQueryField<TFields!>!>! selector, Respire.Search.RespireSearchSortDirection direction = Respire.Search.RespireSearchSortDirection.Ascending) -> Respire.Search.RespireTypedSearchQuery<TFields!>!
+Respire.Search.RespireTypedSearchQuery<TFields>.OrderByDescending(System.Func<TFields!, Respire.Search.RespireSearchQueryField<TFields!>!>! selector) -> Respire.Search.RespireTypedSearchQuery<TFields!>!
+Respire.Search.RespireTypedSearchQuery<TFields>.RespireTypedSearchQuery(string! indexName, TFields! fields) -> void
+Respire.Search.RespireTypedSearchQuery<TFields>.SearchAsync(Respire.Search.RespireSearchClient! client, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchResult!>
+Respire.Search.RespireTypedSearchQuery<TFields>.Select(System.Func<TFields!, Respire.Search.RespireSearchQueryField<TFields!>![]!>! selector) -> Respire.Search.RespireTypedSearchQuery<TFields!>!
+Respire.Search.RespireTypedSearchQuery<TFields>.Skip(int count) -> Respire.Search.RespireTypedSearchQuery<TFields!>!
+Respire.Search.RespireTypedSearchQuery<TFields>.Take(int count) -> Respire.Search.RespireTypedSearchQuery<TFields!>!
+Respire.Search.RespireTypedSearchQuery<TFields>.ToAggregateOptions() -> Respire.Search.RespireSearchAggregateOptions!
+Respire.Search.RespireTypedSearchQuery<TFields>.ToSearchQuery() -> Respire.Search.RespireSearchQuery!
+Respire.Search.RespireTypedSearchQuery<TFields>.ToVectorRequest(System.Func<TFields!, Respire.Search.RespireSearchVectorField<TFields!>!>! selector, System.ReadOnlyMemory<byte> vector, int count) -> Respire.Search.RespireVectorSearchRequest!
+Respire.Search.RespireTypedSearchQuery<TFields>.VectorSearchAsync(Respire.Search.RespireSearchClient! client, System.Func<TFields!, Respire.Search.RespireSearchVectorField<TFields!>!>! selector, System.ReadOnlyMemory<byte> vector, int count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Search.RespireSearchResult!>
+Respire.Search.RespireTypedSearchQuery<TFields>.Where(System.Func<TFields!, Respire.Search.RespireSearchExpression>! predicate) -> Respire.Search.RespireTypedSearchQuery<TFields!>!
+static Respire.Search.RespireSearchNumericField<TFields, TValue>.operator >(Respire.Search.RespireSearchNumericField<TFields, TValue>! field, TValue value) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchNumericField<TFields, TValue>.operator <(Respire.Search.RespireSearchNumericField<TFields, TValue>! field, TValue value) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchNumericField<TFields, TValue>.operator >=(Respire.Search.RespireSearchNumericField<TFields, TValue>! field, TValue value) -> Respire.Search.RespireSearchExpression
+static Respire.Search.RespireSearchNumericField<TFields, TValue>.operator <=(Respire.Search.RespireSearchNumericField<TFields, TValue>! field, TValue value) -> Respire.Search.RespireSearchExpression

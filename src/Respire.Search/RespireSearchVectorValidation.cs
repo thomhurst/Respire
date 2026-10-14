@@ -7,6 +7,11 @@ public static class RespireSearchVectorValidation
     public static void ValidateHash(byte[] value, RespireSearchVectorOptions options)
     {
         ArgumentNullException.ThrowIfNull(value);
+        ValidateHashLength(value.LongLength, options);
+    }
+
+    internal static void ValidateHashLength(long length, RespireSearchVectorOptions options)
+    {
         ArgumentNullException.ThrowIfNull(options);
         if (options.Dimensions <= 0) throw new ArgumentOutOfRangeException(nameof(options));
         var size = options.Type switch
@@ -17,8 +22,8 @@ public static class RespireSearchVectorValidation
             RespireSearchVectorType.Int8 or RespireSearchVectorType.UInt8 => 1,
             _ => throw new ArgumentOutOfRangeException(nameof(options)),
         };
-        if (value.LongLength != (long)options.Dimensions * size)
-            throw new ArgumentException("Hash vector byte length must match dimensions times element size.", nameof(value));
+        if (length != (long)options.Dimensions * size)
+            throw new ArgumentException("Hash vector byte length must match dimensions times element size.", "value");
     }
 
     /// <summary>Validates a FLOAT32 JSON vector, including finite values.</summary>

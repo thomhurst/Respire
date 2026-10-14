@@ -83,6 +83,31 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
                 RespireSearchQueryBuilder.Tag("category", "cache"), RespireSearchQueryBuilder.NumericRange("rating", 42L, 42L));
             var result = await client.Search.SearchAsync(index, new(filter));
             result.Documents.Should().ContainSingle().Which.Id.Should().Be(key);
+            if (json)
+                await AssertTypedQuery(SearchJsonModelSearchSchema.Query(index)
+                    .Where(f => f.Rating.GreaterThan(30)).Where(f => f.Category.EqualTo("cache"))
+                    .OrderByDescending(f => f.Rating).Skip(0).Take(1).Select(f => [f.Title, f.Rating]),
+                    f => f.Embedding);
+            else
+                await AssertTypedQuery(SearchHashModelSearchSchema.Query(index)
+                    .Where(f => f.Rating.GreaterThan(30)).Where(f => f.Category.EqualTo("cache"))
+                    .OrderByDescending(f => f.Rating).Skip(0).Take(1).Select(f => [f.Title, f.Rating]),
+                    f => f.Embedding);
+
+            async Task AssertTypedQuery<TFields>(RespireTypedSearchQuery<TFields> query,
+                Func<TFields, RespireSearchVectorField<TFields>> vectorField) where TFields : class
+            {
+                var typed = await query.SearchAsync(client.Search);
+                typed.Documents.Should().ContainSingle().Which.Id.Should().Be(key);
+                typed.Documents[0].Fields["title"].Should().Be("redis");
+                var aggregate = await query.AggregateAsync(client.Search);
+                aggregate.Rows.Should().ContainSingle();
+                aggregate.Rows[0]["title"].Should().Be("redis");
+                (await query.VectorSearchAsync(client.Search, vectorField, vector, 1))
+                    .Documents.Should().ContainSingle().Which.Id.Should().Be(key);
+                (await query.Where(_ => RespireSearchQueryBuilder.Tag("category", "missing"))
+                    .SearchAsync(client.Search)).Total.Should().Be(0);
+            }
             // Negative control: neither an absent tag nor an out-of-range number matches the document.
             (await client.Search.SearchAsync(index, new(RespireSearchQueryBuilder.Tag("category", "missing")))).Total.Should().Be(0);
             (await client.Search.SearchAsync(index, new(RespireSearchQueryBuilder.NumericRange("rating", 0L, 1L)))).Total.Should().Be(0);

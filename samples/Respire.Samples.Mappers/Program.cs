@@ -27,6 +27,13 @@ foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
 
 static void VerifyCodecs()
 {
+    var query = SearchJsonSearchSchema.Query().Where(f => f.Rating.GreaterThan(30))
+        .OrderBy(f => f.Rating).Skip(2).Take(5).Select(f => [f.Title]);
+    Check(query.Expression.Value == "@rating:[(30 +inf]", "Generated typed filter mismatch.");
+    Check(query.ToSearchQuery().Options!.ReturnFields[0] == "title", "Generated projection alias mismatch.");
+    Check(query.ToAggregateOptions().Stages.Count == 3, "Generated aggregation stages mismatch.");
+    Check(query.ToVectorRequest(f => f.Embedding, new byte[8], 5).Expression.Value ==
+        "(@rating:[(30 +inf])=>[KNN 5 @embedding $vector AS vector_score]", "Generated KNN filter mismatch.");
     Check(!JsonSerializer.IsReflectionEnabledByDefault, "Reflection-based JSON serialization must be disabled.");
     var options = new JsonSerializerOptions { TypeInfoResolver = JsonTypeInfoResolver.Combine() };
     try
@@ -185,11 +192,11 @@ internal partial record Scalars(string Id, [property: RespireFieldTtl(60000)] st
 [RespireHash("mapper-smoke:search-hash:{Id}"), RespireSearch("mapper-smoke-hash", Prefixes = ["mapper-smoke:search-hash:"])]
 internal partial record SearchHash(string Id,
     [property: RespireSearchField(RespireSearchFieldType.Text, Alias = "title")] string Title,
-    [property: RespireSearchField(RespireSearchFieldType.Numeric, Alias = "rating")] int Rating,
+    [property: RespireSearchField(RespireSearchFieldType.Numeric, Alias = "rating", Sortable = true)] int Rating,
     [property: RespireSearchField(RespireSearchFieldType.Vector, Alias = "embedding", Dimensions = 2)] byte[] Embedding);
 
 [RespireJson("mapper-smoke:search-json:{Id}"), RespireSearch("mapper-smoke-json", Prefixes = ["mapper-smoke:search-json:"])]
 internal partial record SearchJson(string Id,
     [property: RespireSearchField(RespireSearchFieldType.Text, Alias = "title")] string Title,
-    [property: RespireSearchField(RespireSearchFieldType.Numeric, Alias = "rating")] int Rating,
+    [property: RespireSearchField(RespireSearchFieldType.Numeric, Alias = "rating", Sortable = true)] int Rating,
     [property: RespireSearchField(RespireSearchFieldType.Vector, Alias = "embedding", Dimensions = 2)] float[] Embedding);
