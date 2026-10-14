@@ -222,6 +222,30 @@ public class RateLimiterUpdateTests
     }
 
     [Test]
+    public async Task CompositeConfigurationMismatchLeavesLimiterUsableAfterAdoption()
+    {
+        await using var client = await RespireClient.ConnectAsync(Redis.CreateOptions());
+        var factory = client.Coordination.RateLimiters;
+        var key = SharedRespireContainer.Key("update-mismatch");
+        RespireRateLimit[] old = [Define(0, 4)];
+        RespireRateLimit[] changed = [Define(0, 6)];
+        await using var updater = factory.Composite(key, old);
+        await using var follower = factory.Composite(key, old);
+        using var initial = await updater.AcquireAsync(3);
+        await Assert.That(initial.IsAcquired).IsTrue();
+        await factory.UpdateAsync(updater, changed);
+
+        // A second migration with the stale signature must reject before modifying shared usage.
+        await Assert.That(async () => await factory.UpdateAsync(follower, changed))
+            .Throws<RespireServerException>();
+        await factory.UpdateAsync(follower, changed, RespireRateLimitUpdateMode.Adopt);
+        using var remaining = await follower.AcquireAsync(3);
+        await Assert.That(remaining.IsAcquired).IsTrue();
+        using var exhausted = await updater.AcquireAsync();
+        await Assert.That(exhausted.IsAcquired).IsFalse();
+    }
+
+    [Test]
     public async Task CompositeMigratesAllComponentsAndOtherInstancesAdoptOnce()
     {
         await using var client = await RespireClient.ConnectAsync(Redis.CreateOptions());

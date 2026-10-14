@@ -433,6 +433,9 @@ rate-limiting configuration. Dispose each limiter when its owner stops; you own 
 Keep the same limiter and update it through the `RateLimiters` factory that owns it:
 
 ```csharp
+using Respire.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var factory = client.Coordination.RateLimiters;
 await using var limiter = factory.FixedWindow(
     "limits:checkout", permitLimit: 100, window: TimeSpan.FromMinutes(1), queueLimit: 20);
@@ -487,8 +490,10 @@ do not record a configuration signature. These rules apply equally to clients wi
 Cluster routing; migration uses the limiter's original binary key and the same single Cluster slot.
 
 Cancellation is honored while waiting to start migration. After the migration command is submitted,
-the update observes its result even if the cancellation token is canceled. If submission or its reply
-fails, the limiter fails closed and its queued requests fail: Redis may already have changed. Reconcile
+the update observes its result even if the cancellation token is canceled. An explicit migration
+validation rejection (a composite configuration mismatch or GCRA debt overflow) preserves the original
+local settings and queue because the script rejects these cases before writing. Other submission or
+reply failures close the limiter and fail its queued requests: Redis may already have changed. Reconcile
 shared state under the rollout barrier before constructing replacement instances; do not blindly retry
 `Migrate`. Cancellation before submission leaves the original settings usable. As with ordinary
 acquisitions, a disconnect or canceled in-flight command can have consumed permits on the server.

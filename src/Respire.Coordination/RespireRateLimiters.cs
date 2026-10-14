@@ -606,14 +606,22 @@ internal sealed partial class RedisRateLimiter : RateLimiter
 
     protected override void Dispose(bool disposing)
     {
-        _disposed = true;
+        lock (_queueGate)
+        {
+            _disposed = true;
+            _settingsChange?.TrySetResult();
+        }
         FailQueuedRequests(new ObjectDisposedException(nameof(RedisRateLimiter)));
         base.Dispose(disposing);
     }
 
     protected override ValueTask DisposeAsyncCore()
     {
-        _disposed = true;
+        lock (_queueGate)
+        {
+            _disposed = true;
+            _settingsChange?.TrySetResult();
+        }
         FailQueuedRequests(new ObjectDisposedException(nameof(RedisRateLimiter)));
         return ValueTask.CompletedTask;
     }

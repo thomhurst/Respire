@@ -132,6 +132,14 @@ internal sealed partial class RedisRateLimiter
                 }
             }
         }
+        catch (RespireServerException error) when (error.Message is
+            "ERR composite rate-limit configuration mismatch during update" or
+            "ERR migrated GCRA debt exceeds the TimeSpan range")
+        {
+            // These explicit validation replies precede every write. Other server errors can
+            // follow a partial script write (Redis does not roll scripts back), so fail closed.
+            throw;
+        }
         catch
         {
             if (migrationStarted)
@@ -207,6 +215,7 @@ internal sealed partial class RedisRateLimiter
                 if composite then
                     if (state[1] or 0) <= now then state = {} end
                     expiry = math.max(expiry, (state[1] or now) - now)
+                -- Standalone fixed windows retain their TTL; do not refresh it with PEXPIRE.
                 else return 1 end
             elseif kind == 1 then
                 if not composite then

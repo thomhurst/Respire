@@ -106,6 +106,89 @@ public class RateLimiterUpdateWireTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DisposalWakesAcquisitionsWaitingForUpdate(bool asyncDispose, bool migrationSubmitted)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            SuppressReply = _ => { received.TrySetResult(); return true; },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        var factory = client.Coordination.RateLimiters;
+        await using var limiter = factory.Gcra("key", 2, TimeSpan.FromHours(1));
+        var first = migrationSubmitted ? null : limiter.AcquireAsync().AsTask();
+        if (first is not null) await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(3, TimeSpan.FromHours(1))).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var later = limiter.AcquireAsync().AsTask();
+        await Assert.That(later.IsCompleted).IsFalse();
+
+        if (asyncDispose) await limiter.DisposeAsync();
+        else limiter.Dispose();
+
+        try
+        {
+            await Assert.That(async () => await later.WaitAsync(TimeSpan.FromSeconds(10)))
+                .Throws<ObjectDisposedException>();
+            await Assert.That(update.IsCompleted).IsFalse();
+            await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+        }
+        finally
+        {
+            // Disposal must not abandon the registered command or let migration overtake its reply.
+            await server.SendRawAsync(migrationSubmitted ? ":1\r\n"u8.ToArray() : Accepted);
+            if (first is not null)
+            {
+                (await first.WaitAsync(TimeSpan.FromSeconds(10))).Dispose();
+                await Assert.That(async () => await update.WaitAsync(TimeSpan.FromSeconds(10)))
+                    .Throws<ObjectDisposedException>();
+            }
+            else await update.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
+    [Arguments("ERR composite rate-limit configuration mismatch during update")]
+    [Arguments("ERR migrated GCRA debt exceeds the TimeSpan range")]
+    public async Task RejectedMigrationPreservesOldSettingsAndQueue(string error)
+    {
+        var denied = "*3\r\n:0\r\n:3600000\r\n:0\r\n"u8.ToArray();
+        var accept = false;
+        await using var server = new FakeRespServer(denied)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("EVAL ", StringComparison.Ordinal)
+                ? Encoding.UTF8.GetBytes($"-{error}\r\n") : Volatile.Read(ref accept) ? Accepted : denied,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var factory = client.Coordination.RateLimiters;
+        await using var limiter = factory.Gcra("key", 2, TimeSpan.FromHours(1), queueLimit: 3);
+        var queued = limiter.AcquireAsync().AsTask();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (limiter.GetStatistics()!.CurrentQueuedCount != 1) await Task.Delay(1, deadline.Token);
+        await Assert.That(async () => await factory.UpdateAsync(limiter, RespireRateLimit.Gcra(3, TimeSpan.FromHours(1))))
+            .Throws<RespireServerException>();
+        await Assert.That(queued.IsCompleted).IsFalse();
+        await Assert.That(limiter.GetStatistics()!.CurrentQueuedCount).IsEqualTo(1);
+        using var oversized = await limiter.AcquireAsync(3);
+        await Assert.That(oversized.IsAcquired).IsFalse();
+        Volatile.Write(ref accept, true);
+        // A later valid adoption wakes the retained queue.
+        await factory.UpdateAsync(limiter, RespireRateLimit.Gcra(4, TimeSpan.FromHours(1)), RespireRateLimitUpdateMode.Adopt);
+        using var lease = await queued.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(lease.IsAcquired).IsTrue();
+    }
+
+    [Test]
     public async Task FailedMigrationClosesLimiterAndFailsItsQueue()
     {
         var denied = "*3\r\n:0\r\n:3600000\r\n:0\r\n"u8.ToArray();
