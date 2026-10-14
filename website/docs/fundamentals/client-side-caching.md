@@ -208,7 +208,7 @@ and network before enabling it.
 
 ## Populate missing values with a factory
 
-`GetOrSetAsync<T>(key, factory, ttl, cancellationToken)` combines a tracked read with a conditional
+`GetOrSetAsync<T>(key, factory, expiry, cancellationToken)` combines a tracked read with a conditional
 cache-aside write. It requires `ClientSideCache` and Redis 7.0 or later for
 [`SET NX GET`](https://redis.io/docs/latest/commands/set/). Hits follow the normal cache,
 serialization, and key-prefix rules.
@@ -244,8 +244,13 @@ created and deleted before the `SET` runs, the computed value is stored.
   fails. Keep factories safe to run without a following write.
 - `IRespireClient` implementations other than `RespireClient` throw `NotSupportedException` unless
   they implement or forward the method.
-- **TTL** must be at least 1 ms, is truncated to whole milliseconds, and starts at the successful
-  server write. Hits and failed conditional writes do not extend it. `LocalExpiration` is separate.
+- **Expiry** uses `RespireExpiry`: pass a `TimeSpan` for a relative TTL or a `DateTimeOffset` /
+  `RespireExpiry.At(instant)` for an absolute deadline. Relative TTLs must be at least 1 ms, are
+  truncated to whole milliseconds, and start at the successful server write. Absolute deadlines
+  use PXAT and must be after the Unix epoch; Redis applies a past deadline immediately, even if
+  the factory has just produced the returned value. `None`, `Keep`, and `Persist` are rejected.
+  Hits and failed conditional writes do not extend expiry. `LocalExpiration` is separate.
+  Existing positional `TimeSpan` calls still compile; rename named `ttl:` arguments to `expiry:`.
 - **Null:** a factory that returns `null` does not write, and a later call can run it again. A stored
   `0`, empty string, or serialized JSON `null` counts as present.
 - Each caller gets its own deserialized result, never the factory's object. Use the same
@@ -255,12 +260,12 @@ created and deleted before the `SET` runs, the computed value is stored.
 
 Factory sharing follows `CoalesceConcurrentMisses`:
 
-- Enabled: calls on the same client with the same physical key, generic type, and millisecond TTL
+- Enabled: calls on the same client with the same physical key, generic type, and expiry form/value
   share the first factory, so different callbacks with that identity must be interchangeable.
   Prefix views share their root client's factories; different clients do not. An invalidation stops
   new callers from joining, so a second factory can start while the first still runs.
 - Disabled: each missed call runs its own factory.
-- A factory must not await `GetOrSetAsync` for the same key, type, and TTL.
+- A factory must not await `GetOrSetAsync` for the same key, type, and expiry.
 
 Cancellation and errors:
 

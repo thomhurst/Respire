@@ -4,6 +4,11 @@ namespace Respire;
 /// The remaining time to live reported by Redis, distinguishing a missing key or field from one
 /// that exists without an expiry — the two negative answers Redis folds into TTL's -2/-1 sentinels.
 /// </summary>
+/// <remarks>
+/// This result is a remaining duration. Use <see cref="RespireExpiryTime"/> for the server's absolute
+/// deadline and <see cref="RespireExpiry"/> to supply an expiry to a command. These results stay distinct
+/// because a remaining duration plus the client's clock cannot recover the server's exact deadline.
+/// </remarks>
 public readonly struct RespireTtl
 {
     private RespireTtl(bool exists, TimeSpan? timeToLive)

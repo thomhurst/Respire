@@ -101,7 +101,7 @@ public class LockCommandTests
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsTrue();
+        await Assert.That(await client.Locks.TryTakeAsync("resource", "owner", leaseDuration: TimeSpan.FromSeconds(30))).IsTrue();
         var queriedToken = await client.Locks.GetOwnerTokenAsync("resource");
         await Assert.That(queriedToken == (RespireLockToken)"owner").IsTrue();
         await Assert.That(await client.Locks.ResetExpiryAsync("resource", "owner", TimeSpan.FromSeconds(45))).IsTrue();

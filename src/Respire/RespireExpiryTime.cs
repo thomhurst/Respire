@@ -14,6 +14,11 @@ public enum ExpiryTimePrecision
 /// An absolute expiration time, distinguishing a missing key or field from one without an expiry.
 /// The default value represents a missing key or field.
 /// </summary>
+/// <remarks>
+/// This result preserves the server's absolute deadline. <see cref="RespireTtl"/> instead reports a
+/// remaining duration; converting it with the client's clock would lose the original deadline.
+/// Use <see cref="RespireExpiry"/> for command inputs.
+/// </remarks>
 public readonly struct RespireExpiryTime
 {
     private RespireExpiryTime(bool exists, long? unixTimeMilliseconds)

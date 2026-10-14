@@ -92,7 +92,24 @@ await redis.SetAsync("session:42", token, RespireExpiry.At(midnight));         /
 await redis.SetAsync("session:42", token, RespireExpiry.Keep);                 // KEEPTTL
 ```
 
-`RespireExpiry` is the expiry you *send*; `RespireTtl` (from `Keys.ExpiryAsync`) is the expiry Redis *reports*.
+Expiry inputs and results have different meanings:
+
+| Meaning | Type and parameter | Examples |
+| --- | --- | --- |
+| Expiry policy sent to Redis | `RespireExpiry expiry` | `SetAsync`, `ExpireAsync`, `GetOrSetAsync` |
+| Remaining lifetime reported by Redis | `RespireTtl` | `Keys.ExpiryAsync` (PTTL) |
+| Absolute expiry instant reported by Redis | `RespireExpiryTime` | `Keys.ExpiryTimeAsync` (PEXPIRETIME/EXPIRETIME) |
+| Relative lock lease | `TimeSpan leaseDuration` | `Locks.AcquireAsync`, `Locks.TryTakeAsync` |
+
+Both result types distinguish a missing key or field from a persistent one using `Exists` and
+`HasExpiry`. `RespireTtl.TimeToLive` is a duration; `RespireExpiryTime.UnixTimeMilliseconds` is the
+server's deadline. They remain separate because adding a TTL to the client's clock cannot recover
+the server's exact deadline. Expiry result types are never command inputs.
+
+Individual commands accept only meaningful expiry policies. Cache-aside writes require a positive
+relative expiry or a positive Unix-millisecond absolute instant. Lock leases are always relative
+durations so renewals can reset the lease from now. Operation `timeout` parameters, such as MIGRATE's
+I/O timeout, bound an operation rather than the lifetime of a key.
 
 ## Compare values before writing or deleting
 
