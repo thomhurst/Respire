@@ -20,6 +20,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) integration
   through the optional `Respire.Resilience` package, with a sample proving one retry layer.
 
+- [Tested Redis recipes](guides/recipes.mdx) for leaderboards, expiring sessions,
+  a transactional stream outbox, leader election, and environment-based connections.
+
 - [Source-generated logging with stable event IDs](integrations/log-events.md) across shipping
   packages, with duplicate-ID and logging-contract regression checks.
 

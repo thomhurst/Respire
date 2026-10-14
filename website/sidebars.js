@@ -3,6 +3,7 @@ const sidebars = {
   docsSidebar: [
     'intro',
     'getting-started',
+    'guides/recipes',
     'packages',
     'stackexchange-redis',
     {

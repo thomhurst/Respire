@@ -46,6 +46,18 @@ const config = {
   scripts: [{src: 'https://tluma.ai/widget.js', async: true}],
   clientModules: ['./src/client/resp-headings.js'],
   plugins: [
+    function recipeSources() {
+      return {
+        name: 'recipe-sources',
+        configureWebpack() {
+          return {
+            module: {
+              rules: [{test: /\.cs$/, resourceQuery: /^\?source$/, type: 'asset/source'}],
+            },
+          };
+        },
+      };
+    },
     [
       '@signalwire/docusaurus-plugin-llms-txt',
       {

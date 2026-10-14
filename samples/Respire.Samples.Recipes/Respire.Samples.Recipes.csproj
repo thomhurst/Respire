@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire/Respire.csproj" />
+    <ProjectReference Include="../../src/Respire.Coordination/Respire.Coordination.csproj" />
+  </ItemGroup>
+</Project>
