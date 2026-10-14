@@ -162,14 +162,16 @@ await using var redis = await RespireClient.ConnectAsync(
     "cache-a:6380,password=secret,ssl=true,defaultDatabase=2");
 ```
 
-Unknown options throw `ArgumentException`. Remove StackExchange.Redis-only options such as
-`abortConnect`. See [StackExchange.Redis connection strings](./fundamentals/connections#stackexchangeredis-connection-strings)
-for the supported options. URIs such as `rediss://user:pass@cache-a:6380/2` and `RespireOptions` also work.
+Azure portal strings including `abortConnect=False` work as pasted. Unsupported options
+are ignored with one warning per key per client when `LoggerFactory` is configured.
+Invalid mapped values throw `RespireConfigurationException`. See
+[StackExchange.Redis connection strings](./fundamentals/connections#stackexchangeredis-connection-strings)
+for mappings and explicit rejections. URIs such as `rediss://user:pass@cache-a:6380/2` and `RespireOptions` also work.
 
 | StackExchange.Redis | Respire |
 | --- | --- |
 | `ConnectionMultiplexer.ConnectAsync(config)` | `RespireClient.ConnectAsync(config)` |
-| `ConnectionMultiplexer.Connect(config)` with `abortConnect=false` | `RespireClient.Create(config)` without `abortConnect` (connects lazily) |
+| `ConnectionMultiplexer.Connect(config)` with `abortConnect=false` | `RespireClient.Create(config)` (connects lazily; accepts `abortConnect=false`) |
 | `multiplexer.GetDatabase()` | The client itself (`IRespireClient`) |
 | `multiplexer.GetDatabase(2)` | A separate client with `Database = 2` |
 | `multiplexer.GetSubscriber()` | `redis.SubscribeAsync` and `redis.PublishAsync` on the client |

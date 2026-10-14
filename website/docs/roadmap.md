@@ -38,7 +38,7 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 - [Physical connection hooks](guides/connection-hooks.md) for auditing, timing, and rejection,
   including reconnects, dedicated connections, Cluster, replicas, and Sentinel.
-- [Connections](fundamentals/connections.md) from Redis URIs, StackExchange.Redis connection
+- [Connections](fundamentals/connections.md) from Redis URIs, pasted Azure portal strings, StackExchange.Redis connection
   strings, or `RespireOptions`, with lazy or eager connect, TLS, and automatic pipelining.
 - [Independent liveness bounds](fundamentals/connections.md#independent-liveness-bounds) for
   receive progress and large borrowed `SET` writes.

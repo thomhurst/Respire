@@ -51,6 +51,8 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         value = value.Trim();
 
+        if (value.StartsWith("!@", StringComparison.Ordinal))
+            throw new RespireConfigurationException("Endpoint '!@name' uses a Linux abstract Unix socket, which Respire does not support. Use a filesystem socket (!/path) instead.");
         if (value[0] == '!') return UnixSocket(value[1..]);
         if (value.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
             || value.StartsWith("redis+unix://", StringComparison.OrdinalIgnoreCase))
@@ -458,6 +460,9 @@ public sealed record RespireOptions
     /// <summary>Optional factory for Respire diagnostic logs.</summary>
     public ILoggerFactory? LoggerFactory { get; init; }
 
+    // Retained through record copies so callers can attach a logger after parsing.
+    internal string[] IgnoredConnectionStringOptions { get; init; } = [];
+
     /// <summary>
     /// Enables TCP keepalive on every connection and sets how long a connection may sit idle
     /// before the kernel starts probing. Whole seconds, minimum one second. Null (the default)
@@ -752,7 +757,8 @@ public sealed record RespireOptions
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false),
     /// <c>allowAdmin</c> (true or false), <c>keyPrefix</c>, and <c>pubSubPrefix</c>.
-    /// In both forms, each prefix is percent-decoded once and used as an independent UTF-8 text namespace.
+    /// In both forms, keyPrefix and pubSubPrefix are percent-decoded once and used as independent UTF-8 text namespaces.
+    /// The comma-delimited channelPrefix alias is literal text.
     /// Empty disables prefixing; duplicate values use the last entry. Escape delimiters and literal percent signs.
     /// Use <c>rediss://</c> to enable TLS. Unix sockets accept <c>unix:///path</c>,
     /// <c>redis+unix:///path</c>, or <c>!/path</c> in comma-delimited strings.
@@ -761,8 +767,24 @@ public sealed record RespireOptions
     /// <c>sentinelSslHost</c> similarly enables Sentinel TLS unless <c>sentinelTls=false</c> is explicit.
     /// URI connections contain one endpoint. Comma-delimited seed lists preserve endpoint order;
     /// they never imply failover between independent standalone deployments.
+    /// Comma-delimited strings also map channelPrefix, keepAlive, connectRetry, responseTimeout,
+    /// configCheckSeconds, and maintNotifications. abortConnect=false accepts lazy Create semantics;
+    /// ConnectAsync always waits. Ignored keys log once per client through LoggerFactory.
     /// </summary>
+    /// <exception cref="RespireConfigurationException">A connection string setting or endpoint is invalid.</exception>
     public static RespireOptions Parse(string connectionString)
+    {
+        try
+        {
+            return ParseCore(connectionString);
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
+        {
+            throw new RespireConfigurationException($"Invalid connectionString: {exception.Message}", exception);
+        }
+    }
+
+    private static RespireOptions ParseCore(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         if (connectionString.TrimStart().StartsWith('!'))
@@ -816,7 +838,7 @@ public sealed record RespireOptions
         var path = uri.AbsolutePath.Trim('/');
         if (!useUnixSocket && path.Length > 0)
         {
-            database = ParseIntegerOption("database", path);
+            database = ParseNonNegativeIntegerOption("database", path);
         }
 
         string? clientName = null;
@@ -857,19 +879,19 @@ public sealed record RespireOptions
                     if (connections < 1)
                     {
                         throw new ArgumentOutOfRangeException(
-                            nameof(connectionString), "Connection count must be at least one.");
+                            nameof(connectionString), $"Option '{name}' must be at least one.");
                     }
 
                     break;
                 case "connecttimeoutms":
-                    connectTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    connectTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
                     break;
                 case "commandtimeoutms":
-                    commandTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    commandTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
                     break;
                 case "responsetimeoutms":
                 case "connectionidlereadtimeoutms":
-                    responseTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    responseTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
                     break;
                 case "protocol":
                     protocol = ParseProtocolOption(name, value);
@@ -878,7 +900,7 @@ public sealed record RespireOptions
                     gatheredWriteStallTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "db":
-                    database = ParseIntegerOption(name, value);
+                    database = ParseNonNegativeIntegerOption(name, value);
                     break;
                 case "allowadmin":
                     allowAdmin = ParseBooleanOption(name, value);
@@ -1052,6 +1074,14 @@ public sealed record RespireOptions
         var mode = new ConnectionStringMode();
         SslClientAuthenticationOptions? tlsOptions = null;
         string? sentinelSslHost = null;
+        TimeSpan? keepAlive = null;
+        TimeSpan? responseTimeout = null;
+        TimeSpan? topologyRefresh = TimeSpan.FromSeconds(60);
+        var maintenanceTimeout = TimeSpan.FromSeconds(30);
+        var maintenanceWindow = TimeSpan.FromSeconds(60);
+        RespireReconnectPolicy? reconnectPolicy = null;
+        var maintenance = RespireMaintenanceNotificationMode.Disabled;
+        var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var segments = connectionString.Split(
             ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1093,18 +1123,64 @@ public sealed record RespireOptions
                 case "pubsubprefix":
                     pubSubPrefix = Uri.UnescapeDataString(value);
                     break;
+                case "channelprefix":
+                    // StackExchange.Redis channel prefixes are literal, not URI-escaped.
+                    pubSubPrefix = value;
+                    break;
+                case "abortconnect":
+                    // Create is always lazy; ConnectAsync always waits for a connection.
+                    if (ParseBooleanOption(name, value)) ignored.Add(name);
+                    else ignored.Remove(name);
+                    break;
+                case "keepalive":
+                    var seconds = ParseIntegerOption(name, value);
+                    if (seconds < -1)
+                        throw new RespireConfigurationException($"Option '{name}' requires -1, zero, or a positive number of seconds.");
+                    keepAlive = seconds <= 0 ? null : TimeSpan.FromSeconds(seconds);
+                    break;
+                case "connectretry":
+                    reconnectPolicy = new RespireReconnectPolicy { MaxAttempts = ParsePositiveIntegerOption(name, value) };
+                    break;
+                case "responsetimeout":
+                    responseTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
+                    break;
+                case "configcheckseconds":
+                case "topologyrefreshseconds":
+                    var refreshSeconds = ParseIntegerOption(name, value);
+                    if (refreshSeconds < 0)
+                        throw new RespireConfigurationException($"Option '{name}' requires a non-negative number of seconds.");
+                    topologyRefresh = TimeSpan.FromSeconds(refreshSeconds);
+                    break;
+                case "maintnotifications":
+                    if (!Enum.TryParse(value, true, out maintenance) || !Enum.IsDefined(maintenance))
+                        throw new RespireConfigurationException($"Option '{name}' requires Disabled, Auto, or Enabled.");
+                    break;
+                case "maintrelaxedtimeout":
+                    maintenanceTimeout = ParseMaintenanceSeconds(name, value);
+                    break;
+                case "maintrelaxedwindowmax":
+                    maintenanceWindow = ParseMaintenanceSeconds(name, value);
+                    break;
+                case "proxy":
+                    if (!value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                        throw new RespireConfigurationException($"Option '{name}' only supports None; proxy command routing is not supported.");
+                    break;
+                case "tunnel":
+                    if (value.Length != 0)
+                        throw new RespireConfigurationException($"Option '{name}' is not supported; configure a direct Redis endpoint.");
+                    break;
                 case "defaultdatabase":
                 case "db":
-                    database = ParseIntegerOption(name, value);
+                    database = ParseNonNegativeIntegerOption(name, value);
                     break;
                 case "connecttimeout":
-                    connectTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    connectTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
                     break;
                 case "asynctimeout":
-                    asyncTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    asyncTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
                     break;
                 case "synctimeout":
-                    syncTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
+                    syncTimeout = TimeSpan.FromMilliseconds(ParsePositiveIntegerOption(name, value));
                     break;
                 case "protocol":
                     protocol = ParseProtocolOption(name, value);
@@ -1129,10 +1205,12 @@ public sealed record RespireOptions
                     allowAdmin = ParseBooleanOption(name, value);
                     break;
                 default:
-                    throw new ArgumentException(
-                        $"StackExchange.Redis connection string option '{name}' is not supported. " +
-                        "Use a redis:// URI or configure RespireOptions directly.",
-                        nameof(connectionString));
+                    if (name.StartsWith('$'))
+                        throw new RespireConfigurationException($"Option '{name}' remaps a Redis command, which Respire does not support.");
+                    if (name.Length == 0)
+                        throw new RespireConfigurationException("A connection string option key cannot be empty.");
+                    ignored.Add(name);
+                    break;
             }
         }
 
@@ -1157,6 +1235,9 @@ public sealed record RespireOptions
         var defaultPort = mode.ServiceName is null ? 6379 : 26379;
         var endpoints = endpointTexts.Select(endpoint => RespireEndpoint.Parse(endpoint, defaultPort)).ToList();
 
+        if (maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespProtocol.Resp2)
+            throw new RespireConfigurationException("Option 'maintNotifications=Enabled' requires RESP3; protocol=2 is incompatible.");
+
         return new RespireOptions
         {
             Endpoints = endpoints,
@@ -1179,6 +1260,38 @@ public sealed record RespireOptions
             CommandTimeout = asyncTimeout ?? syncTimeout ?? DefaultCommandTimeout,
             Protocol = protocol,
             AllowAdmin = allowAdmin,
+            TcpKeepAliveTime = keepAlive,
+            ConnectionIdleReadTimeout = responseTimeout,
+            ClusterTopologyRefreshInterval = topologyRefresh,
+            ReconnectPolicy = reconnectPolicy,
+            MaintenanceNotifications = maintenance,
+            MaintenanceRelaxedTimeout = maintenanceTimeout,
+            MaintenanceWindowTimeout = maintenanceWindow,
+            IgnoredConnectionStringOptions = ignored.ToArray(),
         }.ValidateAndSnapshot();
+    }
+
+    private static int ParsePositiveIntegerOption(string name, string value)
+    {
+        var result = ParseIntegerOption(name, value);
+        if (result <= 0)
+            throw new RespireConfigurationException($"Option '{name}' requires a positive 32-bit integer.");
+        return result;
+    }
+
+    private static int ParseNonNegativeIntegerOption(string name, string value)
+    {
+        var result = ParseIntegerOption(name, value);
+        if (result < 0)
+            throw new RespireConfigurationException($"Option '{name}' requires a non-negative 32-bit integer.");
+        return result;
+    }
+
+    private static TimeSpan ParseMaintenanceSeconds(string name, string value)
+    {
+        var seconds = ParsePositiveIntegerOption(name, value);
+        if (seconds > 86400)
+            throw new RespireConfigurationException($"Option '{name}' requires at most 86400 seconds (one day).");
+        return TimeSpan.FromSeconds(seconds);
     }
 }

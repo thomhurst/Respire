@@ -119,6 +119,11 @@ internal sealed class ClientCore : IAsyncDisposable
         }
         HedgedReads = options.HedgedReads is { } hedging ? new(hedging.MaximumExtraLoadPercent) : null;
         Logger = options.CreateLogger("Respire.RespireClient");
+        if (Logger is not null)
+        {
+            foreach (var key in options.IgnoredConnectionStringOptions)
+                ConfigurationLog.IgnoredConnectionStringOption(Logger, key);
+        }
         var endpoint = options.PrimaryEndpoint;
         ClientCache = options.ClientSideCache is { } cacheOptions
             ? new ClientSideCacheCoordinator(cacheOptions)

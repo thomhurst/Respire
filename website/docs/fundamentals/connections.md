@@ -126,6 +126,14 @@ The one-endpoint rule also applies to `RespireOptions.Endpoints` (throws `Respir
 | `defaultDatabase` (or `db`) | `Database`. |
 | `connectTimeout` | `ConnectTimeout` (ms). |
 | `asyncTimeout` (or `syncTimeout`) | `CommandTimeout` (ms); `asyncTimeout` wins. |
+| `abortConnect=false` | Accepted: `Create` connects lazily. `ConnectAsync` still waits for a connection. `abortConnect=true` is ignored with a warning; choose `ConnectAsync` for eager failure. |
+| `channelPrefix` | `PubSubPrefix`, as literal text (unlike the percent-decoded `pubSubPrefix` alias). Last prefix option wins. |
+| `keepAlive` | `TcpKeepAliveTime` in seconds; zero or -1 leaves the OS default. This configures TCP probes, not StackExchange.Redis's application-level heartbeat. |
+| `connectRetry` | Positive `ReconnectPolicy.MaxAttempts`. Limits recovery attempts; does not retry initial connection setup. Exhausted command slots stay unavailable until the client is recreated. Omit for unlimited recovery. |
+| `responseTimeout` | Positive `ConnectionIdleReadTimeout` (ms). Unlike StackExchange.Redis's obsolete option, this actively controls Respire's receive watchdog. |
+| `configCheckSeconds`, `topologyRefreshSeconds` | `ClusterTopologyRefreshInterval` in seconds; zero disables periodic refresh. Applies only to Cluster routing. Last entry wins. |
+| `maintNotifications` | `MaintenanceNotifications`: `Disabled`, `Auto`, or `Enabled` (case-insensitive). Enabled requires RESP3. |
+| `maintRelaxedTimeout`, `maintRelaxedWindowMax` | `MaintenanceRelaxedTimeout` and `MaintenanceWindowTimeout` in seconds, from 1 through 86400. |
 | `protocol` | `auto`, `2`/`resp2`, or `3`/`resp3`. |
 | `allowAdmin`, `keyPrefix`, `pubSubPrefix` | As for URIs. |
 | `cluster` (or `useCluster`) | Cluster mode. |
@@ -138,9 +146,21 @@ The one-endpoint rule also applies to `RespireOptions.Endpoints` (throws `Respir
 - `sslProtocols` and `checkCertificateRevocation` do not enable TLS and do nothing on plaintext.
 - In Cluster mode, `sslHost` applies to every node. Use it only when every certificate covers that name.
 - `sslHost`, `sentinelSslHost`, `sslProtocols`, and `checkCertificateRevocation` are not URI parameters; with `rediss://`, set `TlsOptions` and `SentinelTlsOptions` in code.
-- Booleans accept `true`/`false`, case-insensitive; other values throw `ArgumentException`.
+- Booleans accept `true`/`false`, case-insensitive; other values throw `RespireConfigurationException`.
 - Omitted ports default to 26379 for Sentinel, else 6379 (also with TLS). Bracket IPv6 to add a port: `[::1]:6380`.
-- Unknown options, such as `abortConnect`, throw `ArgumentException`. StackExchange.Redis `keepAlive` has no equivalent; set `TcpKeepAliveTime` for TCP keepalive probes.
+- Comma-delimited strings accept unknown and client-specific options. `configChannel`, `tiebreaker`, `resolveDns`, `version`, `setlib`, `highPriorityThreads`, `preserveAsyncOrder`, `writeBuffer`, `defaults`, `highIntegrity`, `sharedSubscriptionConnection`, `tcpKeepAlive`, `maintMovingEndpointType`, and `maintPostEventRelaxed` are ignored. Respire uses its own defaults and discovery behavior. URI query parameters remain strict.
+- Each ignored key logs warning `IgnoredConnectionStringOption` (141) once per client, without its value. Attach `LoggerFactory` to the parsed options before creating the client; parsing itself has no logger. Duplicate keys are deduplicated case-insensitively, and derived clients do not log again.
+- `proxy=None` and an empty `tunnel=` are accepted. Other proxy/tunnel values and `$COMMAND=...` remapping are rejected because silently ignoring them could change routing or commands. Linux abstract Unix sockets (`!@name`) are rejected with a filesystem-socket alternative (`!/path`).
+- All `RespireOptions.Parse` errors, including malformed URIs and endpoints, use `RespireConfigurationException` with the reason. Mapped-option errors identify the setting.
+
+For example, an Azure portal string can be used unchanged:
+
+```csharp
+var options = RespireOptions.Parse(
+    "example.redis.cache.windows.net:6380,password=secret,ssl=True,abortConnect=False")
+    with { LoggerFactory = loggerFactory };
+await using var redis = RespireClient.Create(options);
+```
 
 See the [StackExchange.Redis option reference](https://seredis.dev/Configuration.html) for original semantics.
 
