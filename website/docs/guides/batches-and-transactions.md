@@ -13,6 +13,7 @@ Set `RespireOptions.PipelineHook` to audit, time, or reject explicit batches and
 commits. Client views share the hook. The default is `null`: execution allocates no hook state
 and uses the existing async path without a hook wrapper.
 
+<!-- doc-test-tail-declaration: split-before=sealed class AuditPipelineHook -->
 ```csharp
 using System.Diagnostics;
 
