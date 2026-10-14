@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Serialization;
 
 namespace Respire;
@@ -207,10 +208,13 @@ public interface IRespireClient : IAsyncDisposable
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);
 
     /// <summary>Sends a raw command with cancellation followed by individual arguments. The result uses GC-owned storage; disposal is optional.</summary>
+    // Prefer the interpolated handler when a call has no separate raw arguments.
+    [OverloadResolutionPriority(-1)]
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, CancellationToken cancellationToken, params RespireValue[] args)
         => ExecuteAsync(command, args, cancellationToken: cancellationToken);
 
     /// <summary>Queues a raw command with cancellation followed by individual arguments and discards its reply.</summary>
+    [OverloadResolutionPriority(-1)]
     ValueTask ExecuteFireAndForgetAsync(RespireCommand command, CancellationToken cancellationToken, params RespireValue[] args)
         => ExecuteFireAndForgetAsync(command, args, cancellationToken);
 

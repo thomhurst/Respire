@@ -87,6 +87,8 @@ RespireExpiryTime[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
 
 `ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `ExpiryTimePrecision.Seconds` for `HEXPIRETIME`, which rounds fractional seconds up. Results follow input order, including repeated fields.
 
+For a single field's remaining lifetime, `Hashes.ExpiryAsync(key, field, cancellationToken)` returns one `RespireTtl`; a string field and a `RespireKey` field both select the scalar result. Pass a `string[]` or `ReadOnlySpan<string>` for the array result, even when the collection contains one field. Other collection commands such as `GetManyAsync` retain their array result when called with a single item and a cancellation token.
+
 | `RespireExpiryTime` member | Meaning |
 |---|---|
 | `Exists` | False for a missing field. |

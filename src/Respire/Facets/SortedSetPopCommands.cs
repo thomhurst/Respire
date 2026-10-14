@@ -13,7 +13,7 @@ public partial interface ISortedSetCommands
     ValueTask<RespireSortedSetPopManyResult?> PopManyAsync(RespireKey key, long count, bool descending, TimeSpan? waitFor, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireSortedSetPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, bool descending = false, CancellationToken cancellationToken = default);
+    ValueTask<RespireSortedSetPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -23,7 +23,7 @@ public partial interface ISortedSetCommands
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan waitFor, bool descending = false, CancellationToken cancellationToken = default);
+    ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default);
 
     /// <summary>Pops up to count entries from the first nonempty sorted set. Redis: ZMPOP / BZMPOP (7.0+).</summary>
     /// <remarks>Count must be positive. Keys must share a Cluster slot after prefixing. Omit waitFor for nonblocking execution.
@@ -64,7 +64,7 @@ internal sealed partial class SortedSetCommands
         => PopManyAsync([key], count, descending, waitFor, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireSortedSetPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, bool descending = false, CancellationToken cancellationToken = default)
+    public ValueTask<RespireSortedSetPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default)
         => PopAsync([key], waitFor, descending, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -76,7 +76,7 @@ internal sealed partial class SortedSetCommands
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan waitFor, bool descending = false, CancellationToken cancellationToken = default)
+    public ValueTask<RespireSortedSetPopResult<T>?> PopAsync<T>(RespireKey key, TimeSpan waitFor, bool descending, CancellationToken cancellationToken = default)
         => PopAsync<T>([key], waitFor, descending, cancellationToken);
 
 

@@ -27,8 +27,8 @@ public partial interface IHashCommands
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, string field, CancellationToken cancellationToken);
 
-    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, string field, CancellationToken cancellationToken);
+    /// <summary>Expiry state for one field, in milliseconds. Redis: HPTTL.</summary>
+    ValueTask<RespireTtl> ExpiryAsync(RespireKey key, string field, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken);
@@ -295,9 +295,9 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, string field, CancellationToken cancellationToken)
         => ExpiryTimeAsync(key, precision, [field], cancellationToken);
 
-    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, string field, CancellationToken cancellationToken)
-        => ExpiryAsync(key, [field], cancellationToken);
+    /// <summary>Expiry state for one field, in milliseconds. Redis: HPTTL.</summary>
+    public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, string field, CancellationToken cancellationToken)
+        => ExpiryAsync(key, (RespireKey)field, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken)

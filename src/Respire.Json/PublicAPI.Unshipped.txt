@@ -1,1 +1,2 @@
 #nullable enable
+Respire.Json.RespireJsonClient.MultiGetAsync<T>(Respire.RespireKey key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, Respire.Json.RespireJsonPath path = default(Respire.Json.RespireJsonPath), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Json.RespireJsonValue<T>[]?[]!>

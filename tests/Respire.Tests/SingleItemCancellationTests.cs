@@ -8,6 +8,53 @@ namespace Respire.Tests;
 public class SingleItemCancellationTests
 {
     [Test]
+    public async Task HashExpiryPreservesScalarAndCollectionResults()
+    {
+        await using var server = new FakeRespServer("*1\r\n:123\r\n"u8.ToArray());
+        await using var connection = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = connection.WithKeyPrefix("tenant:");
+        using var cancellation = new CancellationTokenSource();
+
+        RespireTtl scalar = await client.Hashes.ExpiryAsync("hash", "field", cancellation.Token);
+        RespireTtl binary = await client.Hashes.ExpiryAsync("hash", (RespireKey)"field", cancellation.Token);
+        RespireTtl[] collection = await client.Hashes.ExpiryAsync("hash", (ReadOnlySpan<string>)["field"], cancellation.Token);
+
+        await Assert.That(scalar).IsEqualTo(binary);
+        await Assert.That(collection).IsEquivalentTo([scalar]);
+        await Assert.That(server.ReceivedCommands.TakeLast(3)).IsEquivalentTo([
+            "HPTTL tenant:hash FIELDS 1 field", "HPTTL tenant:hash FIELDS 1 field",
+            "HPTTL tenant:hash FIELDS 1 field"]);
+    }
+
+    [Test]
+    public async Task InterpolatedCommandsKeepTheirTokenOverloads()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var connection = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = connection;
+        using var cancellation = new CancellationTokenSource();
+        var token = cancellation.Token;
+        var key = "key with spaces";
+
+        await connection.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", token);
+        await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", token);
+        await connection.ExecuteFireAndForgetAsync($"DEL {key}", token);
+        await client.ExecuteFireAndForgetAsync($"DEL {key}", token);
+        using var concrete = await connection.ExecuteAsync($"PING", cancellationToken: token);
+        using var contract = await client.ExecuteAsync($"PING", cancellationToken: token);
+        // A reply fences the preceding fire-and-forget writes.
+        await Assert.That(concrete.AsInteger()).IsEqualTo(1);
+        await Assert.That(contract.AsInteger()).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.TakeLast(6)).IsEquivalentTo([
+            "FUNCTION FLUSH", "FUNCTION FLUSH", "DEL key with spaces", "DEL key with spaces", "PING", "PING"]);
+        foreach (var arguments in server.ReceivedArguments.TakeLast(4).Take(2))
+        {
+            await Assert.That(arguments.Length).IsEqualTo(2);
+            await Assert.That(System.Text.Encoding.UTF8.GetString(arguments[1])).IsEqualTo(key);
+        }
+    }
+
+    [Test]
     public async Task SortedSetPopOverloadsPreserveExistingReturnTypes()
     {
         var compileControl = CompileSortedSetPopCalls;
@@ -16,13 +63,17 @@ public class SingleItemCancellationTests
 
     private static void CompileSortedSetPopCalls(ISortedSetCommands commands, CancellationToken token)
     {
+        ValueTask<SortedSetEntry?> scalar = commands.PopAsync("key", default);
+        ValueTask<SortedSetEntry<int>?> typedScalar = commands.PopAsync<int>("key", default);
         // Existing single-key calls must keep choosing ZPOPMIN/ZPOPMAX and their array result.
         ValueTask<SortedSetEntry[]> existing = commands.PopManyAsync("key", count: 2);
         ValueTask<SortedSetEntry<int>[]> typed = commands.PopManyAsync<int>("key", count: 2, cancellationToken: token);
         // ZMPOP/BZMPOP retain the key-bearing result and require their extra options explicitly.
         ValueTask<RespireSortedSetPopManyResult?> multi = commands.PopManyAsync("key", 2, false, null, token);
         ValueTask<RespireSortedSetPopManyResult<int>?> typedMulti = commands.PopManyAsync<int>("key", 2, false, TimeSpan.FromSeconds(1), token);
-        _ = (existing, typed, multi, typedMulti);
+        ValueTask<RespireSortedSetPopResult?> blocking = commands.PopAsync("key", TimeSpan.FromSeconds(1), false, token);
+        ValueTask<RespireSortedSetPopResult<int>?> typedBlocking = commands.PopAsync<int>("key", TimeSpan.FromSeconds(1), false, token);
+        _ = (scalar, typedScalar, existing, typed, multi, typedMulti, blocking, typedBlocking);
     }
 
     [Test]

@@ -1,1 +1,3 @@
 #nullable enable
+Respire.Probabilistic.RespireProbabilisticClient.CountMinMergeAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.Probabilistic.RespireCountMinMergeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Probabilistic.RespireProbabilisticClient.TDigestMergeAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.Probabilistic.RespireTDigestOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
