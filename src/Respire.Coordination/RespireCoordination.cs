@@ -126,6 +126,17 @@ public sealed class RespireCoordination
         RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
         => _client.Scripts.ExecuteLeaseAsync(script, [key], args, cancellationToken);
 
+    // A single-command script batch sends EVAL directly, including on a cold server, and
+    // applies the client prefix and Cluster routing through the typed scripting API.
+    internal async ValueTask<RespireResult> ExecuteCompositeRateLimitAsync(
+        RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
+    {
+        using var batch = _client.CreateBatch();
+        var pending = batch.Scripts.Evaluate(script, [key], args);
+        await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        return pending.Result;
+    }
+
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>
     /// <param name="count">Initial number of signals required to release waiters.</param>

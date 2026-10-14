@@ -10,6 +10,15 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
 {
     private readonly RespireCoordination _coordination = coordination ?? throw new ArgumentNullException(nameof(coordination));
 
+    /// <summary>Combines one to 32 limits on a dedicated key, consuming permits only when every limit allows them.</summary>
+    /// <remarks>Supports fixed windows, segmented sliding windows, and token buckets. Each Redis attempt uses one
+    /// EVAL, including on a cold server. RetryAfter is the longest component delay. All clients must use identical
+    /// ordered definitions. The key supports binary values and client prefixes and occupies one Cluster slot.
+    /// Use AcquireAsync; zero permits probe without writing, and requests above any component limit cannot succeed.</remarks>
+    public RateLimiter Composite(RespireKey key, IReadOnlyList<RespireRateLimit> limits, int queueLimit = 0,
+        QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
+        => new RedisRateLimiter(_coordination, key, limits, queueLimit, queueProcessingOrder);
+
     /// <summary>Creates a fixed-window rate limiter.</summary>
     /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
     /// returns an unacquired lease without <c>RetryAfter</c>, even when permits are free. A request for more permits than the
@@ -53,9 +62,9 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
             RedisRateLimiterKind.Gcra, emissionInterval);
 }
 
-internal enum RedisRateLimiterKind { FixedWindow, SlidingWindow, TokenBucket, Gcra }
+internal enum RedisRateLimiterKind { FixedWindow, SlidingWindow, TokenBucket, Gcra, Composite }
 
-internal sealed class RedisRateLimiter : RateLimiter
+internal sealed partial class RedisRateLimiter : RateLimiter
 {
     private static readonly TimeSpan MaxQueueDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
     private const long MaxExactLuaInteger = 9_007_199_254_740_991;
@@ -253,6 +262,7 @@ internal sealed class RedisRateLimiter : RateLimiter
             RedisRateLimiterKind.FixedWindow => FixedWindowScript,
             RedisRateLimiterKind.SlidingWindow => SlidingWindowScript,
             RedisRateLimiterKind.Gcra => GcraScript,
+            RedisRateLimiterKind.Composite => CompositeScript,
             _ => TokenBucketScript,
         };
         // Bounds the retry/expiry horizon and keeps timestamp arithmetic within Lua's exact integer range.
@@ -334,12 +344,15 @@ internal sealed class RedisRateLimiter : RateLimiter
     {
         RespireValue[] args = _kind switch
         {
+            RedisRateLimiterKind.Composite => CreateCompositeArguments(permitCount),
             RedisRateLimiterKind.FixedWindow => [_periodMs, permitCount, _permitLimit, _coordination.IncrexUnsupported ? 0 : 1],
             RedisRateLimiterKind.SlidingWindow => [_periodMs, _segments, permitCount, _permitLimit],
             RedisRateLimiterKind.Gcra => [_periodMs, _permitLimit, permitCount],
             _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount, _tokenBucketExpiryMs],
         };
-        using var result = await _coordination.ExecuteRateLimitScriptAsync(_script, _key, args, cancellationToken)
+        using var result = await (_kind == RedisRateLimiterKind.Composite
+            ? _coordination.ExecuteCompositeRateLimitAsync(_script, _key, args, cancellationToken)
+            : _coordination.ExecuteRateLimitScriptAsync(_script, _key, args, cancellationToken))
             .ConfigureAwait(false);
         var expectedCount = _kind == RedisRateLimiterKind.FixedWindow ? 4 : 3;
         if (result.Count != expectedCount) throw new RespireProtocolException("Rate-limit script returned an invalid response.");
