@@ -5,6 +5,7 @@ setup, batch execution, and transaction commits. Respire does not provide a seco
 set of synchronous command methods or a native blocking context.
 
 ```csharp
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var value = await client.GetStringAsync("key");
 await client.SetAsync("key", "value");
 ```
@@ -36,12 +37,17 @@ operation** code fix under `analyzers/dotnet/cs`. There is no extra analyzer pac
 to install. Keep analyzer assets enabled on the package reference.
 
 ```csharp
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
 // RESP009
 var value = client.GetStringAsync("key").Result;
 client.SetAsync("key", "value").AsTask().Wait();
 var other = client.GetStringAsync("other").ConfigureAwait(false).GetAwaiter().GetResult();
+```
 
-// After applying the fix inside an async method
+After applying the fix inside an async method:
+
+```csharp
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var value = await client.GetStringAsync("key");
 await client.SetAsync("key", "value").AsTask();
 var other = await client.GetStringAsync("other").ConfigureAwait(false);

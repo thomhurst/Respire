@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -24,14 +25,23 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
     {
         context.EnableConcurrentExecution();
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
-        context.RegisterOperationAction(Analyze, OperationKind.PropertyReference, OperationKind.Invocation);
+        context.RegisterCompilationStartAction(startContext =>
+        {
+            var unchangedLocals = new ConcurrentDictionary<ILocalSymbol, bool>(SymbolEqualityComparer.Default);
+            startContext.RegisterOperationAction(operationContext => Analyze(operationContext, unchangedLocals),
+                OperationKind.PropertyReference, OperationKind.Invocation);
+        });
     }
 
-    private static void Analyze(OperationAnalysisContext context)
+    private static void Analyze(OperationAnalysisContext context, ConcurrentDictionary<ILocalSymbol, bool> unchangedLocals)
     {
         var operand = GetAwaitable(context.Operation);
-        if (operand is not null && context.Operation.SemanticModel is { } model
-            && IsRespireOperation(operand, model, context.CancellationToken, 0))
+        if (operand is null) return;
+        for (var parent = context.Operation.Parent; parent is not null; parent = parent.Parent)
+            if (parent is INameOfOperation) return;
+
+        if (context.Operation.SemanticModel is { } model
+            && IsRespireOperation(operand, model, unchangedLocals, context.CancellationToken, 0))
             context.ReportDiagnostic(Diagnostic.Create(Rule, context.Operation.Syntax.GetLocation()));
     }
 
@@ -56,7 +66,8 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
             && named.ContainingNamespace.ToDisplayString() == "System.Runtime.CompilerServices"
             && named.Name is "ConfiguredTaskAwaitable" or "ConfiguredValueTaskAwaitable");
 
-    private static bool IsRespireOperation(IOperation operation, SemanticModel model, CancellationToken cancellationToken, int depth)
+    private static bool IsRespireOperation(IOperation operation, SemanticModel model,
+        ConcurrentDictionary<ILocalSymbol, bool> unchangedLocals, CancellationToken cancellationToken, int depth)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Bound alias traversal, including malformed or cyclic initializers.
@@ -64,38 +75,54 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
         switch (operation)
         {
             case IConversionOperation conversion when conversion.OperatorMethod is null:
-                return IsRespireOperation(conversion.Operand, model, cancellationToken, depth + 1);
+                return IsRespireOperation(conversion.Operand, model, unchangedLocals, cancellationToken, depth + 1);
             case IParenthesizedOperation parentheses:
-                return IsRespireOperation(parentheses.Operand, model, cancellationToken, depth + 1);
+                return IsRespireOperation(parentheses.Operand, model, unchangedLocals, cancellationToken, depth + 1);
             case IInvocationOperation call:
                 if (IsTask(call.Type) && IsRespireMethod(call.TargetMethod)) return true;
                 return call.TargetMethod.Name is "AsTask" or "ConfigureAwait" or "WaitAsync"
                     && IsTask(call.TargetMethod.ContainingType) && call.Instance is { } instance
-                    && IsRespireOperation(instance, model, cancellationToken, depth + 1);
+                    && IsRespireOperation(instance, model, unchangedLocals, cancellationToken, depth + 1);
             case ILocalReferenceOperation local:
                 if (local.Local.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax(cancellationToken)
                     is not VariableDeclaratorSyntax { Initializer.Value: { } initializer } declaration) return false;
                 if (initializer.SyntaxTree != model.SyntaxTree) return false;
-                // Only follow locals that cannot have been replaced or mutated through ref/out.
-                // Do not guess across assignments, fields, parameters, or helper methods.
-                var scope = declaration.Ancestors().FirstOrDefault(n => n is BlockSyntax or GlobalStatementSyntax);
-                if (scope is null) return false;
-                if (scope is GlobalStatementSyntax) scope = scope.Parent!;
-                foreach (var identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>())
+                if (!unchangedLocals.TryGetValue(local.Local, out var unchanged))
                 {
-                    if (identifier.Identifier.ValueText != local.Local.Name) continue;
-                    if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(identifier, cancellationToken).Symbol, local.Local)) continue;
-                    var node = (SyntaxNode)identifier;
-                    while (node.Parent is ParenthesizedExpressionSyntax) node = node.Parent;
-                    if (node.Parent is RefExpressionSyntax
-                        || node.Parent is ArgumentSyntax argument && argument.RefKindKeyword.RawKind != 0
-                        || node.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(node.Span))) return false;
+                    unchanged = IsUnchangedLocal(local.Local, declaration, model, cancellationToken);
+                    unchangedLocals.TryAdd(local.Local, unchanged);
                 }
+                if (!unchanged) return false;
                 return model.GetOperation(initializer, cancellationToken) is { } value
-                    && IsRespireOperation(value, model, cancellationToken, depth + 1);
+                    && IsRespireOperation(value, model, unchangedLocals, cancellationToken, depth + 1);
             default:
                 return false;
         }
+    }
+
+    private static bool IsUnchangedLocal(ILocalSymbol local, VariableDeclaratorSyntax declaration,
+        SemanticModel model, CancellationToken cancellationToken)
+    {
+        // Cache only mutation checks, not depth-dependent alias traversal results.
+        var scope = declaration.Ancestors().FirstOrDefault(n => n is BlockSyntax or GlobalStatementSyntax);
+        if (scope is null) return false;
+        if (scope is GlobalStatementSyntax) scope = scope.Parent!;
+        foreach (var identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (identifier.Identifier.ValueText != local.Name) continue;
+            if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(identifier, cancellationToken).Symbol, local)) continue;
+            var node = (SyntaxNode)identifier;
+            // Parentheses and tuple elements can wrap a write to the local. Member/index
+            // access cannot: a local used as an index is read, not reassigned.
+            while (node.Parent is ParenthesizedExpressionSyntax
+                || node.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax })
+                node = node.Parent is ArgumentSyntax ? node.Parent.Parent! : node.Parent;
+            if (node.Parent is RefExpressionSyntax
+                || node.Parent is ArgumentSyntax argument && argument.RefKindKeyword.RawKind != 0
+                || node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node) return false;
+        }
+        return true;
     }
 
     private static bool IsRespireMethod(IMethodSymbol method)

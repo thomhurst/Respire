@@ -7,6 +7,100 @@ namespace Respire.Analyzers.Tests;
 public class SyncOverAsyncAnalyzerTests
 {
     [Test]
+    public Task IgnoresNameOfResult() => Verify.VerifyAsync("""
+        using Respire;
+        class C
+        {
+            void M(RespireClient client)
+            {
+                var task = client.ExecuteAsync("PING");
+                var name = nameof(task.Result);
+                var result = {|RESP009:task.Result|};
+            }
+        }
+        """);
+
+    [Test]
+    public Task ReportsLocalReadsInAssignmentTargets() => Verify.VerifyAsync("""
+        using System.Collections.Generic;
+        using Respire;
+        class C
+        {
+            void M(RespireClient client, Dictionary<string, string> dictionary)
+            {
+                var task = client.ExecuteAsync("PING");
+                dictionary[{|RESP009:task.Result|}.AsString()] = "value";
+                dictionary[{|RESP009:task.Result|}.AsString()] += "suffix";
+                (dictionary[{|RESP009:task.Result|}.AsString()], dictionary["other"]) = ("one", "two");
+                var result = {|RESP009:task.Result|};
+            }
+        }
+        """);
+
+    [Test]
+    public Task IgnoresDeconstructionReassignedLocal() => Verify.VerifyAsync("""
+        using Respire;
+        class C
+        {
+            void M(RespireClient client)
+            {
+                var task = client.ExecuteAsync("PING");
+                var other = client.ExecuteAsync("PONG");
+                (task, other) = (other, task);
+                var result = task.Result;
+                result = other.Result;
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task FixAllAddsAsyncOnce(bool localFunction)
+    {
+        var source = """
+            using System.Threading.Tasks;
+            using Respire;
+            class C
+            {
+                Task M(RespireClient client)
+                {
+                    var first = {|RESP009:client.ExecuteAsync("PING").Result|};
+                    var second = {|RESP009:client.ExecuteAsync("PONG").Result|};
+                    throw new System.Exception();
+                }
+            }
+            """;
+        var fixedSource = """
+            using System.Threading.Tasks;
+            using Respire;
+            class C
+            {
+                async Task M(RespireClient client)
+                {
+                    var first = await client.ExecuteAsync("PING");
+                    var second = await client.ExecuteAsync("PONG");
+                    throw new System.Exception();
+                }
+            }
+            """;
+        if (localFunction)
+        {
+            source = NestInOuter(source);
+            fixedSource = NestInOuter(fixedSource);
+        }
+        return VerifyFix.VerifyAsync(source.ReplaceLineEndings(), fixedSource.ReplaceLineEndings());
+
+        static string NestInOuter(string text)
+        {
+            var lines = text.Split('\n');
+            return string.Join("\n", lines.Take(4)) + "\n    void Outer()\n    {\n"
+                + string.Join("\n", lines.Skip(4).Take(lines.Length - 5).Select(line => "    " + line))
+                + "\n    }\n}";
+        }
+    }
+
+    [Test]
     [Arguments("client.ExecuteAsync(\"PING\").Result")]
     [Arguments("client.ExecuteAsync(\"PING\").AsTask().Result")]
     [Arguments("client.ExecuteAsync(\"PING\").GetAwaiter().GetResult()")]
