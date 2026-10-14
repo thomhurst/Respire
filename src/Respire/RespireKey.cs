@@ -13,7 +13,7 @@ namespace Respire;
 /// the command completes unless the receiving API explicitly snapshots or serializes it earlier.
 /// A scan key with a split UTF-16 scalar retains its namespace and boundary identity; it is not
 /// interchangeable with an unprefixed key containing UTF-8 replacement bytes.</remarks>
-public readonly struct RespireKey : IEquatable<RespireKey>
+public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormattable, IUtf8SpanFormattable, ISpanParsable<RespireKey>
 {
     private readonly string? _string;
     private readonly ReadOnlyMemory<byte> _bytes;

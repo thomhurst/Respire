@@ -284,3 +284,17 @@ Respire.RespireBatch.DisposeAsync() -> System.Threading.Tasks.ValueTask
 Respire.RespireClient.ExecuteLeaseAsync(Respire.RespireCommand command, params Respire.RespireValue[]! args) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.RespireClient.ExecuteLeaseAsync(Respire.RespireCommand command, Respire.RespireValue[]! args, Respire.RespireCommandFlags flags = Respire.RespireCommandFlags.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.RespireClient.ExecuteLeaseAsync(Respire.RespireCommandInterpolatedStringHandler command, Respire.RespireCommandFlags flags = Respire.RespireCommandFlags.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
+Respire.RespireKey.ToString(string? format, System.IFormatProvider? formatProvider) -> string!
+Respire.RespireKey.TryFormat(System.Span<byte> utf8Destination, out int bytesWritten, System.ReadOnlySpan<char> format = default(System.ReadOnlySpan<char>), System.IFormatProvider? provider = null) -> bool
+Respire.RespireKey.TryFormat(System.Span<char> destination, out int charsWritten, System.ReadOnlySpan<char> format = default(System.ReadOnlySpan<char>), System.IFormatProvider? provider = null) -> bool
+Respire.RespireValue.ToString(string? format, System.IFormatProvider? formatProvider) -> string!
+Respire.RespireValue.TryFormat(System.Span<byte> utf8Destination, out int bytesWritten, System.ReadOnlySpan<char> format = default(System.ReadOnlySpan<char>), System.IFormatProvider? provider = null) -> bool
+Respire.RespireValue.TryFormat(System.Span<char> destination, out int charsWritten, System.ReadOnlySpan<char> format = default(System.ReadOnlySpan<char>), System.IFormatProvider? provider = null) -> bool
+static Respire.RespireKey.Parse(System.ReadOnlySpan<char> s, System.IFormatProvider? provider) -> Respire.RespireKey
+static Respire.RespireKey.Parse(string! s, System.IFormatProvider? provider) -> Respire.RespireKey
+static Respire.RespireKey.TryParse(System.ReadOnlySpan<char> s, System.IFormatProvider? provider, out Respire.RespireKey result) -> bool
+static Respire.RespireKey.TryParse(string? s, System.IFormatProvider? provider, out Respire.RespireKey result) -> bool
+static Respire.RespireValue.Parse(System.ReadOnlySpan<char> s, System.IFormatProvider? provider) -> Respire.RespireValue
+static Respire.RespireValue.Parse(string! s, System.IFormatProvider? provider) -> Respire.RespireValue
+static Respire.RespireValue.TryParse(System.ReadOnlySpan<char> s, System.IFormatProvider? provider, out Respire.RespireValue result) -> bool
+static Respire.RespireValue.TryParse(string? s, System.IFormatProvider? provider, out Respire.RespireValue result) -> bool

@@ -10,7 +10,8 @@ internal static class Program
     public static Task<int> Main(string[] args)
     {
         // Enter probes after module initialization, before the runner changes pool capacity.
-        var probeResult = DispatchResponseObservationTests.RunIsolatedNativeDispatchProbe()
+        var probeResult = ArgumentFormattingTests.RunIsolatedAllocationProbe()
+            ?? DispatchResponseObservationTests.RunIsolatedNativeDispatchProbe()
             ?? StandaloneCircuitAllocationTests.RunIsolatedAllocationProbe()
             ?? StandaloneReplicaReadyTests.RunIsolatedAllocationProbe()
             ?? ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()

@@ -14,7 +14,7 @@ namespace Respire;
 /// Input-only: command results come back as plain .NET types (<c>string?</c>, <c>long</c>, …),
 /// never as this struct.
 /// </summary>
-public readonly struct RespireValue : IEquatable<RespireValue>
+public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFormattable, IUtf8SpanFormattable, ISpanParsable<RespireValue>
 {
     private const int StackallocThreshold = 256;
 

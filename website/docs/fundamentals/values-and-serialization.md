@@ -28,6 +28,48 @@ Both use value equality. `RespireValue` compares the exact bulk-string payload s
 | `TimeSpan` | Invariant constant `c` format |
 | `char` | One-character text |
 
+## Span formatting and parsing
+
+Both types implement `ISpanFormattable`, `IUtf8SpanFormattable`, and `ISpanParsable<T>`.
+Interpolating existing keys or values into a character span or UTF-8 destination does not
+allocate in optimized steady state, including binary and prefixed keys:
+
+```csharp
+using System.Text.Unicode;
+using Respire;
+
+RespireKey key = "counter";
+RespireValue value = 42;
+Span<char> text = stackalloc char[64];
+Span<byte> utf8 = stackalloc byte[64];
+bool textFits = text.TryWrite($"{key}={value}", out int charsWritten);
+bool utf8Fits = Utf8.TryWrite(utf8, $"{key}={value}", out int bytesWritten);
+```
+
+Direct `TryFormat` calls return `false` and a written count of zero if the destination is
+too small; its contents may have changed. The default format and `G`/`g` produce the same
+text as `ToString()`. Other formats throw `FormatException`. Format providers are ignored:
+numbers retain invariant Redis formatting, booleans use `1`/`0`, and `RespireValue.Null`
+formats as empty text. `string.Create(provider, $"{key}={value}")` also uses span formatting,
+but still allocates the resulting string.
+
+Formatting is for text and logging, not binary serialization. Binary inputs decode as UTF-8
+with replacement characters for invalid sequences. UTF-8 formatting encodes that text;
+commands continue to send the original binary bytes unchanged.
+
+`Parse` and `TryParse` accept all text verbatim, including whitespace and empty strings;
+they do not infer numeric types or a null sentinel. Span parsing copies the text into an
+owned string. String parsing reuses its immutable input. A null string throws
+`ArgumentNullException` from `Parse`; `TryParse` returns `false` with `RespireKey.Empty`
+or `RespireValue.Null`.
+
+Collection arguments already accept collection expressions through arrays and
+`ReadOnlySpan<T>`. `RespireResult` is a disposable view of response buffers and has no
+collection builder. Numeric increment overloads retain `long` and `double` because they
+select different Redis commands and result types; bitfield operands remain `long` with
+explicit field width and overflow options. A general `INumber<T>` overload would admit
+types Redis cannot represent without narrowing or a separate conversion policy.
+
 ## Typed output
 
 ```csharp

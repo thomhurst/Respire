@@ -1,0 +1,34 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireKey.ToString(string?,IFormatProvider?):string",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.TryFormat(Span<char>,out int,ReadOnlySpan<char>,IFormatProvider?):bool",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.TryFormat(Span<byte>,out int,ReadOnlySpan<char>,IFormatProvider?):bool",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.Parse(string,IFormatProvider?):RespireKey",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.Parse(ReadOnlySpan<char>,IFormatProvider?):RespireKey",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.TryParse(string?,IFormatProvider?,out RespireKey):bool",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireKey.TryParse(ReadOnlySpan<char>,IFormatProvider?,out RespireKey):bool",
+      "Reason": "Local text formatting or parsing; no command dispatch."
+    }
+  ]
+}
