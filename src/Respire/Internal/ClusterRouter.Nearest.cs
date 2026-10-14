@@ -143,7 +143,7 @@ internal sealed partial class ClusterRouter
                 samplingDeadline: deadline, previousFailure: lastError, excluded: excluded).ConfigureAwait(false);
         }
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for Nearest reads.",
-            lastError ?? new InvalidOperationException("The read topology changed during selection."));
+            lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
     }
 
     private void StartNearestReplicaDiscovery(int slot)

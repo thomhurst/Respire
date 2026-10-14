@@ -142,8 +142,8 @@ internal sealed partial class ClusterRouter
         var detail = attempted == 0 ? "no replica available" : "no healthy replica";
         var message = $"Redis Cluster slot {slot} has {detail} for read routing.";
         throw lastError is null
-            ? new RespireConnectionException(message)
-            : new RespireConnectionException(message, lastError);
+            ? new RespireConnectionException(message) { HasAmbiguousEndpoint = true }
+            : new RespireConnectionException(message, lastError) { HasAmbiguousEndpoint = true };
     }
 
     private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(

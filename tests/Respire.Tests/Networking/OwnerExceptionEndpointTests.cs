@@ -58,12 +58,17 @@ public class OwnerExceptionEndpointTests
     public async Task ClusterRecoveryPublishesOriginalTimeoutAfterSeedFailure()
     {
         var source = new RespireEndpoint("source.example");
-        var timeout = new RespireTimeoutException("CONNECT", TimeSpan.FromSeconds(1));
+        var timeouts = new List<RespireTimeoutException>();
         var options = new RespireOptions
         {
             UseCluster = true, Endpoints = [source, new("fallback.example"), new("unused.example")],
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
-            TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(timeout),
+            TestingStreamFactory = (_, _, _) =>
+            {
+                var timeout = new RespireTimeoutException("CONNECT", TimeSpan.FromSeconds(1));
+                timeouts.Add(timeout);
+                return ValueTask.FromException<Stream>(timeout);
+            },
         };
         await using var client = RespireClient.Create(options);
         var router = client.Core.Cluster!;
@@ -75,11 +80,13 @@ public class OwnerExceptionEndpointTests
         var error = await Assert.That(async () => await router.EnsureConnectedAsync(
             default, discovery: null, observation: default)).ThrowsExactly<RespireReconnectLimitException>();
         var notification = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(notification.Error).IsSameReferenceAs(timeout);
+        await Assert.That(notification.Error).IsSameReferenceAs(timeouts[1]);
         await Assert.That(notification.Endpoint).IsEqualTo(options.Endpoints[1]);
-        var timeouts = Causes(error!).OfType<RespireTimeoutException>().ToArray();
-        await Assert.That(timeouts.Length).IsEqualTo(2);
-        await Assert.That(timeouts.All(cause => ReferenceEquals(cause, timeout))).IsTrue();
+        var retained = Causes(error!).OfType<RespireTimeoutException>().ToArray();
+        await Assert.That(retained.Length).IsEqualTo(2);
+        await Assert.That(retained[0]).IsSameReferenceAs(timeouts[0]);
+        await Assert.That(retained[1]).IsSameReferenceAs(timeouts[1]);
+        await Assert.That(retained.Select(cause => cause.Endpoint!.Value)).IsEquivalentTo(options.Endpoints.Take(2));
     }
 
     [Test]

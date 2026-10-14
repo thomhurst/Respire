@@ -29,7 +29,7 @@ public class RespireException : Exception
     // deferred conversions use their captured endpoint. Observation completion is the fallback.
     internal static void PopulateEndpoint(Exception error, RespireEndpoint? endpoint)
     {
-        if (error is RespireException failure && endpoint.HasValue
+        if (error is RespireException { HasAmbiguousEndpoint: false } failure && endpoint.HasValue
             && Volatile.Read(ref failure._endpoint) is null)
         {
             Interlocked.CompareExchange(ref failure._endpoint, new EndpointHolder(endpoint.Value), null);
@@ -37,6 +37,10 @@ public class RespireException : Exception
     }
 
     internal bool IsCommandNotSubmitted { get; set; }
+
+    // Candidate-selection failures have no single origin, even when observation still
+    // remembers the last candidate. Keep their individual endpoints on the inner causes.
+    internal bool HasAmbiguousEndpoint { get; init; }
 
     // Only a transparent wrapper opts into classification through its cause.
     // Meaningful wrappers retain their own category and canonical exception type.

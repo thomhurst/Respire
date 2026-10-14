@@ -128,7 +128,7 @@ internal sealed partial class ReadEndpointRouter
             lastError = ConnectionFailures.Combine(original, lastError);
         }
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
-            lastError ?? new InvalidOperationException("The read topology changed during selection."));
+            lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
     }
 
     private async ValueTask<RespireEndpoint[]> GetReplicaEndpointsAsync(CancellationToken cancellationToken,

@@ -7,6 +7,24 @@ namespace Respire.Tests;
 public class ExceptionEndpointPublicationTests
 {
     [Test]
+    public async Task CandidateSelectionFailureKeepsUnknownEndpointThroughObservation()
+    {
+        var endpoint = new RespireEndpoint("last-candidate", 6380);
+        var cause = new RespireConnectionException("candidate failed") { Endpoint = endpoint };
+        var error = new RespireConnectionException("selection failed", cause) { HasAmbiguousEndpoint = true };
+        var owner = Internal.DispatchResponseSource<long>.Start();
+        var observation = owner.Observation;
+        observation.UseEndpoint(endpoint);
+        observation.Handled(error);
+        owner.Fail(error);
+
+        await Assert.That(error.Endpoint).IsNull();
+        await Assert.That(error.InnerException).IsSameReferenceAs(cause);
+        await Assert.That(cause.Endpoint).IsEqualTo((RespireEndpoint?)endpoint);
+        await Assert.That(Internal.ConnectionFailures.AtEndpoint(error, endpoint)).IsSameReferenceAs(error);
+    }
+
+    [Test]
     public async Task PopulationDoesNotTakeThePublicExceptionLock()
     {
         var error = new RespireConnectionException("shared failure");

@@ -58,7 +58,9 @@ internal static class SentinelResolver
             }
         }
         const string message = "Sentinel replica discovery failed for every configured Sentinel endpoint. Check Sentinel reachability, credentials, and the service name.";
-        throw failures is null ? new RespireConnectionException(message) : new RespireConnectionException(message, failures);
+        throw failures is null
+            ? new RespireConnectionException(message) { HasAmbiguousEndpoint = true }
+            : new RespireConnectionException(message, failures) { HasAmbiguousEndpoint = true };
     }
 
     /// <summary>
@@ -306,14 +308,14 @@ internal static class SentinelResolver
             if (ReferenceEquals(failures, lastError)) throw timeoutError;
             // Preserve timeout classification without assigning a multi-candidate failure to the last Sentinel.
             throw new RespireTimeoutException(timeoutError.CommandName, timeoutError.Timeout, failures!,
-                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)) { Endpoint = null };
+                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)) { HasAmbiguousEndpoint = true };
         }
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
         throw lastError is null
-            ? new RespireConnectionException(message)
-            : new RespireConnectionException(message, failures!);
+            ? new RespireConnectionException(message) { HasAmbiguousEndpoint = true }
+            : new RespireConnectionException(message, failures!) { HasAmbiguousEndpoint = true };
 
         void AddPeer(RespireEndpoint endpoint)
         {
