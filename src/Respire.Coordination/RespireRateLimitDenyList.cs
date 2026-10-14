@@ -14,6 +14,12 @@ public sealed class RespireRateLimitDenyList
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Entry> _cache = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _recency = new();
+    private readonly SortedSet<(long Started, string Identity)> _expiry = new(
+        Comparer<(long Started, string Identity)>.Create(static (left, right) =>
+        {
+            var age = left.Started.CompareTo(right.Started);
+            return age != 0 ? age : StringComparer.Ordinal.Compare(left.Identity, right.Identity);
+        }));
     private readonly Dictionary<string, PendingRead> _pending = new(StringComparer.Ordinal);
     private long _generation;
 
@@ -136,19 +142,19 @@ public sealed class RespireRateLimitDenyList
                 {
                     if (_cache.Count >= _cacheCapacity)
                     {
-                        // Expired entries can appear anywhere in the LRU list: hits do not renew expiry.
-                        var node = _recency.First;
-                        while (node is not null)
+                        // Reads can finish out of order; expiry follows their start time, not publication or usage.
+                        var now = _time.GetTimestamp();
+                        while (_expiry.Count > 0)
                         {
-                            var next = node.Next;
-                            if (_time.GetElapsedTime(_cache[node.Value].Started) >= _cacheDuration)
-                                RemoveEntry(node.Value);
-                            node = next;
+                            var oldest = _expiry.Min;
+                            if (_time.GetElapsedTime(oldest.Started, now) < _cacheDuration) break;
+                            RemoveEntry(oldest.Identity);
                         }
                         if (_cache.Count >= _cacheCapacity) RemoveEntry(_recency.First!.Value);
                     }
                     var added = _recency.AddLast(identity);
                     _cache.Add(identity, new Entry(denied, started, added));
+                    _expiry.Add((started, identity));
                 }
                 RemovePending(identity, pending);
             }
@@ -171,7 +177,11 @@ public sealed class RespireRateLimitDenyList
 
     private void RemoveEntry(string identity)
     {
-        if (_cache.Remove(identity, out var entry)) _recency.Remove(entry.Node);
+        if (_cache.Remove(identity, out var entry))
+        {
+            _recency.Remove(entry.Node);
+            _expiry.Remove((entry.Started, identity));
+        }
     }
 
     /// <summary>Adds or removes an identity in Redis, then invalidates this instance's cache even on failure.</summary>
@@ -195,13 +205,14 @@ public sealed class RespireRateLimitDenyList
             _generation++;
             _cache.Clear();
             _recency.Clear();
+            _expiry.Clear();
             _pending.Clear();
         }
     }
 
-    private static TimeSpan ValidateDuration(TimeSpan duration)
-        => duration >= TimeSpan.Zero && duration <= TimeSpan.FromMinutes(1)
-            ? duration : throw new ArgumentOutOfRangeException(nameof(duration));
+    private static TimeSpan ValidateDuration(TimeSpan cacheDuration)
+        => cacheDuration >= TimeSpan.Zero && cacheDuration <= TimeSpan.FromMinutes(1)
+            ? cacheDuration : throw new ArgumentOutOfRangeException(nameof(cacheDuration));
 
     private sealed class PendingRead(long started)
     {

@@ -105,8 +105,9 @@ public class RateLimitDenyListCacheTests
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
         await Assert.That(() => new RespireRateLimitDenyList(null!, "list")).Throws<ArgumentNullException>();
         await Assert.That(() => new RespireRateLimitDenyList(client, default)).Throws<ArgumentException>();
-        await Assert.That(() => new RespireRateLimitDenyList(client, "list", TimeSpan.FromTicks(-1)))
+        var invalidDuration = await Assert.That(() => new RespireRateLimitDenyList(client, "list", TimeSpan.FromTicks(-1)))
             .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(invalidDuration!.ParamName).IsEqualTo("cacheDuration");
         await Assert.That(() => new RespireRateLimitDenyList(client, "list", TimeSpan.FromMinutes(1) + TimeSpan.FromTicks(1)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new RespireRateLimitDenyList(client, "list", cacheCapacity: 0))
@@ -263,11 +264,58 @@ public class RateLimitDenyListCacheTests
         }
     }
 
+    [Test]
+    public async Task FullLiveCacheDoesNotCheckEveryEntryForExpiry()
+    {
+        var time = new ManualTime();
+        var reads = 0;
+        var list = new RespireRateLimitDenyList((_, _) => { reads++; return ValueTask.FromResult(true); },
+            (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 1024);
+        for (var index = 0; index < 1024; index++) await list.IsDeniedAsync(index.ToString());
+        await list.IsDeniedAsync("0"); // Keep this identity hot through distinct-identity churn.
+        var timestamps = time.TimestampReads;
+        for (var index = 1024; index < 1040; index++) await list.IsDeniedAsync(index.ToString());
+        // Bound expiry work rather than wall-clock duration, so this also runs on busy CI hosts.
+        await Assert.That(time.TimestampReads - timestamps).IsLessThanOrEqualTo(16 * 8);
+        await list.IsDeniedAsync("0");
+        await Assert.That(reads).IsEqualTo(1040);
+    }
+
+    [Test]
+    public async Task ExpiryUsesReadStartOrderWhenReadsCompleteOutOfOrder()
+    {
+        var time = new ManualTime();
+        var older = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var list = new RespireRateLimitDenyList((identity, _) =>
+            { reads++; return identity == "older" ? new ValueTask<bool>(older.Task) : ValueTask.FromResult(true); },
+            (_, _, _) => ValueTask.CompletedTask, time, TimeSpan.FromSeconds(1), 3);
+        var first = list.IsDeniedAsync("older").AsTask();
+        time.Advance(TimeSpan.FromMilliseconds(500));
+        await list.IsDeniedAsync("newer-a");
+        await list.IsDeniedAsync("newer-b"); // Same timestamp must retain both expiry entries.
+        older.SetResult(true);
+        await first; // Oldest by expiry, newest by both publication and usage.
+        time.Advance(TimeSpan.FromMilliseconds(500));
+        await list.IsDeniedAsync("overflow");
+        await list.IsDeniedAsync("newer-a");
+        await list.IsDeniedAsync("newer-b");
+        await Assert.That(reads).IsEqualTo(4);
+        time.Advance(TimeSpan.FromMilliseconds(500));
+        await list.IsDeniedAsync("next"); // Both entries with tied timestamps have now expired.
+        await list.IsDeniedAsync("overflow");
+        await Assert.That(reads).IsEqualTo(5);
+        list.Invalidate();
+        await list.IsDeniedAsync("next");
+        await Assert.That(reads).IsEqualTo(6);
+    }
+
     private sealed class ManualTime : TimeProvider
     {
         private long _timestamp;
+        public int TimestampReads { get; private set; }
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public override long GetTimestamp() => _timestamp;
+        public override long GetTimestamp() { TimestampReads++; return _timestamp; }
         public void Advance(TimeSpan duration) => _timestamp += duration.Ticks;
     }
 }
