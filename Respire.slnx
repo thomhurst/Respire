@@ -16,6 +16,7 @@
     <Project Path="samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj" />
     <Project Path="samples/Respire.Samples.Mappers/Respire.Samples.Mappers.csproj" />
     <Project Path="samples/Respire.Samples.Observability/Respire.Samples.Observability.csproj" />
+    <Project Path="samples/Respire.Samples.Recipes/Respire.Samples.Recipes.csproj" />
     <Project Path="samples/Respire.Samples.Resilience/Respire.Samples.Resilience.csproj" />
     <Project Path="samples/Respire.Samples.Sentinel/Respire.Samples.Sentinel.csproj" />
     <Project Path="samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj" />

@@ -1,0 +1,170 @@
+---
+title: Redis recipes
+description: Tested recipes for leaderboards, expiring sessions, a stream outbox, leader election, and environment-based connections.
+---
+
+import CodeBlock from '@theme/CodeBlock';
+import environment from '@site/../samples/Respire.Samples.Recipes/EnvironmentConnection.cs?source';
+import leaderboard from '@site/../samples/Respire.Samples.Recipes/Leaderboard.cs?source';
+import sessions from '@site/../samples/Respire.Samples.Recipes/SessionStore.cs?source';
+import outbox from '@site/../samples/Respire.Samples.Recipes/Outbox.cs?source';
+import election from '@site/../samples/Respire.Samples.Recipes/LeaderElection.cs?source';
+
+These recipes use the `Respire` package; leader election also needs `Respire.Coordination`.
+Copy the classes you need from
+[Respire.Samples.Recipes](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Recipes).
+The code blocks below display those source files directly. The existing CI integration jobs
+compile and execute them against Redis 8.4 in both RESP2 and RESP3 through
+`RecipeIntegrationTests`; they are not separate, untested copies of the examples.
+
+| Recipe | Server requirement | Data layout |
+| --- | --- | --- |
+| Leaderboard | Redis 7+ or compatible Valkey | Sorted set of scores and hash of member names |
+| Sessions | Redis 8.0+ (`HSETEX`, `HGETEX`) | One hash per user, one expiring field per session |
+| Outbox | Redis 8.4+ (`XREADGROUP CLAIM`) | Business state hash and consumer-group stream in one slot |
+| Leader election | Redis 7+ or compatible Valkey | Expiring lease key and persistent fencing counter |
+| Environment connection | Any server supported by Respire | `REDIS_URL`, then `VALKEY_URL` |
+
+Keep one client for the application lifetime and dispose it at shutdown. Examples use fixed
+keys for clarity; use a [key prefix](../commands/strings-and-keys.md#default-root-namespace) to isolate
+applications and tenants. Select server versions explicitly: a Valkey connection URL does not
+imply support for the Redis 8.x commands used by sessions and the outbox.
+
+## Connect from the environment
+
+Set `REDIS_URL=redis://localhost:6379/0` (or `VALKEY_URL`) in the process environment, then
+call `EnvironmentConnection.ConnectAsync()`. No configuration file is needed. This is a
+recipe helper: the core client does not automatically read these variables.
+The first nonblank value wins, with `REDIS_URL` taking precedence. Missing configuration
+fails at startup instead of silently connecting to localhost. An invalid primary URL fails;
+it does not trigger fallback to a different server.
+
+<CodeBlock language="csharp" title="EnvironmentConnection.cs">{environment}</CodeBlock>
+
+Use `rediss://` for TLS and percent-encode reserved characters in URI credentials. Supply
+secrets through your deployment's secret store; do not log the URL. See
+[connection strings](../fundamentals/connections.md) for authentication and timeout options.
+The tests inject the lookup function so they can check both variable names and precedence
+without changing environment variables for other tests.
+
+## Leaderboard with member metadata
+
+Create `new Leaderboard(client)`, call `SaveAsync("ada", "Ada", 1200)`, and read
+`TopAsync(10)`. The sorted set stores stable member IDs as members and numeric scores as
+scores; the hash stores the display name under the same ID. Repeating a save replaces the
+score and name, so retrying the same values does not increment a score twice.
+
+<CodeBlock language="csharp" title="Leaderboard.cs">{leaderboard}</CodeBlock>
+
+Both keys carry the same hash tag for Redis Cluster. `MULTI`/`EXEC` prevents other clients
+from interleaving the two writes. Reserve these key types: Redis transactions do not roll
+back earlier commands when a later command has a runtime error. Both pending results are
+observed so such failures reach the caller.
+
+Reads fetch descending scores followed by one `HMGET` for names. They are not a snapshot
+across those two commands; a concurrent name update may be visible. A missing name falls
+back to the member ID. Equal scores use Redis's reverse lexicographic member order, so the
+recipe does not invent a tie-breaking rank.
+
+The board has no implicit expiry. Use a new pair of keys per season, then delete both old
+keys when that season's retention ends. For rolling retention, apply the same absolute
+deadline to both keys rather than expiring scores and metadata independently. Delete a
+departing member from both structures in one transaction. See
+[sorted sets](../commands/collections.md) for score increments and range queries.
+
+## Session store with independent expiry
+
+Create `new SessionStore(client)`. Save an opaque, cryptographically random session ID with
+`SaveAsync(userId, sessionId, payload, TimeSpan.FromMinutes(30))`. On authenticated use,
+call `ReadAndRefreshAsync` with the same idle timeout; a `null` result means the user needs
+to sign in again. `RevokeAsync` deletes just that session field.
+
+<CodeBlock language="csharp" title="SessionStore.cs">{sessions}</CodeBlock>
+
+`HSETEX` writes and expires a field atomically. `HGETEX` returns it and slides only that
+field's expiry. Reading an expired or absent session never recreates it; another device's
+session keeps its own deadline. Do not set a key-level TTL, because that would remove all
+of the user's sessions together. Do not update the field with ordinary `HSET`, which can
+clear its field expiry; use this save path consistently.
+
+Treat the payload as application data, not proof of authorization. Validate the session's
+user binding and access rights on the server. For an absolute maximum lifetime, include
+the creation/expiry time in the payload, validate it before authorizing the request, and
+revoke the session when the limit is reached. A sliding idle timeout alone allows a
+continuously active session to live indefinitely. Fail closed on Redis errors and never
+turn a timeout into a newly authenticated session. See
+[hash expiry](../commands/collections.md) for the underlying commands.
+
+## Transactional outbox relay over streams
+
+This recipe stores **both business state and the outbox in Redis**. Call
+`SaveOrderAsync("order-42", "paid", "event-42")` with a stable, application-assigned event
+ID. The transaction saves the order state and appends the event in the same Cluster slot.
+At relay startup call `InitializeRelayAsync`; it starts the group at `0-0`, so entries
+written before the group existed are included. Calling it again is safe.
+
+<CodeBlock language="csharp" title="Outbox.cs">{outbox}</CodeBlock>
+
+Give each relay process a unique consumer name. Call `RelayPageAsync` repeatedly from a
+cancellable background service, passing a publisher that completes only when the downstream
+system confirms acceptance. Back off after an empty page or a transient error. Choose
+`claimMinIdle` longer than the maximum processing time for the **whole ten-entry page**,
+including downstream retries; otherwise another worker can claim an entry still being
+processed. `XREADGROUP CLAIM` delivers eligible abandoned entries as well as new entries.
+
+Publication failures leave entries pending. A process crash after publication but before
+`XACK` causes redelivery, so this is **at-least-once delivery**. The receiver must atomically
+deduplicate by `event-id` with its own business update. Retrying an uncertain producer
+transaction can also append the event again; reuse the same event ID for deduplication.
+Do not retry with a new ID. `XACK` removes the pending record, not the stream entry.
+
+Reserve the two Redis key types: `MULTI`/`EXEC` has no rollback for runtime command errors.
+Configure persistence, replication, and eviction for durable business data. Do not apply
+a TTL or arbitrary `MAXLEN` trim to unprocessed outbox entries. Set a retention policy
+that accounts for every consumer group's progress, monitor pending age/delivery counts,
+and quarantine poison messages durably before acknowledging them. This small relay stops
+the page on a publication failure; it does not silently discard a bad entry.
+
+An SQL transaction cannot atomically commit this Redis transaction. For SQL-owned orders,
+write the outbox row in the same SQL transaction, then relay it to Redis with stable IDs
+and receiver-side deduplication. See [stream workers](stream-workers.md) for a hosted
+worker with recovery and dead-letter handling.
+
+## Leader election with a renewable lease
+
+Every contender calls `LeaderElection.TryRunAsync(client, leaderWork, stoppingToken)`.
+A `false` result means another contender holds the lease; the caller can retry with jitter
+and a cancellation-aware delay. A successful contender runs its callback under a renewable
+30-second fenced lease, then releases it on completion or failure.
+
+<CodeBlock language="csharp" title="LeaderElection.cs">{election}</CodeBlock>
+
+The callback must honor its cancellation token, including during downstream I/O. Renewal
+failure cancels that token; cancellation is cooperative and cannot stop a paused or
+unresponsive process. Pass the fencing token to the protected resource on every write.
+That resource must atomically reject a token older than its last accepted token. Equal
+tokens allow repeated writes by the same leader. Do not start detached work that outlives
+the callback.
+
+Only the lease expires. Never expire, delete, reset, or evict the fencing counter. An old
+leader's release compares ownership, so it cannot release a replacement's lease. The
+counter's monotonicity depends on retaining Redis history: failover or restore can roll
+it back. Use a consensus-backed authority if election must remain exclusive across those
+events. See [coordination and fencing](coordination.md) for the full guarantees.
+
+## Run the same samples locally
+
+Docker is required. From the repository root:
+
+```powershell
+& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
+    'build', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0')
+& scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @(
+    'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0',
+    '--no-build', '--', '--treenode-filter', '/*/*/RecipeIntegrationTests/*',
+    '--minimum-expected-tests', '14')
+```
+
+Testcontainers starts and removes its own Redis 8.4 instance. Tests cover score updates and
+metadata, independent session refresh and expiry, failed outbox publication and recovery,
+competing leaders and release after failure, and both environment variable names.
