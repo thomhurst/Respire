@@ -30,6 +30,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly int _connectionMask;
     private readonly int[] _reconnecting;
     private readonly int[]? _reconnectAttempts;
+    private readonly Exception?[]? _reconnectErrors;
     private readonly RespireConnectionOptions _options;
     private ActiveEndpoint _activeEndpoint;
     private readonly ILogger? _logger;
@@ -54,7 +55,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private TaskCompletionSource? _retirementCompletion;
     private TaskCompletionSource? _disposeCompletion;
     private int _trackServerClientIds;
-    private string? _correctionOrderingFailure;
+    private RespireServerException? _correctionOrderingFailure;
     private volatile bool _correctionOrderingReady;
     private volatile bool _connected;
     private bool _publishingStateNotifications;
@@ -74,7 +75,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         Volatile.Read(ref _correctionOrderingFailure) is not null;
 
     /// <summary>The definitive CLIENT ID / CLIENT KILL denial recorded for this node, if any.</summary>
-    internal string? CorrectionOrderingFailure => Volatile.Read(ref _correctionOrderingFailure);
+    internal string? CorrectionOrderingFailure => Volatile.Read(ref _correctionOrderingFailure)?.Message;
 
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
@@ -278,6 +279,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         _connectionMask = BitOperations.IsPow2((uint)connectionCount) ? connectionCount - 1 : -1;
         _reconnecting = new int[connectionCount];
         _reconnectAttempts = options.ReconnectPolicy is null ? null : new int[connectionCount];
+        _reconnectErrors = options.ReconnectPolicy is null ? null : new Exception?[connectionCount];
     }
 
     /// <summary>Creates an unconnected multiplexer; call <see cref="EnsureConnectedAsync"/> before use.</summary>
@@ -430,7 +432,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             throw new RespireConnectionException(
                 $"Not connected to {ActiveConnectionEndpoint}. Use RespireClient.ConnectAsync to establish a connection before use, " +
-                "and check the endpoint, network reachability, TLS settings, and credentials if connection setup fails.");
+                "and check the endpoint, network reachability, TLS settings, and credentials if connection setup fails.") { Endpoint = ActiveConnectionEndpoint };
         }
 
         RespireConnection? fallback = null;
@@ -454,7 +456,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         if (fallback is not null) return fallback;
         ThrowIfUnavailable();
         ThrowIfRecoveryExhausted();
-        throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
+        throw new RespireConnectionException($"No healthy connections to {ActiveConnectionEndpoint}. Check connection state notifications and the reconnect policy.") { Endpoint = ActiveConnectionEndpoint };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -465,7 +467,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             throw new RespireConnectionException(
                 $"Not connected to {ActiveConnectionEndpoint}. Use RespireClient.ConnectAsync to establish a connection before use, " +
-                "and check the endpoint, network reachability, TLS settings, and credentials if connection setup fails.");
+                "and check the endpoint, network reachability, TLS settings, and credentials if connection setup fails.") { Endpoint = ActiveConnectionEndpoint };
         }
 
         var connection = Volatile.Read(ref _connections[0]);
@@ -477,7 +479,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         ScheduleReconnect(0);
         ThrowIfUnavailable();
         ThrowIfRecoveryExhausted();
-        throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
+        throw new RespireConnectionException($"No healthy connections to {ActiveConnectionEndpoint}. Check connection state notifications and the reconnect policy.") { Endpoint = ActiveConnectionEndpoint };
     }
 
     public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
@@ -589,7 +591,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         catch (RespireServerException ex) when (IsDefinitiveCorrectionOrderingFailure(ex))
         {
             Volatile.Write(ref _trackServerClientIds, 0);
-            Volatile.Write(ref _correctionOrderingFailure, ex.Message);
+            Volatile.Write(ref _correctionOrderingFailure, ex);
             throw;
         }
         finally
@@ -616,7 +618,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     {
         if (Volatile.Read(ref _correctionOrderingFailure) is { } failure)
         {
-            throw new RespireServerException(failure, "CLIENT KILL");
+            ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 
@@ -633,7 +635,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             .ConfigureAwait(false);
         if (reply.IsError)
         {
-            var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
+            var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL") { Endpoint = new(connection.Host, connection.Port) };
             reply.Dispose();
             throw error;
         }
@@ -770,7 +772,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 try
                 {
                     return reply.IsError
-                        ? new RespireServerException(reply.GetErrorMessage())
+                        ? new RespireServerException(reply.GetErrorMessage()) { Endpoint = new(connection.Host, connection.Port) }
                         : null;
                 }
                 finally
@@ -888,12 +890,12 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                         options, _logger, lifetime.Token).ConfigureAwait(false);
                     using var reply = await control.SendAsync(new ClientKillIdCommand(identity.ClientId), lifetime.Token,
                         armCommandDeadline: false).ConfigureAwait(false);
-                    if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
+                    if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL") { Endpoint = new(control.Host, control.Port) };
                 }
                 catch (OperationCanceledException error) when (lifetime.IsCancellationRequested
                     && !cancellationToken.IsCancellationRequested && !_abortCancellation.IsCancellationRequested)
                 {
-                    throw new RespireTimeoutException("CLIENT KILL", _options.ConnectTimeout, error);
+                    throw new RespireTimeoutException("CLIENT KILL", _options.ConnectTimeout, error) { Endpoint = new(identity.Host, identity.Port) };
                 }
                 _retiredServerClientIds.TryRemove(identity, out _);
             }
@@ -1039,7 +1041,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 ThrowIfUnavailable();
                 if (!ReferenceEquals(endpoint, Volatile.Read(ref _activeEndpoint)))
-                    throw new RespireConnectionException("Connection endpoint changed during reconnect.");
+                    throw new RespireConnectionException("Connection endpoint changed during reconnect.") { Endpoint = new(endpoint.Host, endpoint.Port) };
                 ForgetMovingSequences(connectedOnly: true);
                 lock (_moving.Gate)
                 {
@@ -1051,6 +1053,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     publishedReplacement = replacement;
                     replacement = null;
                     if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                    if (_reconnectErrors is not null) _reconnectErrors[slot] = null;
                 }
             }
             ObservePublishedConnection(slot, publishedReplacement);
@@ -1086,6 +1089,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                         // connected and reset its attempts instead of scheduling a retry.
                         _logger?.ReconnectKeptHealthyConnection(slot, ex);
                         if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
+                        if (_reconnectErrors is not null) _reconnectErrors[slot] = null;
                         publish = QueueLifecycleNotificationUnderLock(
                             new StateNotification(slot, RespireConnectionState.Connected, null));
                         Volatile.Write(ref _reconnecting[slot], 0);
@@ -1100,6 +1104,9 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                             _logger?.ReconnectBackoffDeferred(Host, Port, ex);
                         else
                             _logger?.ReconnectDeferred(Host, Port, ex);
+                        if (_reconnectErrors is not null)
+                            _reconnectErrors[slot] = new RespireConnectionException("Connection replacement failed.", ex)
+                            { Endpoint = new(endpoint.Host, endpoint.Port) };
                         publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
                         reconnectGuardReleased = true;
                     }
@@ -1289,6 +1296,9 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private void ThrowIfRecoveryExhausted(int? requiredSlot = null)
     {
         if (_options.ReconnectPolicy is not { MaxAttempts: not null } policy) return;
+        Exception? failure = null;
+        RespireEndpoint? endpoint = null;
+        var multipleEndpoints = false;
         lock (_lifecycleGate)
         {
             var first = requiredSlot ?? 0;
@@ -1296,9 +1306,18 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             for (var slot = first; slot < end; slot++)
                 if (!policy.IsExhausted(_reconnectAttempts![slot]) || Volatile.Read(ref _reconnecting[slot]) != 0
                     || _connections[slot] is { IsAcceptingCommands: true }) return;
+            for (var slot = first; slot < end; slot++)
+            {
+                var cause = _reconnectErrors![slot] ?? _connections[slot]?.CloseError;
+                failure = ConnectionFailures.Combine(failure, cause);
+                var failedEndpoint = (cause as RespireException)?.Endpoint ?? ActiveConnectionEndpoint;
+                if (endpoint is { } previous && previous != failedEndpoint) multipleEndpoints = true;
+                endpoint = failedEndpoint;
+            }
         }
         var scope = requiredSlot is { } exhaustedSlot ? $"required slot {exhaustedSlot}" : "all slots";
-        throw new RespireReconnectLimitException($"Reconnect policy exhausted for {Host}:{Port} ({scope}) after {policy.MaxAttempts} attempts per connection slot. Recreate the client to start a new recovery episode.");
+        throw new RespireReconnectLimitException($"Reconnect policy exhausted for {Host}:{Port} ({scope}) after {policy.MaxAttempts} attempts per connection slot. Recreate the client to start a new recovery episode.", failure!)
+        { Endpoint = multipleEndpoints ? null : endpoint };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

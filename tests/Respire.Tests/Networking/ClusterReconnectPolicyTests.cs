@@ -543,11 +543,14 @@ public class ClusterReconnectPolicyTests
             await Assert.That(pending.IsCompleted).IsFalse();
             timer.Fire();
             await pending.WaitAsync(deadline.Token);
-            var last = new RespireServerException($"{code} 42 target.invalid:6381");
+            var last = new RespireServerException($"{code} 42 target.invalid:6381") { Endpoint = endpoint };
             round.Rejected(endpoint, last);
             var exhaustion = await Assert.That(async () => await round.BeforeCandidateAsync(endpoint, deadline.Token))
                 .ThrowsExactly<RespireReconnectLimitException>();
-            await Assert.That(exhaustion!.InnerException).IsSameReferenceAs(last);
+            await Assert.That(exhaustion!.Endpoint).IsNull();
+            var failures = await Assert.That(exhaustion.InnerException).IsTypeOf<AggregateException>();
+            await Assert.That(failures!.Flatten().InnerExceptions).Contains(last);
+            await Assert.That(failures.Flatten().InnerExceptions.Count).IsEqualTo(3);
         }
         finally { round.Finish(); }
     }

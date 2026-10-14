@@ -79,8 +79,10 @@ public class ReconnectPolicyTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var waiters = Enumerable.Range(0, 8).Select(async _ =>
         {
-            await Assert.That(async () => await client.Core.Multiplexer.GetHealthyConnectionAsync(deadline.Token))
+            var error = await Assert.That(async () => await client.Core.Multiplexer.GetHealthyConnectionAsync(deadline.Token))
                 .ThrowsExactly<RespireReconnectLimitException>();
+            await Assert.That(error!.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", server.Port));
+            await Assert.That(error.InnerException).IsNotNull();
         }).ToArray();
         await Task.WhenAll(waiters);
         await exhausted.Task.WaitAsync(deadline.Token);

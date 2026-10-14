@@ -119,7 +119,7 @@ internal struct CircuitAdmission(CircuitPermit permit, StandaloneCircuitRegistry
     internal void ConnectionFailed(Exception error, CancellationToken cancellationToken)
         => Failed(error is IOException or System.Net.Sockets.SocketException
             or System.Security.Authentication.AuthenticationException
-                ? new RespireConnectionException("Endpoint connection acquisition failed.", error) : error,
+                ? new RespireConnectionException("Endpoint connection acquisition failed.", error) { Endpoint = _permit.Owner?.Endpoint } : error,
             cancellationToken);
 
     internal void Failed(Exception error, CancellationToken cancellationToken)

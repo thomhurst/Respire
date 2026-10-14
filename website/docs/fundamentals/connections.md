@@ -17,7 +17,7 @@ await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379
 
 `ConnectAsync` connects before returning, so an unreachable server fails here. Standalone clients throw the underlying error, such as `SocketException` (refused) or `RespireTimeoutException` (`ConnectTimeout` expired). Cluster clients wrap seed failures in `RespireConnectionException`.
 
-When all Cluster seeds fail, the exception message lists the configured seed endpoints, and `InnerException` preserves the last failure. Check those addresses from the application's network, then check TLS settings and credentials against the inner error. IPv6 addresses are bracketed so the port is unambiguous. Caller cancellation still throws `OperationCanceledException` rather than a seed-exhaustion error.
+When all Cluster seeds fail, the exception message lists the configured seed endpoints, and `InnerException` preserves the candidate failures (an `AggregateException` when several fail). Check those addresses from the application's network, then check TLS settings and credentials against the inner errors. IPv6 addresses are bracketed so the port is unambiguous. Caller cancellation still throws `OperationCanceledException` rather than a seed-exhaustion error.
 
 ## Lazy creation
 
@@ -251,7 +251,11 @@ Every public Respire exception inherits `RespireException.Endpoint`, a nullable 
 
 Timeout exceptions take their endpoint from `Diagnostics.Endpoint`, or from a directly wrapped Respire exception when no snapshot endpoint is available. Transaction-retry exceptions retain the rejecting server's endpoint when the original server error has one. Circuit-open and scripting-engine-unavailable exceptions expose their known endpoint through both the base property and their existing non-nullable `Endpoint` property.
 
-Other server, protocol, authentication, reconnect, and connection failures may still have a null endpoint. General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only the last failed candidate. Application code can attach known context when constructing an exception:
+Connection owners populate context for unavailable connections, reconnect limits, and replica `ROLE` validation. A rejected `ROLE` reply retains its server exception and the same endpoint as its connection wrapper. Sentinel query failures identify the reporting Sentinel; primary connection and validation failures identify the resolved data candidate. A redirect destination is not the endpoint of the server that rejected a command.
+
+Cluster seed, replica-selection, and Sentinel discovery failures covering multiple candidates leave the outer endpoint null. Inspect their inner causes, including nested `AggregateException` instances, for individual candidate failures. Reconnect exhaustion retains its underlying failures; cluster discovery exhaustion has no single endpoint. Physical transport, authentication, and reply-conversion failures can still have null context where their originating layer has not supplied it.
+
+General-purpose exception constructors do not copy endpoint context from an inner exception: that cause could represent only one failed candidate. Application code can attach known context when constructing an exception:
 
 ```csharp
 var failure = new RespireConnectionException("Redis connection failed.")

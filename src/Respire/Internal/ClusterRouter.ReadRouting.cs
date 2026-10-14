@@ -96,10 +96,10 @@ internal sealed partial class ClusterRouter
         HashSet<RespireConnectionMultiplexer>? excluded = null)
     {
         if (excluded is not null && GetKnownSlotOwner(slot) is { } current && excluded.Contains(current))
-            throw new RespireConnectionException("The primary dedicated connection candidate already failed.");
+            throw new RespireConnectionException("The primary dedicated connection candidate already failed.") { Endpoint = current.ActiveConnectionEndpoint };
         var primary = await GetConnectionAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
         if (primary.Multiplexer is { } selected && excluded?.Contains(selected) == true)
-            throw new RespireConnectionException("The primary dedicated connection candidate already failed.");
+            throw new RespireConnectionException("The primary dedicated connection candidate already failed.") { Endpoint = new(primary.Host, primary.Port) };
         return ReadFallbackPolicy.UsesAvailabilityZone(readFrom)
             && primary.Multiplexer is { } owner && _options.ClientAvailabilityZone is { } zone
             ? owner.GetConnectionForZone(zone, slot) : primary;
@@ -122,7 +122,7 @@ internal sealed partial class ClusterRouter
                 tried = routes;
                 var selection = await TrySelectReplicaAsync(routes, slot, cancellationToken, discovery, readFrom, excluded, observation).ConfigureAwait(false);
                 attempted += selection.Attempted;
-                lastError = selection.LastError ?? lastError;
+                lastError = ConnectionFailures.Combine(lastError, selection.LastError);
                 if (selection.Connection is { } connection) return connection;
             }
 
@@ -183,7 +183,7 @@ internal sealed partial class ClusterRouter
                     // The logical read borrows this owner through selection and eventual conversion.
                     // Report the rejected endpoint, not the aggregate no-healthy-replica wrapper.
                     ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, node.ActiveConnectionEndpoint));
                 }
             }
             if (ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, GetKnownSlotOwner(slot), _options.ClientAvailabilityZone))
@@ -198,7 +198,7 @@ internal sealed partial class ClusterRouter
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, error);
                 }
             }
             while (fallbacks.TryTake(out var fallback))
@@ -447,7 +447,7 @@ internal sealed partial class ClusterRouter
             if (readFrom == RespireReadFrom.Replica)
             {
                 throw new RespireConnectionException(
-                    $"Unable to refresh replica routes for Redis Cluster slot {value} after a redirect.");
+                    $"Unable to refresh replica routes for Redis Cluster slot {value} after a redirect.") { Endpoint = new(redirected.Host, redirected.Port) };
             }
             return redirected;
         }

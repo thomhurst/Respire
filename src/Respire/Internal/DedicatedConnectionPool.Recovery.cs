@@ -42,7 +42,8 @@ internal sealed partial class DedicatedConnectionPool
                 {
                     QueueRecovery(RespireConnectionState.Disconnected, failure, attempt, episode, exhausted: true);
                     throw new RespireReconnectLimitException(
-                        $"Dedicated connection acquisition to {host}:{port} exhausted {attempt} replacement attempts.", failure);
+                        $"Dedicated connection acquisition to {host}:{port} exhausted {attempt} replacement attempts. Check endpoint health and RespireOptions.ReconnectPolicy.", failure)
+                    { Endpoint = new(host, port) };
                 }
 
                 if (episode == 0) episode = Interlocked.Increment(ref _nextRecoveryEpisode);

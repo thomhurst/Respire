@@ -41,6 +41,7 @@ public class DedicatedReconnectTests
             var error = await Assert.That(async () => await pool.RentAsync(deadline.Token))
                 .ThrowsExactly<RespireReconnectLimitException>();
             await Assert.That(error!.InnerException).IsTypeOf<RespireConnectionException>();
+            await Assert.That(error.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", server.Port));
         }
         await Task.WhenAll(Rent(), Rent());
         await Assert.That(Stopwatch.GetElapsedTime(start) >= TimeSpan.FromMilliseconds(70)).IsTrue();

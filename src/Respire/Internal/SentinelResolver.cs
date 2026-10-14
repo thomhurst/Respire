@@ -25,6 +25,7 @@ internal static class SentinelResolver
     {
         var connectionOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
+        Exception? failures = null;
         foreach (var sentinel in sentinels)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -37,18 +38,26 @@ internal static class SentinelResolver
                 using var reply = await connection.SendAsync(
                     new Cmd1(Verbs.SentinelReplicas, options.SentinelPrimaryName!), deadline.Token).ConfigureAwait(false);
                 if (TryParseReplicaList(in reply, out var replicas)) return replicas;
+                failures = ConnectionFailures.Combine(failures, reply.IsError
+                    ? new RespireServerException(reply.GetErrorMessage(), "SENTINEL REPLICAS") { Endpoint = sentinel }
+                    : new RespireProtocolException("Sentinel returned a malformed replica list. Check the Sentinel service configuration.") { Endpoint = sentinel });
                 try { logger?.SentinelMalformedReplicas(sentinel); }
                 catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error)) { }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { continue; }
+            catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
+            {
+                failures = ConnectionFailures.Combine(failures, new RespireTimeoutException("SENTINEL REPLICAS",
+                    options.CommandTimeout ?? options.ConnectTimeout, error) { Endpoint = sentinel });
+            }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
             {
+                failures = ConnectionFailures.Combine(failures, new RespireConnectionException($"Sentinel replica discovery failed at {sentinel}.", error) { Endpoint = sentinel });
                 try { logger?.SentinelReplicaDiscoveryUnavailable(sentinel, error); }
                 catch (Exception logError) when (SentinelExceptionPolicy.IsRecoverable(logError)) { }
             }
         }
-        throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint.");
+        throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint. Check Sentinel reachability, credentials, and the service name.", failures!);
     }
 
     /// <summary>
@@ -138,6 +147,7 @@ internal static class SentinelResolver
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
+        Exception? failures = null;
         var lastErrorIsDiscoveryTimeout = false;
         var fallbackBudget = new SentinelFallbackBudget(options.ReconnectPolicy, logger);
 
@@ -152,6 +162,7 @@ internal static class SentinelResolver
             var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
             using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(cancellationToken, discoveryTimeout);
             var discoveryCompleted = false;
+            var candidateEndpoint = endpoint;
             try
             {
                 var observation = await QueryPrimaryAsync(
@@ -188,6 +199,7 @@ internal static class SentinelResolver
                 try
                 {
                     var primary = observation.Endpoint;
+                    candidateEndpoint = primary;
                     string[]? primaryAddresses = null;
                     if (!IPAddress.TryParse(primary.Host, out _))
                     {
@@ -223,7 +235,7 @@ internal static class SentinelResolver
                         || !discoveryState.TryObserveConfiguration(primary, observation.Epoch, primaryAddresses))
                     {
                         // A rejected view consumes the same fallback budget as a failed ROLE check.
-                        throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.");
+                        throw new RespireConnectionException($"Sentinel {endpoint} reported a stale configuration for {primary}.") { Endpoint = endpoint };
                     }
                     var primaryOptions = options with
                     {
@@ -253,7 +265,7 @@ internal static class SentinelResolver
                     // The connection deadline fired while the caller token stayed live.
                     throw new RespireTimeoutException(
                         "CONNECT", options.ConnectTimeout, error,
-                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting, candidateEndpoint));
                 }
             }
             catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
@@ -274,8 +286,11 @@ internal static class SentinelResolver
                 lastError = lastErrorIsDiscoveryTimeout
                     ? new RespireTimeoutException(
                         "SENTINEL GET-MASTER-ADDR-BY-NAME", discoveryTimeout, ex,
-                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
+                        RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting, endpoint))
                     : ex;
+                // Preserve the actual data candidate after discovery, not its reporting Sentinel.
+                var candidateFailure = ConnectionFailures.AtEndpoint(lastError, candidateEndpoint);
+                failures = ConnectionFailures.Combine(failures, candidateFailure);
                 logger?.SentinelPrimaryDiscoveryFailed(endpoint.Host, endpoint.Port, lastError);
                 if (fallbackBudget.StopAfterFailure(endpoint, index + 1 < sentinelEndpoints.Count))
                 {
@@ -285,13 +300,19 @@ internal static class SentinelResolver
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (lastErrorIsDiscoveryTimeout && lastError is RespireTimeoutException timeoutError) throw timeoutError;
+        if (lastErrorIsDiscoveryTimeout && lastError is RespireTimeoutException timeoutError)
+        {
+            if (ReferenceEquals(failures, lastError)) throw timeoutError;
+            // Preserve timeout classification without assigning a multi-candidate failure to the last Sentinel.
+            throw new RespireTimeoutException(timeoutError.CommandName, timeoutError.Timeout, failures!,
+                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)) { Endpoint = null };
+        }
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
         throw lastError is null
             ? new RespireConnectionException(message)
-            : new RespireConnectionException(message, lastError);
+            : new RespireConnectionException(message, failures!);
 
         void AddPeer(RespireEndpoint endpoint)
         {
@@ -425,9 +446,9 @@ internal static class SentinelResolver
             // Sentinel advances config-epoch before replacing its old primary address.
             // Even matching address reads must not bind that address to the new epoch.
             if (failoverInProgress)
-                throw new RespireConnectionException("Sentinel failover is still in progress.");
+                throw new RespireConnectionException("Sentinel failover is still in progress.") { Endpoint = sentinel };
             if (configuredPrimary is { } snapshot && !SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, snapshot))
-                throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
+                throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.") { Endpoint = sentinel };
             if (configurationEpoch is not null)
             {
                 // During promotion, MASTER can expose the new epoch with the old address
@@ -437,7 +458,7 @@ internal static class SentinelResolver
                     new Cmd1(Verbs.SentinelGetMasterAddressByName, serviceName), cancellationToken).ConfigureAwait(false);
                 var confirmed = ParsePrimaryAddress(in confirmation, sentinel, serviceName);
                 if (!SentinelEndpointIdentity.EndpointComparer.Instance.Equals(primary, confirmed))
-                    throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.");
+                    throw new RespireConnectionException("Sentinel primary changed while reading its configuration epoch.") { Endpoint = sentinel };
             }
             return (primary, configurationEpoch);
         }
@@ -451,28 +472,33 @@ internal static class SentinelResolver
     {
         if (reply.IsError)
         {
-            throw new RespireServerException(reply.GetErrorMessage(), "SENTINEL GET-MASTER-ADDR-BY-NAME");
+            throw new RespireServerException(reply.GetErrorMessage(), "SENTINEL GET-MASTER-ADDR-BY-NAME") { Endpoint = sentinel };
         }
 
         if (reply.IsNull)
         {
             throw new RespireConnectionException(
-                $"Redis Sentinel service '{serviceName}' was not found on {sentinel}.");
+                $"Redis Sentinel service '{serviceName}' was not found on {sentinel}. Check RespireOptions.SentinelPrimaryName.") { Endpoint = sentinel };
         }
 
+        if (reply.Type != RespDataType.Array)
+            throw new RespireProtocolException($"Redis Sentinel returned an invalid address reply for service '{serviceName}'.") { Endpoint = sentinel };
         var parts = reply.AsArray();
         if (parts.Length < 2)
         {
             throw new RespireProtocolException(
-                $"Redis Sentinel returned {parts.Length} fields for service '{serviceName}', expected host and port.");
+                $"Redis Sentinel returned {parts.Length} fields for service '{serviceName}', expected host and port.") { Endpoint = sentinel };
         }
 
+        if (parts[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
+            || parts[1].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+            throw new RespireProtocolException($"Redis Sentinel returned non-string host or port fields for service '{serviceName}'.") { Endpoint = sentinel };
         var host = parts[0].AsString();
         var portText = parts[1].AsString();
         if (!TryParseEndpoint(host, portText, out var primary))
         {
             throw new RespireProtocolException(
-                $"Redis Sentinel returned an invalid host or port for service '{serviceName}'.");
+                $"Redis Sentinel returned an invalid host or port for service '{serviceName}'.") { Endpoint = sentinel };
         }
         return primary;
     }

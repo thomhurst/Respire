@@ -549,7 +549,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     RecordCandidateFailure(observation, error, endpoint);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, endpoint));
                     TryRecordFailure(entry, error);
                 }
             }
@@ -565,7 +565,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     RecordCandidateFailure(observation, error, observation.Endpoint);
-                    lastError = error;
+                    lastError = ConnectionFailures.Combine(lastError, error);
                 }
             }
             while (candidates.TryTake(out var fallback))
@@ -758,7 +758,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 ObjectDisposedException.ThrowIf(owner.Disposed, owner);
                 if (_closed || !router.IsCurrent(this))
-                    throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
+                    throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.") { Endpoint = endpoint };
                 // Standalone replicas use ROLE validation, not Cluster's READONLY handshake.
                 pool = _dedicatedPool ??= new(endpoint.Host, endpoint.Port,
                     owner.CreateConnectionOptions(), owner.Logger);
@@ -778,12 +778,14 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     if (!_health.Record(connection, checkedAt, in role))
                     {
                         var message = $"Configured read endpoint {endpoint} did not report a replica ROLE.";
-                        throw role.IsError ? new RespireConnectionException(message, ResponseReader.ServerError(in role, "ROLE"))
-                            : new RespireConnectionException(message);
+                        throw role.IsError ? new RespireConnectionException(message,
+                            new RespireServerException(role.GetErrorMessage(), "ROLE") { Endpoint = new(connection.Host, connection.Port) })
+                            { Endpoint = new(connection.Host, connection.Port) }
+                            : new RespireConnectionException(message) { Endpoint = new(connection.Host, connection.Port) };
                     }
                 }
                 if (_closed || !router.IsCurrent(this))
-                    throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
+                    throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.") { Endpoint = endpoint };
                 return (pool, connection);
             }
             catch (Exception error)
@@ -792,7 +794,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(cancellationToken);
                 if (router._lifetime.IsCancellationRequested) throw new ObjectDisposedException(nameof(ReadEndpointRouter));
                 if (pool.IsStopping && DedicatedConnectionPool.IsRetirementFailure(error))
-                    throw new RespireConnectionException($"Read replica {endpoint} retired during dedicated acquisition.", error);
+                    throw new RespireConnectionException($"Read replica {endpoint} retired during dedicated acquisition.", error) { Endpoint = endpoint };
                 throw;
             }
         }
@@ -843,7 +845,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, router._lifetime.Token);
             try
             {
-                if (_closed) throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.");
+                if (_closed) throw new RespireConnectionException($"Read replica {endpoint} was removed from the topology.") { Endpoint = endpoint };
                 ObjectDisposedException.ThrowIf(owner.Disposed, this);
                 if (_multiplexer is null)
                 {
@@ -895,8 +897,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     if (!_health.Record(selected, checkedAt, in role))
                         throw role.IsError
                             ? new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.",
-                                ResponseReader.ServerError(in role, "ROLE"))
-                            : new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.");
+                                new RespireServerException(role.GetErrorMessage(), "ROLE") { Endpoint = new(selected.Host, selected.Port) })
+                                { Endpoint = new(selected.Host, selected.Port) }
+                            : new RespireConnectionException($"Configured read endpoint {endpoint} did not report a replica ROLE.")
+                                { Endpoint = new(selected.Host, selected.Port) };
                     return selected;
                 }
             }
