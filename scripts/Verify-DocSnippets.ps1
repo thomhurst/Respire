@@ -70,7 +70,12 @@ $requiredPackages = @(
     'Respire.Testing.Containers'
 )
 
-$allowedExternalPackages = @('Azure.Identity', 'ZiggyCreatures.FusionCache.Serialization.SystemTextJson')
+$allowedExternalPackages = @(
+    'Azure.Identity'
+    'Microsoft.Extensions.DependencyInjection'
+    'Microsoft.Extensions.Hosting'
+    'ZiggyCreatures.FusionCache.Serialization.SystemTextJson'
+)
 
 foreach ($packageId in $requiredPackages)
 {
