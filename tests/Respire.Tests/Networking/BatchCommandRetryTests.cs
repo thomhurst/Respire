@@ -231,15 +231,35 @@ public class BatchCommandRetryTests
     public async Task OneDeadlineIncludesFirstAttemptAndLateRetryReplies()
     {
         var reads = 0;
-        await using var server = Server(command => command == "GET key"
-            ? Interlocked.Increment(ref reads) == 1 ? TryAgain : "$5\r\nvalue\r\n"u8.ToArray() : null);
-        server.DelayCommand("GET key", 150);
-        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromMilliseconds(250) });
+        var firstSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retrySeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = Server(_ => null);
+        server.SuppressReply = command =>
+        {
+            if (command != "GET key") return false;
+            if (Interlocked.Increment(ref reads) == 1) firstSeen.TrySetResult();
+            else retrySeen.TrySetResult();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { CommandTimeout = TimeSpan.FromSeconds(2) });
         using var batch = client.CreateBatch();
         var read = batch.GetString("key");
-        var result = await batch.TryExecuteAsync();
+        var execution = batch.TryExecuteAsync().AsTask();
+        await firstSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var ring = client.Core.Multiplexer.GetConnection().InspectForTests().Inflight;
+        await Assert.That(ring.TryPeek(out var firstSource)).IsTrue();
+        var deadline = firstSource.Deadline.RawValue;
+        await Assert.That(deadline).IsGreaterThan(0);
+        await server.SendRawAsync(TryAgain, server.ReceivedConnectionIds[^1]);
+        await retrySeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(ring.TryPeek(out var retrySource)).IsTrue();
+        // Exact deadline identity proves the budget was not reset, without relying on a
+        // 100 ms scheduler margin between two artificially delayed replies.
+        await Assert.That(retrySource.Deadline.RawValue).IsEqualTo(deadline);
+        var result = await execution.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(result.FailureCount).IsEqualTo(1);
         await Assert.That(read.Error).IsTypeOf<RespireTimeoutException>();
+        await server.SendRawAsync("$5\r\nvalue\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
         using var barrier = await client.ExecuteAsync(RespireCommands.Connection.PING);
         await Assert.That(barrier.AsString()).IsEqualTo("OK");
         await Assert.That(reads).IsEqualTo(2);

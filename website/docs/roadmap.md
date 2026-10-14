@@ -178,6 +178,10 @@ Public interface compatibility and the post-1.0 extension policy are described i
   failover groups, whole batches and unwatched transactions, and
   [watched transaction helpers](guides/batches-and-transactions.md#automatic-watched-transaction-retries).
   An enabled policy adds retry ownership work and can allocate on healthy commands.
+  The [retry-owner lifetime audit](guides/command-retries.md#lifetime-validation) maps
+  cancellation, replacement, late-reply and pool-generation coverage, including synchronized
+  public-operation tests and quiescent reference checks. It does not establish complete heap
+  reclamation or exhaust every scheduler/topology combination.
 - The [transport write evidence log](./guides/transport-write-evidence) records how Respire tells
   an unsent command from one that may have reached Redis.
 
