@@ -278,6 +278,36 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
+    public async Task DisposeWaitsForEntireAcceptedPreload()
+    {
+        await using var client = await ConnectAsync();
+        var loaded = new List<int>();
+        await using var map = Create(client, UniqueKey(), new()
+        {
+            Loader = (key, _) =>
+            {
+                loaded.Add(key);
+                return ValueTask.FromResult(new RespireGet<int>(true, key * 10));
+            },
+        });
+        Task? dispose = null;
+        IEnumerable<int> Keys()
+        {
+            yield return 1;
+            // Start shutdown precisely between entries, after the first read completes.
+            dispose = map.DisposeAsync().AsTask();
+            dispose.IsCompleted.Should().BeFalse();
+            yield return 2;
+        }
+
+        (await map.PreloadAsync(Keys())).Should().Be(2);
+        await dispose!;
+        loaded.Should().Equal(1, 2);
+        var nextRead = () => map.GetAsync(3).AsTask();
+        await nextRead.Should().ThrowAsync<ObjectDisposedException>();
+    }
+
+    [Test]
     public async Task MutableValuesAreDetachedFromCacheAndQueuedWrites()
     {
         await using var client = await ConnectAsync();

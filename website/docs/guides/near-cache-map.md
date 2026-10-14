@@ -78,6 +78,12 @@ Callbacks must not call back into the same map, since operations and callbacks a
 per instance. Writers must treat batch contents as immutable. Changes made directly through
 Redis, automatic expiry, and loader fills do not invoke the writer.
 
+This serialization includes near-cache hits: a slow loader, writer (including background
+flushes), or preload blocks all reads on that map, even for unrelated cached keys. Read
+throughput is bounded by the map gate. Both writer modes receive a decoded snapshot of the
+encoded value so caller mutations during Redis I/O cannot change what the external store
+receives.
+
 ## Batched write-behind and shutdown
 
 Set `WriteBehind = true` with a `Writer` to return after Redis accepts a mutation and its
@@ -110,6 +116,9 @@ persistence settings.
 - `PreloadAsync(keys)` reads known keys and uses the loader on misses; it returns the number
   found. `PreloadAsync()` scans existing Redis fields and warms their `HGET` cache entries
   without callbacks. The latter uses `HSCAN NOVALUES` and requires Redis 7.4+.
+  Both overloads read sequentially and hold the map gate for the whole preload. Each uncached
+  field needs its own Redis round trip, in addition to scan pages for the scanning overload.
+  Other map operations wait until preload completes; disposal waits for the accepted preload.
 - `ClearLocalCachesAsync()` invalidates the hash's local views across connected tracking
   clients, including clients on different application nodes. A single-key Lua script adds
   and removes a collision-free temporary field atomically. It preserves map values and their

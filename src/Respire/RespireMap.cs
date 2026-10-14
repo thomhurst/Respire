@@ -8,7 +8,9 @@ namespace Respire;
 /// Enable ClientSideCache on the supplied client and include the map's physical key in its
 /// cache prefixes. Values are decoded from cached bytes on every read, so mutable returned
 /// objects cannot corrupt the local cache. Operations and callbacks are serialized per map;
-/// callbacks must not reenter it. Dispose the map before disposing its client.
+/// even near-cache hits wait for active loaders, writers (including background flushes), and
+/// preloads. Read throughput is bounded by this serialization. Callbacks must not reenter the
+/// map. Dispose the map before disposing its client.
 /// </remarks>
 public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : notnull
 {
@@ -28,6 +30,8 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     private readonly Func<TValue, byte[]> _encode;
     private readonly Func<ReadOnlyMemory<byte>, TValue> _decode;
     private readonly RespireMapOptions<TKey, TValue> _options;
+    // Keep the managed-only gates alive for concurrent waiters and repeated disposal.
+    // Neither gate exposes AvailableWaitHandle, so neither owns an OS wait handle.
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _disposeGate = new(1, 1);
     private readonly Queue<RespireMapChange<TKey, TValue>> _pending = new();
@@ -70,24 +74,32 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         await EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var field = Format(key);
-            var bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
-            if (bytes is not null) return new(true, _decode(bytes));
-            if (_options.Loader is null) return default;
-            var loaded = await _options.Loader(key, cancellationToken).ConfigureAwait(false);
-            if (!loaded.Found) return default;
-            // Never replace a concurrent writer's value, and never echo a loader fill to its writer.
-            await StoreAsync(field, Encode(loaded.Value!), SetWhen.NotExists,
-                _options.EntryExpiration, cancellationToken).ConfigureAwait(false);
-            bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
-            return bytes is null ? default : new(true, _decode(bytes));
+            return await GetCoreAsync(key, cancellationToken).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
+    }
+
+    // The caller owns admission for its entire operation, including every entry in a preload.
+    private async ValueTask<RespireGet<TValue>> GetCoreAsync(TKey key, CancellationToken cancellationToken)
+    {
+        var field = Format(key);
+        var bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
+        if (bytes is not null) return new(true, _decode(bytes));
+        if (_options.Loader is null) return default;
+        var loaded = await _options.Loader(key, cancellationToken).ConfigureAwait(false);
+        if (!loaded.Found) return default;
+        // Never replace a concurrent writer's value, and never echo a loader fill to its writer.
+        await StoreAsync(field, Encode(loaded.Value!), SetWhen.NotExists,
+            _options.EntryExpiration, cancellationToken).ConfigureAwait(false);
+        bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
+        return bytes is null ? default : new(true, _decode(bytes));
     }
 
     /// <summary>
     /// Stores a value in Redis, then persists it through the writer. An explicit lifetime overrides
     /// EntryExpiration; absent either, HSET removes any previous field expiry.
+    /// A write-through writer failure propagates after Redis has changed; it does not roll back
+    /// Redis or its cache invalidations. The caller must retry or reconcile external persistence.
     /// </summary>
     public async ValueTask SetAsync(TKey key, TValue value, TimeSpan? expiration = null,
         CancellationToken cancellationToken = default)
@@ -99,7 +111,8 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         {
             var field = Format(key);
             var bytes = Encode(value);
-            // Decode an owned snapshot for delayed persistence, not the caller's mutable value.
+            // Both writer modes receive the encoded value's snapshot: caller mutations during
+            // Redis I/O must not change what the external store receives.
             var change = _options.Writer is null ? default : new RespireMapChange<TKey, TValue>(key, new(true, _decode(bytes)));
             await MakeRoomAsync(cancellationToken).ConfigureAwait(false);
             await StoreAsync(field, bytes, SetWhen.Always, expiration, cancellationToken).ConfigureAwait(false);
@@ -111,6 +124,8 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     /// <summary>
     /// Removes a field and forwards the deletion to the writer, even if Redis already lacked it.
     /// Returns whether Redis removed an entry.
+    /// A write-through writer failure propagates after Redis has changed; it does not roll back
+    /// Redis or its cache invalidations. The caller must retry or reconcile external persistence.
     /// </summary>
     public async ValueTask<bool> RemoveAsync(TKey key, CancellationToken cancellationToken = default)
     {
@@ -127,16 +142,26 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     }
 
     /// <summary>Warms requested entries, using the loader on misses. Returns the number found.</summary>
+    /// <remarks>Reads entries sequentially while holding the map gate for the entire preload.</remarks>
     public async ValueTask<int> PreloadAsync(IEnumerable<TKey> keys, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(keys);
-        var found = 0;
-        foreach (var key in keys)
-            if ((await GetAsync(key, cancellationToken).ConfigureAwait(false)).Found) found++;
-        return found;
+        await EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var found = 0;
+            foreach (var key in keys)
+                if ((await GetCoreAsync(key, cancellationToken).ConfigureAwait(false)).Found) found++;
+            return found;
+        }
+        finally { _gate.Release(); }
     }
 
     /// <summary>Scans Redis and warms existing fields without callbacks. Requires Redis 7.4+.</summary>
+    /// <remarks>
+    /// Holds the map gate during the scan and sequential field reads. Each uncached field needs
+    /// a Redis round trip in addition to the scan pages; other map operations wait until completion.
+    /// </remarks>
     public async ValueTask PreloadAsync(CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
@@ -207,7 +232,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         if (Volatile.Read(ref _stopping) == 0) return;
         _gate.Release();
-        throw new ObjectDisposedException(GetType().Name);
+        ObjectDisposedException.ThrowIf(true, this);
     }
 
     private string Format(TKey key)

@@ -1,0 +1,21 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireMap`2",
+      "OwnerType": "Respire.RespireMap`2",
+      "Members": [
+        "ClearLocalCachesAsync(CancellationToken):ValueTask",
+        "DisposeAsync():ValueTask",
+        "FlushAsync(CancellationToken):ValueTask",
+        "GetAsync(TKey,CancellationToken):ValueTask<RespireGet<TValue>>",
+        "PreloadAsync(CancellationToken):ValueTask",
+        "PreloadAsync(IEnumerable<TKey>,CancellationToken):ValueTask<int>",
+        "RemoveAsync(TKey,CancellationToken):ValueTask<bool>",
+        "SetAsync(TKey,TValue,TimeSpan?,CancellationToken):ValueTask"
+      ],
+      "Contract": "Own map operation completion through admission, key and value conversion, delegated Redis operations, loader or writer callbacks, and gate cleanup. Flush and disposal own draining accepted writes; failed writer batches remain queued for retry."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}
