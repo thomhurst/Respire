@@ -15,10 +15,13 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     {
         var prefix = $"map:{Guid.NewGuid():N}:";
         await using var first = await ConnectAsync(mode, prefix);
-        await using var second = await ConnectAsync(mode, prefix);
         await using var a = Create(first.WithKeyPrefix(prefix), "values");
-        await using var b = Create(second.WithKeyPrefix(prefix), "values");
         await a.SetAsync(1, 10);
+
+        // Start tracking after seeding so a delayed broadcast invalidation from the
+        // seed write cannot evict the reader's entry between the cache-hit checks.
+        await using var second = await ConnectAsync(mode, prefix);
+        await using var b = Create(second.WithKeyPrefix(prefix), "values");
         (await b.GetAsync(1)).Value.Should().Be(10);
         var hits = second.ClientSideCache!.GetStatistics().Hits;
         (await b.GetAsync(1)).Value.Should().Be(10);

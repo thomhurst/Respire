@@ -27,6 +27,20 @@ Always declare batches with `await using var`. Disposing a batch that never exec
 - Reading a pending before `ExecuteAsync` throws `RespirePendingNotReadyException`.
 - A failed command sets `Status` to `Faulted` and puts its exception in `Error`.
 
+### Ignoring queued results
+
+You can ignore a queued result when you only need the command to execute:
+
+```csharp
+await using var batch = redis.CreateBatch();
+batch.Expire("session:42", TimeSpan.FromMinutes(30));
+await batch.ExecuteAsync(cancellationToken);
+```
+
+The analyzer assembly included in the `Respire` NuGet package suppresses CS4014 for calls returning `RespirePending<T>` (suppression ID `RESPSPR001`). This covers batch and transaction shortcuts, command facets, and helpers returning a pending, including when warnings are treated as errors. It does not suppress warnings for `Task`, `ValueTask`, `ExecuteAsync`, or `CommitAsync` calls. If analyzers are disabled or excluded from the package assets, use an explicit discard (`_ = batch.Expire(...)`) for ignored results.
+
+Keep the pending in a variable when its value matters, then read `.Result`, use `TryGetResult`, or await it after execution. Do not await it while queuing: the existing RESP002 analyzer warns about reads and awaits before execution when it can track the queue and pending within the same method. Awaiting a pending before execution throws `RespirePendingNotReadyException`; it does not execute the queue.
+
 ### Failures
 
 `ExecuteAsync` completes every pending, then throws the first failure in queue order. It does not stop sending at the first error or roll back successful commands, whose results stay readable. This applies to command errors, conversion failures, timeouts, cancellation, and connection-acquisition failures.
@@ -205,6 +219,17 @@ Console.WriteLine(balance.Result);
 - A transaction runs on one connection as `MULTI` / `EXEC`. Its commit returns no result: without `WATCH`, `EXEC` cannot abort.
 - Always commit or dispose it, so its buffer and any WATCH connection are released. `await using` covers early returns and exceptions. Disposal after commit does nothing.
 - Committing an empty transaction sends nothing.
+
+For library code that enables CA2007, configure both asynchronous disposal and the commit await. Keep the transaction in its own variable so its command methods remain available:
+
+```csharp
+var transaction = redis.CreateTransaction();
+await using var lifetime = transaction.ConfigureAwait(false);
+transaction.Expire("session:42", TimeSpan.FromMinutes(30));
+await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+```
+
+The same disposal pattern works for batches and watched transactions. A watched transaction's asynchronous creation can also use `.ConfigureAwait(false)`.
 
 ## Transient retries for batches and transactions
 

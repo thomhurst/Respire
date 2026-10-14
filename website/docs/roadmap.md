@@ -57,6 +57,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - GC-owned raw, script, and function results by default, with explicit
   [pooled result leases](guides/raw-commands.md#result-lifetime) and a shared
   `await using` pattern for batches and transactions.
+- [Queued result diagnostics](guides/batches-and-transactions.md#ignoring-queued-results):
+  CS4014 suppression for ignored pending results, with RESP002 checks for premature reads and awaits.
 
 - Typed facets for strings, keys, collections, streams, bitmaps, HyperLogLog, geo, scripts, and
   server commands; a [command catalog with raw and interpolated execution](guides/raw-commands.md);
