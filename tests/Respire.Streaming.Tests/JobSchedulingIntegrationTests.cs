@@ -18,6 +18,58 @@ public class JobSchedulingIntegrationTests(RedisTestContainer redis)
     private const string Group = RespireJobQueue<string>.ConsumerGroup;
 
     [Test]
+    public async Task SlowHandlerDoesNotRestartTheSchedulingReadWait()
+    {
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        await queue.EnqueueAsync("first", "payload");
+        var handler = new SchedulingWaitHandler();
+        var services = new ServiceCollection().AddSingleton<IRespireClient>(client).AddSingleton(handler);
+        services.AddRespireJobQueue<SchedulingWaitHandler, string>("schedule", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
+            new() { ReadWait = TimeSpan.FromSeconds(30), RecoveryPollInterval = TimeSpan.FromMinutes(1) },
+            new() { SchedulingPollInterval = TimeSpan.FromSeconds(4) });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetServices<IHostedService>().Single();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await worker.StartAsync(deadline.Token);
+        try
+        {
+            await handler.Entered.Task.WaitAsync(deadline.Token);
+            await queue.EnqueueScheduledAsync("scheduled", "payload", new());
+            // Consume half of the interval in the handler. The subsequent read must
+            // use the remaining time, rather than beginning another four-second wait.
+            await Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
+            var clock = Stopwatch.StartNew();
+            handler.Release.TrySetResult();
+            await handler.Scheduled.Task.WaitAsync(deadline.Token);
+            await Assert.That(clock.Elapsed).IsLessThan(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            handler.Release.TrySetResult();
+            await worker.StopAsync(deadline.Token);
+        }
+    }
+
+    public sealed class SchedulingWaitHandler : IRespireStreamHandler<RespireJob<string>>
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Scheduled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
+        {
+            if (job.Id == "first")
+            {
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            else Scheduled.TrySetResult();
+            return RespireStreamWorkerResult.Ack;
+        }
+    }
+
+    [Test]
     public async Task BusyReaderDoesNotPromoteOnEveryIteration()
     {
         await using var client = await ConnectAsync();

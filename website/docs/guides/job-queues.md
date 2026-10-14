@@ -193,7 +193,7 @@ options, retains immediate-only processing and requires no access to the schedul
 Enable scheduling on every worker for a scheduled queue, and grant the permissions below
 before switching producers to `EnqueueScheduledAsync`.
 
-Each worker reader promotes at most `SchedulingBatchSize` due jobs before reading or recovering
+Each worker reader promotes at most `SchedulingBatchSize` due jobs (default 64, maximum 256) before reading or recovering
 work, at most once per `SchedulingPollInterval`. Redis `TIME` determines due times and expiry; application clocks are not used. Clock jumps
 on the Redis server or after failover can advance or postpone eligibility. Delay is a minimum,
 not an execution deadline. Busy handlers, polling, ready-stream backlog and recovery can add latency.

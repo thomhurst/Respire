@@ -146,8 +146,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 {
                     var remaining = options.RecoveryPollInterval - recoveryClock.Elapsed;
                     var wait = remaining < options.ReadWait ? remaining : options.ReadWait;
-                    if (options.JobQueue is { } scheduling && wait > scheduling.SchedulingPollInterval)
-                        wait = scheduling.SchedulingPollInterval;
+                    if (options.JobQueue is { } scheduling)
+                    {
+                        var schedulingRemaining = scheduling.SchedulingPollInterval - schedulingClock.Elapsed;
+                        if (wait > schedulingRemaining) wait = schedulingRemaining;
+                    }
                     if (wait <= TimeSpan.Zero) continue;
                     var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer,
                         readOptions with { WaitFor = wait }, cancellationToken: readers.Token).ConfigureAwait(false);
