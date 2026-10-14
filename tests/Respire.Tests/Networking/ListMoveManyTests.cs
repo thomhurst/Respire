@@ -26,8 +26,9 @@ public class ListMoveManyTests
         var view = client.WithKeyPrefix("tenant:");
         string[]? result;
         if (mode is "immediate" or "blocking")
-            result = await view.Lists.MoveManyAsync("source", "destination", 2, ListSide.Right, ListSide.Left,
-                ListMoveCountMode.Exactly, ListMoveOrder.Bulk, mode == "blocking" ? TimeSpan.FromMilliseconds(250) : null);
+            result = await (mode == "blocking"
+                ? view.Lists.MoveManyAsync("source", "destination", TimeSpan.FromMilliseconds(250), 2, ListSide.Right, ListSide.Left, ListMoveCountMode.Exactly, ListMoveOrder.Bulk)
+                : view.Lists.MoveManyAsync("source", "destination", 2, ListSide.Right, ListSide.Left, ListMoveCountMode.Exactly, ListMoveOrder.Bulk));
         else
         {
             using var batch = mode == "batch" ? view.CreateBatch() : null;

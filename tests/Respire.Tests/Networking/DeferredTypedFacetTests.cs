@@ -25,7 +25,7 @@ public class DeferredTypedFacetTests
         var expiry = await client.Hashes.ExpiryAsync("hash", "field", cancellation.Token);
         var called = await client.Functions.ExecuteIntegerAsync(function, "key", cancellationToken: cancellation.Token);
         var list = await client.Lists.PopManyAsync("list", cancellationToken: cancellation.Token);
-        var sorted = await client.SortedSets.PopManyAsync("sorted", 1, false, null, cancellation.Token);
+        var sorted = await client.SortedSets.PopManyAsync(["sorted"], cancellationToken: cancellation.Token);
         var expected = server.ReceivedCommands.ToArray();
 
         await ExecuteAsync(client, transaction, async (queue, execute) =>

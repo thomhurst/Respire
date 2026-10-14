@@ -7,50 +7,63 @@ namespace Respire;
 public partial interface IListCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, long count = 1, ListSide side = ListSide.Left, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, TimeSpan? waitFor, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
+    ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan? waitFor, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Pops up to count values from the first nonempty list in input order. Null when no list
     /// is ready before waitFor expires. Without waitFor, returns immediately. Redis: LMPOP / BLMPOP (7.0+).
     /// </summary>
     /// <remarks>
-    /// Keys must share a Cluster slot. Count must be positive. Timeout.InfiniteTimeSpan waits indefinitely.
+    /// Keys must share a Cluster slot. Count must be positive. Null waitFor waits indefinitely.
     /// TimeSpan.Zero uses a minimum blocking wait of one millisecond; omit waitFor for nonblocking LMPOP.
     /// Invalid arguments throw synchronously before a task is returned.
     /// </remarks>
-    ValueTask<RespireListPopManyResult?> PopManyAsync(
-        ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left,
-        TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<RespireListPopManyResult?> PopManyAsync(ReadOnlySpan<RespireKey> keys, TimeSpan? waitFor, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<RespireListPopManyResult?> PopManyAsync(ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Waits for and pops one value from the first nonempty list in input order. Null on timeout.
     /// Uses a dedicated pooled connection. Redis: BLPOP / BRPOP.
     /// </summary>
     /// <remarks>
-    /// Keys must share a Cluster slot. Timeout.InfiniteTimeSpan waits indefinitely.
+    /// Keys must share a Cluster slot. Null waitFor waits indefinitely.
     /// TimeSpan.Zero uses a minimum blocking wait of one millisecond.
     /// Invalid arguments throw synchronously before a task is returned.
     /// </remarks>
     ValueTask<RespireListPopResult?> PopAsync(
-        ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, ListSide side = ListSide.Left,
+        ReadOnlySpan<RespireKey> keys, TimeSpan? waitFor, ListSide side = ListSide.Left,
         CancellationToken cancellationToken = default);
 }
 
 internal sealed partial class ListCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, long count = 1, ListSide side = ListSide.Left, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
-        => PopManyAsync([key], count, side, waitFor, cancellationToken);
+    public ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, TimeSpan? waitFor, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
+        => PopManyCoreAsync([key], count, side, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
+        => PopManyCoreAsync([key], count, side, null, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan waitFor, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
+    public ValueTask<RespireListPopResult?> PopAsync(RespireKey key, TimeSpan? waitFor, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
         => PopAsync([key], waitFor, side, cancellationToken);
 
 
-    public ValueTask<RespireListPopManyResult?> PopManyAsync(
+    public ValueTask<RespireListPopManyResult?> PopManyAsync(ReadOnlySpan<RespireKey> keys, TimeSpan? waitFor, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
+        => PopManyCoreAsync(keys, count, side, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask<RespireListPopManyResult?> PopManyAsync(ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left, CancellationToken cancellationToken = default)
+        => PopManyCoreAsync(keys, count, side, null, cancellationToken);
+
+    private ValueTask<RespireListPopManyResult?> PopManyCoreAsync(
         ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
@@ -67,7 +80,7 @@ internal sealed partial class ListCommands
     }
 
     public ValueTask<RespireListPopResult?> PopAsync(
-        ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, ListSide side = ListSide.Left,
+        ReadOnlySpan<RespireKey> keys, TimeSpan? waitFor, ListSide side = ListSide.Left,
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireListPopResult?>.Start();

@@ -236,7 +236,7 @@ public class MultiKeySortedSetPopTests
         if (scalar)
             returned = (await view.SortedSets.PopAsync(keys, TimeSpan.FromSeconds(1), path == "one-max"))!.Value.Key;
         else if (path is "immediate" or "many-blocking")
-            returned = (await view.SortedSets.PopManyAsync(keys, waitFor: path == "many-blocking" ? TimeSpan.FromSeconds(1) : null))!.Value.Key;
+            returned = (await (path == "many-blocking" ? view.SortedSets.PopManyAsync(keys, waitFor: TimeSpan.FromSeconds(1)) : view.SortedSets.PopManyAsync(keys)))!.Value.Key;
         else if (path == "batch")
         {
             using var batch = view.CreateBatch();

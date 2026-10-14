@@ -19,10 +19,10 @@ public enum ListSide
 
 /// <summary>
 /// List commands. Collection cardinality uses <see cref="CountAsync"/>. The pop and move
-/// operations accept an optional <c>waitFor</c>: when given,
+/// operations have immediate overloads and blocking overloads requiring <c>waitFor</c>: when given,
 /// the call becomes its blocking Redis variant (BLPOP, BLMOVE, …) and transparently runs on a
 /// dedicated pooled connection, so blocking never stalls multiplexed traffic — use
-/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> to wait indefinitely.
+/// an explicit null to wait indefinitely.
 /// </summary>
 public partial interface IListCommands
 {
@@ -83,10 +83,16 @@ public partial interface IListCommands
     /// Pops from the head. Null when the list is empty (after <paramref name="waitFor"/>, if
     /// given). Redis: LPOP / BLPOP.
     /// </summary>
-    ValueTask<string?> LeftPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<string?> LeftPopAsync(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<string?> LeftPopAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Pops from the tail. Redis: RPOP / BRPOP.</summary>
-    ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<string?> RightPopAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Removes and returns up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
     ValueTask<string[]> LeftPopManyAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
@@ -101,12 +107,22 @@ public partial interface IListCommands
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> LeftPopAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Pops from the tail and deserializes as <typeparamref name="T"/>. Redis: RPOP / BRPOP.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> RightPopAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes up to <paramref name="count"/> elements from the head and deserializes them as
@@ -128,13 +144,10 @@ public partial interface IListCommands
     /// Atomically moves an element between lists and returns it; null when the source is empty.
     /// Redis: LMOVE / BLMOVE.
     /// </summary>
-    ValueTask<string?> MoveAsync(
-        RespireKey source,
-        RespireKey destination,
-        ListSide from = ListSide.Left,
-        ListSide to = ListSide.Right,
-        TimeSpan? waitFor = null,
-        CancellationToken cancellationToken = default);
+    ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default);
 
     /// <summary>Number of elements in the list (0 when missing). Redis: LLEN.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -365,7 +378,13 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
         RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerValuesAsync("RPUSH", Verbs.RPush, client.Key(in key), values, cancellationToken, observation: observation);
 
-    public ValueTask<string?> LeftPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+    public ValueTask<string?> LeftPopAsync(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default)
+        => LeftPopCoreAsync(key, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask<string?> LeftPopAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => LeftPopCoreAsync(key, null, cancellationToken);
+
+    private ValueTask<string?> LeftPopCoreAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
         try { return owner.Attach(LeftPopBorrowedAsync(key, waitFor, cancellationToken, owner.Observation)); }
@@ -375,7 +394,13 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
     private ValueTask<string?> LeftPopBorrowedAsync(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => PopAsync(key, waitFor, Verbs.LPop, Verbs.BLPop, "LPOP", "BLPOP", cancellationToken, observation);
 
-    public ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+    public ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default)
+        => RightPopCoreAsync(key, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask<string?> RightPopAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => RightPopCoreAsync(key, null, cancellationToken);
+
+    private ValueTask<string?> RightPopCoreAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
         try { return owner.Attach(RightPopBorrowedAsync(key, waitFor, cancellationToken, owner.Observation)); }
@@ -426,6 +451,7 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
             return client.StringOrNullAsync(plainName, new Cmd1(plain, client.Key(in key)), cancellationToken, observation: observation);
         }
 
+        MultiKeyPop.ValidateWait(wait);
         return PopBlockingAsync(key, wait, blocking, blockingName, cancellationToken, observation);
     }
 
@@ -444,7 +470,17 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+    public ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default)
+        => LeftPopCoreAsync<T>(key, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?> LeftPopAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => LeftPopCoreAsync<T>(key, null, cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T?> LeftPopCoreAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
         try { return owner.Attach(LeftPopBorrowedAsync<T>(key, waitFor, cancellationToken, owner.Observation)); }
@@ -458,7 +494,17 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+    public ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor, CancellationToken cancellationToken = default)
+        => RightPopCoreAsync<T>(key, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?> RightPopAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => RightPopCoreAsync<T>(key, null, cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T?> RightPopCoreAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
         try { return owner.Attach(RightPopBorrowedAsync<T>(key, waitFor, cancellationToken, owner.Observation)); }
@@ -523,6 +569,7 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
             return client.DeserializeAsync<T, Cmd1>(plainName, new Cmd1(plain, client.Key(in key)), cancellationToken, observation: observation);
         }
 
+        MultiKeyPop.ValidateWait(wait);
         return PopBlockingAsync<T>(key, wait, blocking, blockingName, cancellationToken, observation);
     }
 
@@ -541,7 +588,13 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
             .ConfigureAwait(false);
     }
 
-    public ValueTask<string?> MoveAsync(
+    public ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default)
+        => MoveCoreAsync(source, destination, from, to, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default)
+        => MoveCoreAsync(source, destination, from, to, null, cancellationToken);
+
+    private ValueTask<string?> MoveCoreAsync(
         RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
@@ -563,6 +616,7 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
                 cancellationToken, observation: observation);
         }
 
+        MultiKeyPop.ValidateWait(wait);
         return MoveBlockingAsync(source, destination, fromSide, toSide, wait, cancellationToken, observation);
     }
 
@@ -649,5 +703,5 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
 
     /// <summary>Redis blocking timeouts are seconds (fractional allowed); 0 waits forever.</summary>
     internal static RespireValue ToSeconds(TimeSpan waitFor)
-        => waitFor == Timeout.InfiniteTimeSpan ? 0 : Math.Max(waitFor.TotalSeconds, 0.001);
+        => MultiKeyPop.ToSeconds(waitFor);
 }

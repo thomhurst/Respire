@@ -104,7 +104,9 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
         IRespireClient client, PopMode mode, RespireKey[] keys, long count, ListSide side)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
-            return await client.Lists.PopManyAsync(keys, count, side, mode == PopMode.Blocking ? TimeSpan.FromMilliseconds(10) : null);
+            return await (mode == PopMode.Blocking
+                ? client.Lists.PopManyAsync(keys, TimeSpan.FromMilliseconds(10), count, side)
+                : client.Lists.PopManyAsync(keys, count, side));
         if (mode == PopMode.Batch)
         {
             using var batch = client.CreateBatch();

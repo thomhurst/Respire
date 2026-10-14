@@ -150,7 +150,7 @@ public class MultiKeyListPopTests
         if (scalar)
             returned = (await view.Lists.PopAsync(keys, TimeSpan.FromSeconds(1), path == "one-left" ? ListSide.Left : ListSide.Right))!.Value.Key;
         else if (path is "immediate" or "many-blocking")
-            returned = (await view.Lists.PopManyAsync(keys, waitFor: path == "many-blocking" ? TimeSpan.FromSeconds(1) : null))!.Value.Key;
+            returned = (await (path == "many-blocking" ? view.Lists.PopManyAsync(keys, waitFor: TimeSpan.FromSeconds(1)) : view.Lists.PopManyAsync(keys)))!.Value.Key;
         else if (path == "batch")
         {
             using var batch = view.CreateBatch();

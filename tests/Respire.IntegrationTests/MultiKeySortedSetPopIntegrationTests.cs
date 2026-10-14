@@ -155,8 +155,8 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
         Task pending = many
             ? client.SortedSets.PopManyAsync(["missing"], descending: descending,
-                waitFor: Timeout.InfiniteTimeSpan, cancellationToken: cancellation.Token).AsTask()
-            : client.SortedSets.PopAsync(["missing"], Timeout.InfiniteTimeSpan,
+                waitFor: null, cancellationToken: cancellation.Token).AsTask()
+            : client.SortedSets.PopAsync(["missing"], null,
                 descending, cancellation.Token).AsTask();
         await client.SetAsync("unrelated", "available");
         (await client.GetAsync<string>("unrelated")).Should().Be("available");
@@ -171,7 +171,9 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         IRespireClient client, PopMode mode, RespireKey[] keys, bool descending)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
-            return await client.SortedSets.PopManyAsync<int>(keys, 2, descending, mode == PopMode.Blocking ? TimeSpan.Zero : null);
+            return await (mode == PopMode.Blocking
+                ? client.SortedSets.PopManyAsync<int>(keys, TimeSpan.Zero, 2, descending)
+                : client.SortedSets.PopManyAsync<int>(keys, 2, descending));
         if (mode == PopMode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -189,7 +191,9 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         IRespireClient client, PopMode mode, RespireKey[] keys, long count, bool descending)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
-            return await client.SortedSets.PopManyAsync(keys, count, descending, mode == PopMode.Blocking ? TimeSpan.FromMilliseconds(10) : null);
+            return await (mode == PopMode.Blocking
+                ? client.SortedSets.PopManyAsync(keys, TimeSpan.FromMilliseconds(10), count, descending)
+                : client.SortedSets.PopManyAsync(keys, count, descending));
         if (mode == PopMode.Batch)
         {
             using var batch = client.CreateBatch();

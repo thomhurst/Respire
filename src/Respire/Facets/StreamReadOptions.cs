@@ -17,8 +17,21 @@ public readonly record struct StreamReadOptions
     /// <remarks>The server always permits the first entry, even when it exceeds this budget.</remarks>
     public long? MaxSize { get; init; }
 
-    /// <summary>Null is nonblocking; InfiniteTimeSpan waits until cancelled. Queued reads require null.</summary>
-    public TimeSpan? WaitFor { get; init; }
+    private readonly TimeSpan? _waitFor;
+
+    /// <summary>Assign to request a blocking read: null waits forever; zero waits at least one millisecond.</summary>
+    /// <remarks>Omit this property for a nonblocking read. Timeout.InfiniteTimeSpan remains a compatibility alias for null.
+    /// Queued reads must leave this property unset.</remarks>
+    public TimeSpan? WaitFor
+    {
+        get => _waitFor;
+        init { _waitFor = value; IsBlocking = true; }
+    }
+
+    /// <summary>Whether WaitFor was explicitly assigned, including an explicit null.</summary>
+    public bool IsBlocking { get; private init; }
+
+    internal StreamReadOptions WithoutBlocking() => this with { IsBlocking = false };
 
     /// <summary>Do not add newly delivered entries to the pending list. Only valid for consumer group reads.</summary>
     /// <remarks>Redis ignores NOACK for pending entries, including those reclaimed with CLAIM.</remarks>
@@ -40,9 +53,9 @@ public readonly record struct StreamReadOptions
         if (MaxSize is { } maxSize) ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSize, nameof(MaxSize));
         if (MaxCount is { } total && Count is { } perStream && total < perStream)
             throw new ArgumentException("MAXCOUNT must be greater than or equal to COUNT.", nameof(MaxCount));
-        if (WaitFor is not { } wait) return;
+        if (!IsBlocking) return;
         if (queued) throw new ArgumentException("Queued stream reads cannot block.", nameof(WaitFor));
-        MultiKeyPop.ValidateWait(wait);
+        MultiKeyPop.ValidateWait(WaitFor);
     }
 
     internal long? GetClaimMinIdleMilliseconds()
@@ -53,8 +66,8 @@ public readonly record struct StreamReadOptions
 
     internal long? GetBlockMilliseconds()
     {
-        if (WaitFor is not { } wait) return null;
-        return wait == Timeout.InfiniteTimeSpan ? 0
+        if (!IsBlocking) return null;
+        return WaitFor is not { } wait || wait == Timeout.InfiniteTimeSpan ? 0
             : Math.Max(1, StreamCommands.CeilingMilliseconds(wait));
     }
 }
