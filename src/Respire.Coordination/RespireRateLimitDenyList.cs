@@ -11,7 +11,7 @@ public sealed class RespireRateLimitDenyList
     private readonly TimeProvider _time;
     private readonly TimeSpan _cacheDuration;
     private readonly int _cacheCapacity;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Dictionary<string, Entry> _cache = new(StringComparer.Ordinal);
     private long _generation;
 

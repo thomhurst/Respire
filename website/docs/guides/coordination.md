@@ -636,6 +636,9 @@ An optional Redis deny list rejects identities before they consume rate-limit pe
 `RespireRateLimitDenyList` across your process and bind an identity when creating each limiter:
 
 ```csharp
+using Respire.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
 var denyList = new RespireRateLimitDenyList(client, "limits:denied",
     cacheDuration: TimeSpan.FromSeconds(1), cacheCapacity: 1024);
 await denyList.SetDeniedAsync("customer:42", denied: true, cancellationToken);
@@ -653,13 +656,17 @@ await denyList.SetDeniedAsync("customer:42", denied: false, cancellationToken);
 buckets, GCRA and composite limits. It does not change the original factory. Denied identities,
 including zero-permit probes, receive an unacquired lease without touching the capacity key or
 entering the queue. Queued requests recheck membership before each capacity retry and leave the
-queue if denied. An update does not wake queued requests; they recheck on their next scheduled retry.
+queue if denied. An update does not wake queued requests; they recheck when they reach the head
+of the queue and their next scheduled retry runs.
 
 Storage is a dedicated Redis **set**: exact, case-sensitive UTF-8 identity strings are members.
 Empty identities are rejected. `SetDeniedAsync` uses `SADD` or `SREM` through Lua; reads use
 `SISMEMBER` through Lua. Redis scripting and these set commands must be permitted. Membership
 persists until removed; no expiry is set. Binary storage keys and client prefixes are preserved.
 The deny-list and capacity keys may occupy different Cluster slots because they are read separately.
+A cache miss therefore adds a Redis round trip. Combining the check with the capacity script would
+require both keys to share a hash slot and would prevent sharing one deny list across independently
+placed limiter keys; separate reads preserve that flexibility.
 Do not share the deny-list key with a limiter's state or another data type.
 
 The local cache holds at most `cacheCapacity` identities (default 1024). Both allowed and denied

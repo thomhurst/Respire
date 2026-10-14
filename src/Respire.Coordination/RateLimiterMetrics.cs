@@ -10,7 +10,14 @@ internal static class RateLimiterMetrics
 
     internal static void Record(bool acquired, bool denyList)
     {
-        if (acquired) Allowed.Add(1);
-        else Blocked.Add(1, new KeyValuePair<string, object?>("reason", denyList ? "deny_list" : "capacity"));
+        try
+        {
+            if (acquired) Allowed.Add(1);
+            else Blocked.Add(1, new KeyValuePair<string, object?>("reason", denyList ? "deny_list" : "capacity"));
+        }
+        catch (Exception)
+        {
+            // A failing metrics listener must not change an already completed admission.
+        }
     }
 }

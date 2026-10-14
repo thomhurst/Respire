@@ -12,6 +12,47 @@ public class RateLimiterMetricsTests
 {
     [Test]
     [NotInParallel]
+    public async Task ThrowingListenerCannotChangeAdmissionOutcomes()
+    {
+        var callbacks = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, target) =>
+        {
+            if (instrument.Meter.Name == "Respire.Coordination.RateLimiting") target.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            Interlocked.Increment(ref callbacks);
+            throw new InvalidOperationException("Exporter failed");
+        });
+        listener.Start();
+        await using var server = new FakeRespServer(
+            "*3\r\n:1\r\n:0\r\n:0\r\n"u8.ToArray(),
+            "*3\r\n:0\r\n:60000\r\n:0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var limiter = client.Coordination.RateLimiters
+            .Composite("limit", [RespireRateLimit.FixedWindow(1, TimeSpan.FromMinutes(1))]);
+        using var allowed = await limiter.AcquireAsync();
+        using var capacity = await limiter.AcquireAsync();
+        await Assert.That(allowed.IsAcquired).IsTrue();
+        await Assert.That(capacity.IsAcquired).IsFalse();
+        await Assert.That(limiter.GetStatistics()!.TotalSuccessfulLeases).IsEqualTo(1);
+        await Assert.That(limiter.GetStatistics()!.TotalFailedLeases).IsEqualTo(1);
+
+        var list = new RespireRateLimitDenyList((_, _) => ValueTask.FromResult(true),
+            (_, _, _) => ValueTask.CompletedTask, TimeProvider.System, TimeSpan.Zero, 1);
+        await using var deniedLimiter = client.Coordination.RateLimiters.WithDenyList(list, "a")
+            .Gcra("denied", 1, TimeSpan.FromMinutes(1));
+        using var denied = await deniedLimiter.AcquireAsync();
+        await Assert.That(denied.IsAcquired).IsFalse();
+        await Assert.That(denied.TryGetMetadata(MetadataName.ReasonPhrase, out string? reason)).IsTrue();
+        await Assert.That(reason).IsEqualTo("deny_list");
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+        await Assert.That(callbacks).IsEqualTo(3);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FinalOutcomesCountOnceIncludingQueueRetriesAndConcurrentRequests()
     {
         var measurements = new ConcurrentQueue<(string Name, long Value, KeyValuePair<string, object?>[] Tags)>();
