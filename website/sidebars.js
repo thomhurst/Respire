@@ -63,6 +63,7 @@ const sidebars = {
       items: [
         'guides/distributed-locks',
         'guides/coordination',
+        'guides/coordination-migration',
         'guides/blocking-queues',
         'guides/stream-workers',
         'guides/job-queues',

@@ -131,6 +131,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ### Compatibility adapters
 
+- A [coordination migration guide](./guides/coordination-migration.md) maps RedLock.net and
+  DistributedLock.Redis to Respire, including quorum, renewal, timeout, and fencing differences.
+
 - The [StackExchange.Redis migration adapter](./guides/stackexchange-interop) (`Respire.StackExchangeCompat`)
   covers a documented subset of `IConnectionMultiplexer`, `IDatabase`, `IBatch`, `ITransaction`,
   `IServer`, and `ISubscriber`, plus value conversion and a raw-command bridge. It passes the

@@ -6,6 +6,9 @@ description: Fencing-token locks, hash-field leases, read-write leases, Redlock,
 The optional `Respire.Coordination` package adds coordination primitives to a client. For ordinary
 single-key locks, use the core client's [distributed locks](distributed-locks.md) instead.
 
+Moving from RedLock.net or DistributedLock.Redis? Read the
+[coordination migration guide](coordination-migration.md) before choosing a primitive.
+
 - [Fencing-token locks](#fencing-token-locks): an expiring lease plus an increasing token that the
   protected resource checks.
 - [Named leases in hash fields](#named-leases-in-hash-fields)
