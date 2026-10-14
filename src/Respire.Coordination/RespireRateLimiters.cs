@@ -9,6 +9,25 @@ namespace Respire.Coordination;
 public sealed class RespireRateLimiters(RespireCoordination coordination)
 {
     private readonly RespireCoordination _coordination = coordination ?? throw new ArgumentNullException(nameof(coordination));
+    private RespireRateLimitDenyList? _denyList;
+    private string? _identity;
+
+    /// <summary>Creates a factory whose limiters check the given identity before admission and each queued retry.</summary>
+    /// <remarks>The original factory is unchanged. Share the deny list across identities to share its bounded cache.
+    /// Denied requests consume no permits and carry ReasonPhrase = "deny_list" without RetryAfter.</remarks>
+    public RespireRateLimiters WithDenyList(RespireRateLimitDenyList denyList, string identity)
+    {
+        ArgumentNullException.ThrowIfNull(denyList);
+        ArgumentException.ThrowIfNullOrEmpty(identity);
+        return new RespireRateLimiters(_coordination) { _denyList = denyList, _identity = identity };
+    }
+
+    private RedisRateLimiter Configure(RedisRateLimiter limiter)
+    {
+        limiter.DenyList = _denyList;
+        limiter.Identity = _identity;
+        return limiter;
+    }
 
     /// <summary>Changes a standalone limiter's settings while retaining its usage and local queue.</summary>
     /// <remarks>The algorithm cannot change. Active Redis attempts finish before migration; later attempts use
@@ -44,7 +63,7 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     /// Use AcquireAsync; zero permits probe without writing, and requests above any component limit cannot succeed.</remarks>
     public RateLimiter Composite(RespireKey key, IReadOnlyList<RespireRateLimit> limits, int queueLimit = 0,
         QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
-        => new RedisRateLimiter(_coordination, key, limits, queueLimit, queueProcessingOrder);
+        => Configure(new RedisRateLimiter(_coordination, key, limits, queueLimit, queueProcessingOrder));
 
     /// <summary>Creates a fixed-window rate limiter.</summary>
     /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
@@ -52,8 +71,8 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
     public RateLimiter FixedWindow(RespireKey key, int permitLimit, TimeSpan window, int queueLimit = 0,
         QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
-        => new RedisRateLimiter(_coordination, key, permitLimit, queueLimit, queueProcessingOrder,
-            RedisRateLimiterKind.FixedWindow, window);
+        => Configure(new RedisRateLimiter(_coordination, key, permitLimit, queueLimit, queueProcessingOrder,
+            RedisRateLimiterKind.FixedWindow, window));
 
     /// <summary>Creates a sliding-window rate limiter divided into segments.</summary>
     /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
@@ -61,8 +80,8 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
     public RateLimiter SlidingWindow(RespireKey key, int permitLimit, TimeSpan window, int segments,
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
-        => new RedisRateLimiter(_coordination, key, permitLimit, queueLimit, queueProcessingOrder,
-            RedisRateLimiterKind.SlidingWindow, window, segments);
+        => Configure(new RedisRateLimiter(_coordination, key, permitLimit, queueLimit, queueProcessingOrder,
+            RedisRateLimiterKind.SlidingWindow, window, segments));
 
     /// <summary>Creates a token-bucket rate limiter.</summary>
     /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
@@ -70,8 +89,8 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
     public RateLimiter TokenBucket(RespireKey key, int tokenLimit, int tokensPerPeriod, TimeSpan replenishmentPeriod,
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
-        => new RedisRateLimiter(_coordination, key, tokenLimit, queueLimit, queueProcessingOrder,
-            RedisRateLimiterKind.TokenBucket, replenishmentPeriod, tokensPerPeriod: tokensPerPeriod);
+        => Configure(new RedisRateLimiter(_coordination, key, tokenLimit, queueLimit, queueProcessingOrder,
+            RedisRateLimiterKind.TokenBucket, replenishmentPeriod, tokensPerPeriod: tokensPerPeriod));
 
     /// <summary>Creates a Generic Cell Rate Algorithm (GCRA) limiter with an initial burst and a steady refill rate.</summary>
     /// <param name="key">The Redis key, before the client's key prefix. All users of this key must use identical settings.</param>
@@ -85,14 +104,16 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     /// <paramref name="burstLimit"/> are rejected without retry metadata. Redis server time controls refill.</remarks>
     public RateLimiter Gcra(RespireKey key, int burstLimit, TimeSpan emissionInterval,
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
-        => new RedisRateLimiter(_coordination, key, burstLimit, queueLimit, queueProcessingOrder,
-            RedisRateLimiterKind.Gcra, emissionInterval);
+        => Configure(new RedisRateLimiter(_coordination, key, burstLimit, queueLimit, queueProcessingOrder,
+            RedisRateLimiterKind.Gcra, emissionInterval));
 }
 
 internal enum RedisRateLimiterKind { FixedWindow, SlidingWindow, TokenBucket, Gcra, Composite }
 
 internal sealed partial class RedisRateLimiter : RateLimiter
 {
+    internal RespireRateLimitDenyList? DenyList { get; set; }
+    internal string? Identity { get; set; }
     private static readonly TimeSpan MaxQueueDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
     private const long MaxExactLuaInteger = 9_007_199_254_740_991;
     private static readonly long MaxTimeSpanMilliseconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond;
@@ -346,6 +367,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
             var lease = await AcquireCoreAsync(permitCount, cancellationToken).ConfigureAwait(false);
             if (lease.IsAcquired) Interlocked.Increment(ref _successfulLeases);
             else Interlocked.Increment(ref _failedLeases);
+            RateLimiterMetrics.Record(lease.IsAcquired, IsDenyListRejection(lease));
             return lease;
         }
         finally
@@ -358,20 +380,26 @@ internal sealed partial class RedisRateLimiter : RateLimiter
     private async ValueTask<RateLimitLease> AcquireCoreAsync(int permitCount, CancellationToken cancellationToken)
     {
         var settingsVersion = Volatile.Read(ref _settingsVersion);
-        if (permitCount == 0) return await AcquireFromRedisAsync(0, cancellationToken).ConfigureAwait(false);
+        if (DenyList is not null && await DenyList.IsDeniedAsync(Identity!, cancellationToken).ConfigureAwait(false))
+            return new RedisRateLimitLease(false, null, denyList: true);
+        if (permitCount == 0) return await AcquireFromRedisAsync(0, cancellationToken, checkDenyList: false).ConfigureAwait(false);
         if (Volatile.Read(ref _queuedPermits) != 0)
         {
             if (_queueLimit == 0) return new RedisRateLimitLease(false, null);
             return await QueueAsync(permitCount, new RedisRateLimitLease(false, null), settingsVersion, cancellationToken)
                 .ConfigureAwait(false);
         }
-        var lease = await AcquireFromRedisAsync(permitCount, cancellationToken).ConfigureAwait(false);
+        var lease = await AcquireFromRedisAsync(permitCount, cancellationToken, checkDenyList: false).ConfigureAwait(false);
         if (lease.IsAcquired || _queueLimit == 0) return lease;
         return await QueueAsync(permitCount, lease, settingsVersion, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<RateLimitLease> AcquireFromRedisAsync(int permitCount, CancellationToken cancellationToken)
+    private async ValueTask<RateLimitLease> AcquireFromRedisAsync(int permitCount, CancellationToken cancellationToken,
+        bool checkDenyList = true)
     {
+        if (checkDenyList && DenyList is not null
+            && await DenyList.IsDeniedAsync(Identity!, cancellationToken).ConfigureAwait(false))
+            return new RedisRateLimitLease(false, null, denyList: true);
         await EnterRedisAttemptAsync(cancellationToken).ConfigureAwait(false);
         var attempt = ExecuteRegisteredAttemptAsync(permitCount, cancellationToken);
         if (!cancellationToken.CanBeCanceled) return await attempt.ConfigureAwait(false);
@@ -662,13 +690,23 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         public long SettingsVersion { get; set; }
     }
 
-    private sealed class RedisRateLimitLease(bool acquired, TimeSpan? retryAfter) : RateLimitLease
+    private static bool IsDenyListRejection(RateLimitLease lease)
+        => lease is RedisRateLimitLease { DeniedByList: true };
+
+    private sealed class RedisRateLimitLease(bool acquired, TimeSpan? retryAfter, bool denyList = false) : RateLimitLease
     {
+        internal bool DeniedByList => denyList;
         public override bool IsAcquired => acquired;
         public override IEnumerable<string> MetadataNames
-            => acquired || retryAfter is null ? [] : [MetadataName.RetryAfter.Name];
+            => denyList ? [MetadataName.ReasonPhrase.Name]
+                : acquired || retryAfter is null ? [] : [MetadataName.RetryAfter.Name];
         public override bool TryGetMetadata(string metadataName, out object? metadata)
         {
+            if (denyList && metadataName == MetadataName.ReasonPhrase.Name)
+            {
+                metadata = "deny_list";
+                return true;
+            }
             if (!acquired && retryAfter is { } value && metadataName == MetadataName.RetryAfter.Name)
             {
                 metadata = value;
