@@ -9,6 +9,15 @@ const sidebars = {
     'stackexchange-redis',
     {
       type: 'category',
+      label: 'Usage diagnostics',
+      items: [
+        'diagnostics/RESP010',
+        'diagnostics/RESP011',
+        'diagnostics/RESP012',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Experimental APIs',
       items: [
         'experimental-apis',

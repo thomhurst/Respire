@@ -1,0 +1,51 @@
+---
+title: RESP011 — Bound collection reads
+description: Scan or page Redis collections instead of materializing unbounded replies.
+---
+
+# RESP011: bound collection reads
+
+The bundled analyzer warns about typed calls that can return an entire keyspace
+or collection. Large replies consume memory and keep Redis busy while it builds
+them. Batching these commands does not bound their replies.
+
+| Flagged operation | Alternative for large collections |
+| --- | --- |
+| `RespireServerNode.KeysAsync` (`KEYS`) | `client.Keys.ScanAsync` (`SCAN`) |
+| `Sets.MembersAsync` / queued `Members` (`SMEMBERS`) | `client.Sets.ScanAsync` (`SSCAN`) |
+| `Hashes.GetAllAsync` / queued `GetAll` (`HGETALL`) | `client.Hashes.ScanAsync` (`HSCAN`) |
+| `Lists.RangeAsync` / queued `Range` with `start: 0, stop: -1` | Bounded `LRANGE` pages |
+
+Generic overloads and the interface facets are covered. List bounds include
+omitted defaults, named arguments and compile-time constants. Nonconstant bounds,
+raw commands, scripts and custom wrappers are not analyzed.
+
+```csharp
+// RESP011
+var members = await client.Sets.MembersAsync("large-set");
+
+// Process incrementally instead.
+await foreach (var member in client.Sets.ScanAsync("large-set"))
+{
+    await ProcessAsync(member);
+}
+
+// Lists have no scan command: choose a bounded range.
+var page = await client.Lists.RangeAsync("list", start: 0, stop: 99);
+```
+
+See [collections](../commands/collections.md) for the typed APIs. Scanning is not
+a snapshot: concurrent changes can affect iteration, duplicate entries are
+possible, and a scan count is a hint. List index paging also needs an explicit
+policy for concurrent mutations. No automatic code fix is offered because
+changing a materialized result into iteration changes the caller's control flow
+and consistency assumptions. In particular, a scan outside a transaction does
+not preserve the transaction's atomicity.
+
+For collections with a known small bound, keeping the original call is reasonable.
+Suppress locally with `#pragma warning disable RESP011` / `restore RESP011`, or
+configure the warning in `.editorconfig`:
+
+```ini
+dotnet_diagnostic.RESP011.severity = suggestion
+```

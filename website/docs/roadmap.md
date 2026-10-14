@@ -72,6 +72,10 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ### Commands and coordination
 
+- Bundled warnings for [short-lived clients](diagnostics/RESP010.md),
+  [unbounded collection reads](diagnostics/RESP011.md), and
+  [blocking subscription consumers](diagnostics/RESP012.md).
+
 - [Async-only native APIs](guides/async-only.md), with the bundled RESP009 warning
   and an `await` code fix for synchronous consumption of Respire tasks.
 
