@@ -23,6 +23,7 @@ const sidebars = {
       type: 'category',
       label: 'Core concepts',
       items: [
+        'guides/async-only',
         'fundamentals/connections',
         'guides/connection-hooks',
         'guides/unix-sockets',

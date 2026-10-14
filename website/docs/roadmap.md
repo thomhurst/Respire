@@ -70,6 +70,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ### Commands and coordination
 
+- [Async-only native APIs](guides/async-only.md), with the bundled RESP009 warning
+  and an `await` code fix for synchronous consumption of Respire tasks.
+
 - GC-owned raw, script, and function results by default, with explicit
   [pooled result leases](guides/raw-commands.md#result-lifetime) and a shared
   `await using` pattern for batches and transactions.
