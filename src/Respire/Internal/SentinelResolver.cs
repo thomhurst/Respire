@@ -57,7 +57,8 @@ internal static class SentinelResolver
                 catch (Exception logError) when (SentinelExceptionPolicy.IsRecoverable(logError)) { }
             }
         }
-        throw new RespireConnectionException("Sentinel replica discovery failed for every configured Sentinel endpoint. Check Sentinel reachability, credentials, and the service name.", failures!);
+        const string message = "Sentinel replica discovery failed for every configured Sentinel endpoint. Check Sentinel reachability, credentials, and the service name.";
+        throw failures is null ? new RespireConnectionException(message) : new RespireConnectionException(message, failures);
     }
 
     /// <summary>

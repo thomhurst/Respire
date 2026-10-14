@@ -31,7 +31,7 @@ public class ConnectionFailureDiagnosticsTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ExhaustedSeedsNameEveryEndpointAndPreserveLastFailure(bool defaultSeed)
+    public async Task ExhaustedSeedsNameEveryEndpointAndPreserveEveryFailure(bool defaultSeed)
     {
         var options = new RespireOptions { UseCluster = true };
         if (!defaultSeed)
@@ -64,7 +64,16 @@ public class ConnectionFailureDiagnosticsTests
         foreach (var endpoint in expected)
             await Assert.That(error!.Message).Contains(endpoint.ToString());
         await Assert.That(error!.Message).Contains("network reachability");
-        await Assert.That(error.InnerException).IsSameReferenceAs(failures[^1]);
+        await Assert.That(error.Endpoint).IsNull();
+        var causes = error.InnerException is AggregateException aggregate
+            ? aggregate.InnerExceptions.ToArray() : [error.InnerException!];
+        await Assert.That(causes.Length).IsEqualTo(failures.Count);
+        for (var index = 0; index < causes.Length; index++)
+        {
+            var cause = (RespireConnectionException)causes[index];
+            await Assert.That(cause.Endpoint).IsEqualTo((RespireEndpoint?)expected[index]);
+            await Assert.That(cause.InnerException).IsSameReferenceAs(failures[index]);
+        }
     }
 
     [Test]

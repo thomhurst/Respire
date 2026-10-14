@@ -968,7 +968,7 @@ public class NearestReadRoutingTests
             .Throws<RespireConnectionException>();
         await Assert.That(failure!.Endpoint).IsNull();
         var failures = await Assert.That(failure.InnerException).IsTypeOf<AggregateException>();
-        var candidates = failures!.Flatten().InnerExceptions.Cast<RespireConnectionException>().ToArray();
+        var candidates = failures!.InnerExceptions.Cast<RespireConnectionException>().ToArray();
         await Assert.That(candidates.Length).IsEqualTo(2);
         foreach (var candidate in candidates)
         {

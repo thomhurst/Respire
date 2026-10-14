@@ -384,7 +384,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 {
                     var failure = ConnectionFailures.AtEndpoint(ex, node.ActiveConnectionEndpoint);
                     lastError = ConnectionFailures.Combine(lastError, failure);
-                    discovery?.FailedNode(node, failure);
+                    // Recovery events and retry classification retain the original type.
+                    // The endpoint wrapper belongs only to the diagnostic cause tree.
+                    discovery?.FailedNode(node, ex);
                 }
             }
 

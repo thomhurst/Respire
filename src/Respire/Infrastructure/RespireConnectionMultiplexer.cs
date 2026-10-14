@@ -618,7 +618,9 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     {
         if (Volatile.Read(ref _correctionOrderingFailure) is { } failure)
         {
-            ExceptionDispatchInfo.Capture(failure).Throw();
+            // Each caller gets its own stack; the cached rejection is never rethrown.
+            throw new RespireServerException(failure.Message, failure.CommandName)
+            { Endpoint = failure.Endpoint, IsCommandNotSubmitted = failure.IsCommandNotSubmitted };
         }
     }
 
@@ -1316,8 +1318,10 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             }
         }
         var scope = requiredSlot is { } exhaustedSlot ? $"required slot {exhaustedSlot}" : "all slots";
-        throw new RespireReconnectLimitException($"Reconnect policy exhausted for {Host}:{Port} ({scope}) after {policy.MaxAttempts} attempts per connection slot. Recreate the client to start a new recovery episode.", failure!)
-        { Endpoint = multipleEndpoints ? null : endpoint };
+        var message = $"Reconnect policy exhausted for {Host}:{Port} ({scope}) after {policy.MaxAttempts} attempts per connection slot. Recreate the client to start a new recovery episode.";
+        throw failure is null
+            ? new RespireReconnectLimitException(message) { Endpoint = multipleEndpoints ? null : endpoint }
+            : new RespireReconnectLimitException(message, failure) { Endpoint = multipleEndpoints ? null : endpoint };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

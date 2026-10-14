@@ -12,6 +12,125 @@ namespace Respire.Tests.Networking;
 public class OwnerExceptionEndpointTests
 {
     [Test]
+    public async Task CombinedCandidateFailuresAreFlatAndKeepEncounterOrder()
+    {
+        var first = new IOException("first");
+        var second = new IOException("second");
+        var third = new IOException("third");
+        var fourth = new IOException("fourth");
+        var combined = (AggregateException)ConnectionFailures.Combine(
+            ConnectionFailures.Combine(first, second), new AggregateException(third, new AggregateException(fourth)))!;
+        await Assert.That(combined.InnerExceptions.SequenceEqual([first, second, third, fourth])).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NearestPreservesExcludedFailureAndAddsLaterCandidatesOnce(bool additionalCandidates)
+    {
+        var primary = new RespireEndpoint("primary.example");
+        RespireEndpoint[] replicas = additionalCandidates ? [new("first.example"), new("second.example")] : [];
+        var original = new RespireTimeoutException("GET", TimeSpan.FromSeconds(1)) { Endpoint = primary };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [primary], ReplicaEndpoints = replicas.ToList(),
+            TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(new IOException("unavailable")),
+        });
+        var attempt = new ReadAttempt();
+        attempt.TryAdd(primary, original);
+        var router = client.Core.ReadRouter;
+        router.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
+        var error = await Assert.That(async () => await router.SelectAsync(
+            RespireReadFrom.Nearest, default, observation: default, attempt: attempt)).Throws<RespireException>();
+        if (!additionalCandidates)
+        {
+            await Assert.That(error).IsSameReferenceAs(original);
+            return;
+        }
+        var aggregate = (AggregateException)error!.InnerException!;
+        await Assert.That(aggregate.InnerExceptions.Count).IsEqualTo(3);
+        await Assert.That(aggregate.InnerExceptions[0]).IsSameReferenceAs(original);
+        await Assert.That(aggregate.InnerExceptions.Skip(1).Cast<RespireException>()
+            .Select(cause => cause.Endpoint!.Value)).IsEquivalentTo(replicas);
+    }
+
+    [Test]
+    public async Task ClusterRecoveryPublishesOriginalTimeoutAfterSeedFailure()
+    {
+        var source = new RespireEndpoint("source.example");
+        var timeout = new RespireTimeoutException("CONNECT", TimeSpan.FromSeconds(1));
+        var options = new RespireOptions
+        {
+            UseCluster = true, Endpoints = [source, new("fallback.example"), new("unused.example")],
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
+            TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(timeout),
+        };
+        await using var client = RespireClient.Create(options);
+        var router = client.Core.Cluster!;
+        var disconnected = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.DiscoveryStateChanged += change =>
+        {
+            if (change.ReconnectExhausted) disconnected.TrySetResult(change);
+        };
+        var error = await Assert.That(async () => await router.EnsureConnectedAsync(
+            default, discovery: null, observation: default)).ThrowsExactly<RespireReconnectLimitException>();
+        var notification = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(notification.Error).IsSameReferenceAs(timeout);
+        await Assert.That(notification.Endpoint).IsEqualTo(options.Endpoints[1]);
+        var timeouts = Causes(error!).OfType<RespireTimeoutException>().ToArray();
+        await Assert.That(timeouts.Length).IsEqualTo(2);
+        await Assert.That(timeouts.All(cause => ReferenceEquals(cause, timeout))).IsTrue();
+    }
+
+    [Test]
+    public async Task EmptySentinelReplicaDiscoveryHasNoInventedCauseOrEndpoint()
+    {
+        var error = await Assert.That(async () => await SentinelResolver.DiscoverReplicaEndpointsAsync(
+            SentinelOptions(), [], default)).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.InnerException).IsNull();
+        await Assert.That(error.Endpoint).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MalformedSentinelPrimaryAddressNamesTheReportingEndpoint(bool nonStringField)
+    {
+        await using var sentinel = new FakeRespServer(nonStringField
+            ? "*2\r\n:123\r\n$4\r\n6379\r\n"u8.ToArray() : FakeRespServer.OkReply);
+        var options = SentinelOptions(sentinel.Port);
+        var error = await Assert.That(async () => await SentinelResolver.ResolveAndConnectPrimaryAsync<object>(
+            options, static (_, _, _) => throw new InvalidOperationException("No primary was reported."), default))
+            .ThrowsExactly<RespireConnectionException>();
+        var malformed = Causes(error!).OfType<RespireProtocolException>().Single();
+        await Assert.That(malformed.Endpoint).IsEqualTo((RespireEndpoint?)options.Endpoints[0]);
+    }
+
+    [Test]
+    public async Task CachedCorrectionRejectionCreatesSeparateExceptionsForLaterCallers()
+    {
+        await using var server = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT ID" ? ":42\r\n"u8.ToArray()
+                : command.StartsWith("CLIENT KILL", StringComparison.Ordinal) ? "-NOPERM fence denied\r\n"u8.ToArray() : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var first = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
+            .ThrowsExactly<RespireServerException>();
+        var second = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
+            .ThrowsExactly<RespireServerException>();
+        var third = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
+            .ThrowsExactly<RespireServerException>();
+        await Assert.That(ReferenceEquals(first, second) || ReferenceEquals(second, third)).IsFalse();
+        await Assert.That(second!.Message).IsEqualTo(first!.Message);
+        await Assert.That(third!.Endpoint).IsEqualTo(first.Endpoint);
+        await Assert.That(third.CommandName).IsEqualTo(first.CommandName);
+    }
+
+    [Test]
     public async Task CandidateContextPreservesKnownOriginsAggregatesAndUnsentMarkers()
     {
         var source = new RespireEndpoint("source.example", 6379);

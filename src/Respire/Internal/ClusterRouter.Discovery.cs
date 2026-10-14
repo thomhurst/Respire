@@ -600,7 +600,8 @@ internal sealed partial class ClusterRouter
                     throw Exhaustion;
                 }
                 var failure = _failure;
-                _previousFailures = ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(failure, _endpoint));
+                if (policy.MaxAttempts is not null)
+                    _previousFailures = ConnectionFailures.Combine(_previousFailures, ConnectionFailures.AtEndpoint(failure, _endpoint));
                 var immediateRedirect = _failureIsRedirect && _attempts == 0;
                 _failure = null;
                 _failureIsRedirect = false;

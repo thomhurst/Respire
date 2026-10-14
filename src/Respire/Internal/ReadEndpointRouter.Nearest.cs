@@ -125,7 +125,7 @@ internal sealed partial class ReadEndpointRouter
             // Exclusions alone preserve the original exception. A later selection or
             // discovery failure remains visible alongside that acquisition failure.
             if (lastError is null || ReferenceEquals(lastError, original)) attempt.ThrowFirstFailure();
-            lastError = new AggregateException(original, lastError);
+            lastError = ConnectionFailures.Combine(original, lastError);
         }
         throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection."));
