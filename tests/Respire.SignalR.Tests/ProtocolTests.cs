@@ -43,6 +43,44 @@ public class ProtocolTests
     }
 
     [Test]
+    public async Task HeartbeatExtensionIsIgnoredByMicrosoftReader()
+    {
+        await using var services = new ServiceCollection().AddLogging().AddSignalR().AddMessagePackProtocol()
+            .Services.BuildServiceProvider();
+        var serializer = new DefaultHubMessageSerializer(services.GetRequiredService<IHubProtocolResolver>(), null, null);
+        var bytes = new RedisProtocol(serializer).WriteInvocation("answer", [], "id", returnChannel: "return", requestHeartbeat: true);
+        var decoded = RedisProtocol.ReadInvocation(bytes);
+        await Assert.That(decoded.RequestHeartbeat).IsTrue();
+        await Assert.That(decoded.InvocationId).IsEqualTo("id");
+        var protocolType = typeof(RedisHubLifetimeManager<>).Assembly
+            .GetType("Microsoft.AspNetCore.SignalR.StackExchangeRedis.Internal.RedisProtocol", true)!;
+        var microsoft = protocolType.GetMethod("ReadInvocation")!.Invoke(null, [new ReadOnlyMemory<byte>(bytes)])!;
+        await Assert.That(microsoft.GetType().GetProperty("InvocationId")!.GetValue(microsoft)).IsEqualTo("id");
+        await Assert.That(microsoft.GetType().GetProperty("ReturnChannel")!.GetValue(microsoft)).IsEqualTo("return");
+        await Assert.That(RedisProtocol.ReadHeartbeat(RedisProtocol.WriteHeartbeat("id"))).IsEqualTo("id");
+    }
+
+    [Test]
+    public async Task ClientResultBindersRejectInvocationsAndStreamsExplicitly()
+    {
+        var fallback = typeof(RespireHubLifetimeManager<BackplaneTestHub>)
+            .GetNestedType("FakeInvocationBinder", BindingFlags.NonPublic)!;
+        if (fallback.ContainsGenericParameters) fallback = fallback.MakeGenericType(typeof(BackplaneTestHub));
+        var binders = new IInvocationBinder[]
+        {
+            new ClientResultsManager(),
+            (IInvocationBinder)fallback.GetField("Instance")!.GetValue(null)!,
+        };
+        foreach (var binder in binders)
+        {
+            var invocation = await Assert.That(() => binder.GetParameterTypes("method")).ThrowsExactly<NotSupportedException>();
+            await Assert.That(invocation!.Message).Contains("hub method invocations");
+            var stream = await Assert.That(() => binder.GetStreamItemType("stream")).ThrowsExactly<NotSupportedException>();
+            await Assert.That(stream!.Message).Contains("streaming results");
+        }
+    }
+
+    [Test]
     public async Task ChannelNamesAndControlEnvelopesMatchMicrosoft()
     {
         var channels = new RedisChannels("Hub", "server");

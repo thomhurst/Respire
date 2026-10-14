@@ -8,11 +8,11 @@ namespace Respire.SignalR.Internal;
 internal sealed class RedisProtocol(DefaultHubMessageSerializer serializer)
 {
     internal byte[] WriteInvocation(string methodName, object?[] args, string? invocationId = null,
-        IReadOnlyList<string>? excludedConnectionIds = null, string? returnChannel = null)
+        IReadOnlyList<string>? excludedConnectionIds = null, string? returnChannel = null, bool requestHeartbeat = false)
     {
         var buffer = new ArrayBufferWriter<byte>();
         var writer = new MessagePackWriter(buffer);
-        writer.WriteArrayHeader(returnChannel is null ? 2 : 4);
+        writer.WriteArrayHeader(returnChannel is null ? 2 : requestHeartbeat ? 5 : 4);
         writer.WriteArrayHeader(excludedConnectionIds?.Count ?? 0);
         if (excludedConnectionIds is not null)
             foreach (var id in excludedConnectionIds) writer.Write(id);
@@ -24,6 +24,7 @@ internal sealed class RedisProtocol(DefaultHubMessageSerializer serializer)
             writer.Write(message.Serialized.Span);
         }
         if (returnChannel is not null) { writer.Write(invocationId); writer.Write(returnChannel); }
+        if (returnChannel is not null && requestHeartbeat) writer.Write(true);
         writer.Flush();
         return buffer.WrittenSpan.ToArray();
     }
@@ -45,6 +46,21 @@ internal sealed class RedisProtocol(DefaultHubMessageSerializer serializer)
         var writer = new MessagePackWriter(buffer);
         writer.WriteArrayHeader(1); writer.Write(id); writer.Flush();
         return buffer.WrittenSpan.ToArray();
+    }
+
+    internal static byte[] WriteHeartbeat(string invocationId)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var writer = new MessagePackWriter(buffer);
+        writer.WriteArrayHeader(1); writer.Write(invocationId); writer.Flush();
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    internal static string ReadHeartbeat(ReadOnlyMemory<byte> data)
+    {
+        var reader = new MessagePackReader(data);
+        ReadEnvelope(ref reader, 1);
+        return ReadString(ref reader);
     }
 
     internal static byte[] WriteCompletionMessage(ReadOnlyMemory<byte> message, string protocol)
@@ -74,7 +90,8 @@ internal sealed class RedisProtocol(DefaultHubMessageSerializer serializer)
         }
         var invocationId = count > 3 ? ReadString(ref reader) : null;
         var returnChannel = count > 3 ? ReadString(ref reader) : null;
-        return new(new SerializedHubMessage(messages), ids, invocationId, returnChannel);
+        var requestHeartbeat = count > 4 && reader.ReadBoolean();
+        return new(new SerializedHubMessage(messages), ids, invocationId, returnChannel, requestHeartbeat);
     }
 
     internal static RedisGroupCommand ReadGroupCommand(ReadOnlyMemory<byte> data)

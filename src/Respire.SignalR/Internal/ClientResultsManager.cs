@@ -130,13 +130,13 @@ internal sealed class ClientResultsManager : IInvocationBinder
     // Unused, here to honor the IInvocationBinder interface but should never be called
     public IReadOnlyList<Type> GetParameterTypes(string methodName)
     {
-        throw new NotImplementedException();
+        throw new NotSupportedException("Client-result binding does not support hub method invocations.");
     }
 
     // Unused, here to honor the IInvocationBinder interface but should never be called
     public Type GetStreamItemType(string streamId)
     {
-        throw new NotImplementedException();
+        throw new NotSupportedException("Client-result binding does not support streaming results.");
     }
 
     // Custom TCS type to avoid the extra allocation that would be introduced if we managed the cancellation separately

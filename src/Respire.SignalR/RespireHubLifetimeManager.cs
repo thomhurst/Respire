@@ -32,6 +32,8 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     private readonly SemaphoreSlim _connectionLock = new SemaphoreSlim(1);
     private readonly IHubProtocolResolver _hubProtocolResolver;
     private readonly ClientResultsManager _clientResultsManager = new();
+    private readonly ClientResultHeartbeats _clientResultHeartbeats;
+    private Task _heartbeatTask = Task.CompletedTask;
     private bool _initialized;
     private int _disposed;
 
@@ -68,6 +70,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             RemoteClientResultTimeout = configured.RemoteClientResultTimeout,
         };
         _bus = new RespirePubSub(client, _options, logger, typeof(THub).FullName!);
+        _clientResultHeartbeats = new(_bus, _clientResultsManager, logger);
         _ackHandler = new AckHandler();
         _channels = new RedisChannels(typeof(THub).FullName!, _serverName);
         if (globalHubOptions != null && hubOptions != null)
@@ -375,6 +378,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         foreach (var connection in _connections) _connections.Remove(connection);
         _ackHandler.Dispose();
         await _bus.DisposeAsync().ConfigureAwait(false);
+        await _heartbeatTask.ConfigureAwait(false);
         await _clientResultsManager.CompleteAllAsync().ConfigureAwait(false);
     }
 
@@ -390,6 +394,8 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         // ID needs to be unique for each invocation and across servers, we generate a GUID every time, that should provide enough uniqueness guarantees.
         var invocationId = GenerateInvocationId();
 
+        using var heartbeat = connection is null ? _clientResultHeartbeats.Track(invocationId, connectionId) : null;
+
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _bus.Stopping);
         using var _ = CancellationTokenUtils.CreateLinkedToken(shutdown.Token,
             connection?.ConnectionAborted ?? default, out var linkedToken);
@@ -399,8 +405,8 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         {
             if (connection == null)
             {
-                // TODO: Need to handle other server going away while waiting for connection result
-                var messageBytes = _protocol.WriteInvocation(methodName, args, invocationId, returnChannel: _channels.ReturnResults);
+                var messageBytes = _protocol.WriteInvocation(methodName, args, invocationId,
+                    returnChannel: _channels.ReturnResults, requestHeartbeat: true);
                 var received = await PublishAsync(_channels.Connection(connectionId), messageBytes, linkedToken).ConfigureAwait(false);
                 if (received < 1 && _bus.ReceiverCountIsGlobal)
                 {
@@ -551,16 +557,19 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
         RedisLog.Subscribing(_logger, connectionChannel);
         var channel = await _bus.SubscribeAsync(connectionChannel).ConfigureAwait(false);
-        channel.OnMessage(channelMessage =>
+        channel.OnMessage(async channelMessage =>
         {
             var invocation = RedisProtocol.ReadInvocation(channelMessage.Message);
 
             // This is a Client result we need to setup state for the completion and forward the message to the client
             if (!string.IsNullOrEmpty(invocation.InvocationId))
             {
+                var heartbeat = invocation.RequestHeartbeat
+                    ? _clientResultHeartbeats.Forward(invocation.InvocationId, invocation.ReturnChannel!) : null;
                 var lifetime = new RemoteInvocationLifetime(_clientResultsManager, invocation.InvocationId,
                     connection.ConnectionAborted, _options.RemoteClientResultTimeout, async completionMessage =>
                 {
+                    heartbeat?.Dispose();
                     try
                     {
                         var memoryBufferWriter = new ArrayBufferWriter<byte>();
@@ -579,13 +588,19 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                         (typeof(RawResult), connection.ConnectionId, lifetime,
                             static (state, completion) => ((RemoteInvocationLifetime)state).CompleteAsync(completion)));
                 }
-                catch { lifetime.DisposeBeforeStart(); throw; }
+                catch { heartbeat?.Dispose(); lifetime.DisposeBeforeStart(); throw; }
                 lifetime.Start();
+                if (invocation.RequestHeartbeat)
+                {
+                    using var sending = CancellationTokenSource.CreateLinkedTokenSource(channelMessage.Stopping);
+                    sending.CancelAfter(ClientResultHeartbeats.Interval);
+                    await _clientResultHeartbeats.SendAsync(invocation.InvocationId, sending.Token).ConfigureAwait(false);
+                }
             }
 
             // Forward message from other server to client
             // Normal client method invokes and client result invokes use the same message
-            return connection.WriteAsync(invocation.Message, channelMessage.Stopping).AsTask();
+            await connection.WriteAsync(invocation.Message, channelMessage.Stopping).ConfigureAwait(false);
         });
     }
 
@@ -727,7 +742,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
         public IReadOnlyList<Type> GetParameterTypes(string methodName)
         {
-            throw new NotImplementedException();
+            throw new NotSupportedException("Client-result binding does not support hub method invocations.");
         }
 
         public Type GetReturnType(string invocationId)
@@ -737,7 +752,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
         public Type GetStreamItemType(string streamId)
         {
-            throw new NotImplementedException();
+            throw new NotSupportedException("Client-result binding does not support streaming results.");
         }
     }
 
@@ -757,7 +772,10 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                         await SubscribeToGroupManagementChannel().ConfigureAwait(false);
                         await SubscribeToAckChannel().ConfigureAwait(false);
                         await SubscribeToReturnResultsAsync().ConfigureAwait(false);
+                        var heartbeats = await _bus.SubscribeAsync(ClientResultHeartbeats.Channel(_channels.ReturnResults)).ConfigureAwait(false);
+                        heartbeats.OnMessage(message => _clientResultHeartbeats.Receive(RedisProtocol.ReadHeartbeat(message.Message)));
                         Volatile.Write(ref _initialized, true);
+                        _heartbeatTask = _clientResultHeartbeats.RunAsync();
                     }
                     catch
                     {
