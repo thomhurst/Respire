@@ -1,0 +1,14 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireConnectionHook.OnConnectingAsync(RespireConnectionContext,CancellationToken):ValueTask",
+      "Reason": "User callback before physical connection establishment; no command dispatch. ConnectWithHookAsync owns rejection, cancellation and cleanup."
+    },
+    {
+      "Member": "Respire.RespireConnectionHook.OnCompletedAsync(RespireConnectionContext,RespireConnectionOutcome,TimeSpan,CancellationToken):ValueTask",
+      "Reason": "User callback auditing physical connection establishment; no command dispatch. ConnectWithHookAsync owns completion failures and connection cleanup."
+    }
+  ]
+}

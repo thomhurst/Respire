@@ -29,6 +29,10 @@ public class ConnectionEstablishmentBenchmarks
     }
 
     [Benchmark]
+    // Bound connection churn so pilot calibration cannot open tens of thousands of
+    // sockets per case and put pressure on the runner's Docker/NAT connection resources.
+    // Keep the same count on both revisions; steady-state PING still auto-calibrates.
+    [InvocationCount(64)]
     public async Task<bool> ConnectAndDispose()
     {
         await using var connection = await RespireConnection.ConnectAsync(_host, _port, _options);

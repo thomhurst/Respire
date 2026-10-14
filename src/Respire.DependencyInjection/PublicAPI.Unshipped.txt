@@ -7,6 +7,8 @@ Respire.DependencyInjection.RespireOptionsBuilder.ClientAvailabilityZone.get -> 
 Respire.DependencyInjection.RespireOptionsBuilder.ClientAvailabilityZone.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.ClusterTopologyRefreshInterval.get -> System.TimeSpan?
 Respire.DependencyInjection.RespireOptionsBuilder.ClusterTopologyRefreshInterval.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionHook.get -> Respire.RespireConnectionHook?
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionHook.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.Endpoints.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.HedgedReads.get -> Respire.RespireHedgedReadOptions?
 Respire.DependencyInjection.RespireOptionsBuilder.HedgedReads.set -> void
