@@ -27,7 +27,13 @@ public static class RespireJobQueueServiceCollectionExtensions
         options ??= new RespireStreamWorkerOptions { DeliveryLimit = 5 };
         if (options.GroupStart != RespireStreamId.Beginning && options.GroupStart != (RespireStreamId)"0-0")
             throw new ArgumentException("Job queue groups must start at the beginning.", nameof(options));
-        options = options with { DeadLetterStream = options.DeadLetterStream ?? RespireJobQueue<T>.GetDeadLetterStreamKey(queueName) };
+        options = options with
+        {
+            DeadLetterStream = options.DeadLetterStream ?? RespireJobQueue<T>.GetDeadLetterStreamKey(queueName),
+            JobEventsStream = stream + ":events",
+            TraceParentField = "traceparent",
+            TraceStateField = "tracestate",
+        };
         services.AddRespireStreamWorker<THandler, RespireJob<T>>(stream, RespireJobQueue<T>.ConsumerGroup,
             entry => RespireJobQueue<T>.Deserialize(entry, deserialize), options);
         services.AddSingleton(new QueueRegistration(queueName));

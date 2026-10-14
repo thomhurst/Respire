@@ -21,6 +21,16 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (options.JobEventsStream is { } events)
+        {
+            var eventKey = client.ResolveKey(events).ToBytes();
+            foreach (var key in new[] { stream, options.DeadLetterStream! })
+            {
+                var resolved = client.ResolveKey(key).ToBytes();
+                if (eventKey.AsSpan().SequenceEqual(resolved) || ClusterHash.GetSlot(eventKey) != ClusterHash.GetSlot(resolved))
+                    throw new ArgumentException("Job event, source, and dead-letter streams must be distinct keys in one Cluster slot.");
+            }
+        }
         if (options.DeadLetterStream is { } deadLetter)
         {
             var sourceKey = client.ResolveKey(stream).ToBytes();
@@ -209,7 +219,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             var failureType = "";
             try
             {
-                result = await handler.HandleAsync(deserialize(delivery.Entry), _handlers.Token).ConfigureAwait(false);
+                var message = deserialize(delivery.Entry);
+                if (options.JobEventsStream is { } events && message is IJobDelivery job)
+                    job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt));
+                result = await handler.HandleAsync(message, _handlers.Token).ConfigureAwait(false);
                 if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
                     throw new InvalidOperationException("The stream handler returned an unknown completion result.");
                 if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
@@ -233,7 +246,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             {
                 // ConsumeAsync treats acknowledgement cancellation as expected only after
                 // readers stop. StopAsync and Dispose must therefore cancel readers first.
-                var acknowledged = await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
+                var acknowledged = options.JobEventsStream is { } events
+                    ? await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
+                            ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete, [stream, events],
+                        [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "completed"], _handlers.Token).ConfigureAwait(false)
+                    : await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
                         ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
                 observation.Outcome = acknowledged == 1 ? "ack" : "stale";
@@ -260,7 +277,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private async Task<string> DeadLetterAsync(Delivery delivery, string consumer, string reason, string failureType)
     {
         if (_handlers.IsCancellationRequested) return "canceled";
-        var completed = await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
+        var completed = options.JobEventsStream is { } events
+            ? await client.Scripts.ExecuteIntegerAsync(JobQueueScripts.Complete, [stream, events, options.DeadLetterStream!],
+                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "dead-letter", reason, failureType],
+                _handlers.Token).ConfigureAwait(false)
+            : await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
             [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, reason, failureType],
             _handlers.Token).ConfigureAwait(false);
         if (completed == 1) _telemetry.DeadLetter(reason);

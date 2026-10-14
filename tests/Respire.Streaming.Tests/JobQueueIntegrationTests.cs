@@ -9,7 +9,7 @@ using TUnit.Core;
 namespace Respire.Streaming.Tests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class JobQueueIntegrationTests(RedisTestContainer redis)
+public partial class JobQueueIntegrationTests(RedisTestContainer redis)
 {
     [Test]
     [Arguments(2)]
@@ -166,10 +166,16 @@ public class JobQueueIntegrationTests(RedisTestContainer redis)
             await Assert.That(recovered.Id).IsEqualTo("crashed-job");
             await Assert.That(recovered.Payload).IsEqualTo("payload");
             await Assert.That(recovered.EntryId).IsEqualTo(enqueued.EntryId);
+            var envelope = new RespireJob<string>(recovered.Id, recovered.Payload, recovered.EntryId);
+            await Assert.That(recovered.Equals(envelope)).IsTrue();
+            await Assert.That(recovered.GetHashCode()).IsEqualTo(envelope.GetHashCode());
             await UntilAsync(async () => (await client.Streams.PendingSummaryAsync(
                 queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count == 0, deadline.Token);
             await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
             await Assert.That((await queue.EnqueueAsync("crashed-job", "duplicate")).Enqueued).IsFalse();
+            var completion = (await client.Streams.ReadAsync(queue.EventsStreamKey)).Single();
+            await Assert.That(completion.GetString("kind")).IsEqualTo("completed");
+            await Assert.That(completion.GetString("attempt")).IsEqualTo("2");
         }
         finally { await worker.StopAsync(deadline.Token); }
     }
@@ -197,14 +203,19 @@ public class JobQueueIntegrationTests(RedisTestContainer redis)
             await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count)
                 .IsEqualTo(0);
             await Assert.That(state.Attempts).IsEqualTo(result == RespireStreamWorkerResult.Nack ? 2 : 1);
+            var completion = (await client.Streams.ReadAsync(queue.EventsStreamKey)).Single();
+            await Assert.That(completion.GetString("kind")).IsEqualTo("dead-letter");
+            await Assert.That(completion.GetString("reason")).IsEqualTo(result == RespireStreamWorkerResult.Nack ? "nack" : "explicit");
         }
         finally { await worker.StopAsync(deadline.Token); }
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task StaleHandlerCannotAcknowledgeTheRecoveredAttempt(int protocol)
+    [Arguments(2, RespireStreamWorkerResult.Ack)]
+    [Arguments(3, RespireStreamWorkerResult.Ack)]
+    [Arguments(2, RespireStreamWorkerResult.DeadLetter)]
+    [Arguments(3, RespireStreamWorkerResult.DeadLetter)]
+    public async Task StaleHandlerCannotAcknowledgeTheRecoveredAttempt(int protocol, RespireStreamWorkerResult staleResult)
     {
         await using var client = await ConnectAsync(protocol);
         var queue = Queue(client);
@@ -214,7 +225,7 @@ public class JobQueueIntegrationTests(RedisTestContainer redis)
         var first = new HandlerState { OnHandle = async token =>
         {
             await releaseFirst.Task.WaitAsync(token);
-            return RespireStreamWorkerResult.Ack;
+            return staleResult;
         } };
         var second = new HandlerState { OnHandle = async token =>
         {
@@ -229,19 +240,34 @@ public class JobQueueIntegrationTests(RedisTestContainer redis)
         await firstWorker.StartAsync(deadline.Token);
         try
         {
-            await first.Received.Task.WaitAsync(deadline.Token);
+            var firstJob = await first.Received.Task.WaitAsync(deadline.Token);
+            await Assert.That(await firstJob.ReportProgressAsync(10, deadline.Token)).IsTrue();
             // Deliberately reuse the consumer identity: attempt fencing must still protect recovery.
             await secondWorker.StartAsync(deadline.Token);
-            await second.Received.Task.WaitAsync(deadline.Token);
+            var secondJob = await second.Received.Task.WaitAsync(deadline.Token);
+            await Assert.That(await firstJob.ReportProgressAsync(90, deadline.Token)).IsFalse();
+            await Assert.That(await secondJob.ReportProgressAsync(50, deadline.Token)).IsTrue();
             releaseFirst.TrySetResult();
             await firstWorker.StopAsync(deadline.Token);
             var pending = await client.Streams.PendingAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup);
             await Assert.That(pending.Length).IsEqualTo(1);
             await Assert.That(pending[0].DeliveryCount).IsEqualTo(2);
+            await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(2);
             releaseSecond.TrySetResult();
             await secondWorker.StopAsync(deadline.Token);
             await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count)
                 .IsEqualTo(0);
+            await Assert.That(await secondJob.ReportProgressAsync(100, deadline.Token)).IsFalse();
+            var events = await client.Streams.ReadAsync(queue.EventsStreamKey);
+            await Assert.That(events.Select(entry => entry.GetString("kind")))
+                .IsEquivalentTo(new string?[] { "progress", "progress", "completed" });
+            await Assert.That(events[^1].GetString("attempt")).IsEqualTo("2");
+            await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(0);
+            await using var reader = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Kind).IsEqualTo("progress");
+            await Assert.That(reader.Current.Percent).IsEqualTo(10);
+            await Assert.That(reader.Current.Attempt).IsEqualTo(1);
         }
         finally
         {

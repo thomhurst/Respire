@@ -1,6 +1,6 @@
 ---
 title: Typed job queues
-description: Enqueue deduplicated jobs and process them with scoped handlers, visibility recovery and dead letters.
+description: Enqueue deduplicated jobs with progress, durable completion events, tracing, visibility recovery and dead letters.
 ---
 
 # Typed job queues
@@ -10,9 +10,9 @@ deduplication to the [hosted stream worker](stream-workers.md). Workers share a 
 group, explicitly acknowledge jobs, and recover deliveries abandoned by another consumer.
 
 This API currently queues jobs for immediate processing. Delay, priority, job TTL and retry
-backoff are tracked in [#1649](https://github.com/thomhurst/Respire/issues/1649); progress,
-completion events and producer tracing are tracked in
-[#1650](https://github.com/thomhurst/Respire/issues/1650).
+backoff are tracked in [#1649](https://github.com/thomhurst/Respire/issues/1649).
+Handlers can report progress, observers can replay retained completion events, and tracing links
+each delivery attempt to its enqueue.
 
 ## Register and enqueue
 
@@ -58,12 +58,14 @@ internal partial class JobJson : JsonSerializerContext { }
 
 public sealed class EmailHandler : IRespireStreamHandler<RespireJob<EmailJob>>
 {
-    public ValueTask<RespireStreamWorkerResult> HandleAsync(
+    public async ValueTask<RespireStreamWorkerResult> HandleAsync(
         RespireJob<EmailJob> job, CancellationToken cancellationToken)
     {
         // Perform an idempotent application operation using job.Id before returning Ack.
         // job.Payload is EmailJob; job.EntryId identifies this enqueue across redeliveries.
-        return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+        if (!await job.ReportProgressAsync(50, cancellationToken))
+            return RespireStreamWorkerResult.Nack; // Another delivery already owns this job.
+        return RespireStreamWorkerResult.Ack;
     }
 }
 ```
@@ -101,9 +103,9 @@ A handler returns one of these explicit results:
 
 | Result | Effect |
 | --- | --- |
-| `Ack` | Acknowledge this delivery after processing completes. |
+| `Ack` | Atomically publish a `completed` event and acknowledge this delivery. |
 | `Nack` | Leave the delivery eligible for recovery after its visibility timeout; dead-letter when the delivery limit is reached. |
-| `DeadLetter` | Atomically append the original envelope plus worker metadata to the dead-letter stream and acknowledge the current attempt. |
+| `DeadLetter` | Atomically append the original envelope plus worker metadata to the dead-letter stream, publish a `dead-letter` event, and acknowledge the current attempt. |
 
 A thrown handler or deserialization exception follows the `Nack` policy. With no options supplied,
 registration uses a delivery limit of five; if you supply `RespireStreamWorkerOptions`, its
@@ -131,11 +133,92 @@ Entries retain `_respire.job.id` and binary `_respire.job.payload`, plus worker 
 fixing a poison job, choose a new application ID or wait for the original deduplication window
 and preserve an application-level idempotency key. Reading a dead letter does not requeue it.
 
+## Progress and completion observers
+
+Call `await job.ReportProgressAsync(percent, cancellationToken)` with an integer from 0 to 100
+inside a hosted handler. `true` confirms the report was appended; `false` means the delivery
+has been acknowledged, recovered by another attempt, or its body has been removed. Reports
+are fenced by both consumer name and delivery count, including recovery with the same name.
+Await reports before returning. Progress neither extends the visibility timeout nor completes
+the job; returning `Ack` is what publishes success. A retry may start progress again from zero,
+so observers should compare the event's `Attempt`. Progress need not be monotonic.
+
+Each queue has an independent event stream at `queue.EventsStreamKey`. A producer-only client
+can observe it without registering a hosted worker:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "email", Encoding.UTF8.GetBytes);
+using var shutdown = new CancellationTokenSource();
+var cursor = RespireStreamId.Beginning; // Load the last successfully processed event ID on restart.
+await foreach (var update in queue.ReadEventsAsync(cursor, shutdown.Token))
+{
+    Console.WriteLine($"{update.EntryId} attempt {update.Attempt}: {update.Kind} {update.Percent}");
+    cursor = update.Id; // Persist this checkpoint after your observer's side effects succeed.
+}
+```
+
+`Kind` is `progress`, `completed`, or `dead-letter`. Every event contains `JobId`, `EntryId`,
+`Attempt`, and its own cursor `Id`; only progress includes `Percent`, and only dead letters
+include `Reason` (`explicit`, `nack`, `processing-failed`, or `delivery-limit`). Events omit
+the payload and exception message. Match terminal events to the enqueue result's `EntryId`,
+since an application job ID can be reused after its deduplication window expires. Deserialization
+errors can dead-letter without invoking a handler and still produce a terminal event.
+
+Each enumeration sees all events after its cursor; observers do not compete for events.
+The default cursor reads from the beginning. The underlying stream reader reconnects after
+transient transport failures, resuming after its last yielded event, with backoff capped at
+3.2 seconds. Cancellation ends enumeration; permanent errors surface to the caller. On process
+restart, use your persisted cursor. Saving a cursor before completing side effects can lose
+observer work; saving it afterwards can replay a duplicate after a crash. Make observer side
+effects idempotent using the event ID. A progress request with an uncertain reply can also
+append again when retried.
+
+Terminal publication, dead-letter append where applicable, and acknowledgement run in one
+fenced Redis script. A consumer crash before that script leaves the job pending for recovery;
+a crash after it leaves the terminal event available even when the consumer never receives the
+reply. Repeating completion cannot append another event for an acknowledged delivery.
+An event write failure leaves the job pending. If a later dead-letter or acknowledgement write
+fails, the script removes its newly appended events before returning the error. Such errors
+fault the worker; repair the key type/permissions and restart it to recover the pending delivery.
+
+Events have **no automatic expiry or trimming**. Set a retention policy with Redis stream APIs
+on `EventsStreamKey`, based on the slowest observer's durable checkpoint. Trimming, eviction,
+deleting the stream, or losing Redis persistence can lose events, including during an outage;
+the reader does not detect a gap caused by trimming. Progress can generate substantial storage,
+so report at useful milestones. Do not expire or trim unprocessed ready-stream bodies.
+
+## Enqueue-to-processing tracing
+
+Subscribe OpenTelemetry tracing to `RespireStreamWorkerTelemetry.ActivitySourceName`
+(`Respire.Streaming`) and metrics to `RespireStreamWorkerTelemetry.MeterName`.
+`job enqueue` is a producer span. Its W3C `traceparent` and optional `tracestate` are persisted
+with the winning enqueue's envelope; a deduplicated call never replaces them. Each `job process`
+consumer span is a new root with an `ActivityLink` to that producer context, including replay,
+retry, and recovery by another host. Handler child spans use the processing span as parent.
+Job queues reserve the `traceparent` and `tracestate` fields and use them regardless of the
+generic stream worker's field-name options.
+
+Without a sampled producer activity, enqueue propagates an existing ambient W3C context.
+Without either context, it writes no tracing fields. Processing creates no activity without a
+listener, and never adopts the worker host's ambient activity. Invalid incoming context is
+ignored. Listener exceptions do not change enqueue or processing outcomes.
+
+The existing stream-worker duration, dead-letter, lag, and pending metrics cover job workers.
+Their dimensions contain only the configured, bounded `TelemetryName` and fixed outcome/reason
+values. Job IDs, entry IDs, payloads, and raw queue keys are not metric dimensions. Choose a
+fixed application role for `TelemetryName`, not a per-tenant or per-job name.
+
 ## Storage and delivery guarantees
 
 Queue names must be nonblank and cannot contain braces. The generated ready stream is
 `{respire-job:<name>}:ready`; its default dead-letter stream appends `:dead`, and deduplication
-keys append `:dedup:<SHA256-of-job-ID>`. The shared hash tag keeps the atomic operations in one
+keys append `:dedup:<SHA256-of-job-ID>`, and the event stream appends `:events`.
+The shared hash tag keeps the atomic operations in one
 Redis Cluster slot, including through key-prefixed clients. Reserve this namespace exclusively
 for the queue. All worker hosts must agree on the codecs and worker policy for a queue.
 
@@ -144,12 +227,14 @@ In addition to script execution,
 allow `GET` and `SET` on deduplication keys, and `XADD` and `XDEL` on the ready stream; `XDEL`
 is required to roll back an append if recording its deduplication key fails.
 Hosted job workers also require Redis 7.0 or later because registration configures a
-dead-letter destination and dead-letter completion uses Lua ACL preflight. Recovery alone in
+dead-letter destination and terminal completion uses Lua ACL preflight. Allow `XADD` and
+`XDEL` on both event and dead-letter streams, alongside the underlying worker's read,
+recovery, and acknowledgement permissions; rollback requires `XDEL`. These destinations must
+resolve to distinct keys in the ready stream's Cluster slot. Observers require `XREAD`
+(and `XREVRANGE` when starting at `$`). Recovery alone in
 the underlying stream worker supports Redis 6.2, but that is not sufficient for this job queue.
 Use real Redis for queue tests;
-`RespireFakeServer` supports only its built-in stream-worker scripts, not the enqueue script.
-The existing worker's tracing and metrics remain available; enqueue-to-processing trace propagation
-is not yet provided by this API.
+`RespireFakeServer` supports only its built-in stream-worker scripts, not the job queue scripts.
 
 Consumer crashes leave delivered jobs in the group's pending list for redelivery. The guarantee is
 at-least-once processing while Redis retains the stream and group state. Redis durability, replica

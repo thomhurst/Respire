@@ -1,4 +1,15 @@
 #nullable enable
+Respire.Streaming.RespireJob<T>.ReportProgressAsync(int percent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobEvent
+Respire.Streaming.RespireJobEvent.Attempt.get -> long
+Respire.Streaming.RespireJobEvent.EntryId.get -> Respire.RespireStreamId
+Respire.Streaming.RespireJobEvent.Id.get -> Respire.RespireStreamId
+Respire.Streaming.RespireJobEvent.JobId.get -> string!
+Respire.Streaming.RespireJobEvent.Kind.get -> string!
+Respire.Streaming.RespireJobEvent.Percent.get -> int?
+Respire.Streaming.RespireJobEvent.Reason.get -> string?
+Respire.Streaming.RespireJobQueue<T>.EventsStreamKey.get -> string!
+Respire.Streaming.RespireJobQueue<T>.ReadEventsAsync(Respire.RespireStreamId after = default(Respire.RespireStreamId), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.Streaming.RespireJobEvent!>!
 ~override Respire.Streaming.RespireJobEnqueueResult.Equals(object obj) -> bool
 ~override Respire.Streaming.RespireJobEnqueueResult.ToString() -> string
 const Respire.Streaming.RespireJobQueue<T>.ConsumerGroup = "respire-jobs" -> string!

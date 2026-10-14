@@ -251,12 +251,15 @@ public partial class StreamWorkerTests
         meter.SetMeasurementEventCallback<long>((_, _, _, _) => { if (failure == "metrics") throw new InvalidOperationException(); });
         meter.Start();
         var handlerContexts = new ConcurrentQueue<Activity?>();
+        var listenerRegistered = false;
         using var tracing = new ActivityListener
         {
             ShouldListenTo = source =>
             {
                 if (source.Name != RespireStreamWorkerTelemetry.ActivitySourceName) return false;
-                if (failure == "source") throw new InvalidOperationException();
+                // A process-wide job producer source may already exist. Inject failure only when
+                // the worker creates its source, not while this test registers its own listener.
+                if (failure == "source" && listenerRegistered) throw new InvalidOperationException();
                 return true;
             },
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => failure == "sample"
@@ -265,6 +268,7 @@ public partial class StreamWorkerTests
             ActivityStopped = _ => { if (failure == "stopped") throw new InvalidOperationException(); },
         };
         ActivitySource.AddActivityListener(tracing);
+        listenerRegistered = true;
         var ambient = Activity.Current;
         var state = new State { Handle = (_, _) =>
         {
