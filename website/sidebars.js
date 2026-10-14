@@ -7,6 +7,19 @@ const sidebars = {
     'stackexchange-redis',
     {
       type: 'category',
+      label: 'Experimental APIs',
+      items: [
+        'experimental-apis',
+        'diagnostics/RSP0001',
+        'diagnostics/RSP0002',
+        'diagnostics/RSP0003',
+        'diagnostics/RSP0004',
+        'diagnostics/RSP0005',
+        'diagnostics/RSP0006',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Core concepts',
       items: [
         'fundamentals/connections',

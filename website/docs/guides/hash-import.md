@@ -5,6 +5,11 @@ description: Import hashes through connection-local fieldsets on Redis 8.10.
 
 # Hash import sessions
 
+:::warning Experimental API: RSP0004
+This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+See [RSP0004](../diagnostics/RSP0004.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
+:::
+
 Redis 8.10 [HIMPORT](https://redis.io/docs/latest/commands/himport/) prepares an ordered list of field names once, then reuses it to import hashes. Each fieldset belongs to one connection, so use a `RespireHashImportSession`: it keeps preparation and imports on one dedicated connection.
 
 ```csharp

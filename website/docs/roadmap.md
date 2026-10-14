@@ -8,6 +8,10 @@ description: What Respire supports today and what remains before a stable releas
 Respire is pre-release. Everything below is implemented, but public APIs may change.
 Each linked guide lists its server and protocol requirements.
 
+Six settling surfaces now require an explicit [experimental API opt-in](experimental-apis.md):
+VectorData, semantic chat caching, hedged reads, hash import sessions, deferred raw commands,
+and StackExchange.Redis compatibility. These remain outside the 1.0 compatibility promise.
+
 ## Available now
 
 - [Public API baselines and deprecation policy](packages.md#public-api-review-and-deprecation)

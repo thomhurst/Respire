@@ -1,5 +1,10 @@
 # Deferred raw commands
 
+:::warning Experimental API: RSP0005
+This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+See [RSP0005](../diagnostics/RSP0005.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
+:::
+
 Batches, transactions, watched transactions, and `IRespireCommandQueue` expose `Execute(command, args)` for queuing a raw command. It returns a `RespirePending<RespireResult>` at once; `batch.ExecuteAsync()` or `transaction.CommitAsync()` runs it and owns cancellation. Prefer a typed facet when one has the operation.
 
 ```csharp

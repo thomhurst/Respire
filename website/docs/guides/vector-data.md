@@ -5,6 +5,11 @@ description: Store typed vector records in Redis hashes or JSON through explicit
 
 # Microsoft.Extensions.VectorData
 
+:::warning Experimental API: RSP0001
+This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+See [RSP0001](../diagnostics/RSP0001.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
+:::
+
 `Respire.VectorData` implements `VectorStore` and `VectorStoreCollection<string,TRecord>` from `Microsoft.Extensions.VectorData.Abstractions` 10.10.0. Records live in Redis Query Engine hashes or RedisJSON documents. Use it when you want the standard VectorData API with explicit, reflection-free mapping.
 
 Both storage kinds support collection lifecycle, CRUD, sequential batches, expression filters, filtered retrieval, FLOAT32 KNN search and hybrid text/vector search.

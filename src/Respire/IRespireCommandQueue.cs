@@ -21,6 +21,7 @@ public interface IRespireCommandQueue
     /// share a Cluster slot. The result owns GC-managed storage; disposal is optional but invalidates
     /// it and its nested views. No inline arguments, flags, or per-command cancellation are accepted.
     /// </remarks>
+    [Experimental("RSP0005", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
     RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args);
 
     /// <summary>String (plain value) commands.</summary>
