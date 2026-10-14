@@ -15,6 +15,19 @@ Respire.RespirePipelineOutcome.Rejected = 4 -> Respire.RespirePipelineOutcome
 Respire.RespirePipelineOutcome.Succeeded = 0 -> Respire.RespirePipelineOutcome
 Respire.RespireOptions.PipelineHook.get -> Respire.RespirePipelineHook?
 Respire.RespireOptions.PipelineHook.init -> void
+Respire.RespireConnectionHook
+Respire.RespireConnectionHook.RespireConnectionHook() -> void
+virtual Respire.RespireConnectionHook.OnConnectingAsync(Respire.RespireConnectionContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+virtual Respire.RespireConnectionHook.OnCompletedAsync(Respire.RespireConnectionContext! context, Respire.RespireConnectionOutcome outcome, System.TimeSpan elapsed, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+Respire.RespireConnectionContext
+Respire.RespireConnectionContext.Endpoint.get -> Respire.RespireEndpoint
+Respire.RespireConnectionContext.UseTls.get -> bool
+Respire.RespireConnectionOutcome
+Respire.RespireConnectionOutcome.Succeeded = 0 -> Respire.RespireConnectionOutcome
+Respire.RespireConnectionOutcome.Failed = 1 -> Respire.RespireConnectionOutcome
+Respire.RespireConnectionOutcome.Canceled = 2 -> Respire.RespireConnectionOutcome
+Respire.RespireOptions.ConnectionHook.get -> Respire.RespireConnectionHook?
+Respire.RespireOptions.ConnectionHook.init -> void
 Respire.RespireException.Endpoint.get -> Respire.RespireEndpoint?
 Respire.RespireException.Endpoint.init -> void
 Respire.RespireTracing

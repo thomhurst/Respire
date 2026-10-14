@@ -55,6 +55,7 @@ public class DependencyInjectionOptionsTests
         if (type == typeof(RespireKey)) return (RespireKey)"prefix:";
         if (type.IsEnum) return Enum.GetValues(type).GetValue(1)!;
         if (type == typeof(IRespireCredentialProvider)) return new Credentials();
+        if (type == typeof(RespireConnectionHook)) return new ConnectionHook();
         if (type == typeof(IRespireSerializer)) return RespireSerializer.Default;
         if (type == typeof(ILoggerFactory)) return NullLoggerFactory.Instance;
         if (type == typeof(RespirePipelineHook)) return new PipelineHook();
@@ -100,7 +101,7 @@ public class DependencyInjectionOptionsTests
         // Mapping is tested separately from validation: this exercises all fields, including
         // settings that cannot be enabled together on one client (replicas and circuit breaker).
         var options = RespireConfiguration.Apply(section, new RespireOptions());
-        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "Serializer", "LoggerFactory", "PipelineHook"];
+        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook"];
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
             if (runtimeServices.Contains(property.Name)) continue;
@@ -148,8 +149,13 @@ public class DependencyInjectionOptionsTests
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton<IRespireCredentialProvider, Credentials>();
+        builder.Services.AddSingleton<RespireConnectionHook, ConnectionHook>();
         builder.Services.AddRespire(Section(new() { ["Endpoints:0"] = "127.0.0.1:1", ["KeyPrefix"] = "default:" }),
-            (provider, options) => options with { CredentialProvider = provider.GetRequiredService<IRespireCredentialProvider>() });
+            (provider, options) => options with
+            {
+                CredentialProvider = provider.GetRequiredService<IRespireCredentialProvider>(),
+                ConnectionHook = provider.GetRequiredService<RespireConnectionHook>(),
+            });
         builder.Services.AddKeyedRespire("jobs", Section(new() { ["Endpoints:0"] = "127.0.0.1:2", ["KeyPrefix"] = "jobs:" }));
         using var host = builder.Build();
         await host.StartAsync();
@@ -158,6 +164,7 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.KeyPrefix.ToString()).IsEqualTo("default:");
         await Assert.That(named.KeyPrefix.ToString()).IsEqualTo("jobs:");
         await Assert.That(options.CredentialProvider).IsSameReferenceAs(host.Services.GetRequiredService<IRespireCredentialProvider>());
+        await Assert.That(options.ConnectionHook).IsSameReferenceAs(host.Services.GetRequiredService<RespireConnectionHook>());
         await Assert.That(options.LoggerFactory).IsSameReferenceAs(host.Services.GetRequiredService<ILoggerFactory>());
         var client = host.Services.GetRequiredService<RespireClient>();
         var jobs = host.Services.GetRequiredKeyedService<RespireClient>("jobs");
@@ -277,6 +284,12 @@ public class DependencyInjectionOptionsTests
 
         public override void OnCompleted(RespirePipelineContext context, object? state,
             RespirePipelineOutcome outcome, Exception? error) { }
+    }
+
+    private sealed class ConnectionHook : RespireConnectionHook
+    {
+        public override ValueTask OnConnectingAsync(RespireConnectionContext context, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("Startup must not invoke connection hooks.");
     }
 
     private sealed class Credentials : IRespireCredentialProvider

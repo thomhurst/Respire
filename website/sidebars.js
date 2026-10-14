@@ -24,6 +24,7 @@ const sidebars = {
       label: 'Core concepts',
       items: [
         'fundamentals/connections',
+        'guides/connection-hooks',
         'guides/unix-sockets',
         'fundamentals/values-and-serialization',
         'fundamentals/client-side-caching',

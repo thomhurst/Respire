@@ -354,7 +354,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _ = WatchStalledDeliveryAsync(_watchdogCancellation.Token);
     }
 
-    public static async Task<RespireConnection> ConnectAsync(
+    private static async Task<RespireConnection> ConnectCoreAsync(
         string host,
         int port,
         RespireConnectionOptions? options = null,
@@ -4383,6 +4383,8 @@ internal sealed record RespireConnectionOptions
     internal IConnectionGeneration? Generation { get; init; }
     internal bool IsDedicatedConnection { get; init; }
     internal bool ObserveEstablishmentErrors { get; init; }
+
+    internal RespireConnectionHook? ConnectionHook { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
     /// <summary>
