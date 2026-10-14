@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 
 namespace Respire.Streaming;
@@ -21,12 +22,17 @@ public sealed class RespireJobQueue<T>
         if not redis.acl_check_cmd then
             return redis.error_reply('ERR job enqueue requires Redis 7.0 or later')
         end
-        if not redis.acl_check_cmd('XADD', KEYS[1], '*', '_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2])
+        local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2]}
+        if ARGV[4] and ARGV[4] ~= '' then
+            table.insert(fields, 'traceparent'); table.insert(fields, ARGV[4])
+            if ARGV[5] and ARGV[5] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[5]) end
+        end
+        if not redis.acl_check_cmd('XADD', KEYS[1], '*', unpack(fields))
             or not redis.acl_check_cmd('SET', KEYS[2], '0-0', 'PX', ARGV[3])
             or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0') then
             return redis.error_reply('NOPERM job enqueue is not permitted')
         end
-        local id = redis.call('XADD', KEYS[1], '*', '_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2])
+        local id = redis.call('XADD', KEYS[1], '*', unpack(fields))
         local recorded = redis.pcall('SET', KEYS[2], id, 'PX', ARGV[3])
         if type(recorded) == 'table' and recorded.err then
             redis.call('XDEL', KEYS[1], id)
@@ -57,6 +63,21 @@ public sealed class RespireJobQueue<T>
     /// <summary>The default logical dead-letter stream key. Worker options can override it with a same-slot destination.</summary>
     public string DeadLetterStreamKey { get; }
 
+    /// <summary>The retained progress and completion stream. No automatic expiry or trimming is applied.</summary>
+    public string EventsStreamKey => StreamKey + ":events";
+
+    /// <summary>Observes retained events after a cursor, resuming transient connections until cancellation.</summary>
+    /// <remarks>Defaults to the beginning. Persist each event's Id after processing and pass it when restarting.
+    /// Replaying an older cursor can deliver duplicates; trimming or eviction can lose events. Independent
+    /// enumerations each see all events. Terminal events are committed atomically with job acknowledgement.</remarks>
+    public async IAsyncEnumerable<RespireJobEvent> ReadEventsAsync(RespireStreamId after = default,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var entry in _client.Streams.ReadAllAsync(EventsStreamKey, after,
+            cancellationToken: cancellationToken).ConfigureAwait(false))
+            yield return new(entry);
+    }
+
     /// <summary>Enqueues a job once within a window, returning the original entry ID on duplicate submissions.</summary>
     /// <remarks>The window starts at the first successful enqueue and is not extended by duplicates.
     /// It defaults to one day and must be positive and at most Int32.MaxValue milliseconds.
@@ -77,9 +98,11 @@ public sealed class RespireJobQueue<T>
         if (streamKey.AsSpan().SequenceEqual(deduplicationKeyBytes)
             || ClusterHash.GetSlot(streamKey) != ClusterHash.GetSlot(deduplicationKeyBytes))
             throw new ArgumentException("Queue keys must resolve to distinct keys in the same Cluster slot.");
+        using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         using var result = await _client.Scripts.ExecuteAsync(Enqueue, [StreamKey, deduplicationKey],
-            [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds)], cancellationToken).ConfigureAwait(false);
+            [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
+        trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }
 

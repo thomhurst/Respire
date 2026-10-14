@@ -2,7 +2,30 @@ namespace Respire.Streaming;
 
 /// <summary>A typed job delivery. A recovered delivery retains both its application ID and stream entry ID.</summary>
 /// <typeparam name="T">The application payload type.</typeparam>
-public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId);
+public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId) : IJobDelivery
+{
+    private JobProgress? _progress;
+
+    void IJobDelivery.Attach(JobProgress progress) => _progress = progress;
+
+    /// <summary>Compares the job envelope, excluding the delivery's progress transport.</summary>
+    public bool Equals(RespireJob<T>? other) => other is not null
+        && Id == other.Id && EqualityComparer<T>.Default.Equals(Payload, other.Payload) && EntryId == other.EntryId;
+
+    /// <summary>Hashes the job envelope, excluding the delivery's progress transport.</summary>
+    public override int GetHashCode() => HashCode.Combine(Id, Payload, EntryId);
+
+    /// <summary>Appends progress from 0 through 100 for this delivery; false means it is no longer current.</summary>
+    /// <remarks>Only hosted deliveries can report progress. Reports do not extend the visibility timeout.
+    /// Await reports before returning from the handler. A lost reply can leave a duplicate progress event on retry.</remarks>
+    public ValueTask<bool> ReportProgressAsync(int percent, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(percent);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(percent, 100);
+        return (_progress ?? throw new InvalidOperationException("Progress requires a hosted job delivery."))
+            .ReportAsync(percent, cancellationToken);
+    }
+}
 
 /// <summary>The stream entry for an enqueue attempt, including whether this call appended it.</summary>
 /// <param name="EntryId">The new entry ID, or the original entry ID when deduplicated.</param>

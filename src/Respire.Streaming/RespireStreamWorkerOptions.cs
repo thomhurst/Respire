@@ -3,6 +3,7 @@ namespace Respire.Streaming;
 /// <summary>Immutable settings captured when registering a hosted stream consumer.</summary>
 public sealed record RespireStreamWorkerOptions
 {
+    internal string? JobEventsStream { get; init; }
     /// <summary>Stable consumer-name base, suffixed with each reader's index. Null creates unique names.</summary>
     /// <remarks>Reuse the same name and consumer count to replay owned pending entries once at startup.
     /// Active registrations and hosts sharing a group must use different names.</remarks>

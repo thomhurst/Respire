@@ -103,8 +103,11 @@ internal sealed class StreamWorkerTelemetry : IDisposable
             if (!_disposed && _source?.HasListeners() == true)
             {
                 // A delivery has a remote producer parent or is a new root, never the host's ambient activity.
-                activity = _source.StartActivity("stream process", ActivityKind.Consumer,
-                    StreamTraceContext.Extract(entry, options), tags: [_workerTag]);
+                var producer = StreamTraceContext.Extract(entry, options);
+                activity = options.JobEventsStream is not null
+                    ? _source.StartActivity("job process", ActivityKind.Consumer, default(ActivityContext),
+                        tags: [_workerTag], links: producer != default ? [new ActivityLink(producer)] : null)
+                    : _source.StartActivity("stream process", ActivityKind.Consumer, producer, tags: [_workerTag]);
             }
         }
         catch

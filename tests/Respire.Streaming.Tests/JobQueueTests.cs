@@ -10,6 +10,15 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test]
+    public async Task ProgressRequiresAHostedDeliveryAndValidPercentage()
+    {
+        var job = new RespireJob<string>("id", "payload", new("1-0"));
+        await Assert.That(async () => await job.ReportProgressAsync(-1)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await job.ReportProgressAsync(101)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await job.ReportProgressAsync(50)).Throws<InvalidOperationException>();
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments(" ")]
     [Arguments("{queue}")]
