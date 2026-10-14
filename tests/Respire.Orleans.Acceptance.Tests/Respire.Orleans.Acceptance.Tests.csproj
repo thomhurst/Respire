@@ -11,6 +11,7 @@
     <PackageVersion Update="Microsoft.Orleans.Clustering.Redis" Version="10.2.2" />
     <PackageVersion Update="Microsoft.Orleans.Persistence.Redis" Version="10.2.2" />
     <PackageVersion Update="Microsoft.Orleans.Reminders.Redis" Version="10.2.2" />
+    <PackageVersion Include="Microsoft.Orleans.Server" Version="10.2.2" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" />
@@ -19,11 +20,12 @@
     <PackageReference Include="Microsoft.Orleans.Clustering.Redis" />
     <PackageReference Include="Microsoft.Orleans.Persistence.Redis" />
     <PackageReference Include="Microsoft.Orleans.Reminders.Redis" />
+    <PackageReference Include="Microsoft.Orleans.Server" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <ProjectReference Include="../../src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
+    <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
     <Compile Include="../ContainerStartRetry.cs" Link="ContainerStartRetry.cs" />
-    <Compile Include="../../src/Respire.Testing.Containers/ContainerPortCollision.cs" Link="ContainerPortCollision.cs" />
     <Using Include="Respire.Testing" />
   </ItemGroup>
 </Project>
