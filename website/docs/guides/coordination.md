@@ -472,6 +472,11 @@ server time to admit requests atomically across clients. For example, this permi
 requests at once, then sustains 10 requests per second:
 
 ```csharp
+using System.Threading.RateLimiting;
+using Respire.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var coordination = client.Coordination;
 using var limiter = coordination.RateLimiters.Gcra(
     "limits:api", burstLimit: 20, emissionInterval: TimeSpan.FromMilliseconds(100));
 
