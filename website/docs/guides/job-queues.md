@@ -81,6 +81,10 @@ original ID; only one has `Enqueued == true`. The first payload wins, so resubmi
 not update a queued job. The default deduplication window is one day; a custom window must be
 positive and at most `Int32.MaxValue` milliseconds. Fractions round up to one millisecond.
 
+Before appending, the script checks permissions for both writes and rollback. If recording the
+deduplication key fails, it removes the new entry before returning the error, so a retry cannot
+create a duplicate from that failed append.
+
 The window starts at the successful enqueue and duplicate calls do not extend it. Acknowledgement
 or dead-letter completion does not remove the deduplication record. Once it expires, the same
 application ID can create a new stream entry, even if the earlier entry is still pending.
@@ -135,7 +139,14 @@ keys append `:dedup:<SHA256-of-job-ID>`. The shared hash tag keeps the atomic op
 Redis Cluster slot, including through key-prefixed clients. Reserve this namespace exclusively
 for the queue. All worker hosts must agree on the codecs and worker policy for a queue.
 
-Redis 6.2 or later and permission to run Lua scripts are required. Use real Redis for queue tests;
+Producers require Redis 7.0 or later for [Lua ACL preflight](https://redis.io/docs/latest/develop/programmability/lua-api/#redisacl_check_cmdcommand-arg).
+In addition to script execution,
+allow `GET` and `SET` on deduplication keys, and `XADD` and `XDEL` on the ready stream; `XDEL`
+is required to roll back an append if recording its deduplication key fails.
+Hosted job workers also require Redis 7.0 or later because registration configures a
+dead-letter destination and dead-letter completion uses Lua ACL preflight. Recovery alone in
+the underlying stream worker supports Redis 6.2, but that is not sufficient for this job queue.
+Use real Redis for queue tests;
 `RespireFakeServer` supports only its built-in stream-worker scripts, not the enqueue script.
 The existing worker's tracing and metrics remain available; enqueue-to-processing trace propagation
 is not yet provided by this API.

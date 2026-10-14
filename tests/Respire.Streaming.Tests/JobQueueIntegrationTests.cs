@@ -56,6 +56,77 @@ public class JobQueueIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(2, "set")]
+    [Arguments(3, "set")]
+    [Arguments(2, "xadd")]
+    [Arguments(3, "xadd")]
+    [Arguments(2, "xdel")]
+    [Arguments(3, "xdel")]
+    public async Task DeniedEnqueueWriteDoesNotAppendOrReserveTheJobId(int protocol, string deniedCommand)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            with { Protocol = (RespProtocol)protocol, AllowAdmin = true });
+        var username = "job-" + Guid.NewGuid().ToString("N");
+        await admin.Server.AclSetUserAsync(username, ["on", ">job-test-password", "~*", "+@all", "-" + deniedCommand]);
+        try
+        {
+            await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+                with { Protocol = (RespProtocol)protocol, Username = username, Password = "job-test-password" });
+            var queue = Queue(restricted);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                await Assert.That(async () => await queue.EnqueueAsync("recoverable", "payload"))
+                    .Throws<RespireServerException>();
+                await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(0);
+            }
+
+            await admin.Server.AclSetUserAsync(username, ["+" + deniedCommand]);
+            var first = await queue.EnqueueAsync("recoverable", "payload");
+            var retry = await queue.EnqueueAsync("recoverable", "replacement");
+            await Assert.That(first.Enqueued).IsTrue();
+            await Assert.That(retry.Enqueued).IsFalse();
+            await Assert.That(retry.EntryId).IsEqualTo(first.EntryId);
+            await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
+        }
+        finally { using var deleted = await admin.ExecuteAsync("ACL DELUSER", [username]); }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task FailedDeduplicationWriteRollsBackOnlyTheNewEntry(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var queue = Queue(client);
+        var earlier = await queue.EnqueueAsync("earlier", "keep me");
+        // Inject an invalid expiry directly into the production script: the public API rejects it,
+        // but Redis accepts XADD before SET fails, exercising runtime rollback after ACL preflight.
+        var script = (RespireScript)typeof(RespireJobQueue<string>)
+            .GetField("Enqueue", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(null)!;
+        var deduplicationKey = queue.StreamKey + ":dedup:" + Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("recoverable")));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await Assert.That(async () =>
+            {
+                using var result = await client.Scripts.ExecuteAsync(script,
+                    [queue.StreamKey, deduplicationKey], ["recoverable", "payload", 0]);
+            }).Throws<RespireServerException>();
+            var retained = await client.Streams.ReadAsync(queue.StreamKey);
+            await Assert.That(retained.Length).IsEqualTo(1);
+            await Assert.That(retained[0].Id).IsEqualTo(earlier.EntryId);
+        }
+
+        var first = await queue.EnqueueAsync("recoverable", "payload");
+        var retry = await queue.EnqueueAsync("recoverable", "replacement");
+        await Assert.That(first.Enqueued).IsTrue();
+        await Assert.That(retry.Enqueued).IsFalse();
+        await Assert.That(retry.EntryId).IsEqualTo(first.EntryId);
+        await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task FailedAppendDoesNotReserveTheJobId()
     {
         await using var client = await ConnectAsync();

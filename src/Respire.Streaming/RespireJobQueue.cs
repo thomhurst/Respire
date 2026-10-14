@@ -6,7 +6,8 @@ namespace Respire.Streaming;
 
 /// <summary>A typed, immediate job producer backed by a Redis stream and expiring deduplication keys.</summary>
 /// <remarks>The client is caller-owned. Enqueue deduplication does not make processing exactly once;
-/// handlers must tolerate redelivery. Reserve this queue's generated key namespace for its exclusive use.</remarks>
+/// handlers must tolerate redelivery. Reserve this queue's generated key namespace for its exclusive use.
+/// Requires Redis 7.0 or later, script execution, GET/SET on deduplication keys, and XADD/XDEL on the stream.</remarks>
 public sealed class RespireJobQueue<T>
 {
     /// <summary>The consumer group shared by all hosted workers for a queue.</summary>
@@ -16,8 +17,21 @@ public sealed class RespireJobQueue<T>
     private static readonly RespireScript Enqueue = RespireScript.Create("""
         local existing = redis.call('GET', KEYS[2])
         if existing then return {existing, 0} end
+        -- Lua errors do not roll back writes. Check both mutations and rollback before appending.
+        if not redis.acl_check_cmd then
+            return redis.error_reply('ERR job enqueue requires Redis 7.0 or later')
+        end
+        if not redis.acl_check_cmd('XADD', KEYS[1], '*', '_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2])
+            or not redis.acl_check_cmd('SET', KEYS[2], '0-0', 'PX', ARGV[3])
+            or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0') then
+            return redis.error_reply('NOPERM job enqueue is not permitted')
+        end
         local id = redis.call('XADD', KEYS[1], '*', '_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2])
-        redis.call('SET', KEYS[2], id, 'PX', ARGV[3])
+        local recorded = redis.pcall('SET', KEYS[2], id, 'PX', ARGV[3])
+        if type(recorded) == 'table' and recorded.err then
+            redis.call('XDEL', KEYS[1], id)
+            return recorded
+        end
         return {id, 1}
         """);
     private readonly IRespireClient _client;
