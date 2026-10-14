@@ -174,9 +174,19 @@ Public interface compatibility and the post-1.0 extension policy are described i
   Retries cover immediate commands, raw/script/function requests with a declared category,
   failover groups, whole batches and unwatched transactions, and
   [watched transaction helpers](guides/batches-and-transactions.md#automatic-watched-transaction-retries).
-  An enabled policy adds latency and allocation to every eligible command.
+  An enabled policy adds retry ownership work and can allocate on healthy commands.
 - The [transport write evidence log](./guides/transport-write-evidence) records how Respire tells
   an unsent command from one that may have reached Redis.
+
+The [14 October healthy-path audit](guides/command-retries.md#healthy-path-acceptance-audit-14-october-2026)
+completes the evidence disposition in [#1693](https://github.com/thomhurst/Respire/issues/1693).
+The original zero-allocation/no-measurable-cost goal remains unmet. Completed owner comparisons
+report 0 B/op for Default/Disabled integer reads, positive Enabled allocations including tracked
+Cluster cache producers, and mixed latency/control drift. Transport's
+[current disposition](guides/transport-write-evidence.md#healthy-path-disposition-14-october-2026)
+also remains negative. The guides define per-path targets, known causes and the evidence needed
+before further optimization; closed #862, #1214 and #1499 are historical predecessors, not
+open blockers. These historical results do not certify current main or promise zero overhead.
 
 A notification-based field cache is not offered: subkey notifications cannot meet the cache
 consistency contract. See the [field-level caching decision](guides/keyspace-notifications.md#field-level-cache-decision).
