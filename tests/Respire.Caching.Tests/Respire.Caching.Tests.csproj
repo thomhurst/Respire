@@ -8,6 +8,7 @@
 
     <ItemGroup>
         <PackageReference Include="TUnit" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" />
         <PackageReference Include="Testcontainers.Redis" />
         <PackageReference Include="Microsoft.AspNetCore.OutputCaching.StackExchangeRedis" />
     </ItemGroup>

@@ -3,7 +3,7 @@ using System.Net.Security;
 using Microsoft.Extensions.Configuration;
 using global::Respire;
 
-namespace Aspire.Respire;
+namespace Respire.DependencyInjection;
 
 // Explicit mapping keeps configuration binding trim-safe and avoids binding service interfaces,
 // callbacks, certificate handles, or binary key internals as though they were configuration objects.
@@ -39,6 +39,9 @@ internal static class RespireConfiguration
         MaintenanceWindowTimeout = section.GetValue("MaintenanceWindowTimeout", options.MaintenanceWindowTimeout),
         ConnectTimeout = section.GetValue("ConnectTimeout", options.ConnectTimeout),
         ReconnectPolicy = ReconnectPolicy(section.GetSection("ReconnectPolicy"), options.ReconnectPolicy),
+        RetryPolicy = RetryPolicy(section.GetSection("RetryPolicy"), options.RetryPolicy),
+        CircuitBreaker = CircuitBreaker(section.GetSection("CircuitBreaker"), options.CircuitBreaker),
+        StreamProducerId = section.GetValue("StreamProducerId", options.StreamProducerId),
         ClusterTopologyRefreshInterval = OptionalTimeSpan(section, "ClusterTopologyRefreshInterval", options.ClusterTopologyRefreshInterval),
         UseTls = section.GetValue("UseTls", options.UseTls),
         TlsOptions = Tls(section.GetSection("TlsOptions"), options.TlsOptions),
@@ -99,6 +102,36 @@ internal static class RespireConfiguration
             MaxDelay = section.GetValue("MaxDelay", options.MaxDelay),
             JitterRatio = section.GetValue("JitterRatio", options.JitterRatio),
             MaxAttempts = OptionalInt32(section, "MaxAttempts", options.MaxAttempts),
+        };
+    }
+
+    private static RespireRetryPolicy? RetryPolicy(IConfigurationSection section, RespireRetryPolicy? options)
+    {
+        if (!section.Exists()) return options;
+        options ??= new();
+        return options with
+        {
+            MaxAttempts = section.GetValue("MaxAttempts", options.MaxAttempts),
+            MaxCommandRetryCategory = section.GetValue("MaxCommandRetryCategory", options.MaxCommandRetryCategory),
+            RetryableErrors = section.GetValue("RetryableErrors", options.RetryableErrors),
+            InitialBackoff = section.GetValue("InitialBackoff", options.InitialBackoff),
+            MaxBackoff = section.GetValue("MaxBackoff", options.MaxBackoff),
+            Jitter = section.GetValue("Jitter", options.Jitter),
+        };
+    }
+
+    private static RespireCircuitBreakerOptions? CircuitBreaker(IConfigurationSection section, RespireCircuitBreakerOptions? options)
+    {
+        if (!section.Exists()) return options;
+        options ??= new();
+        return options with
+        {
+            FailureRateThreshold = section.GetValue("FailureRateThreshold", options.FailureRateThreshold),
+            MinimumFailureCount = section.GetValue("MinimumFailureCount", options.MinimumFailureCount),
+            SamplingWindow = section.GetValue("SamplingWindow", options.SamplingWindow),
+            MaximumSampleCount = section.GetValue("MaximumSampleCount", options.MaximumSampleCount),
+            OpenDuration = section.GetValue("OpenDuration", options.OpenDuration),
+            HalfOpenProbeCount = section.GetValue("HalfOpenProbeCount", options.HalfOpenProbeCount),
         };
     }
 

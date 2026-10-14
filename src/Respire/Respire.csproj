@@ -15,6 +15,7 @@
          wait immune to CommandTimeout, Redis connection identities, and all-connection sends
          for FIFO-ordered TTL corrections. -->
     <InternalsVisibleTo Include="Respire.Caching" />
+    <InternalsVisibleTo Include="Respire.DependencyInjection" />
     <InternalsVisibleTo Include="Respire.Caching.Tests" />
     <!-- Reuse owned binary keys and the managed lock's cancellation-safe renewal lifecycle. -->
     <InternalsVisibleTo Include="Respire.Coordination" />
