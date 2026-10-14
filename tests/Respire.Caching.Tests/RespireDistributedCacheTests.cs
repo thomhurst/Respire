@@ -1703,8 +1703,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public IRespireClient WithPubSubPrefix(string prefix) => inner.WithPubSubPrefix(prefix);
         public IRespireClient WithPubSubPrefix(RespireKey prefix) => inner.WithPubSubPrefix(prefix);
         public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-            TimeSpan ttl, CancellationToken cancellationToken = default)
-            => inner.GetOrSetAsync(key, factory, ttl, cancellationToken);
+            RespireExpiry expiry, CancellationToken cancellationToken = default)
+            => inner.GetOrSetAsync(key, factory, expiry, cancellationToken);
 
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
         public RespireChannel ResolveChannel(RespireChannel channel) => inner.ResolveChannel(channel);
