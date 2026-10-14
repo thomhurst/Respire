@@ -629,3 +629,69 @@ Optional `queueLimit` and `queueProcessingOrder` use the same local queue behavi
 limiters. Queued retries each make another single atomic attempt after the composite retry delay.
 Cancellation or a disconnect after Redis accepts an attempt can leave permits consumed without
 a returned lease. As with the other limiters, asynchronous failover can lose recent state.
+
+### Deny lists and admission metrics
+
+An optional Redis deny list rejects identities before they consume rate-limit permits. Share one
+`RespireRateLimitDenyList` across your process and bind an identity when creating each limiter:
+
+```csharp
+var denyList = new RespireRateLimitDenyList(client, "limits:denied",
+    cacheDuration: TimeSpan.FromSeconds(1), cacheCapacity: 1024);
+await denyList.SetDeniedAsync("customer:42", denied: true, cancellationToken);
+
+await using var limiter = client.Coordination.RateLimiters
+    .WithDenyList(denyList, "customer:42")
+    .FixedWindow("limits:customer:42", 100, TimeSpan.FromMinutes(1));
+using var lease = await limiter.AcquireAsync(1, cancellationToken);
+// A deny-list rejection has ReasonPhrase = "deny_list" and no RetryAfter.
+
+await denyList.SetDeniedAsync("customer:42", denied: false, cancellationToken);
+```
+
+`WithDenyList` returns a separate factory and works with fixed windows, sliding windows, token
+buckets, GCRA and composite limits. It does not change the original factory. Denied identities,
+including zero-permit probes, receive an unacquired lease without touching the capacity key or
+entering the queue. Queued requests recheck membership before each capacity retry and leave the
+queue if denied. An update does not wake queued requests; they recheck on their next scheduled retry.
+
+Storage is a dedicated Redis **set**: exact, case-sensitive UTF-8 identity strings are members.
+Empty identities are rejected. `SetDeniedAsync` uses `SADD` or `SREM` through Lua; reads use
+`SISMEMBER` through Lua. Redis scripting and these set commands must be permitted. Membership
+persists until removed; no expiry is set. Binary storage keys and client prefixes are preserved.
+The deny-list and capacity keys may occupy different Cluster slots because they are read separately.
+Do not share the deny-list key with a limiter's state or another data type.
+
+The local cache holds at most `cacheCapacity` identities (default 1024). Both allowed and denied
+memberships are cached for a fixed `cacheDuration` from the start of the read, default one second,
+maximum one minute. Hits do not extend expiry. Zero disables caching. Overflow clears the cache
+before inserting the new entry; expired entries are removed when read and count toward the bound.
+Concurrent misses may issue separate Redis reads. Share the instance to bound the total cache;
+creating one per identity multiplies the bound. Identity length is application-controlled.
+
+Updates clear the calling instance's entire cache before and after the Redis write, even if the
+write fails. `Invalidate()` clears it explicitly and prevents older in-flight reads from refilling
+it. Other instances see updates on expiry or after their own `Invalidate()` call; there is no
+cross-process invalidation channel. An external `SADD`/`SREM` has the same remote-cache delay.
+Cached decisions remain usable until expiry during a Redis outage. On a miss, read errors propagate
+and prevent capacity acquisition; failures are not cached. A failed or cancelled write may already
+have reached Redis, so read again to determine membership. Concurrent writes follow Redis order.
+
+Membership checks and capacity acquisition are **not atomic**: an update or invalidation does not
+revoke an admission already in progress, including an in-flight membership read. Even with caching
+disabled, a concurrent update can occur between the check and acquisition. This is an admission
+filter with bounded cache staleness, not an immediate revocation or authorization mechanism.
+
+Subscribe to meter `Respire.Coordination.RateLimiting` for all Redis-backed rate limiters, with or
+without deny lists:
+
+| Counter | Tags | Meaning |
+| --- | --- | --- |
+| `respire.rate_limit.allowed` | None | Final acquired asynchronous leases |
+| `respire.rate_limit.blocked` | `reason=deny_list` or `reason=capacity` | Final unacquired asynchronous leases |
+
+Each completed acquisition counts once, regardless of permit count or internal queue retries.
+Zero-permit asynchronous probes count; synchronous `AttemptAcquire` fallback probes do not.
+Capacity includes oversized requests and local queue rejection/eviction. Exceptions, cancellations
+and disposal failures produce no admission count. Keys, identities and endpoints are never tags.
+The same final outcomes feed each limiter's `GetStatistics()` success/failure totals.
