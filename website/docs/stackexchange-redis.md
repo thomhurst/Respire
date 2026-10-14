@@ -91,8 +91,9 @@ returns `string?`, while `GetAsync<T>` uses the selected codec. Both offer poole
 must be disposed. Review binary values, missing values, and ownership when porting callers.
 
 StackExchange.Redis 4.0's `Context.Blocking()` blocks the calling thread; it does not add typed
-Redis blocking queue commands such as `BLPOP`. Also, a command group's cancellation token
-cancels the wait, not a command that has already reached Redis.
+Redis blocking queue commands such as `BLPOP`. A command group's cancellation token prevents
+a command from being sent if it has not yet been written to the connection. Once written,
+the command still runs on Redis; cancellation ends the caller's wait and discards the reply.
 
 The examples below map the flat 3.x API, which is also available in 4.0. For callers already
 using 4.0 groups, use the upstream [mapping][ser4-legacy] to identify the Redis operation,
