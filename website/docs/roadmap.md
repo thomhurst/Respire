@@ -108,7 +108,8 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - Typed serialization, custom serializers, and [value compression codecs](guides/value-codecs.md).
 - [Dependency injection](integrations/dependency-injection.md),
   [distributed caching and `HybridCache`](integrations/caching.md) with cross-instance tag
-  invalidation, and [OpenTelemetry](integrations/observability.md), including a
+  invalidation, and [OpenTelemetry](integrations/observability.md), including
+  [command trace filters](integrations/observability.md#command-trace-filters) and a
   [Prometheus and Redis dashboard setup](integrations/observability.md#prometheus-and-the-published-redis-dashboard).
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
   with a generated builder covering every client option and validation at host startup.
