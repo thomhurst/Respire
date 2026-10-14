@@ -656,8 +656,9 @@ await denyList.SetDeniedAsync("customer:42", denied: false, cancellationToken);
 buckets, GCRA and composite limits. It does not change the original factory. Denied identities,
 including zero-permit probes, receive an unacquired lease without touching the capacity key or
 entering the queue. Queued requests recheck membership before each capacity retry and leave the
-queue if denied. An update does not wake queued requests; they recheck when they reach the head
-of the queue and their next scheduled retry runs.
+queue if denied. A deny-list update does not wake queued requests; they recheck when they reach
+the head of the queue and their next retry runs. Runtime rate-limit settings updates can wake
+the queue earlier, and those retries also recheck the deny list.
 
 Storage is a dedicated Redis **set**: exact, case-sensitive UTF-8 identity strings are members.
 Empty identities are rejected. `SetDeniedAsync` uses `SADD` or `SREM` through Lua; reads use
