@@ -10,6 +10,59 @@ public class CrossSlotExceptionTests
 {
     [Test]
     [MatrixDataSource]
+    public async Task SetCardinalityHonorsKeyContextBeforeAdmission(
+        [Matrix(false, true)] bool includeKeys,
+        [Matrix(false, true)] bool union,
+        [Matrix("typed", "batch", "transaction")] string surface)
+    {
+        await using var server = new FakeRespServer();
+        await using var root = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            IncludeCrossSlotKeyContext = includeKeys,
+        });
+        var client = root.WithKeyPrefix("private-prefix:");
+        byte[] first = [255, .. "{first}:secret"u8];
+        byte[] second = [0, 128, .. "{second}:secret"u8];
+        RespireKey[] keys = [first, second];
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+        async Task Invoke()
+        {
+            if (surface == "typed")
+            {
+                if (union) await client.Sets.UnionCountAsync(keys);
+                else await client.Sets.DifferenceCountAsync(keys);
+            }
+            else
+            {
+                var sets = surface == "batch" ? batch.Sets : transaction.Sets;
+                if (union) _ = sets.UnionCount(keys);
+                else _ = sets.DifferenceCount(keys);
+            }
+        }
+        var error = (await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>())!;
+        await Assert.That(error.CommandName).IsEqualTo(union ? "SUNIONCARD" : "SDIFFCARD");
+        await Assert.That(error.ExpectedSlot).IsEqualTo(((RespireKey)first).ClusterSlot);
+        await Assert.That(error.ConflictingSlot).IsEqualTo(((RespireKey)second).ClusterSlot);
+        var expectedHex = includeKeys ? Convert.ToHexString([.. "private-prefix:"u8, .. second]) : null;
+        await Assert.That(error.ConflictingKeyHex).IsEqualTo(expectedHex);
+        Array.Fill(second, (byte)'x');
+        await Assert.That(error.ConflictingKeyHex).IsEqualTo(expectedHex);
+        await Assert.That(error.ToString().Contains("private-prefix", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(error.ToString().Contains("secret", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(batch.Count).IsEqualTo(0);
+        await Assert.That(transaction.Count).IsEqualTo(0);
+        _ = batch.Set("{third}:key", "value");
+        _ = transaction.Set("{third}:key", "value");
+        await Assert.That(batch.Count).IsEqualTo(1);
+        await Assert.That(transaction.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [MatrixDataSource]
     public async Task LocalRejectionHasSlotsAndOptInBinaryContext(
         [Matrix(false, true)] bool includeKeys,
         [Matrix(false, true)] bool cache,

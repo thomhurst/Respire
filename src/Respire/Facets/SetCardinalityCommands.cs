@@ -84,7 +84,8 @@ internal sealed partial class SetCommands
     {
         var arguments = CountedKeyArguments.Create(client, keys, limit, approximate);
         if (client.Core.Cluster is not null)
-            RawCommandKeyLayouts.ValidateClusterKeys(union ? "SUNIONCARD" : "SDIFFCARD", arguments);
+            RawCommandKeyLayouts.ValidateClusterKeys(union ? "SUNIONCARD" : "SDIFFCARD", arguments,
+                client.Core.Options.IncludeCrossSlotKeyContext);
         return new(union ? Verbs.SUnionCard : Verbs.SDiffCard, arguments);
     }
 }

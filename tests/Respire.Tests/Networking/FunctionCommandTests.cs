@@ -76,11 +76,11 @@ public class FunctionCommandTests
     {
         await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
         var function = RespireFunction.Create("function");
-        await Assert.That(async () => { using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]); }).Throws<RespireServerException>();
+        await Assert.That(async () => { using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]); }).Throws<RespireCrossSlotException>();
         using var batch = client.CreateBatch();
-        await Assert.That(() => batch.Functions.Execute(function, ["{a}", "{b}"])).Throws<RespireServerException>();
+        await Assert.That(() => batch.Functions.Execute(function, ["{a}", "{b}"])).Throws<RespireCrossSlotException>();
         await using var tx = client.CreateTransaction();
-        await Assert.That(() => tx.Functions.Execute(function, ["{a}", "{b}"])).Throws<RespireServerException>();
+        await Assert.That(() => tx.Functions.Execute(function, ["{a}", "{b}"])).Throws<RespireCrossSlotException>();
         _ = tx.Functions.Load("#!lua name=library\nreturn 1");
         _ = tx.Functions.List("library", true);
         _ = tx.Functions.Restore(new byte[] { 1 });
