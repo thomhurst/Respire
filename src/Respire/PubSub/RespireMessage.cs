@@ -64,9 +64,9 @@ public readonly struct RespireMessage
             return (T)(object)Text;
         }
 
-        if (typeof(T) == typeof(byte[]))
+        if (PrimitiveCodec.TryDeserializeBytes<T>(Payload.Span, out var bytes))
         {
-            return (T)(object)Payload.ToArray();
+            return bytes;
         }
 
         if (PrimitiveCodec.TryDeserialize<T>(Payload.Span, out var primitive))

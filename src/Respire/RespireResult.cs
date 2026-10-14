@@ -152,9 +152,9 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
             return (T)(object)value.AsString();
         }
 
-        if (typeof(T) == typeof(byte[]))
+        if (PrimitiveCodec.TryDeserializeBytes<T>(in value, out var bytes))
         {
-            return (T)(object)value.AsSpan().ToArray();
+            return bytes;
         }
 
         if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))

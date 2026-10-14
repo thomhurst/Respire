@@ -1665,6 +1665,21 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return (byte[])(object)value;
         }
 
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
+        {
+            return (ReadOnlyMemory<byte>)(object)value;
+        }
+
+        if (typeof(T) == typeof(Memory<byte>))
+        {
+            return (Memory<byte>)(object)value;
+        }
+
+        if (typeof(T) == typeof(ArraySegment<byte>))
+        {
+            return (ArraySegment<byte>)(object)value;
+        }
+
         if (typeof(T) == typeof(char))
         {
             return (char)(object)value;
@@ -1712,11 +1727,6 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return RespireValue.Null;
         }
 
-        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
-        {
-            return (ReadOnlyMemory<byte>)(object)value!;
-        }
-
         if (typeof(T) == typeof(float) && !float.IsFinite((float)(object)value!))
         {
             return (float)(object)value!;
@@ -1759,9 +1769,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return (T)(object)value.AsString();
         }
 
-        if (typeof(T) == typeof(byte[]))
+        if (PrimitiveCodec.TryDeserializeBytes<T>(in value, out var bytes))
         {
-            return (T)(object)value.AsSpan().ToArray();
+            return bytes;
         }
 
         if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))
