@@ -10,6 +10,50 @@ internal static class PrimitiveCodec
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
+    internal static bool TryDeserializeBytes<T>(in RespValue value, out T? result)
+    {
+        // Avoid accessing the payload for scalar RESP replies.
+        if (typeof(T) == typeof(byte[]) || typeof(T) == typeof(ReadOnlyMemory<byte>)
+            || typeof(T) == typeof(Memory<byte>) || typeof(T) == typeof(ArraySegment<byte>))
+        {
+            return TryDeserializeBytes(value.AsSpan(), out result);
+        }
+
+        result = default;
+        return false;
+    }
+
+    internal static bool TryDeserializeBytes<T>(ReadOnlySpan<byte> payload, out T? result)
+    {
+        // Results may borrow receive/cache storage; every binary read owns its copy.
+        if (typeof(T) == typeof(byte[]))
+        {
+            result = (T)(object)payload.ToArray();
+            return true;
+        }
+
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
+        {
+            result = (T)(object)new ReadOnlyMemory<byte>(payload.ToArray());
+            return true;
+        }
+
+        if (typeof(T) == typeof(Memory<byte>))
+        {
+            result = (T)(object)new Memory<byte>(payload.ToArray());
+            return true;
+        }
+
+        if (typeof(T) == typeof(ArraySegment<byte>))
+        {
+            result = (T)(object)new ArraySegment<byte>(payload.ToArray());
+            return true;
+        }
+
+        result = default;
+        return false;
+    }
+
     private enum PrimitiveKind : byte
     {
         None,

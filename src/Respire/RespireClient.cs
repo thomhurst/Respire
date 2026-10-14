@@ -1769,25 +1769,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return (T)(object)value.AsString();
         }
 
-        if (typeof(T) == typeof(byte[]))
+        if (PrimitiveCodec.TryDeserializeBytes<T>(in value, out var bytes))
         {
-            return (T)(object)value.AsSpan().ToArray();
-        }
-
-        // Replies can borrow receive or cache storage. Return owned bytes just as byte[] reads do.
-        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
-        {
-            return (T)(object)new ReadOnlyMemory<byte>(value.AsSpan().ToArray());
-        }
-
-        if (typeof(T) == typeof(Memory<byte>))
-        {
-            return (T)(object)new Memory<byte>(value.AsSpan().ToArray());
-        }
-
-        if (typeof(T) == typeof(ArraySegment<byte>))
-        {
-            return (T)(object)new ArraySegment<byte>(value.AsSpan().ToArray());
+            return bytes;
         }
 
         if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))

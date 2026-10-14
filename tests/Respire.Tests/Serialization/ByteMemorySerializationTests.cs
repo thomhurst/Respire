@@ -2,6 +2,7 @@ using System.Buffers;
 using Respire.Protocol;
 using Respire.Serialization;
 using Respire.Testing;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -10,6 +11,82 @@ namespace Respire.Tests.Serialization;
 
 public class ByteMemorySerializationTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TypedScriptAndFunctionReadsPreserveBinaryWrites(bool readOnly)
+    {
+        await CheckScriptAndFunctionAsync<ReadOnlyMemory<byte>>(readOnly);
+        await CheckScriptAndFunctionAsync<Memory<byte>>(readOnly);
+        await CheckScriptAndFunctionAsync<ArraySegment<byte>>(readOnly);
+    }
+
+    private static async Task CheckScriptAndFunctionAsync<T>(bool readOnly)
+    {
+        byte[] expected = [0, 255, 128, 13, 10];
+        byte[] reply = [.. "$5\r\n"u8, .. expected, .. "\r\n"u8];
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, reply, reply);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            Serializer = new RejectingSerializer(),
+        });
+        object value = typeof(T) == typeof(ReadOnlyMemory<byte>) ? (object)new ReadOnlyMemory<byte>(expected)
+            : typeof(T) == typeof(Memory<byte>) ? (object)new Memory<byte>(expected)
+            : new ArraySegment<byte>(expected);
+        await client.SetAsync("binary", (T)value);
+        var scriptValue = await client.Scripts.ExecuteAsync<T>(
+            RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly), ["binary"]);
+        var functionValue = await client.Functions.ExecuteAsync<T>(RespireFunction.Create("read_binary", readOnly), ["binary"]);
+        await client.DisposeAsync();
+
+        await AssertBytesAsync(server.ReceivedArguments[0][2], expected);
+        await AssertBytesAsync(ToMemory(scriptValue).ToArray(), expected);
+        await AssertBytesAsync(ToMemory(functionValue).ToArray(), expected);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(5)]
+    public async Task ResultAndMessageReadsCopyBinaryPayloadWithoutSerializer(int length)
+    {
+        byte[] buffer = [99, 0, 255, 128, 13, 10, 98];
+        var payload = buffer.AsMemory(1, length);
+        var expected = payload.ToArray();
+        var serializer = new RejectingSerializer();
+        var response = RespValue.BulkString(payload);
+        using var result = new RespireResult(in response, serializer);
+        var message = new RespireMessage("binary", null, payload, serializer);
+
+        var resultReadOnly = result.As<ReadOnlyMemory<byte>>();
+        var resultWritable = result.As<Memory<byte>>();
+        var resultSegment = result.As<ArraySegment<byte>>();
+        var messageReadOnly = message.As<ReadOnlyMemory<byte>>();
+        var messageWritable = message.As<Memory<byte>>();
+        var messageSegment = message.As<ArraySegment<byte>>();
+        var resultBytes = result.As<byte[]>();
+        var messageBytes = message.As<byte[]>();
+
+        payload.Span.Fill(42);
+        result.Dispose();
+        await AssertBytesAsync(resultReadOnly.ToArray(), expected);
+        await AssertBytesAsync(resultWritable.ToArray(), expected);
+        await AssertBytesAsync(resultSegment.ToArray(), expected);
+        await AssertBytesAsync(messageReadOnly.ToArray(), expected);
+        await AssertBytesAsync(messageWritable.ToArray(), expected);
+        await AssertBytesAsync(messageSegment.ToArray(), expected);
+        await AssertBytesAsync(resultBytes, expected);
+        await AssertBytesAsync(messageBytes, expected);
+        resultWritable.Span.Fill(99);
+        messageWritable.Span.Fill(99);
+        await AssertBytesAsync(resultReadOnly.ToArray(), expected);
+        await AssertBytesAsync(resultSegment.ToArray(), expected);
+        await AssertBytesAsync(messageReadOnly.ToArray(), expected);
+        await AssertBytesAsync(messageSegment.ToArray(), expected);
+    }
+
     [Test]
     public async Task TypedReadsCopyBorrowedResponseStorage()
     {
