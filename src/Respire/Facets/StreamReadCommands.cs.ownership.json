@@ -6,8 +6,10 @@
       "Members": [
         "ReadAllAsync(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,int,CancellationToken):IAsyncEnumerable<RespireStreamReadEntry>",
         "ReadAllAsync(RespireKey,RespireStreamId,int,CancellationToken):IAsyncEnumerable<RespireStreamEntry>",
-        "ReadAsync(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,int?,TimeSpan?,CancellationToken):ValueTask<RespireStreamReadResult[]>",
-        "ReadAsync(RespireKey,RespireStreamId,int?,TimeSpan?,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ReadAsync(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,TimeSpan?,int?,CancellationToken):ValueTask<RespireStreamReadResult[]>",
+        "ReadAsync(ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,int?,CancellationToken):ValueTask<RespireStreamReadResult[]>",
+        "ReadAsync(RespireKey,RespireStreamId,int?,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ReadAsync(RespireKey,TimeSpan?,RespireStreamId,int?,CancellationToken):ValueTask<RespireStreamEntry[]>",
         "ReadAsync(StreamReadOptions,ReadOnlySpan<(RespireKeyKey,RespireStreamIdAfter)>,CancellationToken):ValueTask<RespireStreamReadResult[]>",
         "ReadAsync(StreamReadOptions,RespireKey,RespireStreamId,CancellationToken):ValueTask<RespireStreamEntry[]>"
       ],

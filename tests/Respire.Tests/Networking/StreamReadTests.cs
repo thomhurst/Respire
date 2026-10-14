@@ -91,8 +91,10 @@ public class StreamReadTests
         await using var seed = new FakeRespServer(topology);
         await using var client = Create(seed.Port, cluster: true);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var result = await client.WithKeyPrefix("{foo}:").Streams.ReadAsync(
-            [("one", "0"), ("two", "0")], waitFor: blocking ? TimeSpan.FromSeconds(1) : null, cancellationToken: timeout.Token);
+        var view = client.WithKeyPrefix("{foo}:");
+        var result = await (blocking
+            ? view.Streams.ReadAsync([("one", "0"), ("two", "0")], waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token)
+            : view.Streams.ReadAsync([("one", "0"), ("two", "0")], cancellationToken: timeout.Token));
         await Assert.That(result.Select(x => x.Key.ToString())).IsEquivalentTo(["one", "two"], CollectionOrdering.Matching);
         await Assert.That(first.CommandsSeen).IsEqualTo(0);
         await Assert.That(second.ReceivedCommands).IsEquivalentTo(

@@ -158,7 +158,7 @@ Multi-key pops return the selected key with its values, or `null` when no list h
 
 - `PopManyAsync` uses LMPOP (Redis 7.0+). It pops up to `count` (positive) from the `side` of the first nonempty list, in input order. Supplying `waitFor` uses BLMPOP.
 - `PopAsync` always waits, using BLPOP or BRPOP, and returns one value.
-- `Timeout.InfiniteTimeSpan` waits indefinitely. A zero wait uses Redis's minimum one-millisecond timeout.
+- Explicit `waitFor: null` waits indefinitely; omit `waitFor` for an immediate call. A zero wait uses Redis's minimum one-millisecond timeout.
 
 ```csharp
 RespireListPopManyResult? jobs = await redis.Lists.PopManyAsync(
@@ -523,7 +523,7 @@ await foreach (var item in redis.Streams.ReadAllAsync(
 - The default start ID is `0`. Only entries newer than each ID are returned. `count` limits entries **per stream**.
 - Missing or empty streams are left out of multi-stream results. An empty or timed-out read returns an empty array.
 - Returned keys have the client prefix removed.
-- Omit `waitFor` for a nonblocking read. A finite wait rounds up to milliseconds (zero becomes one millisecond). `Timeout.InfiniteTimeSpan` sends `BLOCK 0`.
+- Omit `waitFor` for a nonblocking read. A finite wait rounds up to milliseconds (zero becomes one millisecond). Explicit `waitFor: null` sends `BLOCK 0`; `Timeout.InfiniteTimeSpan` remains a compatibility alias.
 - Blocking reads use dedicated connections, so other commands stay responsive. Pass cancellation to interrupt a wait.
 - Queued `Streams.Read` is nonblocking only.
 
@@ -545,7 +545,7 @@ var page = await redis.Streams.ReadAsync(
 
 - The first limit reached wins. These are server-side limits, not client-side truncation.
 - Nonblocking reads visit streams in request order, so earlier streams can use the whole budget.
-- Queued reads reject `WaitFor` locally.
+- Leave `StreamReadOptions.WaitFor` unset for immediate reads. Assigning `WaitFor = null` waits indefinitely; `IsBlocking` reports whether the option was assigned. Queued reads reject any assigned `WaitFor`, including null, locally. See [blocking-wait migration](../guides/blocking-queues.md#migrating-blocking-waits).
 - Without `MaxCount` and `MaxSize`, the server requirements are unchanged.
 - `XREADGROUP` accepts the same limits; see [Consumer groups](#consumer-groups).
 

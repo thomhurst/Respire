@@ -64,8 +64,8 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         (await view.Lists.MoveManyAsync("s", "d", countMode: ListMoveCountMode.Exactly)).Should().BeNull();
         (await view.Lists.MoveManyAsync("s", "d", waitFor: TimeSpan.FromMilliseconds(10))).Should().BeNull();
         await view.Lists.RightPushAsync("s", "a");
-        (await view.Lists.MoveManyAsync("s", "d", 2, countMode: ListMoveCountMode.Exactly)).Should().BeNull();
-        (await view.Lists.MoveManyAsync("s", "d", 2, countMode: ListMoveCountMode.Exactly, waitFor: TimeSpan.FromMilliseconds(10))).Should().BeNull();
+        (await view.Lists.MoveManyAsync("s", "d", count: 2, countMode: ListMoveCountMode.Exactly)).Should().BeNull();
+        (await view.Lists.MoveManyAsync("s", "d", count: 2, countMode: ListMoveCountMode.Exactly, waitFor: TimeSpan.FromMilliseconds(10))).Should().BeNull();
         await view.SetAsync("d", "wrong");
         Func<Task> invalid = async () => await view.Lists.MoveManyAsync("s", "d");
         await invalid.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
@@ -74,7 +74,7 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         (await view.Lists.MoveManyAsync("s", "d", 10)).Should().Equal("a");
         (await view.Keys.ExistsAsync("s")).Should().BeFalse();
         await using var transaction = view.CreateTransaction();
-        var empty = transaction.Lists.MoveMany("s", "d", 2, countMode: ListMoveCountMode.Exactly);
+        var empty = transaction.Lists.MoveMany("s", "d", count: 2, countMode: ListMoveCountMode.Exactly);
         await transaction.CommitAsync();
         empty.Result.Should().BeNull();
     }
@@ -91,8 +91,8 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         var view = client.WithKeyPrefix(name + ":");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        var move = view.Lists.MoveManyAsync("s", "d", 2, countMode: ListMoveCountMode.Exactly,
-            waitFor: Timeout.InfiniteTimeSpan, cancellationToken: cancel.Token).AsTask();
+        var move = view.Lists.MoveManyAsync("s", "d", count: 2, countMode: ListMoveCountMode.Exactly,
+            waitFor: null, cancellationToken: cancel.Token).AsTask();
         await WaitForBlocked(observer, name, deadline.Token);
         (await view.SetAsync("ordinary", "responsive", cancellationToken: deadline.Token)).Should().BeTrue();
         await view.Lists.RightPushAsync("s", ["a"], deadline.Token);
@@ -100,7 +100,7 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         move.IsCompleted.Should().BeFalse();
         await view.Lists.RightPushAsync("s", ["b"], deadline.Token);
         (await move.WaitAsync(deadline.Token)).Should().Equal("a", "b");
-        var blocked = view.Lists.MoveManyAsync("s", "d", waitFor: Timeout.InfiniteTimeSpan, cancellationToken: cancel.Token).AsTask();
+        var blocked = view.Lists.MoveManyAsync("s", "d", waitFor: null, cancellationToken: cancel.Token).AsTask();
         var blockedId = await WaitForBlocked(observer, name, deadline.Token);
         cancel.Cancel();
         Func<Task> canceled = async () => await blocked.WaitAsync(deadline.Token);
@@ -128,8 +128,9 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
         ListSide from, ListSide to, ListMoveOrder order)
     {
         if (mode is "immediate" or "blocking")
-            return await client.Lists.MoveManyAsync("s", destination, 2, from, to, order: order,
-                waitFor: mode == "blocking" ? TimeSpan.FromSeconds(1) : null);
+            return await (mode == "blocking"
+                ? client.Lists.MoveManyAsync("s", destination, TimeSpan.FromSeconds(1), 2, from, to, order: order)
+                : client.Lists.MoveManyAsync("s", destination, 2, from, to, order: order));
         using var batch = mode == "batch" ? client.CreateBatch() : null;
         await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;

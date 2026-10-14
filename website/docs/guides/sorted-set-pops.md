@@ -50,18 +50,18 @@ await using var client = await RespireClient.ConnectAsync("localhost:6379");
 using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 var result = await client.SortedSets.PopAsync(
     ["{jobs}:urgent", "{jobs}:ready"],
-    waitFor: Timeout.InfiniteTimeSpan,
+    waitFor: null,
     cancellationToken: cancellation.Token);
 ```
 
 | Call | Redis command | Minimum Redis version |
 | --- | --- | --- |
-| `PopManyAsync(keys, count, descending, waitFor)` | BZMPOP | 7.0 |
+| `PopManyAsync(keys, waitFor, count, descending)` | BZMPOP | 7.0 |
 | `PopAsync(keys, waitFor, descending)` | BZPOPMIN or BZPOPMAX | 5.0 (6.0 for fractional-second waits) |
 
 - Blocking calls use dedicated connections, so other traffic on the client continues. See [Blocking queues](blocking-queues.md).
 - Cancellation throws `OperationCanceledException`. A server timeout returns `null`.
-- `Timeout.InfiniteTimeSpan` waits indefinitely. `TimeSpan.Zero` waits the minimum of one millisecond. Other negative values throw `ArgumentOutOfRangeException`.
+- Explicit `null` waits indefinitely (`Timeout.InfiniteTimeSpan` remains a compatibility alias). `TimeSpan.Zero` waits the minimum of one millisecond. Other negative values throw `ArgumentOutOfRangeException`.
 - Omit `waitFor` on `PopManyAsync` to run without blocking.
 
 ## Batches and transactions

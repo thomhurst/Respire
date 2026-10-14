@@ -31,20 +31,25 @@ public partial interface IListCommands
     /// <remarks>
     /// Count must be positive and both keys must share a Cluster slot. Omit waitFor for an
     /// immediate move. A supplied wait rents a dedicated connection; Exactly waits for the
-    /// entire count, while UpTo waits for at least one element. Timeout.InfiniteTimeSpan waits
+    /// entire count, while UpTo waits for at least one element. Null waitFor waits
     /// indefinitely. TimeSpan.Zero uses a one-millisecond wait. Cancellation discards the lease.
     /// Invalid options throw synchronously before I/O.
     /// </remarks>
-    ValueTask<string[]?> MoveManyAsync(
-        RespireKey source, RespireKey destination, long count = 1,
-        ListSide from = ListSide.Left, ListSide to = ListSide.Right,
-        ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne,
-        TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default);
 }
 
 internal sealed partial class ListCommands
 {
-    public ValueTask<string[]?> MoveManyAsync(
+    public ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default)
+        => MoveManyCoreAsync(source, destination, count, from, to, countMode, order, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default)
+        => MoveManyCoreAsync(source, destination, count, from, to, countMode, order, null, cancellationToken);
+
+    private ValueTask<string[]?> MoveManyCoreAsync(
         RespireKey source, RespireKey destination, long count = 1,
         ListSide from = ListSide.Left, ListSide to = ListSide.Right,
         ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne,

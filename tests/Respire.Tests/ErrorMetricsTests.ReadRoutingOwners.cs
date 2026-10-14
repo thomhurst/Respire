@@ -124,7 +124,7 @@ public partial class ErrorMetricsTests
                     await foreach (var _ in client.Hashes.ScanAsync("key", cancellationToken: deadline.Token)) { }
                     break;
                 case "blocking":
-                    _ = await client.Streams.ReadAsync("key", "0-0",
+                    _ = await client.Streams.ReadAsync("key", after: "0-0",
                         waitFor: TimeSpan.FromMilliseconds(1), cancellationToken: deadline.Token);
                     break;
                 default:

@@ -2725,7 +2725,7 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true);
         async Task Execute()
         {
-            var options = new StreamReadOptions { WaitFor = blocking ? TimeSpan.FromSeconds(1) : null };
+            var options = blocking ? new StreamReadOptions { WaitFor = TimeSpan.FromSeconds(1) } : default;
             switch (path)
             {
                 case "xread": await client.Streams.ReadAsync(options, "events"); break;

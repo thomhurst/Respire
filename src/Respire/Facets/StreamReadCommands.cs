@@ -28,13 +28,17 @@ public partial interface IStreamCommands
     ValueTask<RespireStreamReadResult[]> ReadAsync(StreamReadOptions options,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default);
 
-    /// <summary>Reads entries newer than after. Null waitFor is nonblocking; InfiniteTimeSpan waits until cancelled.</summary>
-    ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default,
-        int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    /// <summary>Reads entries newer than after. Omit waitFor for immediate reads; null waits until cancelled.</summary>
+    ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, TimeSpan? waitFor, RespireStreamId after = default, int? count = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default, int? count = null, CancellationToken cancellationToken = default);
 
     /// <summary>Reads newer entries from same-slot streams. COUNT applies per stream. Empty/timeout replies return an empty array.</summary>
-    ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
-        int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+    ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, TimeSpan? waitFor, int? count = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns immediately without waiting for new data.</summary>
+    ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, int? count = null, CancellationToken cancellationToken = default);
 
     /// <summary>Continuously reads a stream, resuming after the last delivered id following transient connection failures.</summary>
     /// <remarks>$ is resolved once before reading. Failure to resolve the initial position is surfaced without retry.
@@ -60,7 +64,7 @@ internal sealed partial class StreamCommands
         try
         {
             var command = BuildReadCommand(client, [(key, after)], options);
-            return owner.Attach(ReadSingleAsync(command, options.WaitFor.HasValue, cancellationToken, owner.Observation));
+            return owner.Attach(ReadSingleAsync(command, options.IsBlocking, cancellationToken, owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
@@ -72,18 +76,22 @@ internal sealed partial class StreamCommands
         try
         {
             var command = BuildReadCommand(client, streams, options);
-            return owner.Attach(ReadCoreAsync(command, options.WaitFor.HasValue, cancellationToken, owner.Observation));
+            return owner.Attach(ReadCoreAsync(command, options.IsBlocking, cancellationToken, owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default,
-        int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+    public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, TimeSpan? waitFor, RespireStreamId after = default, int? count = null, CancellationToken cancellationToken = default)
         => ReadAsync(new StreamReadOptions { Count = count, WaitFor = waitFor }, key, after, cancellationToken);
 
-    public ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
-        int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+    public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default, int? count = null, CancellationToken cancellationToken = default)
+        => ReadAsync(new StreamReadOptions { Count = count }, key, after, cancellationToken);
+
+    public ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, TimeSpan? waitFor, int? count = null, CancellationToken cancellationToken = default)
         => ReadAsync(new StreamReadOptions { Count = count, WaitFor = waitFor }, streams, cancellationToken);
+
+    public ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, int? count = null, CancellationToken cancellationToken = default)
+        => ReadAsync(new StreamReadOptions { Count = count }, streams, cancellationToken);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamEntry[]> ReadSingleAsync(StreamReadCommand command, bool blocking,

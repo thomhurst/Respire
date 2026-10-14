@@ -15,7 +15,7 @@ public partial interface IStreamCommands
         string group, string consumer, StreamReadOptions options = default, CancellationToken cancellationToken = default);
 
     /// <summary>Continuously reads new group entries, or replays pending entries until empty, with reply limits.</summary>
-    /// <remarks>New-entry reads use a five-second blocking interval when WaitFor is null. Pending reads do not block.</remarks>
+    /// <remarks>New-entry reads use a five-second blocking interval when WaitFor is omitted. Pending reads do not block.</remarks>
     IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(StreamReadOptions options, RespireKey key, string group,
         string consumer, RespireStreamId? startAt = null, CancellationToken cancellationToken = default);
 }
@@ -62,7 +62,7 @@ internal sealed partial class StreamCommands
         ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(consumer);
         var command = BuildReadCommand(client, streams, options, group: group, consumer: consumer);
-        return ReadGroupCoreAsync(command, group, options.WaitFor.HasValue, cancellationToken, observation);
+        return ReadGroupCoreAsync(command, group, options.IsBlocking, cancellationToken, observation);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -90,7 +90,8 @@ internal sealed partial class StreamCommands
             {
                 options.Validate(group: true);
                 key = key.Snapshot();
-                options = options with { WaitFor = startAt is null ? options.WaitFor ?? BlockInterval : null };
+                options = startAt is not null ? options.WithoutBlocking()
+                    : options.IsBlocking ? options : options with { WaitFor = BlockInterval };
             }
             catch (Exception error) { failure = error; throw; }
             var cursor = startAt;

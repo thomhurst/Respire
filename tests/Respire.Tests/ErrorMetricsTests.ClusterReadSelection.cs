@@ -106,7 +106,7 @@ public partial class ErrorMetricsTests
                         await Assert.That(entry.Key).IsEqualTo("field");
                     break;
                 case "blocking":
-                    await Assert.That(await client.Streams.ReadAsync("private-key", "0-0",
+                    await Assert.That(await client.Streams.ReadAsync("private-key", after: "0-0",
                         waitFor: TimeSpan.FromMilliseconds(1), cancellationToken: cancellation.Token)).IsEmpty();
                     break;
                 default: throw new ArgumentOutOfRangeException(nameof(shape));

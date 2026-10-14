@@ -193,7 +193,7 @@ public class FakeListMoveManyTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         using var observed = server.InjectFault("BLMOVEM", RespireFakeFault.Delay(TimeSpan.Zero));
-        var move = client.Lists.MoveManyAsync("s", "d", 2, countMode: ListMoveCountMode.Exactly,
+        var move = client.Lists.MoveManyAsync("s", "d", count: 2, countMode: ListMoveCountMode.Exactly,
             waitFor: Timeout.InfiniteTimeSpan, cancellationToken: cancel.Token).AsTask();
         await observed.Matched.WaitAsync(deadline.Token);
         await client.Lists.RightPushAsync("s", ["a"], deadline.Token);

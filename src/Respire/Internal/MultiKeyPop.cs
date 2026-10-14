@@ -27,7 +27,7 @@ internal static class MultiKeyPop
         }
     }
 
-    internal static void ValidateWait(TimeSpan waitFor)
+    internal static void ValidateWait(TimeSpan? waitFor)
     {
         if (waitFor < TimeSpan.Zero && waitFor != Timeout.InfiniteTimeSpan)
         {
@@ -50,6 +50,6 @@ internal static class MultiKeyPop
     }
 
     // Redis zero means infinite blocking; finite waits use at least one millisecond.
-    internal static RespireValue ToSeconds(TimeSpan waitFor)
-        => waitFor == Timeout.InfiniteTimeSpan ? 0 : Math.Max(waitFor.TotalSeconds, 0.001);
+    internal static RespireValue ToSeconds(TimeSpan? waitFor)
+        => waitFor is null || waitFor == Timeout.InfiniteTimeSpan ? 0 : Math.Max(waitFor.Value.TotalSeconds, 0.001);
 }
