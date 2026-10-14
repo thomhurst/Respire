@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Threading.RateLimiting;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -10,6 +12,59 @@ namespace Respire.Coordination.Tests;
 
 public class RateLimiterMetricsTests
 {
+    [Test]
+    [NotInParallel]
+    public async Task ColdInstrumentPublicationFailureIsIsolatedAndRetryable()
+    {
+        // A separate load context guarantees cold statics regardless of test order.
+        var context = new AssemblyLoadContext("cold-rate-limiter-metrics", isCollectible: true);
+        Meter? meter = null;
+        try
+        {
+            var assembly = context.LoadFromAssemblyPath(typeof(RespireRateLimitDenyList).Assembly.Location);
+            var record = assembly.GetType("Respire.Coordination.RateLimiterMetrics", throwOnError: true)!
+                .GetMethod("Record", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var publications = 0;
+            using (var broken = new MeterListener())
+            {
+                broken.Start();
+                broken.InstrumentPublished = (instrument, _) =>
+                {
+                    if (instrument.Meter.Name != "Respire.Coordination.RateLimiting") return;
+                    meter = instrument.Meter;
+                    publications++;
+                    throw new InvalidOperationException("Instrument publication failed");
+                };
+                record.Invoke(null, [true, false]);
+                record.Invoke(null, [false, false]);
+                record.Invoke(null, [false, true]);
+                await Assert.That(publications).IsGreaterThan(0);
+            }
+
+            var measurements = new List<(string Name, string? Reason)>();
+            using var healthy = new MeterListener();
+            healthy.InstrumentPublished = (instrument, target) =>
+            {
+                if (ReferenceEquals(instrument.Meter, meter)) target.EnableMeasurementEvents(instrument);
+            };
+            healthy.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
+                measurements.Add((instrument.Name, tags.Length == 0 ? null : (string?)tags[0].Value)));
+            healthy.Start();
+            record.Invoke(null, [true, false]);
+            record.Invoke(null, [false, false]);
+            record.Invoke(null, [false, true]);
+            await Assert.That(measurements.Count).IsEqualTo(3);
+            await Assert.That(measurements[0]).IsEqualTo(("respire.rate_limit.allowed", (string?)null));
+            await Assert.That(measurements[1]).IsEqualTo(("respire.rate_limit.blocked", (string?)"capacity"));
+            await Assert.That(measurements[2]).IsEqualTo(("respire.rate_limit.blocked", (string?)"deny_list"));
+        }
+        finally
+        {
+            meter?.Dispose();
+            context.Unload();
+        }
+    }
+
     [Test]
     [NotInParallel]
     public async Task ThrowingListenerCannotChangeAdmissionOutcomes()
