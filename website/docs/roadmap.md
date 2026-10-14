@@ -46,6 +46,10 @@ Public interface compatibility and the post-1.0 extension policy are described i
 
 ### Commands and coordination
 
+- GC-owned raw, script, and function results by default, with explicit
+  [pooled result leases](guides/raw-commands.md#result-lifetime) and a shared
+  `await using` pattern for batches and transactions.
+
 - Typed facets for strings, keys, collections, streams, bitmaps, HyperLogLog, geo, scripts, and
   server commands; a [command catalog with raw and interpolated execution](guides/raw-commands.md);
   and [source-generated custom commands](guides/generated-commands.md).

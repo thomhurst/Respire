@@ -124,7 +124,7 @@ public sealed class RespireCoordination
 
     internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
         RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
-        => _client.Scripts.ExecuteAsync(script, [key], args, cancellationToken);
+        => _client.Scripts.ExecuteLeaseAsync(script, [key], args, cancellationToken);
 
     /// <summary>Creates a single-use countdown latch with an initial nonnegative count.</summary>
     /// <param name="key">The latch key, before the client's key prefix. On Cluster, use a hash tag if related keys are added by an application.</param>
@@ -160,12 +160,12 @@ public sealed class RespireCoordination
     {
         try
         {
-            return await client.Scripts.ExecuteAsync(ReadCountdownLatch, [key], cancellationToken: cancellationToken)
+            return await client.Scripts.ExecuteLeaseAsync(ReadCountdownLatch, [key], cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException error) when (IsUnsupportedReadOnlyScriptCommand(error))
         {
-            return await client.Scripts.ExecuteAsync(ReadCountdownLatchCompatibility, [key], cancellationToken: cancellationToken)
+            return await client.Scripts.ExecuteLeaseAsync(ReadCountdownLatchCompatibility, [key], cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -192,7 +192,7 @@ public sealed class RespireCoordination
         var snapshot = key.Snapshot();
         var generation = Guid.NewGuid().ToString("N");
         var channel = "respire:latch:" + Guid.NewGuid().ToString("N");
-        using var result = await _client.Scripts.ExecuteAsync(
+        using var result = await _client.Scripts.ExecuteLeaseAsync(
             reset ? ResetCountdownLatch : CreateCountdownLatch,
             [snapshot], [generation, count, channel], cancellationToken).ConfigureAwait(false);
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
@@ -386,7 +386,7 @@ public sealed class RespireCoordination
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
         var role = isWriter ? WriterRole : ReaderRole;
-        using var response = await _client.Scripts.ExecuteAsync(AcquireReadWriteLock, [key],
+        using var response = await _client.Scripts.ExecuteLeaseAsync(AcquireReadWriteLock, [key],
             [owner.Bytes, milliseconds, role], cancellationToken).ConfigureAwait(false);
         if (response.AsInteger() != 1) return default;
 
@@ -474,7 +474,7 @@ public sealed class RespireCoordination
         {
             if (concreteClient is null)
             {
-                using var response = await _client.Scripts.ExecuteAsync(AcquireHashFieldLease, [hashKey],
+                using var response = await _client.Scripts.ExecuteLeaseAsync(AcquireHashFieldLease, [hashKey],
                     [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 acquired = !response.IsNull && response.AsInteger() != 0;
             }
@@ -688,7 +688,7 @@ public sealed class RespireCoordination
     private static async Task ReleaseOnCurrentClusterOwnerAsync(
         RespireClient client, RespireKey hashKey, RespireKey field, RespireLockToken owner)
     {
-        using var response = await client.Scripts.ExecuteAsync(
+        using var response = await client.Scripts.ExecuteLeaseAsync(
             ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None).ConfigureAwait(false);
     }
 
@@ -731,7 +731,7 @@ public sealed class RespireCoordination
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, long milliseconds, CancellationToken cancellationToken)
     {
-        using var response = await _client.Scripts.ExecuteAsync(RenewHashFieldLease, [hashKey],
+        using var response = await _client.Scripts.ExecuteLeaseAsync(RenewHashFieldLease, [hashKey],
             [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -739,7 +739,7 @@ public sealed class RespireCoordination
     internal async ValueTask<bool> VerifyHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, CancellationToken cancellationToken)
     {
-        using var response = await _client.Scripts.ExecuteAsync(VerifyHashFieldLease, [hashKey],
+        using var response = await _client.Scripts.ExecuteLeaseAsync(VerifyHashFieldLease, [hashKey],
             [field, owner.Bytes], cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -747,7 +747,7 @@ public sealed class RespireCoordination
     internal async ValueTask<bool> ReleaseHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, CancellationToken cancellationToken)
     {
-        using var response = await _client.Scripts.ExecuteAsync(ReleaseHashFieldLease, [hashKey],
+        using var response = await _client.Scripts.ExecuteLeaseAsync(ReleaseHashFieldLease, [hashKey],
             [field, owner.Bytes], cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -757,7 +757,7 @@ public sealed class RespireCoordination
     {
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
-        using var response = await _client.Scripts.ExecuteAsync(AcquireFencedLock, [key, counterKey],
+        using var response = await _client.Scripts.ExecuteLeaseAsync(AcquireFencedLock, [key, counterKey],
             [owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
         if (response.IsNull) return default;
 

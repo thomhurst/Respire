@@ -65,7 +65,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
                     {
                         // The native stored-procedure telemetry path cannot expose admission yet.
                         // Keep dispatch order by holding the gate until this reply completes.
-                        pending = client.ExecuteAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
+                        pending = client.ExecuteLeaseAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
                         await pending.ConfigureAwait(false);
                     }
                     else

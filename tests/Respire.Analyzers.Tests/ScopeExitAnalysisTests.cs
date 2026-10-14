@@ -24,7 +24,7 @@ public class ScopeExitAnalysisTests
             {
                 async Task Run<{{parameters}}>(RespireClient client, T error) {{constraints}}
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { throw error; }
                     catch (InvalidOperationException) { }
                     catch (Exception) { result.Dispose(); }
@@ -107,7 +107,7 @@ public class ScopeExitAnalysisTests
                 public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip,
                     InvalidOperationException error)
                 {
-                    var {{result}} = choice switch { 0 => await client.ExecuteAsync("PING"), _ => existing };
+                    var {{result}} = choice switch { 0 => await client.ExecuteLeaseAsync("PING"), _ => existing };
                     try { if (skip) throw error; }
                     catch (InvalidOperationException) { }
                     {{(catchNull ? "catch (NullReferenceException) { }" : "")}}
@@ -166,7 +166,7 @@ public class ScopeExitAnalysisTests
             {
                 var {|RESP001:result|} = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 if (skip) {{{exit}}}
@@ -186,7 +186,7 @@ public class ScopeExitAnalysisTests
             {
                 var {|RESP001:result|} = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 yield return "before";
@@ -224,7 +224,7 @@ public class ScopeExitAnalysisTests
                 public async Task RunAsync(RespireClient client, RespireResult existing, int choice, bool skip)
                 {
                     {{setup}}
-                    var {{result}} = choice switch { 0 => await client.ExecuteAsync("PING"), _ => existing };
+                    var {{result}} = choice switch { 0 => await client.ExecuteLeaseAsync("PING"), _ => existing };
                     try { if (skip) {{thrown}}; }
                     {{handler}}
                     if (choice == 0) result.Dispose();

@@ -144,7 +144,7 @@ public interface IScriptCommands
 {
     /// <summary>
     /// Executes a script. Keys go through KEYS[…] (and get this view's key prefix); args through
-    /// ARGV[…]. The result is a lease — dispose it. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.
+    /// ARGV[…]. The result uses GC-owned storage; disposal is optional. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.
     /// Arrays are forwarded as spans without copying; null arrays mean empty inputs.
     /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
@@ -155,8 +155,8 @@ public interface IScriptCommands
         => ExecuteSpanAsync(script, keys.AsSpan(), args.AsSpan(), cancellationToken);
 
     /// <summary>
-    /// Executes a script from span-based key and argument collections. The result owns pooled
-    /// memory and must be disposed. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.
+    /// Executes a script from span-based key and argument collections. The result uses GC-owned
+    /// memory and disposal is optional. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.
     /// Implementations must consume the spans before returning; callers may reuse their input
     /// storage as soon as this method returns its pending operation.
     /// </summary>
@@ -165,6 +165,16 @@ public interface IScriptCommands
         ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Executes a script and returns a result that must be disposed. Implementations may use pooled storage.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(script, keys.AsSpan(), args.AsSpan(), cancellationToken);
+
+    /// <summary>Consumes the spans before returning and returns a result that must be disposed. Binary argument memory stays borrowed until completion.</summary>
+    ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(script, keys, args, cancellationToken);
 
     /// <summary>Executes a script and deserializes its scalar result. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -235,19 +245,33 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args,
         CancellationToken cancellationToken = default)
+        => ExecuteCoreAsync(script, keys, args, cancellationToken, owned: true);
+
+    public ValueTask<RespireResult> ExecuteLeaseAsync(RespireScript script, RespireKey[]? keys = null,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(script, keys.AsSpan(), args.AsSpan(), cancellationToken);
+
+    public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireScript script, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteCoreAsync(script, keys, args, cancellationToken, owned: false);
+
+    private ValueTask<RespireResult> ExecuteCoreAsync(RespireScript script, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken, bool owned)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
         if (borrowed.IsOpen)
         {
             ArgumentNullException.ThrowIfNull(script);
-            return client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
+            var response = client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
+            return owned ? RespireResult.MaterializeAsync(response) : response;
         }
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
             ArgumentNullException.ThrowIfNull(script);
             var tail = client.BuildScriptTailFromSpans(keys, args);
-            return owner.Attach(client.ExecuteScriptAsync(script, tail, cancellationToken, owner.Observation));
+            var response = client.ExecuteScriptAsync(script, tail, cancellationToken, owner.Observation);
+            return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }

@@ -286,6 +286,10 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 
     private async Task InitializeClusterAsync(int dataCount, CancellationToken cancellationToken)
     {
+        // Give every fresh node a distinct epoch before gossip starts. Starting at zero
+        // leaves collision resolution racing with tests that immediately migrate slots.
+        for (var index = 0; index < dataCount; index++)
+            await CliAsync(_ports[index], ["CLUSTER", "SET-CONFIG-EPOCH", Number(index + 1)], cancellationToken).ConfigureAwait(false);
         for (var index = 0; index < dataCount; index++)
         {
             var first = index * 16384 / dataCount;

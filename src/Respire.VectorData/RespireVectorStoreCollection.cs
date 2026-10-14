@@ -172,7 +172,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             return _jsonMapper.Read(json.AsSpan(), options?.IncludeVectors == true, _vectorPaths, removeFilters: _jsonFilters is not null);
         }
         using var result = await RespireVectorDataOperations.ExecuteAsync(
-            _client.ExecuteAsync(RespireCommands.Hash.HGETALL, [RecordKey(key)], cancellationToken: cancellationToken),
+            _client.ExecuteLeaseAsync(RespireCommands.Hash.HGETALL, [RecordKey(key)], cancellationToken: cancellationToken),
             nameof(GetAsync), Name).ConfigureAwait(false);
         if (result.Count == 0) return null;
         var fields = new Dictionary<string, ReadOnlyMemory<byte>>(StringComparer.Ordinal);
@@ -234,7 +234,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             RespireVectorDataJsonPaths.ValidateVectors(json, _vectors, _vectorPaths, _jsonMapper.JsonTypeInfo.Options.MaxDepth);
             if (_jsonFilters is not null) json = _jsonFilters.Write(json);
             using var replaced = await RespireVectorDataOperations.ExecuteAsync(
-                _client.Scripts.ExecuteAsync(ReplaceJson, [key], [json], cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
+                _client.Scripts.ExecuteLeaseAsync(ReplaceJson, [key], [json], cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
             return;
         }
         var fields = ((RespireVectorDataHashMapper<TRecord>)_mapper).Write(record);
@@ -253,7 +253,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             args[i++] = field.Value;
         }
         using var result = await RespireVectorDataOperations.ExecuteAsync(
-            _client.Scripts.ExecuteAsync(Replace, [key], args, cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
+            _client.Scripts.ExecuteLeaseAsync(Replace, [key], args, cancellationToken), nameof(UpsertAsync), Name).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

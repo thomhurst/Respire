@@ -103,7 +103,7 @@ public static class RespireStackExchangeExtensions
         RespireCommandFlags flags,
         CancellationToken cancellationToken)
     {
-        using var result = await client.ExecuteAsync(command, arguments, flags, cancellationToken).ConfigureAwait(false);
+        using var result = await client.ExecuteLeaseAsync(command, arguments, flags, cancellationToken).ConfigureAwait(false);
         return result.ToStackExchangeResult();
     }
 

@@ -397,8 +397,8 @@ public class ResultBoundaryTests
 
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
-            if (method?.Name != nameof(IRespireClient.ExecuteAsync) || arguments?.Length != 4)
-                throw new NotSupportedException("The ownership control permits only the raw execution boundary.");
+            if (method?.Name != nameof(IRespireClient.ExecuteLeaseAsync) || arguments?.Length != 4)
+                throw new NotSupportedException("The ownership control permits only the leased raw execution boundary.");
             Flags = (RespireCommandFlags)arguments[2]!;
             Token = (CancellationToken)arguments[3]!;
             return CaptureAsync((RespireCommand)arguments[0]!, (RespireValue[])arguments[1]!);
@@ -406,7 +406,7 @@ public class ResultBoundaryTests
 
         private async ValueTask<RespireResult> CaptureAsync(RespireCommand command, RespireValue[] arguments)
         {
-            Captured = await Native.ExecuteAsync(command, arguments, Flags, Token);
+            Captured = await Native.ExecuteLeaseAsync(command, arguments, Flags, Token);
             return Captured;
         }
     }

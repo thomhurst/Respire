@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Respire.Internal;
 using Respire.Protocol;
 using Respire.Serialization;
@@ -10,11 +11,10 @@ namespace Respire;
 /// <summary>
 /// The reply of a command (<see cref="RespireClient.ExecuteAsync(RespireCommand, RespireValue[])"/>)
 /// as a thin view over the RESP value. This is the one protocol-shaped public result type; the
-/// typed command surface returns plain .NET types instead. Immediate command results are leases over
-/// pooled memory — dispose them when done; disposal is idempotent across struct copies. Nested
-/// results obtained via the indexer are views into the root and must not outlive it.
-/// Deferred raw, script, and function results use GC-owned storage
-/// instead: disposal is optional, but still invalidates the result and its nested views.
+/// typed command surface returns plain .NET types instead. Ordinary command results use GC-owned
+/// storage and need no disposal. Explicit ExecuteLeaseAsync/ExecuteLeaseSpanAsync calls return
+/// pooled storage that must be disposed. Disposal is idempotent across struct copies and
+/// invalidates the root and its nested views for both owned and leased results.
 /// </summary>
 public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
 {
@@ -35,6 +35,17 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     {
         var owned = value.ToOwned();
         return new(in owned, serializer);
+    }
+
+    /// <summary>Copies a completed lease and releases it before publishing the owned result.</summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal static async ValueTask<RespireResult> MaterializeAsync(ValueTask<RespireResult> response)
+    {
+        using var lease = await response.ConfigureAwait(false);
+        var value = lease.Value;
+        return CreateOwned(in value, lease._serializer);
     }
 
     /// <summary>Nested element view: storage belongs to the root.</summary>
@@ -171,7 +182,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <inheritdoc/>
     public override string ToString() => Value.ToString();
 
-    /// <summary>Invalidates a root result and releases any pooled buffers. Optional for deferred script results; safe to call more than once.</summary>
+    /// <summary>Invalidates a root result and releases any pooled buffers. Required only for explicit leases; safe to call more than once.</summary>
     public void Dispose() => _owner?.Dispose();
 
     /// <summary>Enumerates non-owning views over an aggregate result's elements.</summary>

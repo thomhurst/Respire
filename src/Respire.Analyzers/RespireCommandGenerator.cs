@@ -283,7 +283,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
                 .Append("            return global::System.Threading.Tasks.ValueTask.FromException<global::Respire.RespireResult>(")
                 .Append(exception).Append(");\n        }\n");
         }
-        var call = "this." + clientField + ".ExecuteAsync(" + commandField + ", " + values + ", "
+        var call = "this." + clientField + (raw ? ".ExecuteAsync(" : ".ExecuteLeaseAsync(") + commandField + ", " + values + ", "
             + (flags is null ? "global::Respire.RespireCommandFlags.None" : Escape(flags.Name)) + ", "
             + (cancellation is null ? "default" : Escape(cancellation.Name)) + ")";
         if (direct) source.Append("        return ").Append(call).Append(";\n");

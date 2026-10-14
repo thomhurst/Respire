@@ -254,7 +254,7 @@ public sealed partial class RespireSearchClient
         if (_hybridConfirmed || error.Code != RespireErrorCodes.Err) return false;
         try
         {
-            using var info = await _client.ExecuteAsync(RespireCommands.Server.COMMAND_INFO, ["FT.HYBRID"], cancellationToken: cancellationToken).ConfigureAwait(false);
+            using var info = await _client.ExecuteLeaseAsync(RespireCommands.Server.COMMAND_INFO, ["FT.HYBRID"], cancellationToken: cancellationToken).ConfigureAwait(false);
             if (info.Type is RespDataType.Array or RespDataType.Set && info.Count == 1)
             {
                 if (info[0].IsNull) return true;

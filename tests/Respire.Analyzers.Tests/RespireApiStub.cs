@@ -88,6 +88,7 @@ internal static class RespireApiStub
             public sealed class RespireClient
             {
                 public ValueTask<RespireResult> ExecuteAsync(string command, params string[] args) => default;
+                public ValueTask<RespireResult> ExecuteLeaseAsync(string command, params string[] args) => default;
                 public ValueTask<RespireLease> GetLeaseAsync(string key) => default;
                 public RespireBatch CreateBatch() => new RespireBatch();
                 public RespireTransaction CreateTransaction() => new RespireTransaction();

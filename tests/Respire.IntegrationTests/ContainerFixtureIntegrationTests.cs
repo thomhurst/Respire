@@ -102,6 +102,28 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
+    [Arguments(RespireContainerServer.Redis)]
+    [Arguments(RespireContainerServer.Valkey)]
+    public async Task ClusterStartsWithDistinctNonzeroConfigurationEpochs(RespireContainerServer server)
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new()
+        {
+            Server = server, Topology = RespireContainerTopology.Cluster,
+        });
+        var epochs = new List<long>();
+        foreach (var endpoint in fixture.DataEndpoints)
+        {
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [endpoint] });
+            using var info = await client.ExecuteAsync("CLUSTER INFO", []);
+            var epoch = info.AsString()!.Split('\n', StringSplitOptions.TrimEntries)
+                .Single(field => field.StartsWith("cluster_my_epoch:", StringComparison.Ordinal));
+            epochs.Add(long.Parse(epoch["cluster_my_epoch:".Length..], System.Globalization.CultureInfo.InvariantCulture));
+        }
+        epochs.Should().OnlyContain(epoch => epoch > 0);
+        epochs.Should().OnlyHaveUniqueItems();
+    }
+
+    [Test]
     public async Task SeparateFixturesDoNotShareDataOrCleanup()
     {
         await using var first = await RespireContainerFixture.StartAsync();

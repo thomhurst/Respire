@@ -135,7 +135,7 @@ for the supported options. URIs such as `rediss://user:pass@cache-a:6380/2` and 
 | `RedisKey` | `RespireKey` (implicit from `string`, `byte[]`, `ReadOnlyMemory<byte>`) |
 | `RedisValue` (arguments) | `RespireValue` (implicit from strings, bytes, numbers, `bool`, `Guid`, and more) |
 | `RedisValue` (results) | `string?`, `byte[]?`, `long`, `bool`, `double`, or `T?` |
-| `RedisResult` | `RespireResult` — owns pooled memory, so dispose it |
+| `RedisResult` | `RespireResult` — GC-owned by default; dispose results from explicit lease APIs |
 | `RedisChannel` | `RespireChannel` |
 | `TimeSpan? expiry` | `RespireExpiry` (implicit from `TimeSpan` and `DateTimeOffset`) |
 | `When.NotExists`, `When.Exists` | `SetWhen.NotExists`, `SetWhen.Exists` |

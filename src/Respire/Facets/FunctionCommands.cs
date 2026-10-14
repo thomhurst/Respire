@@ -15,13 +15,21 @@ namespace Respire;
 /// to each primary when inspecting or backing up divergent server state. Fan-out mutations are not atomic.</remarks>
 public interface IFunctionCommands
 {
-    /// <summary>Calls a function with prefixed keys. Dispose the leased result. A reusable library permits one missing-function reload/retry.</summary>
+    /// <summary>Calls a function with prefixed keys. The result uses GC-owned storage; disposal is optional. A reusable library permits one missing-function reload/retry.</summary>
     ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
         => ExecuteSpanAsync(function, keys.AsSpan(), args.AsSpan(), cancellationToken);
     /// <summary>Consumes key/argument spans before returning. Underlying byte memory must remain unchanged until completion.</summary>
     ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default);
+    /// <summary>Calls a function and returns a result that must be disposed. Implementations may use pooled storage.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey[]? keys = null,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(function, keys.AsSpan(), args.AsSpan(), cancellationToken);
+    /// <summary>Consumes the spans before returning and returns a result that must be disposed. Binary argument memory stays borrowed until completion.</summary>
+    ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(function, keys, args, cancellationToken);
     /// <summary>Calls a function and deserializes its scalar result using the client serializer.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -113,12 +121,25 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 
     public ValueTask<RespireResult> ExecuteSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteCoreAsync(function, keys, args, cancellationToken, owned: true);
+
+    public ValueTask<RespireResult> ExecuteLeaseAsync(RespireFunction function, RespireKey[]? keys = null,
+        RespireValue[]? args = null, CancellationToken cancellationToken = default)
+        => ExecuteLeaseSpanAsync(function, keys.AsSpan(), args.AsSpan(), cancellationToken);
+
+    public ValueTask<RespireResult> ExecuteLeaseSpanAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken = default)
+        => ExecuteCoreAsync(function, keys, args, cancellationToken, owned: false);
+
+    private ValueTask<RespireResult> ExecuteCoreAsync(RespireFunction function, ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args, CancellationToken cancellationToken, bool owned)
     {
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
             var command = CallCommand(client, function, keys, args, deferred: false);
-            return owner.Attach(ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation));
+            var response = ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation);
+            return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
         }
         catch (Exception error)
         {

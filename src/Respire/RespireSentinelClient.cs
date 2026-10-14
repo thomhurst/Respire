@@ -75,7 +75,7 @@ public sealed class RespireSentinelClient : IAsyncDisposable
             RespireResult reply;
             try
             {
-                reply = await client.ExecuteAsync("INFO SERVER", [], cancellationToken: cancellationToken).ConfigureAwait(false);
+                reply = await client.ExecuteLeaseAsync("INFO SERVER", [], cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (RespireServerException exception) when (exception.Code == RespireErrorCodes.NoPerm)
             {
@@ -209,7 +209,7 @@ public sealed class RespireSentinelClient : IAsyncDisposable
     private async ValueTask<T> ReadAsync<T>(string command, RespireValue[] arguments, Func<RespireResult, T> parse,
         CancellationToken cancellationToken)
     {
-        using var reply = await _client.ExecuteAsync("SENTINEL " + command, arguments, cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var reply = await _client.ExecuteLeaseAsync("SENTINEL " + command, arguments, cancellationToken: cancellationToken).ConfigureAwait(false);
         return parse(reply);
     }
 

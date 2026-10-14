@@ -40,7 +40,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, {{delegateType}} left, {{delegateType}} right)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { {{(cleanup ? "result.Dispose();" : "")}} }
                 }
@@ -87,7 +87,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client, Publisher publisher)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 {{(catchType.Length == 0 ? operation : $"try {{ {operation} }} catch ({catchType}) {{ {cleanup} }}")}}
             }
         }
@@ -168,7 +168,7 @@ public class ExceptionAwareFlowTests
                 static void Take(params RespireResult[] values) { }
                 async Task Run(RespireClient client)
                 {
-                    var {{(warning ? "{|RESP001:owner|}" : "owner")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:owner|}" : "owner")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{call}} }
                     catch ({{catchType}}) { {{(cleanup ? "owner.Dispose();" : "")}} }
                 }
@@ -247,7 +247,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, int divisor, object value)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -334,7 +334,7 @@ public class ExceptionAwareFlowTests
             static void Take(object owner, int other) { }
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { Take({{owner}}, {{argument}}); }
                 catch (InvalidOperationException) { {{cleanup}} }
             }
@@ -383,7 +383,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, int? optional)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { object boxed = optional; result.Dispose(); }
                     catch (OutOfMemoryException) { }
                 }
@@ -479,7 +479,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Element left, Element right, Converted converted, int number, string text, int? optional, (Element, int) pair, Element? maybe, object plain)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{expression}}; result.Dispose(); }
                     catch (InvalidOperationException) { }
                 }
@@ -522,7 +522,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, ValueTask unknown)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { await {{expression}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -560,7 +560,7 @@ public class ExceptionAwareFlowTests
             static void Take(object owner, int other) { }
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { Take(result as object, {{argument}}); }
                 catch (InvalidOperationException) { {{cleanup}} }
             }
@@ -633,7 +633,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, {{type}} left, {{type}} right)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch (OverflowException) { }
                 }
@@ -711,7 +711,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, int? left, int? right)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -757,7 +757,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, {{type}} value)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{conversion}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -831,7 +831,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client)
             {
                 object holder;
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{operation}} }
                 catch ({{catchType}}) { {{cleanup}} }
             }
@@ -899,7 +899,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client, RecordHolder existing, bool flag)
             {
                 Holder holder;
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{operation}} }
                 catch (InvalidOperationException) { {{cleanup}} }
             }
@@ -921,7 +921,7 @@ public class ExceptionAwareFlowTests
             static void Throws() => throw new InvalidOperationException();
             async Task<RespireResult> Run(RespireClient client, bool fail)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try
                 {
                     try { return result; }
@@ -945,7 +945,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client, object[] values)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{operation}} }
                 catch ({{catchType}}) { }
             }
@@ -966,7 +966,7 @@ public class ExceptionAwareFlowTests
             {
                 while (true)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("BLPOP", "q", "0");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("BLPOP", "q", "0");
                     {{body}}
                 }
             }
@@ -1028,7 +1028,7 @@ public class ExceptionAwareFlowTests
             static void Take(RespireResult[][] values, int other) { foreach (var row in values) Take(row, other); }
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{operation}} }
                 catch ({{catchType}}) { {{cleanup}} }
             }
@@ -1059,7 +1059,7 @@ public class ExceptionAwareFlowTests
             static Owner Take(Owner owner, int other) => owner;
             async Task Run(RespireClient client, Owner existing, bool flag)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { _ = {{expression}}; }
                 catch ({{catchType}}) { {{cleanup}} }
             }
@@ -1091,7 +1091,7 @@ public class ExceptionAwareFlowTests
                 static int Throws() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, Holder holder, bool flag)
                 {
-                    var {{(warning ? "{|RESP001:owner|}" : "owner")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:owner|}" : "owner")}} = await client.ExecuteLeaseAsync("PING");
                     try { holder += {{operand}}; }
                     catch ({{catchType}}) { {{(cleanup ? "owner.Dispose();" : "")}} }
                 }
@@ -1139,7 +1139,7 @@ public class ExceptionAwareFlowTests
             static void Take(RespireResult value, int other) => value.Dispose();
             async Task Run(RespireClient client, RespireResult existing, RespireResult? optional)
             {
-                RespireResult? {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                RespireResult? {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { Take({{value}}, {{laterArgument}}); {{cleanup}} }
                 catch (InvalidOperationException) { {{cleanup}} }
             }
@@ -1174,7 +1174,7 @@ public class ExceptionAwareFlowTests
             static int Throws() => throw new InvalidOperationException();
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { _ = {{creation}}; }
                 catch ({{catchType}}) { {{cleanup}} }
             }
@@ -1201,7 +1201,7 @@ public class ExceptionAwareFlowTests
                 static int Throws() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, int choice)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { Take(choice switch { {{selections}} }, {{(throwingArgument ? "Throws()" : "0")}}); }
                     catch (InvalidOperationException) { }
                 }
@@ -1227,7 +1227,7 @@ public class ExceptionAwareFlowTests
             static void Take((RespireResult, int) value, int other = 0) => value.Item1.Dispose();
             async Task Run(RespireClient client, bool flag, RespireResult existing)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{operation}} result.Dispose(); }
                 catch (InvalidOperationException) { }
             }
@@ -1251,7 +1251,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client, Holder holder)
             {
                 {{setup}}
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { holder.Value = (holder = {{replacement}}) != null ? result : result; }
                 catch (NullReferenceException) { }
             }
@@ -1295,7 +1295,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, string[] strings, object[] objects)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch (ArrayTypeMismatchException) { }
                 }
@@ -1336,7 +1336,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client, bool flag)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 {{operation}}
             }
         }
@@ -1367,7 +1367,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, Holder holder, int index)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -1448,7 +1448,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, string text, int[] values, int? optional, object boxed)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -1500,7 +1500,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = new Owner(result); }
                     catch ({{catchType}}) { }
                 }
@@ -1542,7 +1542,7 @@ public class ExceptionAwareFlowTests
                 static int? GetOptional() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, int? optional, Custom custom)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{expression}}; result.Dispose(); }
                     catch (InvalidOperationException) { }
                 }
@@ -1588,7 +1588,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client, bool choice, Holder holder)
             {
                 if (!choice) return;
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{operation}} }
                 catch (InvalidOperationException) { if (choice) result.Dispose(); }
             }
@@ -1613,7 +1613,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, Holder holder)
                 {
                     object[] values = new string[1];
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -1651,7 +1651,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client, dynamic argument)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { _ = new Owner(result, argument); }
                 catch ({{catchType}}) { }
             }
@@ -1681,7 +1681,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, object[] values)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -1747,7 +1747,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, bool flag)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { Holder.Take(result); }
                     catch (TypeInitializationException) { }
                 }
@@ -1800,7 +1800,7 @@ public class ExceptionAwareFlowTests
             static int Throws() => throw new InvalidOperationException();
             async Task Run(RespireClient client, bool flag)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{capture}} }
                 catch ({{catchType}}) { {{cleanup}} }
             }
@@ -1828,7 +1828,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client, Holder target, object[] buffer, int index, object holder)
             {
                 {{setup}}
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{assignment}} }
                 catch ({{catchType}}) { {{cleanup}} }
             }
@@ -1859,7 +1859,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, Holder holder, int value, int divisor, decimal fraction, int? nullable)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{operation}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -1897,7 +1897,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client)
             {
-                var {{(dispose ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                var {{(dispose ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                 {{(dispose ? "result.Dispose();" : "")}}
                 {{loop}}
             }
@@ -1924,7 +1924,7 @@ public class ExceptionAwareFlowTests
                     try { {{operation}} }
                     catch ({{catchType}})
                     {
-                        var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                        var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     }
                 }
             }
@@ -1957,7 +1957,7 @@ public class ExceptionAwareFlowTests
         {
             async IAsyncEnumerable<RespireResult> Run(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 yield return result;
             }
         }
@@ -1996,7 +1996,7 @@ public class ExceptionAwareFlowTests
                 static object GetObject() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, object boxed, int? nullable, int number, decimal fraction)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{conversion}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2058,7 +2058,7 @@ public class ExceptionAwareFlowTests
             static int Throws() => throw new Exception();
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{initializer}} }
                 catch ({{catchType}}) { }
             }
@@ -2079,7 +2079,7 @@ public class ExceptionAwareFlowTests
             async Task Run(RespireClient client, bool flag, int[] array, Holder holder)
             {
                 if (flag) return;
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { (array[Throws()], holder.Value) = ((flag = true) ? 0 : 0, result); }
                 catch { if ({{cleanupCondition}}) result.Dispose(); }
             }
@@ -2113,7 +2113,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client)
                 {
-                    var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                    var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch (InvalidOperationException) { }
                 }
@@ -2178,7 +2178,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = Holder.Value; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2226,7 +2226,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{transfer}} }
                 catch ({{catchType}}) { }
             }
@@ -2253,7 +2253,7 @@ public class ExceptionAwareFlowTests
             static int Throws() => throw new InvalidOperationException();
             async Task Run(RespireClient client, Holder holder)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{transfer}} }
                 catch ({{catchType}}) { }
             }
@@ -2273,7 +2273,7 @@ public class ExceptionAwareFlowTests
         {
             async Task<{{returnType}}> Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { return result; }
                 catch ({{catchType}}) { return default; }
             }
@@ -2305,7 +2305,7 @@ public class ExceptionAwareFlowTests
             static int Throws() => throw new InvalidOperationException();
             async Task Run(RespireClient client, Holder holder)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{transfer}} }
                 catch ({{catchType}}) { }
             }
@@ -2332,7 +2332,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{expression}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2384,7 +2384,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, {{type}} value, {{divisorType}} divisor)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{expression}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2438,7 +2438,7 @@ public class ExceptionAwareFlowTests
                 static int Throws() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, {{type}} value, {{type}} divisor)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{expression}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2491,7 +2491,7 @@ public class ExceptionAwareFlowTests
                 static int Length() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, int length, int[] buffer, string text)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{expression}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2549,7 +2549,7 @@ public class ExceptionAwareFlowTests
                 static void Reset(ref int value) => value++;
                 async Task Run(RespireClient client, RespireResult existing, {{type}} left, {{type}} right)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteLeaseAsync("PING") : existing;
                     {{mutation}}
                     if ({{cleanup}}) result.Dispose();
                 }
@@ -2586,7 +2586,7 @@ public class ExceptionAwareFlowTests
         {
             async Task<object> Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { return (object)result; }
                 catch ({{catchType}}) { return null; }
             }
@@ -2608,7 +2608,7 @@ public class ExceptionAwareFlowTests
             static int Throw() => throw new InvalidOperationException();
             async Task<(RespireResult, int)> Run(RespireClient client, RespireResult existing, bool choice)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { return {{returned}}; }
                 catch (InvalidOperationException)
                 {
@@ -2629,7 +2629,7 @@ public class ExceptionAwareFlowTests
             static int Throws() => throw new InvalidOperationException();
             async Task<(RespireResult, int)> Run(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 try { return (result, Throws()); }
                 catch { return default; }
             }
@@ -2656,7 +2656,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client, Holder holder, RespireResult existing, RespireResult[] buffer, bool choice)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{transfer}} }
                 catch ({{catchType}}) { }
             }
@@ -2685,7 +2685,7 @@ public class ExceptionAwareFlowTests
         {
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{transfer}} }
                 catch ({{catchType}}) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
             }
@@ -2713,7 +2713,7 @@ public class ExceptionAwareFlowTests
             static void TakeObject(object value, int ignored) => ((RespireResult)value).Dispose();
             async Task Run(RespireClient client, RespireResult existing, bool choice)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 try { {{transfer}} }
                 catch (InvalidOperationException) { }
             }
@@ -2733,7 +2733,7 @@ public class ExceptionAwareFlowTests
             static void Take(RespireResult result, int ignored) => result.Dispose();
             async Task Run(RespireClient client)
             {
-                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                 unsafe
                 {
                     delegate*<RespireResult, int, void> callback = &Take;
@@ -2758,7 +2758,7 @@ public class ExceptionAwareFlowTests
                 static void Throw() => throw new InvalidOperationException();
                 async Task Run(RespireClient client)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     unsafe
                     {
                         delegate*<void> callback = &Throw;
@@ -2822,7 +2822,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, Holder input)
                 {
                     {{setup}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     {{mutation}}
                     try { {{transfer}} }
                     catch (NullReferenceException) { }
@@ -2851,7 +2851,7 @@ public class ExceptionAwareFlowTests
                 static int Index() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, object[] values)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{expression}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -2896,7 +2896,7 @@ public class ExceptionAwareFlowTests
                 RespireResult Value { set { value.Dispose(); } }
                 async Task Run(RespireClient client, Holder holder, RespireResult[] buffer, int index, dynamic target)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{assignment}} }
                     catch ({{catchType}}) { }
                 }
@@ -2925,7 +2925,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, bool flag, Value value)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteLeaseAsync("PING") : existing;
                     try { {{expression}} result.Dispose(); }
                     catch (InvalidOperationException) { if (flag) result.Dispose(); }
                 }
@@ -2964,7 +2964,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, dynamic value)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{condition}} ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{condition}} ? await client.ExecuteLeaseAsync("PING") : existing;
                     if ({{condition}}) result.Dispose();
                 }
             }
@@ -3010,7 +3010,7 @@ public class ExceptionAwareFlowTests
                 void Take(RespireResult result, int value) { result.Dispose(); }
                 async Task Run(RespireClient client, bool choice, Owner holder, dynamic target)
                 {
-                    var {{(warning && !cleanupInCatch ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning && !cleanupInCatch ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{transfer}} }
                     catch ({{catchType}}) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3038,7 +3038,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Holder holder, string text)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{expression}} result.Dispose(); }
                     catch (InvalidOperationException) { }
                 }
@@ -3087,7 +3087,7 @@ public class ExceptionAwareFlowTests
                 int Throw() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, int value)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{expression}} result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -3127,7 +3127,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     try { throw new {{exceptionType}}(); }
                     catch (OutOfMemoryException) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                     catch (Exception) { result.Dispose(); }
@@ -3169,7 +3169,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, bool choice, dynamic target)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteLeaseAsync("PING") : existing;
                     {{call}};
                     if (choice) result.Dispose();
                 }
@@ -3210,7 +3210,7 @@ public class ExceptionAwareFlowTests
                 int Throw() => throw new InvalidOperationException();
                 async Task Run(RespireClient client, IEnumerable<int> source)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { int[] copy = {{expression}}; result.Dispose(); }
                     catch ({{catchType}}) { }
                 }
@@ -3251,7 +3251,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, IEnumerable<int> source)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{expression}} result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3301,7 +3301,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Holder holder, int[] array, string text)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{pattern}}; result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3375,7 +3375,7 @@ public class ExceptionAwareFlowTests
                 void Method() { }
                 async Task Run(RespireClient client, Holder holder)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { Action action = {{methodGroup}}; result.Dispose(); }
                     catch ({{catchType}}) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3421,7 +3421,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Holder value)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = value with { }; result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3459,7 +3459,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = Holder.Value; result.Dispose(); }
                     catch { }
                 }
@@ -3507,7 +3507,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, object value, bool choice, int[] buffer)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteLeaseAsync("PING") : existing;
                     {{write}}
                     if ({{cleanup}}) result.Dispose();
                 }
@@ -3549,7 +3549,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, dynamic value)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{access}}; result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3601,7 +3601,7 @@ public class ExceptionAwareFlowTests
                 bool Throws() => throw new System.Exception();
                 async Task Run(RespireClient client, RespireResult existing, bool flag)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteLeaseAsync("PING") : existing;
                     try { _ = {{creation}}; result.Dispose(); }
                     catch { if (flag) result.Dispose(); }
                 }
@@ -3654,7 +3654,7 @@ public class ExceptionAwareFlowTests
                 {{members}}
                 async Task Run(RespireClient client, RespireResult existing, bool flag, dynamic target)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = flag ? await client.ExecuteLeaseAsync("PING") : existing;
                     try { {{assignment}} result.Dispose(); }
                     catch { if (flag) result.Dispose(); }
                 }
@@ -3724,7 +3724,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, {{parameters}})
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3766,7 +3766,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run<T>(RespireClient client, Holder holder, dynamic value) where T : new()
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3809,7 +3809,7 @@ public class ExceptionAwareFlowTests
                 bool Property => throw new Exception();
                 async Task Run(RespireClient client)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { throw new Exception(); }
                     catch (Exception) when ({{filter}}) { result.Dispose(); }
                     catch (Exception) { {{(cleanupInFallback ? "result.Dispose();" : "")}} }
@@ -3861,7 +3861,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, int divisor, decimal amount)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch { }
                 }
@@ -3901,7 +3901,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, {{type}} count)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteLeaseAsync("PING") : existing;
                     if ({{opposite}}) { } else result.Dispose();
                 }
             }
@@ -3949,7 +3949,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Operand left, Operand right)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     try { {{operation}} result.Dispose(); }
                     catch { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -3991,7 +3991,7 @@ public class ExceptionAwareFlowTests
                 {
                     try
                     {
-                        var {{(throwAfterAcquisition ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync({{command}});
+                        var {{(throwAfterAcquisition ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync({{command}});
                         {{(throwAfterAcquisition ? "GetCommand();" : "")}}
                         result.Dispose();
                     }
@@ -4024,7 +4024,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, int count)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = {{selection}} ? await client.ExecuteLeaseAsync("PING") : existing;
                     {{write}}
                     if ({{cleanup}}) result.Dispose();
                 }
@@ -4065,7 +4065,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Holder holder)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = {{access}}; result.Dispose(); }
                     catch (NullReferenceException) { }
                 }
@@ -4106,7 +4106,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, {{parameters}})
                 {
                     {{branches}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     result.Dispose();
                     {{branches}}
                 }
@@ -4130,7 +4130,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, {{parameters}})
                 {
                     {{branches}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteAsync("PING");
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = await client.ExecuteLeaseAsync("PING");
                     {{branches}}
                     result.Dispose();
                 }
@@ -4152,7 +4152,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, Holder holder)
                 {
-                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteAsync("PING");
+                    var {{(cleanupInCatch ? "result" : "{|RESP001:result|}")}} = await client.ExecuteLeaseAsync("PING");
                     try { _ = holder.Field; result.Dispose(); }
                     catch (NullReferenceException) { {{(cleanupInCatch ? "result.Dispose();" : "")}} }
                 }
@@ -4195,7 +4195,7 @@ public class ExceptionAwareFlowTests
                 void Consume(bool first, bool second) { }
                 async Task Run(RespireClient client, RespireResult existing, bool choice)
                 {
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteLeaseAsync("PING") : existing;
                     try { {{operations}} result.Dispose(); }
                     catch (Exception) { if (choice) result.Dispose(); }
                 }
@@ -4282,7 +4282,7 @@ public class ExceptionAwareFlowTests
                     try { MayThrow(); }
                     catch (Exception) {{(filtered ? "when (filter)" : "")}}
                     {
-                        var result = await client.ExecuteAsync("PING");
+                        var result = await client.ExecuteLeaseAsync("PING");
                         if (choice) result.Dispose();
                     }
                 }
@@ -4305,7 +4305,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, RespireResult existing, bool choice)
                 {
                     {{before}}
-                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteAsync("PING") : existing;
+                    var {{(warning ? "{|RESP001:result|}" : "result")}} = choice ? await client.ExecuteLeaseAsync("PING") : existing;
                     {{between}}
                     if (choice) result.Dispose();
                     {{after}}
@@ -4366,7 +4366,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, bool choice)
                 {
-                    var result = {{selection}} ? await client.ExecuteAsync("PING") : existing;
+                    var result = {{selection}} ? await client.ExecuteLeaseAsync("PING") : existing;
                     if ({{cleanup}}) result.Dispose();
                 }
             }
@@ -4428,7 +4428,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, {{parameters}})
                 {
                     {{branches}}
-                    var result = await client.ExecuteAsync("PING");
+                    var result = await client.ExecuteLeaseAsync("PING");
                     result.Dispose();
                 }
             }
@@ -4452,7 +4452,7 @@ public class ExceptionAwareFlowTests
                     try { Console.WriteLine("may throw"); }
                     catch (Exception) when (choice)
                     {
-                        var {{local}} = await client.ExecuteAsync("PING");
+                        var {{local}} = await client.ExecuteLeaseAsync("PING");
                         if ({{(inverted ? "!choice" : "choice")}}) result.Dispose();
                     }
                 }
@@ -4510,7 +4510,7 @@ public class ExceptionAwareFlowTests
                 async Task Run(RespireClient client, RespireResult existing, bool choice, bool other, int number)
                 {
                     {{declaration}}
-                    var {{((disposalWarning ?? warning) ? "{|RESP001:result|}" : "result")}} = ({{select}}) ? await client.ExecuteAsync("PING") : existing;
+                    var {{((disposalWarning ?? warning) ? "{|RESP001:result|}" : "result")}} = ({{select}}) ? await client.ExecuteLeaseAsync("PING") : existing;
                     {{mutation}}
                     if ({{flush}}) result.Dispose();
                 }
@@ -4662,7 +4662,7 @@ public class ExceptionAwareFlowTests
             {
                 async Task Run(RespireClient client, RespireResult existing, int choice)
                 {
-                    var {{local}} = choice switch { 0 => await client.ExecuteAsync("PING"), _ => existing };
+                    var {{local}} = choice switch { 0 => await client.ExecuteLeaseAsync("PING"), _ => existing };
                     {{jump}}
                 Release:
                     if (choice == 0) result.Dispose();
@@ -4715,7 +4715,7 @@ public class ExceptionAwareFlowTests
             {
                 async IAsyncEnumerable<int> Run(RespireClient client)
                 {
-                    var {{local}} = await client.ExecuteAsync("PING");
+                    var {{local}} = await client.ExecuteLeaseAsync("PING");
                     {{body}}
                 }
             }

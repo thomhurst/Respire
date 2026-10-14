@@ -72,7 +72,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
             try
             {
                 var json = JsonSerializer.SerializeToUtf8Bytes(response, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponse)));
-                using var inserted = await _client.Scripts.ExecuteAsync(Insert,
+                using var inserted = await _client.Scripts.ExecuteLeaseAsync(Insert,
                     [_prefix + Guid.NewGuid().ToString("N")],
                     [scope, vector, json, _options.TimeToLive.Ticks / TimeSpan.TicksPerMillisecond], cancellationToken).ConfigureAwait(false);
             }

@@ -24,7 +24,7 @@ public sealed class RespireCountdownLatch
     public async ValueTask<long> CountDownAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var result = await _client.Scripts.ExecuteAsync(RespireCoordination.CountDownLatch,
+        using var result = await _client.Scripts.ExecuteLeaseAsync(RespireCoordination.CountDownLatch,
             [_key], [_generation, _channel], cancellationToken).ConfigureAwait(false);
         return long.TryParse(result.AsString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var remaining)
             ? remaining

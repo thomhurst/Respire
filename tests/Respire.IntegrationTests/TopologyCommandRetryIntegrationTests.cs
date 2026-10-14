@@ -154,7 +154,8 @@ public class TopologyCommandRetryIntegrationTests
             using (await newNode.ExecuteAsync("CLUSTER SETSLOT", [slot, "IMPORTING", sourceId.AsString()!], cancellationToken: token)) { }
             using (await oldNode.ExecuteAsync("CLUSTER SETSLOT", [slot, "MIGRATING", targetId.AsString()!], cancellationToken: token)) { }
             using (await oldNode.ExecuteAsync("MIGRATE", [replacement.Host, replacement.Port, key, "0", "5000"], cancellationToken: token)) { }
-            foreach (var endpoint in fixture.DataEndpoints)
+            // Commit ownership on the destination before notifying the source and peers.
+            foreach (var endpoint in new[] { replacement, source }.Concat(fixture.DataEndpoints.Where(endpoint => endpoint != replacement && endpoint != source)))
             {
                 await using var node = await RespireClient.ConnectAsync(DirectOptions(endpoint), token);
                 using var moved = await node.ExecuteAsync("CLUSTER SETSLOT", [slot, "NODE", targetId.AsString()!], cancellationToken: token);
@@ -174,6 +175,8 @@ public class TopologyCommandRetryIntegrationTests
         if (allowDuplicate) failure.Should().BeNull();
         else failure.Should().BeAssignableTo<RespireConnectionException>();
         fault.Dropped.Should().Be(1);
+        // Surface migration failures instead of mistaking them for the injected reply loss.
+        await fault.RouteReady.Task.WaitAsync(deadline.Token);
         await using var observer = await RespireClient.ConnectAsync(DirectOptions(replacement), deadline.Token);
         (await observer.GetStringAsync(key, deadline.Token)).Should().Be(allowDuplicate ? "2" : "1");
         await using var formerObserver = await RespireClient.ConnectAsync(DirectOptions(former), deadline.Token);

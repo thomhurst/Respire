@@ -30,7 +30,7 @@ internal static class SharedScenarios
     {
         await client.Hashes.SetAsync("user:1", "name", "Ada");
         await Assert.That(await client.Hashes.IncrementAsync("user:1", "visits")).IsEqualTo(1L);
-        using var batch = client.CreateBatch();
+        await using var batch = client.CreateBatch();
         var stored = batch.Strings.Set("greeting", "hello");
         var read = batch.Strings.GetString("greeting");
         await batch.ExecuteAsync();

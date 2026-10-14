@@ -43,6 +43,8 @@ public class DeferredFacetParityTests
         // Leased replies require explicit pooled-buffer ownership outside deferred completion.
         typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetLeaseAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,
+        .. typeof(IFunctionCommands).GetMethods().Where(method => method.Name is
+            nameof(IFunctionCommands.ExecuteLeaseAsync) or nameof(IFunctionCommands.ExecuteLeaseSpanAsync)),
         // Stream payloads are immediate-only: deferred batches snapshot values and cannot hold
         // a multiplexed connection while asynchronously reading an external source.
         typeof(IStringCommands).GetMethod(nameof(IStringCommands.SetAsync),

@@ -13,7 +13,7 @@ namespace Respire;
 /// An explicit pipeline: queue commands, then <see cref="ExecuteAsync"/> flushes them to one
 /// connection together and completes every queued <see cref="RespirePending{T}"/>. Not atomic —
 /// use <see cref="RespireTransaction"/> for MULTI/EXEC semantics. Single-shot and not
-/// thread-safe: build, send once, discard. Always use a <c>using</c> declaration. Disposing an
+/// thread-safe: build, send once, discard. Use <c>await using</c>, as for transactions. Disposing an
 /// unsent batch faults its queued pendings with <see cref="RespireBatchDiscardedException"/>;
 /// disposing after execution preserves their results and errors.
 /// </summary>
@@ -36,7 +36,7 @@ namespace Respire;
 /// locks remain client-only because their blocking, streaming, connection-scoped, or managed-lifetime
 /// semantics do not fit a deferred single-flush command queue.
 /// </remarks>
-public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
+public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
@@ -664,6 +664,13 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             operation.Fail(error);
             operation.AllowErrorInspection();
         }
+    }
+
+    /// <summary>Discards an unsent batch or preserves completed results, using the same disposal pattern as transactions.</summary>
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return default;
     }
 
     private async Task RunClusterGroupAsync(
