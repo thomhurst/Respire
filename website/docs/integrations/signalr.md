@@ -128,5 +128,8 @@ Pending operations:
 
 The channel conventions and lifecycle helpers are adapted from the MIT-licensed
 [ASP.NET Core Redis backplane at v8.0.31](https://github.com/dotnet/aspnetcore/tree/v8.0.31/src/SignalR/server/StackExchangeRedis).
+This link identifies the original source version. The interoperability tests run
+against `Microsoft.AspNetCore.SignalR.StackExchangeRedis` 8.0.32 on .NET 8 and
+10.0.13 on .NET 10.
 The package includes Microsoft's copyright and license notice in
 `licenses/LICENSE-Microsoft.txt`.

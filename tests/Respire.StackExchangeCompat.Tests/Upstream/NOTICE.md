@@ -6,10 +6,13 @@ The source headers retain the .NET Foundation copyright/license notices. The
 applies to these adaptations.
 
 Both `Microsoft.Extensions.Caching.StackExchangeRedis` and
-`Microsoft.AspNetCore.DataProtection.StackExchangeRedis` are pinned to **10.0.12**
+`Microsoft.AspNetCore.DataProtection.StackExchangeRedis` are pinned to **10.0.13**
 in `Directory.Packages.props`, on net8.0 and net10.0. They use the pinned
 **StackExchange.Redis 3.4.0** interfaces. No test uses a production
 StackExchange.Redis connection in place of the shim.
+
+The adapted test sources remain based on v10.0.12; the package versions above
+identify the releases those tests currently run against.
 
 ## Complete upstream class inventory
 
