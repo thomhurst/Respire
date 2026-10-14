@@ -56,6 +56,8 @@ public static class RespireServiceCollectionExtensions
             // Callback and service-resolution failures must retain their original exception and stack.
             return Resolve(provider, _ => configure is null ? options : configure(provider, options));
         }));
+        // A previously registered custom factory takes precedence and must handle configuration
+        // registrations itself; this factory supplies their initial values to the options pipeline.
         services.TryAddTransient<IOptionsFactory<RespireOptions>, RespireOptionsFactory>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<RespireOptions>, RespireOptionsValidator>());
         services.AddOptions<RespireOptions>(name).ValidateOnStart();
