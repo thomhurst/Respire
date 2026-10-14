@@ -429,7 +429,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         if (!_connected)
         {
             throw new RespireConnectionException(
-                $"Not connected to {Host}:{Port} — call {nameof(EnsureConnectedAsync)} first.");
+                $"Not connected to {ActiveConnectionEndpoint}. Use RespireClient.ConnectAsync to establish a connection before use, " +
+                "and check the endpoint, network reachability, TLS settings, and credentials if connection setup fails.");
         }
 
         RespireConnection? fallback = null;
@@ -463,7 +464,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         if (!_connected)
         {
             throw new RespireConnectionException(
-                $"Not connected to {Host}:{Port} — call {nameof(EnsureConnectedAsync)} first.");
+                $"Not connected to {ActiveConnectionEndpoint}. Use RespireClient.ConnectAsync to establish a connection before use, " +
+                "and check the endpoint, network reachability, TLS settings, and credentials if connection setup fails.");
         }
 
         var connection = Volatile.Read(ref _connections[0]);
