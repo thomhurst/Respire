@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
 namespace Respire.Analyzers;
@@ -23,6 +25,14 @@ public sealed class RespireOptionsBuilderGenerator : IIncrementalGenerator
         if (compilation.AssemblyName != "Respire.DependencyInjection") return null;
         var options = compilation.GetTypeByMetadataName("Respire.RespireOptions");
         if (options is null) return null;
+        var builder = compilation.GetTypeByMetadataName("Respire.DependencyInjection.RespireOptionsBuilder");
+        // This analyzer also ships to core-package consumers. An assembly name alone does not
+        // establish that the handwritten partial (and the storage used below) is present.
+        if (builder is null || !SymbolEqualityComparer.Default.Equals(builder.ContainingAssembly, compilation.Assembly)
+            || !builder.DeclaringSyntaxReferences.Any(reference => reference.GetSyntax() is ClassDeclarationSyntax declaration
+                && declaration.Modifiers.Any(SyntaxKind.PartialKeyword))
+            || !builder.GetMembers("_options").OfType<IFieldSymbol>().Any(field =>
+                !field.IsStatic && !field.IsReadOnly && SymbolEqualityComparer.Default.Equals(field.Type, options))) return null;
 
         var format = SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
             SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers |

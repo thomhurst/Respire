@@ -138,7 +138,15 @@ builder.Services.AddRespire(builder.Configuration.GetSection("Redis"),
 ```
 
 The callback requires that the credential provider has already been registered. Keep secrets
-in a configuration secret provider. Options are read when first resolved; existing singleton
+in a configuration secret provider. `RespireOptions` is an immutable record: use this callback
+and return an `options with { ... }` expression to change bound settings. Standard
+`Configure<RespireOptions>` and `PostConfigure<RespireOptions>` callbacks still run, but cannot
+assign init-only properties or replace the record. Register `IValidateOptions<RespireOptions>`
+to add validation rules. A custom `IOptionsFactory<RespireOptions>` registered before
+`AddRespire` takes precedence over Respire's configuration factory; do not combine the two
+unless your factory supplies the configuration-bound options itself.
+
+Options are read when first resolved; existing singleton
 clients do not reconnect or change settings when configuration reloads. Restart the host to
 apply client configuration changes.
 

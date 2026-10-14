@@ -5,8 +5,8 @@ namespace Respire.DependencyInjection;
 internal sealed record RespireOptionsRegistration(
     string Name, Func<IServiceProvider, RespireOptions> Create);
 
-// OptionsFactory's configure/post-configure/validate pipeline remains available even though
-// the initial value is an immutable record produced by our configuration mapper.
+// OptionsFactory still invokes configure/post-configure/validate callbacks. Init-only settings
+// must be changed by returning a new record from the configuration registration callback.
 internal sealed class RespireOptionsFactory(
     IEnumerable<IConfigureOptions<RespireOptions>> setups,
     IEnumerable<IPostConfigureOptions<RespireOptions>> postConfigures,
