@@ -15,11 +15,12 @@ for the official distributed cache, DataProtection, and [Hangfire](./guides/hang
 It is not a general StackExchange.Redis replacement. It does not support Microsoft's SignalR
 backplane; use [`Respire.SignalR`](./integrations/signalr).
 
-The feature table describes StackExchange.Redis 3.4.5; the published benchmarks used 3.3.1.
-Recheck claims against your version. See the upstream
-[configuration](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Configuration.md),
-[failover/retry](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Failover.md),
-and [maintenance event](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/ServerMaintenanceEvent.md) docs.
+Verified on **14 October 2026** against StackExchange.Redis
+[3.4.5 (latest stable release)](https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.4.5)
+and [4.0.127-alpha (latest published 4.0 preview)](https://www.nuget.org/packages/StackExchange.Redis/4.0.127-alpha).
+The 4.0 column describes that preview, not a stable 4.0 release or a promise about its final API.
+Earlier 3.x releases may lack features added in 3.4. The published [benchmarks](./benchmarks)
+used 3.3.1 and do not measure 4.0.
 
 :::note Pre-release
 Respire's public API may still change before a stable release. See the [roadmap](./roadmap).
@@ -36,36 +37,78 @@ Respire gives you:
 - `IAsyncEnumerable` pub/sub, stream reads, and scans;
 - an [in-memory test server](./guides/in-memory-testing) and built-in OpenTelemetry.
 
-Uncached wire performance is comparable. See the [benchmarks](./benchmarks) and
-[stress tests](./stress-tests) for current measurements against StackExchange.Redis.
+See the [benchmarks](./benchmarks) and [stress tests](./stress-tests) for measurements against
+StackExchange.Redis. The published 3.3.1 results do not establish performance against 4.0.
 
 ## Feature comparison
 
-| Capability | StackExchange.Redis | Respire |
-| --- | --- | --- |
-| Target frameworks | .NET Framework 4.6.1+, `netstandard2.0`, .NET 8+ | .NET 8 and .NET 10 |
-| API style | Synchronous and asynchronous methods; opt-in [`DedicatedThreads`](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/SyncOverAsync.md) keeps redis traffic off the global thread pool | Asynchronous only (`ValueTask`) |
-| Command surface | Flat methods on `IDatabase` (`HashGet`, `ListLeftPush`) | Facets per data type (`redis.Hashes.GetStringAsync`) |
-| Values | `RedisValue` union | Typed results; `RespireValue` for arguments |
-| Automatic pipelining | Yes | Yes |
-| Protocol | RESP3 attempted by default when `HELLO` is enabled and the configured server version is 6+; RESP2 fallback and explicit override | RESP3 preferred by default, with RESP2 fallback |
-| Server-assisted client-side cache | No in 3.x; the 4.0 previews add an opt-in cache | Yes, opt-in |
-| Blocking commands (`BLPOP`, `BLMOVE`, ...) | No typed APIs; they would stall the shared connection | Typed APIs on dedicated pooled connections |
-| Pub/sub | Handlers or `ChannelMessageQueue`; a separate pub/sub connection by default under RESP3 since 3.4 | `IAsyncEnumerable` subscriptions with delivery-gap markers |
-| Sharded pub/sub (Redis 7) | Yes | Yes |
-| Transactions | `AddCondition` checks | `WATCH`-based optimistic concurrency |
-| Distributed locks | `LockTake`, `LockExtend`, `LockRelease` | Raw-token APIs plus managed lock handles with keep-alive |
-| Read from replicas | `CommandFlags.PreferReplica` / `DemandReplica` per command | `ReadFrom` option or `WithReadFrom` view, with hedged and zone-aware reads |
-| Fire-and-forget | `CommandFlags.FireAndForget` on any command | `ExecuteFireAndForgetAsync` for raw commands |
-| Multiple databases | `GetDatabase(n)` per call | One database per client (`Database` option) |
-| Health-checked failover between deployments | `ConnectGroupAsync` connection groups | [`RespireFailoverGroup`](./guides/failover-groups); read `ActiveClient` for each operation |
-| Smart client handoffs | Maintenance notifications and endpoint handoff; on by default for Redis Enterprise and Azure Managed Redis since 3.4, opt-in elsewhere | Opt-in [maintenance notifications and handoff](./fundamentals/connections#maintenance-notifications), including [failover group candidates](./guides/failover-groups#maintenance-notifications) |
-| Command retry policy | Async `WithRetry(...)` wrapper with `RetryPolicy` and `CommandRetry*` categories | [`RetryPolicy`](./guides/command-retries) option with `RespireCommandRetryCategory` limits, plus whole-unit batch and transaction retries |
-| Diagnostics | `RegisterProfiler` profiling sessions | OpenTelemetry `ActivitySource` and `Meter` |
-| Analyzers | Transaction and sync-over-async diagnostics (`SER305`–`SER308`) | Pooled-result and batch-read diagnostics (`RESP001`, `RESP002`), plus source-generator input checks (`RESP003`–`RESP006`) |
-| `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | [`Respire.Caching`](./integrations/caching); entries are interchangeable while `ValueCodec` is unset |
-| Module commands | Raw `Execute` | Typed `Json`, `Search`, `TimeSeries`, and `Probabilistic` packages |
-| Test double | None built in | [`Respire.Testing`](./guides/in-memory-testing) in-memory server |
+| Capability | StackExchange.Redis 3.x (3.4.5) | StackExchange.Redis 4.0.127-alpha | Respire |
+| --- | --- | --- | --- |
+| Target frameworks | .NET Framework 4.6.1/4.7.2, `netstandard2.0`, .NET 8/10 | Same targets | .NET 8 and .NET 10 |
+| API style | Sync methods and async `Task` methods | New command groups return `ValueTask`; legacy sync/`Task` methods remain supported | Asynchronous only (`ValueTask`) |
+| Command surface | Flat methods on `IDatabase` (`StringGetAsync`) | Groups on the database (`db.Strings.GetAsync`), alongside the flat API | Facets per data type (`redis.Strings.GetStringAsync`) |
+| Values | `RedisValue` union | `RedisValue` for ordinary string results; groups also expose pooled `ReadOnlyLease<T>` results | Typed results; `RespireValue` for arguments and pooled result APIs |
+| Per-call cancellation | No token on ordinary `IDatabaseAsync` commands | Command groups accept `CancellationToken` | Most methods accept `CancellationToken` |
+| Automatic pipelining | Yes | Yes | Yes |
+| Protocol | RESP3 attempted when `HELLO` is enabled and configured server version is 6+; RESP2 fallback/override | Same negotiation; client-side caching requires RESP3 | RESP3 preferred, with RESP2 fallback |
+| Server-assisted client-side cache | No built-in cache | Opt-in `ClientCache`; covers both legacy calls and groups | Opt-in `ClientSideCache` |
+| Blocking Redis commands (`BLPOP`, `BLMOVE`, ...) | No typed APIs | No typed APIs in this preview | Typed APIs on dedicated pooled connections |
+| Pub/sub | Handlers or `ChannelMessageQueue`; separate pub/sub connection by default under RESP3 since 3.4 | Same subscription API and connection default | `IAsyncEnumerable` subscriptions with delivery-gap markers |
+| Sharded pub/sub (Redis 7) | Yes | Yes | Yes |
+| Transactions | `AddCondition` checks | Same checks; batches and transactions also expose groups | `WATCH`-based optimistic concurrency |
+| Distributed locks | `LockTake`, `LockExtend`, `LockRelease` | Same helpers on the legacy `IDatabase` surface | Raw-token APIs plus managed lock handles with keep-alive |
+| Read from replicas | `CommandFlags.PreferReplica` / `DemandReplica` | Same per-command flags | `ReadFrom` or `WithReadFrom`, with hedged and zone-aware reads |
+| Fire-and-forget | `CommandFlags.FireAndForget` | Same flag, including on groups | `ExecuteFireAndForgetAsync` for raw commands |
+| Multiple databases | `GetDatabase(n)` | Same | One database per client (`Database` option) |
+| Health-checked failover between deployments | `ConnectGroupAsync` connection groups | Same, with group configuration in `MultiGroupOptions` | [`RespireFailoverGroup`](./guides/failover-groups); read `ActiveClient` for each operation |
+| Smart client handoffs | Maintenance notifications and endpoint handoff; automatic for Redis Enterprise and Azure Managed Redis since 3.4; disabled inside connection groups | Same availability and group restriction | Opt-in [maintenance handoff](./fundamentals/connections#maintenance-notifications), including [failover group candidates](./guides/failover-groups#maintenance-notifications) |
+| Command retry policy | Async `WithRetry(...)` wrapper with `RetryPolicy` and `CommandRetry*` categories | `WithRetry(...)` also exposes groups; configurable connection/group policy | [`RetryPolicy`](./guides/command-retries) with category limits, plus whole-unit batch and transaction retries |
+| Diagnostics | `RegisterProfiler` profiling sessions | Same profiling API | OpenTelemetry `ActivitySource` and `Meter` |
+| Analyzers | Transaction and sync-over-async checks (`SER305`–`SER308`) | Those checks remain available | Pooled-result and batch-read checks (`RESP001`, `RESP002`); source-generator checks (`RESP003`–`RESP006`) |
+| `IDistributedCache` | `Microsoft.Extensions.Caching.StackExchangeRedis` | Legacy `IConnectionMultiplexer` / `IDatabase` API remains available for adapters | [`Respire.Caching`](./integrations/caching); entries interchangeable while `ValueCodec` is unset |
+| Module/custom commands | Raw `Execute` | Raw commands plus extensible groups and `Context.SendAsync<T>` | Typed `Json`, `Search`, `TimeSeries`, and `Probabilistic` packages |
+| In-memory test server | None shipped in the client package | None shipped in the client package | [`Respire.Testing`](./guides/in-memory-testing) |
+
+The 3.x entries use the tagged [configuration][ser3-config], [failover/retry][ser3-failover],
+[maintenance][ser3-maintenance], and [sync/async][ser3-async] documentation. For 4.0, see the
+preview's [command groups][ser4-groups], [legacy API mapping][ser4-legacy],
+[client-side cache][ser4-cache], [protocol][ser4-protocol], and [failover/retry][ser4-failover]
+documentation. These links are pinned to the compared versions.
+
+Both compared StackExchange.Redis versions also offer opt-in `DedicatedThreads` to keep Redis
+traffic off the global thread pool; see the [3.x][ser3-async] and [4.0][ser4-async] threading guidance.
+
+### What changes when coming from 4.0
+
+Async command groups, `ValueTask`, cancellation, and client-side caching are also available in
+the 4.0 preview. Compare their behavior and configuration before choosing a client. Its legacy
+`IDatabase` methods are still supported; upgrading StackExchange.Redis does not require a
+migration to Respire or a rewrite to groups.
+
+Similar method names do not imply identical result types: StackExchange.Redis
+`db.Strings.GetAsync(key)` returns `RedisValue`; Respire's `redis.Strings.GetStringAsync(key)`
+returns `string?`, while `GetAsync<T>` uses the selected codec. Both offer pooled results that
+must be disposed. Review binary values, missing values, and ownership when porting callers.
+
+StackExchange.Redis 4.0's `Context.Blocking()` blocks the calling thread; it does not add typed
+Redis blocking queue commands such as `BLPOP`. A command group's cancellation token prevents
+a command from being sent if it has not yet been written to the connection. Once written,
+the command still runs on Redis; cancellation ends the caller's wait and discards the reply.
+
+The examples below map the flat 3.x API, which is also available in 4.0. For callers already
+using 4.0 groups, use the upstream [mapping][ser4-legacy] to identify the Redis operation,
+then check the Respire result and options rather than applying a mechanical rename.
+
+[ser3-config]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Configuration.md
+[ser3-failover]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/Failover.md
+[ser3-maintenance]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/ServerMaintenanceEvent.md
+[ser3-async]: https://github.com/StackExchange/StackExchange.Redis/blob/3.4.5/docs/SyncOverAsync.md
+[ser4-groups]: https://github.com/StackExchange/StackExchange.Redis/blob/4.0.127-alpha/docs/Groups.md
+[ser4-legacy]: https://github.com/StackExchange/StackExchange.Redis/blob/4.0.127-alpha/docs/LegacyApi.md
+[ser4-cache]: https://github.com/StackExchange/StackExchange.Redis/blob/4.0.127-alpha/docs/ClientSideCaching.md
+[ser4-protocol]: https://github.com/StackExchange/StackExchange.Redis/blob/4.0.127-alpha/docs/Resp3.md
+[ser4-failover]: https://github.com/StackExchange/StackExchange.Redis/blob/4.0.127-alpha/docs/Failover.md
+[ser4-async]: https://github.com/StackExchange/StackExchange.Redis/blob/4.0.127-alpha/docs/SyncOverAsync.md
 
 ## Behavior differences
 
