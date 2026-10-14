@@ -125,7 +125,7 @@ public static class RespireHashModelIO
             {
                 try
                 {
-                    using var reply = await client.ExecuteAsync(RespireCommands.Hash.HSETEX,
+                    using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HSETEX,
                         [keyValue, "PX", group.Ttl, "FIELDS", group.Fields.Length, .. pairs], cancellationToken: cancellationToken).ConfigureAwait(false);
                     if (reply.Type != RespDataType.Integer || reply.AsInteger() != 1)
                         throw new RespireProtocolException("Unconditional HSETEX must return 1.");
@@ -137,10 +137,10 @@ public static class RespireHashModelIO
             }
             else
             {
-                using (var reply = await client.ExecuteAsync(RespireCommands.Hash.HSET,
+                using (var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HSET,
                     [keyValue, .. pairs], cancellationToken: cancellationToken).ConfigureAwait(false))
                     ValidateWriteReply(reply, group.Fields.Length);
-                using var expiry = await client.ExecuteAsync(RespireCommands.Hash.HPEXPIRE,
+                using var expiry = await client.ExecuteLeaseAsync(RespireCommands.Hash.HPEXPIRE,
                     [keyValue, group.Ttl, "FIELDS", group.Fields.Length, .. group.Fields.Select(field => (RespireValue)field.Key)],
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 if (expiry.Type != RespDataType.Array || expiry.Count != group.Fields.Length)
@@ -160,12 +160,12 @@ public static class RespireHashModelIO
 
         if (writes.Length > 1)
         {
-            using var reply = await client.ExecuteAsync(RespireCommands.Hash.HSET, writes, cancellationToken: cancellationToken).ConfigureAwait(false);
+            using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HSET, writes, cancellationToken: cancellationToken).ConfigureAwait(false);
             ValidateWriteReply(reply, ordinary.Length);
         }
         if (removals.Count > 1)
         {
-            using var reply = await client.ExecuteAsync(RespireCommands.Hash.HDEL, removals.ToArray(), cancellationToken: cancellationToken).ConfigureAwait(false);
+            using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HDEL, removals.ToArray(), cancellationToken: cancellationToken).ConfigureAwait(false);
             ValidateWriteReply(reply, removals.Count - 1);
         }
     }
@@ -185,7 +185,7 @@ public static class RespireHashModelIO
     {
         ArgumentNullException.ThrowIfNull(client);
         cancellationToken.ThrowIfCancellationRequested();
-        using var reply = await client.ExecuteAsync(RespireCommands.Hash.HGETALL, [key.Snapshot().AsValue()], cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HGETALL, [key.Snapshot().AsValue()], cancellationToken: cancellationToken).ConfigureAwait(false);
         if (reply.Type is not (RespDataType.Array or RespDataType.Map) || reply.Count % 2 != 0)
             throw new RespireProtocolException("HGETALL must return complete field/value pairs.");
         var fields = new Dictionary<string, T>(reply.Count / 2, StringComparer.Ordinal);
@@ -229,7 +229,7 @@ public static class RespireHashModelIO
                 throw new ArgumentException("Select distinct mapped hash field names, using exact casing.", nameof(fields));
             arguments[index + 1] = name;
         }
-        using var reply = await client.ExecuteAsync(RespireCommands.Hash.HMGET, arguments, cancellationToken: cancellationToken).ConfigureAwait(false);
+        using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HMGET, arguments, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (reply.Type != RespDataType.Array || reply.Count != names.Length)
             throw new RespireProtocolException("HMGET must return one value per requested field.");
         for (var index = 0; index < names.Length; index++)

@@ -8,6 +8,47 @@ namespace Respire.Analyzers.Tests;
 public class UndisposedPooledResultAnalyzerTests
 {
     [Test]
+    [Arguments("IScriptCommands", "ExecuteLeaseAsync")]
+    [Arguments("IScriptCommands", "ExecuteLeaseSpanAsync")]
+    [Arguments("IFunctionCommands", "ExecuteLeaseAsync")]
+    [Arguments("IFunctionCommands", "ExecuteLeaseSpanAsync")]
+    public async Task FacetLeasesRequireDisposal(string facet, string method) => await Verify.VerifyAsync(
+        $$"""
+        using System.Threading.Tasks;
+        using Respire;
+        namespace Respire
+        {
+            public interface {{facet}}
+            {
+                ValueTask<RespireResult> {{method}}();
+            }
+        }
+        public class Caller
+        {
+            public async Task RunAsync({{facet}} commands)
+            {
+                var {|RESP001:result|} = await commands.{{method}}();
+                _ = result.AsString();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task OrdinaryResultNeedsNoDisposal() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var result = await client.ExecuteAsync("PING");
+                _ = result.AsString();
+            }
+        }
+        """);
+
+    [Test]
     [Arguments("System.Exception")]
     [Arguments("System.InvalidOperationException")]
     public async Task GenericExceptionCaughtByItsBaseDoesNotBypassRelease(string constraint) => await Verify.VerifyAsync(
@@ -21,7 +62,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var result = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 try { if (skip) throw new T(); }
@@ -42,7 +83,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var result = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 if (skip) { goto Resume; Resume:; }
@@ -63,7 +104,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool skip)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 try { if (skip) { {{{exit}}} } }
                 finally { result.Dispose(); }
             }
@@ -82,7 +123,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool skip, bool dispose)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 try { if (skip) { {{{exit}}} } }
                 finally { if (dispose) result.Dispose(); }
             }
@@ -105,7 +146,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var {{{(warning ? "{|RESP001:result|}" : "result")}}} = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 try { if (skip) throw {{{exception}}}; }
@@ -129,7 +170,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var result = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 try { if (skip) throw new System.InvalidOperationException(); }
@@ -156,7 +197,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var result = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
                 {{{nested}}}
@@ -180,7 +221,7 @@ public class UndisposedPooledResultAnalyzerTests
                 {
                     var {|RESP001:result|} = choice switch
                     {
-                        0 => await client.ExecuteAsync("PING"),
+                        0 => await client.ExecuteLeaseAsync("PING"),
                         _ => existing,
                     };
                     if (skip) {{{exit}}};
@@ -201,7 +242,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
             }
         }
@@ -235,7 +276,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                using var result = await client.ExecuteAsync("PING");
+                using var result = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
             }
         }
@@ -252,7 +293,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
                 result.Dispose();
             }
@@ -270,7 +311,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool dispose)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
                 if (dispose)
                 {
@@ -291,7 +332,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 using (result)
                 {
                     Console.WriteLine(result.AsString());
@@ -311,7 +352,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool dispose)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 if (dispose)
                 {
                     using (result)
@@ -333,7 +374,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(nameof(result));
             }
         }
@@ -349,7 +390,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 result.Consume();
             }
         }
@@ -371,7 +412,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 Action dispose = result.Dispose;
                 dispose();
             }
@@ -384,7 +425,7 @@ public class UndisposedPooledResultAnalyzerTests
         using Respire;
 
         var client = new RespireClient();
-        var result = await client.ExecuteAsync("PING");
+        var result = await client.ExecuteLeaseAsync("PING");
         result.Dispose();
         """);
 
@@ -401,7 +442,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 Func<Task> run = async () =>
                 {
-                    var result = await client.ExecuteAsync("PING");
+                    var result = await client.ExecuteLeaseAsync("PING");
                     result.Dispose();
                 };
 
@@ -424,7 +465,7 @@ public class UndisposedPooledResultAnalyzerTests
 
                 async Task RunLocalAsync()
                 {
-                    var result = await client.ExecuteAsync("PING");
+                    var result = await client.ExecuteLeaseAsync("PING");
                     result.Dispose();
                 }
             }
@@ -442,7 +483,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool stop)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 if (stop)
                 {
                     return;
@@ -482,7 +523,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING").AsTask();
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING").AsTask();
                 Console.WriteLine(result.AsString());
             }
         }
@@ -499,7 +540,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(nameof(result.Dispose));
             }
         }
@@ -515,7 +556,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task<RespireResult> RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 return result;
             }
         }
@@ -531,7 +572,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 Consume(result);
             }
 
@@ -551,7 +592,7 @@ public class UndisposedPooledResultAnalyzerTests
 
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 _last = result;
             }
         }
@@ -568,7 +609,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                using var result = await client.ExecuteAsync("MGET", "a", "b");
+                using var result = await client.ExecuteLeaseAsync("MGET", "a", "b");
                 var first = result[0];
                 var second = result[1];
                 Console.WriteLine(first.AsString() + second.AsString());
@@ -587,7 +628,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 Action dispose = () => result.Dispose();
                 dispose();
             }
@@ -605,7 +646,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
             }
         }
@@ -619,7 +660,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                using var result = await client.ExecuteAsync("PING");
+                using var result = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
             }
         }
@@ -639,7 +680,7 @@ public class UndisposedPooledResultAnalyzerTests
                 switch (value)
                 {
                     case 1:
-                        var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                        var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                         Console.WriteLine(result.AsString());
                         break;
                 }
@@ -658,7 +699,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING").AsTask().ConfigureAwait(false);
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING").AsTask().ConfigureAwait(false);
                 Console.WriteLine(result.AsString());
             }
         }
@@ -698,7 +739,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 result = default;
             }
         }
@@ -714,7 +755,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 result = default;
                 result.Dispose();
             }
@@ -733,7 +774,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult result;
-                {|RESP001:result|} = await client.ExecuteAsync("PING");
+                {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
             }
         }
@@ -750,7 +791,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult result;
-                result = await client.ExecuteAsync("PING");
+                result = await client.ExecuteLeaseAsync("PING");
                 result.Dispose();
             }
         }
@@ -769,7 +810,7 @@ public class UndisposedPooledResultAnalyzerTests
                 RespireResult result = default;
                 while (condition)
                 {
-                    {|RESP001:result|} = await client.ExecuteAsync("PING");
+                    {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 }
 
                 result.Dispose();
@@ -790,7 +831,7 @@ public class UndisposedPooledResultAnalyzerTests
                 RespireResult result;
                 do
                 {
-                    result = await client.ExecuteAsync("PING");
+                    result = await client.ExecuteLeaseAsync("PING");
                     result.Dispose();
                 }
                 while (condition);
@@ -809,7 +850,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult result;
-                using (result = await client.ExecuteAsync("PING"))
+                using (result = await client.ExecuteLeaseAsync("PING"))
                 {
                 }
             }
@@ -827,7 +868,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task<RespireResult> RunAsync(RespireClient client)
             {
                 RespireResult result;
-                return result = await client.ExecuteAsync("PING");
+                return result = await client.ExecuteLeaseAsync("PING");
             }
         }
         """);
@@ -842,7 +883,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                RespireResult? {|RESP001:result|} = await client.ExecuteAsync("PING");
+                RespireResult? {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
             }
         }
         """);
@@ -858,7 +899,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult? result = null;
-                {|RESP001:result|} ??= await client.ExecuteAsync("PING");
+                {|RESP001:result|} ??= await client.ExecuteLeaseAsync("PING");
             }
         }
         """);
@@ -874,7 +915,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult? result = null;
-                result ??= await client.ExecuteAsync("PING");
+                result ??= await client.ExecuteLeaseAsync("PING");
                 result?.Dispose();
             }
         }
@@ -891,8 +932,8 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult? result = null;
-                result ??= await client.ExecuteAsync("A");
-                result ??= await client.ExecuteAsync("B");
+                result ??= await client.ExecuteLeaseAsync("A");
+                result ??= await client.ExecuteLeaseAsync("B");
                 result?.Dispose();
             }
         }
@@ -911,7 +952,7 @@ public class UndisposedPooledResultAnalyzerTests
                 RespireResult result;
                 if (condition)
                 {
-                    result = await client.ExecuteAsync("PING");
+                    result = await client.ExecuteLeaseAsync("PING");
                 }
                 else
                 {
@@ -934,7 +975,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public Func<RespireClient, Task> Run { get; } = async client =>
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(result.AsString());
                 result.Dispose();
             };
@@ -951,7 +992,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 _ = result;
             }
         }
@@ -968,7 +1009,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, CancellationToken cancellationToken)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING").AsTask().WaitAsync(cancellationToken);
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING").AsTask().WaitAsync(cancellationToken);
             }
         }
         """);
@@ -984,8 +1025,8 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client, bool condition)
             {
                 var {|RESP001:result|} = condition
-                    ? await client.ExecuteAsync("A")
-                    : await client.ExecuteAsync("B");
+                    ? await client.ExecuteLeaseAsync("A")
+                    : await client.ExecuteLeaseAsync("B");
             }
         }
         """);
@@ -1001,7 +1042,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client, RespireResult existing, bool condition)
             {
                 var result = condition
-                    ? await client.ExecuteAsync("PING")
+                    ? await client.ExecuteLeaseAsync("PING")
                     : existing;
 
                 if (condition)
@@ -1023,7 +1064,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client, RespireResult existing, bool condition)
             {
                 var {|RESP001:result|} = condition
-                    ? await client.ExecuteAsync("PING")
+                    ? await client.ExecuteLeaseAsync("PING")
                     : existing;
                 condition = !condition;
 
@@ -1047,7 +1088,7 @@ public class UndisposedPooledResultAnalyzerTests
                 RespireClient client, RespireResult existing, bool condition, bool release)
             {
                 var {|RESP001:result|} = condition
-                    ? await client.ExecuteAsync("PING")
+                    ? await client.ExecuteLeaseAsync("PING")
                     : existing;
 
                 if (release)
@@ -1072,7 +1113,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, RespireResult? existing)
             {
-                var {|RESP001:result|} = existing ?? await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = existing ?? await client.ExecuteLeaseAsync("PING");
                 _ = result.AsString();
             }
         }
@@ -1089,7 +1130,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, RespireResult? existing)
             {
-                var result = existing ?? await client.ExecuteAsync("PING");
+                var result = existing ?? await client.ExecuteLeaseAsync("PING");
                 if (existing is null)
                 {
                     result.Dispose();
@@ -1109,7 +1150,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client, RespireResult existing, bool condition)
             {
                 var {|RESP001:result|} = condition
-                    ? await client.ExecuteAsync("PING")
+                    ? await client.ExecuteLeaseAsync("PING")
                     : existing;
 
                 if (condition)
@@ -1133,8 +1174,8 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var {|RESP001:result|} = choice switch
                 {
-                    0 => await client.ExecuteAsync("A"),
-                    _ => await client.ExecuteAsync("B"),
+                    0 => await client.ExecuteLeaseAsync("A"),
+                    _ => await client.ExecuteLeaseAsync("B"),
                 };
             }
         }
@@ -1152,7 +1193,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var result = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
 
@@ -1177,7 +1218,7 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 var {|RESP001:result|} = choice switch
                 {
-                    0 => await client.ExecuteAsync("PING"),
+                    0 => await client.ExecuteLeaseAsync("PING"),
                     _ => existing,
                 };
 
@@ -1203,7 +1244,7 @@ public class UndisposedPooledResultAnalyzerTests
             public async Task RunAsync(RespireClient client)
             {
                 RespireResult result;
-                _ = {|RESP001:result|} = await client.ExecuteAsync("PING");
+                _ = {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
             }
         }
         """);
@@ -1219,7 +1260,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 Console.WriteLine(((result!)).AsString());
             }
         }
@@ -1235,7 +1276,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool transfer)
             {
-                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("PING");
                 if (transfer)
                 {
                     Consume(result);
@@ -1256,7 +1297,7 @@ public class UndisposedPooledResultAnalyzerTests
         {
             public async Task RunAsync(RespireClient client, bool transfer)
             {
-                var result = await client.ExecuteAsync("PING");
+                var result = await client.ExecuteLeaseAsync("PING");
                 if (transfer)
                 {
                     Consume(result);

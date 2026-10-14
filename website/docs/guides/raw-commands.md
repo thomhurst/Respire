@@ -150,7 +150,20 @@ Each interpolation hole becomes exactly one RESP argument, so spaces or other co
 
 ## Result lifetime
 
-`RespireResult` can own pooled protocol data. Dispose it promptly with `using`.
+`ExecuteAsync` returns a `RespireResult` backed by GC-owned storage, including nested
+arrays and payloads. You do not need to dispose it. Calling `Dispose` is still
+supported and invalidates the root, its struct copies, and nested views.
+
+Use `ExecuteLeaseAsync` when you want to avoid copying the reply. It supports the
+same catalog, raw descriptor, interpolated command, flags, and cancellation arguments:
+
+```csharp
+using RespireResult lease = await redis.ExecuteLeaseAsync("GET", "large-value");
+Process(lease.AsSpan());
+```
+
+Always dispose a leased result. Nested views borrow its storage and must not outlive
+the root lease. RESP001 warns when an explicit lease is dropped without disposal.
 
 Top-level Redis errors throw `RespireServerException`, as with typed commands. Nested error elements in compound replies stay inspectable through the result.
 

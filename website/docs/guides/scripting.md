@@ -25,8 +25,9 @@ var value = await client.Scripts.ExecuteStringAsync(read, keys: ["key"]);
 
 | Method | Result |
 | --- | --- |
-| `ExecuteAsync` | A leased `RespireResult`. Dispose it. |
-| `ExecuteSpanAsync` | A leased `RespireResult` from span-based keys and arguments. Dispose it. |
+| `ExecuteAsync` | A GC-owned `RespireResult`. Disposal is optional. |
+| `ExecuteSpanAsync` | A GC-owned `RespireResult` from span-based keys and arguments. |
+| `ExecuteLeaseAsync` / `ExecuteLeaseSpanAsync` | A pooled `RespireResult`. Dispose it with `using`. |
 | `ExecuteAsync<T>` | The reply deserialized with the client serializer. |
 | `ExecuteIntegerAsync` | The reply as `long`. |
 | `ExecuteStringAsync` | The reply as `string`, or `null`. |
@@ -116,7 +117,7 @@ Use `RespireFunction.Create(name)` for a function you load separately. `readOnly
 
 - Keys get the client's key prefix. Arguments, library names, and function names do not.
 - All keys must share one Cluster slot, even for read-only functions. Keyless calls use the router's default node.
-- `ExecuteAsync` returns a leased `RespireResult` to dispose. `ExecuteAsync<T>`, `ExecuteStringAsync`, and `ExecuteIntegerAsync` dispose the reply for you.
+- `ExecuteAsync` returns a GC-owned `RespireResult`; disposal is optional. `ExecuteLeaseAsync` and `ExecuteLeaseSpanAsync` return pooled results that must be disposed. `ExecuteAsync<T>`, `ExecuteStringAsync`, and `ExecuteIntegerAsync` dispose the reply for you.
 - `ExecuteSpanAsync` copies its span collections before returning. Binary key and argument memory stays borrowed until the call completes.
 - Functions default to `RespireCommandRetryCategory.Never`. Use `WithRetryCategory` to opt in.
 

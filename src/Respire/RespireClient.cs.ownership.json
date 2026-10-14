@@ -16,8 +16,11 @@
         "CreateTransactionAsync(params ReadOnlySpan<RespireKey>):ValueTask<RespireWatchedTransaction>",
         "DisposeAsync():ValueTask",
         "ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteLeaseAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
         "ExecuteAsync(RespireCommand,params RespireValue[]):ValueTask<RespireResult>",
+        "ExecuteLeaseAsync(RespireCommand,params RespireValue[]):ValueTask<RespireResult>",
         "ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
+        "ExecuteLeaseAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
         "ExecuteFireAndForgetAsync(RespireCommand,RespireValue[],CancellationToken):ValueTask",
         "ExecuteFireAndForgetAsync(RespireCommand,params RespireValue[]):ValueTask",
         "ExecuteFireAndForgetAsync(RespireCommandInterpolatedStringHandler,CancellationToken):ValueTask",
@@ -66,8 +69,11 @@
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner. These migrated entries retain the failure-only dispatch owner through preflight, conversion and cleanup; synchronous construction failure completes its Fail boundary.",
       "Overrides": {
         "ExecuteAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteLeaseAsync(RespireCommand,RespireValue[],RespireCommandFlags,CancellationToken):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExecuteAsync(RespireCommand,params RespireValue[]):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteLeaseAsync(RespireCommand,params RespireValue[]):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExecuteLeaseAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExecuteFireAndForgetAsync(RespireCommand,RespireValue[],CancellationToken):ValueTask": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExecuteFireAndForgetAsync(RespireCommand,params RespireValue[]):ValueTask": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExecuteFireAndForgetAsync(RespireCommandInterpolatedStringHandler,CancellationToken):ValueTask": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"

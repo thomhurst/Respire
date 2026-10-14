@@ -396,11 +396,11 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>
     /// Sends a command. Catalog descriptors are pre-encoded; a string converts implicitly to a
-    /// caller-supplied descriptor and may contain spaces. The result is a lease.
+    /// caller-supplied descriptor and may contain spaces. The result uses GC-owned storage; disposal is optional.
     /// </summary>
     /// <remarks>Cluster execution validates all keys in known raw layouts before I/O. Unknown layouts remain server-validated.</remarks>
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
-        => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+        => RespireResult.MaterializeAsync(ExecuteLeaseAsync(command, args));
 
     /// <summary>
     /// Sends a command with optional policy flags and cancellation. Blocking commands use a
@@ -410,6 +410,17 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
         RespireValue[] args,
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
+        => RespireResult.MaterializeAsync(ExecuteLeaseAsync(command, args, flags, cancellationToken));
+
+    /// <summary>Sends a command and returns a pooled result. Dispose the root result after reading it.</summary>
+    public ValueTask<RespireResult> ExecuteLeaseAsync(RespireCommand command, params RespireValue[] args)
+        => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+
+    /// <summary>Sends a command with policy flags and cancellation and returns a pooled result that must be disposed.</summary>
+    public ValueTask<RespireResult> ExecuteLeaseAsync(
+        RespireCommand command, RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
         => ExecuteCommandAsync(command, args, flags, cancellationToken);
@@ -893,6 +904,13 @@ public sealed partial class RespireClient : IRespireClient
     /// optional arguments — pass them by name.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
+        => RespireResult.MaterializeAsync(ExecuteLeaseAsync(command, flags, cancellationToken));
+
+    /// <summary>Sends an interpolated command and returns a pooled result that must be disposed. Each hole is one argument.</summary>
+    public ValueTask<RespireResult> ExecuteLeaseAsync(
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)

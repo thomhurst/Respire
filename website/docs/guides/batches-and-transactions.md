@@ -10,7 +10,7 @@ Respire pipelines concurrent commands automatically. Use a batch when sequential
 ## Batch one flush
 
 ```csharp
-using var batch = redis.CreateBatch();
+await using var batch = redis.CreateBatch();
 
 RespirePending<string?> name = batch.GetString("name");
 RespirePending<long> visits = batch.Increment("visits");
@@ -20,7 +20,7 @@ await batch.ExecuteAsync();
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
-Always declare batches with `using var`. Disposing a batch that never executed faults its pendings, for example after an early return or exception. After execution, disposal keeps all results and errors. Repeated disposal is safe.
+Always declare batches with `await using var`. Disposing a batch that never executed faults its pendings, for example after an early return or exception. After execution, disposal keeps all results and errors. Repeated disposal is safe.
 
 `RespirePending<T>` is awaitable and has `.Result`. For exception-free handling, inspect `Status`, `HasResult`, or `Error`, or call `TryGetResult`.
 
@@ -34,7 +34,7 @@ Always declare batches with `using var`. Disposing a batch that never executed f
 `RespireBatchResult` summarizes the flush with `Count`, `FailureCount`, `FirstError`, and `Failures`. Each failure has the command's queue index, operation name, and exception. Use `TryExecuteAsync` to get the summary without rethrowing. Disposed or already-sent batches still throw.
 
 ```csharp
-using var batch = redis.CreateBatch();
+await using var batch = redis.CreateBatch();
 batch.GetString("name");
 batch.Increment("visits");
 RespireBatchResult result = await batch.TryExecuteAsync();
@@ -63,7 +63,7 @@ Batches and transactions expose `Strings`, `Keys`, `Hashes`, `Lists`, `Arrays`, 
 - Exception: deferred scripts use `Evaluate`, not the client's `ExecuteAsync` variants.
 
 ```csharp
-using var batch = redis.CreateBatch();
+await using var batch = redis.CreateBatch();
 
 RespirePending<long> pushed = batch.Lists.RightPush("queue", "job-1", "job-2");
 RespirePending<bool> stored = batch.Hashes.Set("user:1", "name", "Ada");
@@ -105,7 +105,7 @@ static void QueueUserUpdate(IRespireCommandQueue queue, string userId)
     queue.Expire($"user:{userId}", TimeSpan.FromHours(1));
 }
 
-using var batch = redis.CreateBatch();
+await using var batch = redis.CreateBatch();
 QueueUserUpdate(batch, "42");
 await batch.ExecuteAsync();
 
@@ -183,7 +183,12 @@ Queued `Scripts.Evaluate(...)` copies replies, including nested arrays and paylo
 - Disposing a root result also invalidates its nested views.
 - Disposing the batch or transaction does not invalidate a successful result.
 
-Immediate `redis.Scripts.ExecuteAsync(...)` and raw `redis.ExecuteAsync(...)` return pooled leases that you must dispose with `using`.
+Immediate script, function, and raw `ExecuteAsync(...)` results also use GC-owned storage.
+Their explicit `ExecuteLeaseAsync(...)` alternatives return pooled leases that you must dispose with `using`.
+
+Use `await using` for both batches and transactions, including watched transactions.
+An unsent batch faults its pending results on disposal; a completed batch preserves them.
+Synchronous `using` remains supported for existing batch code.
 
 ## Atomic transactions
 

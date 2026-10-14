@@ -43,7 +43,7 @@ foreach (var entry in await redis.SortedSets.RangeWithScoresAsync("leaderboard",
 // ── Batch: explicit pipeline, one flush ──────────────────────────────────────
 // Batches and transactions carry the same facets as the client — batch.Hashes.Set
 // mirrors redis.Hashes.SetAsync — but return a pending instead of awaiting.
-using var batch = redis.CreateBatch();
+await using var batch = redis.CreateBatch();
 var a = batch.GetString("greeting");
 var b = batch.Increment("stats:hits");
 var profile = batch.Hashes.GetAll("user:1:profile");
@@ -52,17 +52,15 @@ await batch.ExecuteAsync();
 Console.WriteLine($"batched: {a.Result} / hits={b.Result} / profile fields={profile.Result.Count}");
 
 // ── Transaction: MULTI/EXEC with typed results ───────────────────────────────
-var tx = redis.CreateTransaction();
+await using var tx = redis.CreateTransaction();
 var newBalance = tx.Increment("balance", 100);
 tx.Lists.RightPush("audit", "deposit:100");
 await tx.CommitAsync();
 Console.WriteLine($"committed, balance={newBalance.Result}");
 
 // ── Raw escape hatch — any command, interpolated safely ──────────────────────
-using (var encoding = await redis.ExecuteAsync($"OBJECT ENCODING {"greeting"}"))
-{
-    Console.WriteLine($"encoding = {encoding.AsString()}");
-}
+var encoding = await redis.ExecuteAsync($"OBJECT ENCODING {"greeting"}");
+Console.WriteLine($"encoding = {encoding.AsString()}");
 
 // ── Pub/sub as an async stream ───────────────────────────────────────────────
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));

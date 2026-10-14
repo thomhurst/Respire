@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Respire.Analyzers;
 
 /// <summary>
-/// RESP001: a <c>RespireResult</c> or <c>RespireLease</c> awaited into a local and then dropped
+/// RESP001: a <c>RespireResult</c> or <c>RespireLease</c> from an explicit lease API dropped
 /// without disposal leaks its pooled buffer.
 /// </summary>
 /// <remarks>
@@ -32,7 +32,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description:
-            "RespireResult and RespireLease are leases over pooled memory. A local that is awaited "
+            "Results from explicit lease APIs own pooled memory. A local that is awaited "
             + "into existence and then never disposed keeps that buffer out of the pool for good. "
             + "Declare it with a 'using' declaration (or dispose it explicitly).");
 
@@ -204,10 +204,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         var containingType = method.ContainingType?.ToDisplayString();
         return method.Name switch
         {
-            "ExecuteAsync" => containingType is "Respire.RespireClient"
+            "ExecuteLeaseAsync" or "ExecuteLeaseSpanAsync" => containingType is "Respire.RespireClient"
                 or "Respire.IRespireClient"
                 or "Respire.ScriptCommands"
-                or "Respire.IScriptCommands",
+                or "Respire.IScriptCommands"
+                or "Respire.FunctionCommands"
+                or "Respire.IFunctionCommands",
             "GetLeaseAsync" => containingType is "Respire.RespireClient"
                 or "Respire.IRespireClient"
                 or "Respire.StringCommands"

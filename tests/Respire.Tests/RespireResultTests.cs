@@ -10,6 +10,54 @@ namespace Respire.Tests;
 public class RespireResultTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Materialization_ReleasesSourceAndPreservesSerializer(bool asynchronous)
+    {
+        var serializer = new RecordingSerializer();
+        var value = RespParser.CopyToPooled(RespDataType.BulkString, "payload"u8);
+        var lease = new RespireResult(in value, serializer);
+        var source = new TaskCompletionSource<RespireResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var materialized = RespireResult.MaterializeAsync(asynchronous
+            ? new ValueTask<RespireResult>(source.Task)
+            : ValueTask.FromResult(lease));
+        if (asynchronous) source.SetResult(lease);
+
+        var result = await materialized;
+
+        await Assert.That(lease.IsDisposed).IsTrue();
+        await Assert.That(result.As<Payload>()).IsEqualTo(new Payload("payload"));
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Materialization_PreservesCancellationTokenAndServerError()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        try
+        {
+            await RespireResult.MaterializeAsync(ValueTask.FromCanceled<RespireResult>(cancellation.Token));
+            throw new InvalidOperationException("Expected cancellation.");
+        }
+        catch (OperationCanceledException error)
+        {
+            await Assert.That(error.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
+        var serverError = new RespireServerException("ERR test");
+        try
+        {
+            await RespireResult.MaterializeAsync(ValueTask.FromException<RespireResult>(serverError));
+            throw new InvalidOperationException("Expected server error.");
+        }
+        catch (RespireServerException error)
+        {
+            await Assert.That(ReferenceEquals(error, serverError)).IsTrue();
+        }
+    }
+
+    [Test]
     public async Task AggregateResult_SupportsForeachAndLinq()
     {
         using var result = new RespireResult(RespValue.Array(

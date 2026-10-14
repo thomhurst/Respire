@@ -27,7 +27,7 @@ Console.WriteLine(readResult.AsString());
 ## Results and failures
 
 - Results copy replies into GC-managed storage and stay valid after the queue is disposed. Disposal is optional. Disposing a root invalidates its struct copies and nested views; repeated disposal is safe.
-- Immediate `ExecuteAsync` results are pooled leases and must be disposed.
+- Immediate `ExecuteAsync` results also use GC-owned storage. Use `ExecuteLeaseAsync` explicitly for pooled replies and dispose those leases.
 - Both kinds have the same `RespireResult` conversions and RESP2/RESP3 aggregate shapes, including nulls and nested errors.
 - A top-level server error faults its pending. A batch completes all pendings before `ExecuteAsync` throws the first error; `TryExecuteAsync` returns the failure summary instead.
 - In transactions, errors inside EXEC fault individual pendings, and transaction-level failures fault the commit.

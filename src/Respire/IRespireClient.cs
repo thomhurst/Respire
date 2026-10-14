@@ -292,15 +292,15 @@ public interface IRespireClient : IAsyncDisposable
     // common case; the array shape adds flags and cancellation as optional arguments.
 
     /// <summary>
-    /// Sends a command; each value is exactly one argument. The result owns pooled memory
-    /// and must be disposed.
+    /// Sends a command; each value is exactly one argument. The result uses GC-owned memory
+    /// and disposal is optional.
     /// </summary>
     /// <remarks>Cluster execution validates all keys in known raw layouts before I/O. Unknown layouts remain server-validated.</remarks>
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
     /// <summary>
-    /// Sends a command with optional policy flags and cancellation. The result owns pooled
-    /// memory and must be disposed.
+    /// Sends a command with optional policy flags and cancellation. The result uses GC-owned
+    /// memory and disposal is optional.
     /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
@@ -309,13 +309,27 @@ public interface IRespireClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Sends a command written as an interpolated string; each hole is one argument. The result owns
-    /// pooled memory and must be disposed.
+    /// Sends a command written as an interpolated string; each hole is one argument. The result uses
+    /// GC-owned memory and disposal is optional.
     /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Sends a command and returns a result that must be disposed. Implementations may use pooled storage.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireCommand command, params RespireValue[] args)
+        => ExecuteAsync(command, args);
+
+    /// <summary>Sends a command with flags and cancellation and returns a result that must be disposed.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireCommand command, RespireValue[] args,
+        RespireCommandFlags flags = RespireCommandFlags.None, CancellationToken cancellationToken = default)
+        => ExecuteAsync(command, args, flags, cancellationToken);
+
+    /// <summary>Sends an interpolated command and returns a result that must be disposed.</summary>
+    ValueTask<RespireResult> ExecuteLeaseAsync(RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags = RespireCommandFlags.None, CancellationToken cancellationToken = default)
+        => ExecuteAsync(command, flags, cancellationToken);
 
     /// <summary>Queues a command and discards its reply.</summary>
     /// <remarks>Cluster redirects that cannot be followed are surfaced as server errors.</remarks>

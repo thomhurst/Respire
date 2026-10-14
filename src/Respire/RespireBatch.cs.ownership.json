@@ -7,6 +7,7 @@
         "Decrement(RespireKey,long):RespirePending<long>",
         "Delete(params ReadOnlySpan<RespireKey>):RespirePending<long>",
         "Dispose():void",
+        "DisposeAsync():ValueTask",
         "Execute(RespireCommand,params RespireValue[]):RespirePending<RespireResult>",
         "ExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
         "Exists(RespireKey):RespirePending<bool>",

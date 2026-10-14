@@ -61,15 +61,94 @@ public class DeferredScriptOwnershipTests
     }
 
     [Test]
-    public async Task ImmediateScriptResult_StillOwnsPooledBuffers()
+    public async Task ImmediateScriptResult_DoesNotOwnPooledBuffers()
     {
         await using var server = new FakeRespServer(NestedReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var result = await client.Scripts.ExecuteAsync(RespireScript.Create("return {'outer', {'inner', 7}}"));
 
-        // Positive control: the ownership check must detect both aggregates and payloads on the wire path.
-        await Assert.That(OwnsPooledStorage(result)).IsTrue();
+        await Assert.That(OwnsPooledStorage(result)).IsFalse();
         await Assert.That(result[1][0].AsString()).IsEqualTo("inner");
+    }
+
+    [Test]
+    [Arguments("catalog")]
+    [Arguments("raw")]
+    [Arguments("flags")]
+    [Arguments("interpolated")]
+    [Arguments("script")]
+    [Arguments("script-span")]
+    [Arguments("function")]
+    [Arguments("function-span")]
+    public async Task ImmediateResults_AreOwnedUnlessExplicitlyLeased(string api)
+    {
+        await using var server = new FakeRespServer(NestedReply);
+        await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = owner;
+        var script = RespireScript.Create("return {'outer', {'inner', 7}}");
+        var function = RespireFunction.Create("nested");
+        using var cancellation = new CancellationTokenSource();
+        // Deliberately never dispose the ordinary result, including its nested views.
+        var result = await (api switch
+        {
+            "catalog" => client.ExecuteAsync(RespireCommands.String.MGET, "key"),
+            "raw" => client.ExecuteAsync("MGET", "key"),
+            "flags" => client.ExecuteAsync("MGET", ["key"], cancellationToken: cancellation.Token),
+            "interpolated" => client.ExecuteAsync($"MGET {"key"}"),
+            "script" => client.Scripts.ExecuteAsync(script),
+            "script-span" => client.Scripts.ExecuteSpanAsync(script, [], []),
+            "function" => client.Functions.ExecuteAsync(function),
+            _ => client.Functions.ExecuteSpanAsync(function, [], []),
+        });
+        var nested = result[1][0];
+        await Assert.That(OwnsPooledStorage(result)).IsFalse();
+
+        var lease = await (api switch
+        {
+            "catalog" => client.ExecuteLeaseAsync(RespireCommands.String.MGET, "key"),
+            "raw" => client.ExecuteLeaseAsync("MGET", "key"),
+            "flags" => client.ExecuteLeaseAsync("MGET", ["key"], cancellationToken: cancellation.Token),
+            "interpolated" => client.ExecuteLeaseAsync($"MGET {"key"}"),
+            "script" => client.Scripts.ExecuteLeaseAsync(script),
+            "script-span" => client.Scripts.ExecuteLeaseSpanAsync(script, [], []),
+            "function" => client.Functions.ExecuteLeaseAsync(function),
+            _ => client.Functions.ExecuteLeaseSpanAsync(function, [], []),
+        });
+        var copy = lease;
+        var leasedChild = lease[1][0];
+        // Positive control ensures the check detects actual wire-buffer ownership.
+        await Assert.That(OwnsPooledStorage(lease)).IsTrue();
+        lease.Dispose();
+        copy.Dispose();
+        await Assert.That(leasedChild.IsDisposed).IsTrue();
+        await Assert.That(() => leasedChild.AsString()).ThrowsExactly<ObjectDisposedException>();
+        await owner.DisposeAsync();
+        await Assert.That(nested.AsString()).IsEqualTo("inner");
+        await Assert.That(result[1][1].AsInteger()).IsEqualTo(7);
+    }
+
+    [Test]
+    public async Task AsyncBatchDisposal_DiscardsUnsentCommandsAndPreservesCompletedResults()
+    {
+        await using var server = new FakeRespServer(NestedReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        RespirePending<RespireResult> discarded;
+        await using (var batch = client.CreateBatch())
+        {
+            discarded = batch.Execute("MGET", "key");
+        }
+        await Assert.That(() => discarded.Result).ThrowsExactly<RespireBatchDiscardedException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+
+        RespirePending<RespireResult> completed;
+        await using (var batch = client.CreateBatch())
+        {
+            completed = batch.Execute("MGET", "key");
+            await batch.ExecuteAsync();
+            await batch.DisposeAsync();
+        }
+        await Assert.That(completed.Result[1][0].AsString()).IsEqualTo("inner");
+        await Assert.That(OwnsPooledStorage(completed.Result)).IsFalse();
     }
 
     private static bool OwnsPooledStorage(RespireResult result)
