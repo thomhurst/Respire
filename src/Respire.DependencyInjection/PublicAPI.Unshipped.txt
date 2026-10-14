@@ -1,4 +1,6 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.PipelineHook.get -> Respire.RespirePipelineHook?
+Respire.DependencyInjection.RespireOptionsBuilder.PipelineHook.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.CircuitBreaker.get -> Respire.RespireCircuitBreakerOptions?
 Respire.DependencyInjection.RespireOptionsBuilder.CircuitBreaker.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.ClientAvailabilityZone.get -> string?

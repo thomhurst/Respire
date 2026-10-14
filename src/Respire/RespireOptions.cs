@@ -415,6 +415,10 @@ public sealed record RespireOptions
     /// </summary>
     public RespireClientSideCacheOptions? ClientSideCache { get; init; }
 
+    /// <summary>Optional admission and completion hook for explicit pipelines and transaction commits.</summary>
+    /// <remarks>Shared by client views. Does not intercept individual commands. Null adds no hook state or async wrapper.</remarks>
+    public RespirePipelineHook? PipelineHook { get; init; }
+
     /// <summary>
     /// Opt-in retries for buffered immediate commands on standalone, Sentinel and Cluster clients,
     /// and complete unwatched transactions on standalone and Sentinel clients.

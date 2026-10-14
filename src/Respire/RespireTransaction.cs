@@ -265,11 +265,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     }
 
     /// <summary>Executes the shared transaction path and reports a watched abort.</summary>
+    private protected ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
+        => _client.Core.Options.PipelineHook is { } hook
+            ? CommitHookedAsync(hook, cancellationToken, validateEmptyWatch)
+            : CommitWithoutHookAsync(cancellationToken, validateEmptyWatch);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
+    private async ValueTask<bool> CommitWithoutHookAsync(CancellationToken cancellationToken, bool validateEmptyWatch,
+        PipelineHookScope? hook = null)
     {
         var observation = _ops.Count == 0 ? default : _ops[0].Observation;
-        using var importUsage = PrepareCommit();
+        using var importUsage = hook is null ? PrepareCommit() : null;
         var core = _client.Core;
         var telemetryOperation = "MULTI";
         var sentinelStarted = core.Sentinel is null ? default : RespireTelemetry.CaptureBatchStart("MULTI", _ops, static op => op.Operation);
@@ -477,6 +483,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
             finally
             {
+                hook?.Fail(operationError);
                 var attempts = observation.Attempts;
                 // An empty WATCH commit has no queued owner, but still sends MULTI/EXEC on its
                 // pinned connection. Capture the node before ReportErrors closes the owners; an
