@@ -12,6 +12,44 @@ public class FakeKeyspaceParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task EmptyKeyGlobMatchingPreservesCatchAllSpecialCase(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        await using var client = await RespireClient.ConnectAsync(
+            (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol });
+        await client.SetAsync("", "empty-key");
+        await client.SetAsync("nonempty", "value");
+
+        foreach (var pattern in new[] { "*", "**", "***", "", "?", "non*" })
+        {
+            string[] expected = pattern switch
+            {
+                "*" => ["", "nonempty"],
+                "**" or "***" or "non*" => ["nonempty"],
+                "" => [""],
+                _ => [],
+            };
+            using var keys = await client.ExecuteAsync("KEYS", pattern);
+            keys.Select(value => value.AsString()).Should().BeEquivalentTo(expected, $"KEYS pattern '{pattern}'");
+            var found = new HashSet<string>();
+            await foreach (var key in client.Keys.ScanAsync(pattern, countHint: 1))
+                found.Add(key);
+            found.Should().BeEquivalentTo(expected, $"SCAN MATCH pattern '{pattern}'");
+        }
+
+        var unfiltered = new HashSet<string>();
+        await foreach (var key in client.Keys.ScanAsync(countHint: 1))
+            unfiltered.Add(key);
+        unfiltered.Should().BeEquivalentTo(new[] { "", "nonempty" });
+        await client.DeleteAsync("");
+        await client.DeleteAsync("nonempty");
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task EscapedClassCharactersStayLiteral(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;

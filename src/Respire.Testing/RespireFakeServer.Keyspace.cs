@@ -24,7 +24,7 @@ public sealed partial class RespireFakeServer
         {
             foreach (var key in _entries.Keys.ToArray())
             {
-                if (Find(key) is not null && ArrayGlob(key, pattern, ignoreCase: false, ref remainingWork))
+                if (Find(key) is not null && KeyspaceGlob(key, pattern, ref remainingWork))
                     replies.Add(FakeReply.Bulk(key));
             }
         }
@@ -68,7 +68,7 @@ public sealed partial class RespireFakeServer
                     foreach (var key in buckets[(int)cursor])
                     {
                         visited++;
-                        if (Find(key) is not null && (pattern is null || ArrayGlob(key, pattern, ignoreCase: false, ref remainingWork)))
+                        if (Find(key) is not null && (pattern is null || KeyspaceGlob(key, pattern, ref remainingWork)))
                             replies.Add(FakeReply.Bulk(key));
                     }
                     cursor++;
@@ -78,6 +78,15 @@ public sealed partial class RespireFakeServer
         }
         if (cursor >= ScanBucketCount) cursor = 0;
         return FakeReply.Array([FakeReply.Text(cursor.ToString(CultureInfo.InvariantCulture)), FakeReply.Array(replies.ToArray())]);
+    }
+
+    private static bool KeyspaceGlob(ReadOnlySpan<byte> key, ReadOnlySpan<byte> pattern, ref int remainingWork)
+    {
+        // KEYS and SCAN bypass Redis's glob matcher for a single '*'. Otherwise,
+        // its empty-candidate rule only accepts an empty pattern, not even '**'.
+        if (pattern.SequenceEqual("*"u8)) return true;
+        if (key.IsEmpty) return pattern.IsEmpty;
+        return ArrayGlob(key, pattern, ignoreCase: false, ref remainingWork);
     }
 
     private static FakeReply KeyspaceGlobLimit(string command)
