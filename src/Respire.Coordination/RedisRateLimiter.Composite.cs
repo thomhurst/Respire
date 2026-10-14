@@ -4,7 +4,7 @@ namespace Respire.Coordination;
 
 internal sealed partial class RedisRateLimiter
 {
-    private readonly RespireValue[]? _compositeArguments;
+    private RespireValue[]? _compositeArguments;
 
     internal RedisRateLimiter(RespireCoordination coordination, RespireKey key,
         IReadOnlyList<RespireRateLimit> limits, int queueLimit, QueueProcessingOrder queueOrder)
@@ -28,7 +28,11 @@ internal sealed partial class RedisRateLimiter
             throw new ArgumentOutOfRangeException(nameof(limits), "Specify between one and 32 component limits.");
         var snapshot = new RespireRateLimit[limits.Count];
         for (var i = 0; i < snapshot.Length; i++)
+        {
             snapshot[i] = limits[i] ?? throw new ArgumentException("Component limits must not be null.", nameof(limits));
+            if (snapshot[i].Kind == RedisRateLimiterKind.Gcra)
+                throw new ArgumentException("GCRA is not a composite component.", nameof(limits));
+        }
         return snapshot;
     }
 
@@ -100,14 +104,16 @@ internal sealed partial class RedisRateLimiter
                         if needed <= 0 then delay = active[j] + period - now; break end
                     end
                 end
-                if #active > 0 and active[#active - 1] == bucketEnd then
-                    active[#active] = active[#active] + requested
+                -- A changed segment width can place the current bucket before an older bucket.
+                local position = #active + 1
+                while position > 1 and active[position - 2] >= bucketEnd do position = position - 2 end
+                if active[position] == bucketEnd then active[position + 1] = active[position + 1] + requested
                 else
-                    active[#active + 1] = bucketEnd
-                    active[#active + 1] = requested
+                    table.insert(active, position, bucketEnd)
+                    table.insert(active, position + 1, requested)
                 end
                 state = active
-                horizon = bucketEnd + period - now
+                horizon = active[#active - 1] + period - now
             else
                 local last, tokens = state[1] or now, state[2] or limit
                 local elapsedPeriods = math.floor(math.max(0, now - last) / period)

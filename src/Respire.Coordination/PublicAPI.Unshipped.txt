@@ -1,4 +1,10 @@
 #nullable enable
+Respire.Coordination.RespireRateLimitUpdateMode
+Respire.Coordination.RespireRateLimitUpdateMode.Adopt = 1 -> Respire.Coordination.RespireRateLimitUpdateMode
+Respire.Coordination.RespireRateLimitUpdateMode.Migrate = 0 -> Respire.Coordination.RespireRateLimitUpdateMode
+Respire.Coordination.RespireRateLimiters.UpdateAsync(System.Threading.RateLimiting.RateLimiter! limiter, Respire.Coordination.RespireRateLimit! settings, Respire.Coordination.RespireRateLimitUpdateMode mode = Respire.Coordination.RespireRateLimitUpdateMode.Migrate, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Coordination.RespireRateLimiters.UpdateAsync(System.Threading.RateLimiting.RateLimiter! limiter, System.Collections.Generic.IReadOnlyList<Respire.Coordination.RespireRateLimit!>! settings, Respire.Coordination.RespireRateLimitUpdateMode mode = Respire.Coordination.RespireRateLimitUpdateMode.Migrate, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+static Respire.Coordination.RespireRateLimit.Gcra(int burstLimit, System.TimeSpan emissionInterval) -> Respire.Coordination.RespireRateLimit!
 Respire.Coordination.RespireRateLimit
 Respire.Coordination.RespireRateLimiters.Composite(Respire.RespireKey key, System.Collections.Generic.IReadOnlyList<Respire.Coordination.RespireRateLimit!>! limits, int queueLimit = 0, System.Threading.RateLimiting.QueueProcessingOrder queueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst) -> System.Threading.RateLimiting.RateLimiter!
 static Respire.Coordination.RespireRateLimit.FixedWindow(int permitLimit, System.TimeSpan window) -> Respire.Coordination.RespireRateLimit!
