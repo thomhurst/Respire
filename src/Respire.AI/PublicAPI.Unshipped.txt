@@ -1,1 +1,53 @@
 #nullable enable
+*REMOVED*Respire.AI.RespireSemanticCacheExtensions
+[RSP0002]Respire.AI.RespireSemanticCacheExtensions
+*REMOVED*Respire.AI.RespireSemanticCacheOptions
+[RSP0002]Respire.AI.RespireSemanticCacheOptions
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.<Clone>$() -> Respire.AI.RespireSemanticCacheOptions!
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.<Clone>$() -> Respire.AI.RespireSemanticCacheOptions!
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.CacheName.get -> string!
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.CacheName.get -> string!
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.CacheName.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.CacheName.init -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.Dimensions.get -> int
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.Dimensions.get -> int
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.Dimensions.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.Dimensions.init -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.DistanceThreshold.get -> double
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.DistanceThreshold.get -> double
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.DistanceThreshold.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.DistanceThreshold.init -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.Equals(Respire.AI.RespireSemanticCacheOptions? other) -> bool
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.Equals(Respire.AI.RespireSemanticCacheOptions? other) -> bool
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.FailOpen.get -> bool
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.FailOpen.get -> bool
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.FailOpen.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.FailOpen.init -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.RespireSemanticCacheOptions() -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.RespireSemanticCacheOptions() -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.ScopeSelector.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Extensions.AI.ChatOptions?, string?>!
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.ScopeSelector.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Extensions.AI.ChatOptions?, string?>!
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.ScopeSelector.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.ScopeSelector.init -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.ShouldBypass.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Extensions.AI.ChatOptions?, bool>?
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.ShouldBypass.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Extensions.AI.ChatOptions?, bool>?
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.ShouldBypass.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.ShouldBypass.init -> void
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.TimeToLive.get -> System.TimeSpan
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.TimeToLive.get -> System.TimeSpan
+*REMOVED*Respire.AI.RespireSemanticCacheOptions.TimeToLive.init -> void
+[RSP0002]Respire.AI.RespireSemanticCacheOptions.TimeToLive.init -> void
+*REMOVED*const Respire.AI.RespireSemanticCacheOptions.DisableCacheKey = "Respire.SemanticCache.Disabled" -> string!
+[RSP0002]const Respire.AI.RespireSemanticCacheOptions.DisableCacheKey = "Respire.SemanticCache.Disabled" -> string!
+*REMOVED*override Respire.AI.RespireSemanticCacheOptions.Equals(object? obj) -> bool
+[RSP0002]override Respire.AI.RespireSemanticCacheOptions.Equals(object? obj) -> bool
+*REMOVED*override Respire.AI.RespireSemanticCacheOptions.GetHashCode() -> int
+[RSP0002]override Respire.AI.RespireSemanticCacheOptions.GetHashCode() -> int
+*REMOVED*override Respire.AI.RespireSemanticCacheOptions.ToString() -> string!
+[RSP0002]override Respire.AI.RespireSemanticCacheOptions.ToString() -> string!
+*REMOVED*static Respire.AI.RespireSemanticCacheExtensions.UseRespireSemanticCache(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Respire.IRespireClient! client, Microsoft.Extensions.AI.IEmbeddingGenerator<string!, Microsoft.Extensions.AI.Embedding<float>!>! embeddingGenerator, Respire.AI.RespireSemanticCacheOptions! options) -> Microsoft.Extensions.AI.ChatClientBuilder!
+[RSP0002]static Respire.AI.RespireSemanticCacheExtensions.UseRespireSemanticCache(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Respire.IRespireClient! client, Microsoft.Extensions.AI.IEmbeddingGenerator<string!, Microsoft.Extensions.AI.Embedding<float>!>! embeddingGenerator, Respire.AI.RespireSemanticCacheOptions! options) -> Microsoft.Extensions.AI.ChatClientBuilder!
+*REMOVED*static Respire.AI.RespireSemanticCacheOptions.operator !=(Respire.AI.RespireSemanticCacheOptions? left, Respire.AI.RespireSemanticCacheOptions? right) -> bool
+[RSP0002]static Respire.AI.RespireSemanticCacheOptions.operator !=(Respire.AI.RespireSemanticCacheOptions? left, Respire.AI.RespireSemanticCacheOptions? right) -> bool
+*REMOVED*static Respire.AI.RespireSemanticCacheOptions.operator ==(Respire.AI.RespireSemanticCacheOptions? left, Respire.AI.RespireSemanticCacheOptions? right) -> bool
+[RSP0002]static Respire.AI.RespireSemanticCacheOptions.operator ==(Respire.AI.RespireSemanticCacheOptions? left, Respire.AI.RespireSemanticCacheOptions? right) -> bool

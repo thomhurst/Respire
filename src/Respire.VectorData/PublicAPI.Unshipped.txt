@@ -1,1 +1,219 @@
 #nullable enable
+*REMOVED*Respire.VectorData.RespireVectorDataFilterEncoding
+[RSP0001]Respire.VectorData.RespireVectorDataFilterEncoding
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.<Clone>$() -> Respire.VectorData.RespireVectorDataFilterField!
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.<Clone>$() -> Respire.VectorData.RespireVectorDataFilterField!
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.Deconstruct(out string! PropertyName, out string! StorageName, out Respire.VectorData.RespireVectorDataFilterKind Kind) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.Deconstruct(out string! PropertyName, out string! StorageName, out Respire.VectorData.RespireVectorDataFilterKind Kind) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.Equals(Respire.VectorData.RespireVectorDataFilterField? other) -> bool
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.Equals(Respire.VectorData.RespireVectorDataFilterField? other) -> bool
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.JsonPath.get -> string?
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.JsonPath.get -> string?
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.JsonPath.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.JsonPath.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.Kind.get -> Respire.VectorData.RespireVectorDataFilterKind
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.Kind.get -> Respire.VectorData.RespireVectorDataFilterKind
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.Kind.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.Kind.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.PropertyName.get -> string!
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.PropertyName.get -> string!
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.PropertyName.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.PropertyName.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.RespireVectorDataFilterField(string! PropertyName, string! StorageName, Respire.VectorData.RespireVectorDataFilterKind Kind) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.RespireVectorDataFilterField(string! PropertyName, string! StorageName, Respire.VectorData.RespireVectorDataFilterKind Kind) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.StorageName.get -> string!
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.StorageName.get -> string!
+*REMOVED*Respire.VectorData.RespireVectorDataFilterField.StorageName.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataFilterField.StorageName.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataFilterKind
+[RSP0001]Respire.VectorData.RespireVectorDataFilterKind
+*REMOVED*Respire.VectorData.RespireVectorDataFilterKind.Boolean = 2 -> Respire.VectorData.RespireVectorDataFilterKind
+[RSP0001]Respire.VectorData.RespireVectorDataFilterKind.Boolean = 2 -> Respire.VectorData.RespireVectorDataFilterKind
+*REMOVED*Respire.VectorData.RespireVectorDataFilterKind.Numeric = 1 -> Respire.VectorData.RespireVectorDataFilterKind
+[RSP0001]Respire.VectorData.RespireVectorDataFilterKind.Numeric = 1 -> Respire.VectorData.RespireVectorDataFilterKind
+*REMOVED*Respire.VectorData.RespireVectorDataFilterKind.String = 0 -> Respire.VectorData.RespireVectorDataFilterKind
+[RSP0001]Respire.VectorData.RespireVectorDataFilterKind.String = 0 -> Respire.VectorData.RespireVectorDataFilterKind
+*REMOVED*Respire.VectorData.RespireVectorDataFilterKind.StringCollection = 3 -> Respire.VectorData.RespireVectorDataFilterKind
+[RSP0001]Respire.VectorData.RespireVectorDataFilterKind.StringCollection = 3 -> Respire.VectorData.RespireVectorDataFilterKind
+*REMOVED*Respire.VectorData.RespireVectorDataFloat32
+[RSP0001]Respire.VectorData.RespireVectorDataFloat32
+*REMOVED*Respire.VectorData.RespireVectorDataHashMapper<TRecord>
+[RSP0001]Respire.VectorData.RespireVectorDataHashMapper<TRecord>
+*REMOVED*Respire.VectorData.RespireVectorDataHashMapper<TRecord>.RespireVectorDataHashMapper() -> void
+[RSP0001]Respire.VectorData.RespireVectorDataHashMapper<TRecord>.RespireVectorDataHashMapper() -> void
+*REMOVED*Respire.VectorData.RespireVectorDataJsonMapper<TRecord>
+[RSP0001]Respire.VectorData.RespireVectorDataJsonMapper<TRecord>
+*REMOVED*Respire.VectorData.RespireVectorDataJsonMapper<TRecord>.JsonTypeInfo.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<TRecord!>!
+[RSP0001]Respire.VectorData.RespireVectorDataJsonMapper<TRecord>.JsonTypeInfo.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<TRecord!>!
+*REMOVED*Respire.VectorData.RespireVectorDataJsonMapper<TRecord>.RespireVectorDataJsonMapper(System.Text.Json.Serialization.Metadata.JsonTypeInfo<TRecord!>! jsonTypeInfo) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataJsonMapper<TRecord>.RespireVectorDataJsonMapper(System.Text.Json.Serialization.Metadata.JsonTypeInfo<TRecord!>! jsonTypeInfo) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataMapper<TRecord>
+[RSP0001]Respire.VectorData.RespireVectorDataMapper<TRecord>
+*REMOVED*Respire.VectorData.RespireVectorDataMapper<TRecord>.RespireVectorDataMapper() -> void
+[RSP0001]Respire.VectorData.RespireVectorDataMapper<TRecord>.RespireVectorDataMapper() -> void
+*REMOVED*Respire.VectorData.RespireVectorDataTextField
+[RSP0001]Respire.VectorData.RespireVectorDataTextField
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.<Clone>$() -> Respire.VectorData.RespireVectorDataTextField!
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.<Clone>$() -> Respire.VectorData.RespireVectorDataTextField!
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.Deconstruct(out string! PropertyName, out string! StorageName) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.Deconstruct(out string! PropertyName, out string! StorageName) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.Equals(Respire.VectorData.RespireVectorDataTextField? other) -> bool
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.Equals(Respire.VectorData.RespireVectorDataTextField? other) -> bool
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.PropertyName.get -> string!
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.PropertyName.get -> string!
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.PropertyName.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.PropertyName.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.RespireVectorDataTextField(string! PropertyName, string! StorageName) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.RespireVectorDataTextField(string! PropertyName, string! StorageName) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.StorageName.get -> string!
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.StorageName.get -> string!
+*REMOVED*Respire.VectorData.RespireVectorDataTextField.StorageName.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataTextField.StorageName.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.<Clone>$() -> Respire.VectorData.RespireVectorDataVectorField!
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.<Clone>$() -> Respire.VectorData.RespireVectorDataVectorField!
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.Algorithm.get -> Respire.Search.RespireSearchVectorAlgorithm
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.Algorithm.get -> Respire.Search.RespireSearchVectorAlgorithm
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.Algorithm.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.Algorithm.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.Deconstruct(out string! PropertyName, out string! StorageName, out int Dimensions) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.Deconstruct(out string! PropertyName, out string! StorageName, out int Dimensions) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.Dimensions.get -> int
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.Dimensions.get -> int
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.Dimensions.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.Dimensions.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.DistanceMetric.get -> Respire.Search.RespireSearchDistanceMetric
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.DistanceMetric.get -> Respire.Search.RespireSearchDistanceMetric
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.DistanceMetric.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.DistanceMetric.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.Equals(Respire.VectorData.RespireVectorDataVectorField? other) -> bool
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.Equals(Respire.VectorData.RespireVectorDataVectorField? other) -> bool
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.JsonPath.get -> string?
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.JsonPath.get -> string?
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.JsonPath.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.JsonPath.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.PropertyName.get -> string!
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.PropertyName.get -> string!
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.PropertyName.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.PropertyName.init -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.RespireVectorDataVectorField(string! PropertyName, string! StorageName, int Dimensions) -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.RespireVectorDataVectorField(string! PropertyName, string! StorageName, int Dimensions) -> void
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.StorageName.get -> string!
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.StorageName.get -> string!
+*REMOVED*Respire.VectorData.RespireVectorDataVectorField.StorageName.init -> void
+[RSP0001]Respire.VectorData.RespireVectorDataVectorField.StorageName.init -> void
+*REMOVED*Respire.VectorData.RespireVectorStore
+[RSP0001]Respire.VectorData.RespireVectorStore
+*REMOVED*Respire.VectorData.RespireVectorStore.GetHashCollection<TRecord>(string! name) -> Respire.VectorData.RespireVectorStoreCollection<TRecord!>!
+[RSP0001]Respire.VectorData.RespireVectorStore.GetHashCollection<TRecord>(string! name) -> Respire.VectorData.RespireVectorStoreCollection<TRecord!>!
+*REMOVED*Respire.VectorData.RespireVectorStore.GetJsonCollection<TRecord>(string! name) -> Respire.VectorData.RespireVectorStoreCollection<TRecord!>!
+[RSP0001]Respire.VectorData.RespireVectorStore.GetJsonCollection<TRecord>(string! name) -> Respire.VectorData.RespireVectorStoreCollection<TRecord!>!
+*REMOVED*Respire.VectorData.RespireVectorStore.RegisterMapper<TRecord>(Respire.VectorData.RespireVectorDataHashMapper<TRecord!>! mapper) -> void
+[RSP0001]Respire.VectorData.RespireVectorStore.RegisterMapper<TRecord>(Respire.VectorData.RespireVectorDataHashMapper<TRecord!>! mapper) -> void
+*REMOVED*Respire.VectorData.RespireVectorStore.RegisterMapper<TRecord>(Respire.VectorData.RespireVectorDataMapper<TRecord!>! mapper) -> void
+[RSP0001]Respire.VectorData.RespireVectorStore.RegisterMapper<TRecord>(Respire.VectorData.RespireVectorDataMapper<TRecord!>! mapper) -> void
+*REMOVED*Respire.VectorData.RespireVectorStore.RespireVectorStore(Respire.IRespireClient! client, string! keyNamespace = "respire:vector:") -> void
+[RSP0001]Respire.VectorData.RespireVectorStore.RespireVectorStore(Respire.IRespireClient! client, string! keyNamespace = "respire:vector:") -> void
+*REMOVED*Respire.VectorData.RespireVectorStoreCollection<TRecord>
+[RSP0001]Respire.VectorData.RespireVectorStoreCollection<TRecord>
+*REMOVED*Respire.VectorData.RespireVectorStoreCollection<TRecord>.HybridSearchAsync<TInput>(TInput searchValue, System.Collections.Generic.ICollection<string!>! keywords, int top, Microsoft.Extensions.VectorData.HybridSearchOptions<TRecord!>? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.VectorData.VectorSearchResult<TRecord!>!>!
+[RSP0001]Respire.VectorData.RespireVectorStoreCollection<TRecord>.HybridSearchAsync<TInput>(TInput searchValue, System.Collections.Generic.ICollection<string!>! keywords, int top, Microsoft.Extensions.VectorData.HybridSearchOptions<TRecord!>? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.VectorData.VectorSearchResult<TRecord!>!>!
+*REMOVED*abstract Respire.VectorData.RespireVectorDataHashMapper<TRecord>.Read(string! key, System.Collections.Generic.IReadOnlyDictionary<string!, System.ReadOnlyMemory<byte>>! fields) -> TRecord!
+[RSP0001]abstract Respire.VectorData.RespireVectorDataHashMapper<TRecord>.Read(string! key, System.Collections.Generic.IReadOnlyDictionary<string!, System.ReadOnlyMemory<byte>>! fields) -> TRecord!
+*REMOVED*abstract Respire.VectorData.RespireVectorDataHashMapper<TRecord>.Write(TRecord! record) -> System.Collections.Generic.IReadOnlyDictionary<string!, System.ReadOnlyMemory<byte>>!
+[RSP0001]abstract Respire.VectorData.RespireVectorDataHashMapper<TRecord>.Write(TRecord! record) -> System.Collections.Generic.IReadOnlyDictionary<string!, System.ReadOnlyMemory<byte>>!
+*REMOVED*abstract Respire.VectorData.RespireVectorDataMapper<TRecord>.GetKey(TRecord! record) -> string!
+[RSP0001]abstract Respire.VectorData.RespireVectorDataMapper<TRecord>.GetKey(TRecord! record) -> string!
+*REMOVED*abstract Respire.VectorData.RespireVectorDataMapper<TRecord>.VectorFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataVectorField!>!
+[RSP0001]abstract Respire.VectorData.RespireVectorDataMapper<TRecord>.VectorFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataVectorField!>!
+*REMOVED*override Respire.VectorData.RespireVectorDataFilterField.Equals(object? obj) -> bool
+[RSP0001]override Respire.VectorData.RespireVectorDataFilterField.Equals(object? obj) -> bool
+*REMOVED*override Respire.VectorData.RespireVectorDataFilterField.GetHashCode() -> int
+[RSP0001]override Respire.VectorData.RespireVectorDataFilterField.GetHashCode() -> int
+*REMOVED*override Respire.VectorData.RespireVectorDataFilterField.ToString() -> string!
+[RSP0001]override Respire.VectorData.RespireVectorDataFilterField.ToString() -> string!
+*REMOVED*override Respire.VectorData.RespireVectorDataTextField.Equals(object? obj) -> bool
+[RSP0001]override Respire.VectorData.RespireVectorDataTextField.Equals(object? obj) -> bool
+*REMOVED*override Respire.VectorData.RespireVectorDataTextField.GetHashCode() -> int
+[RSP0001]override Respire.VectorData.RespireVectorDataTextField.GetHashCode() -> int
+*REMOVED*override Respire.VectorData.RespireVectorDataTextField.ToString() -> string!
+[RSP0001]override Respire.VectorData.RespireVectorDataTextField.ToString() -> string!
+*REMOVED*override Respire.VectorData.RespireVectorDataVectorField.Equals(object? obj) -> bool
+[RSP0001]override Respire.VectorData.RespireVectorDataVectorField.Equals(object? obj) -> bool
+*REMOVED*override Respire.VectorData.RespireVectorDataVectorField.GetHashCode() -> int
+[RSP0001]override Respire.VectorData.RespireVectorDataVectorField.GetHashCode() -> int
+*REMOVED*override Respire.VectorData.RespireVectorDataVectorField.ToString() -> string!
+[RSP0001]override Respire.VectorData.RespireVectorDataVectorField.ToString() -> string!
+*REMOVED*override Respire.VectorData.RespireVectorStore.CollectionExistsAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[RSP0001]override Respire.VectorData.RespireVectorStore.CollectionExistsAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+*REMOVED*override Respire.VectorData.RespireVectorStore.EnsureCollectionDeletedAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStore.EnsureCollectionDeletedAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*override Respire.VectorData.RespireVectorStore.GetCollection<TKey, TRecord>(string! name, Microsoft.Extensions.VectorData.VectorStoreCollectionDefinition? definition = null) -> Microsoft.Extensions.VectorData.VectorStoreCollection<TKey, TRecord!>!
+[RSP0001]override Respire.VectorData.RespireVectorStore.GetCollection<TKey, TRecord>(string! name, Microsoft.Extensions.VectorData.VectorStoreCollectionDefinition? definition = null) -> Microsoft.Extensions.VectorData.VectorStoreCollection<TKey, TRecord!>!
+*REMOVED*override Respire.VectorData.RespireVectorStore.GetDynamicCollection(string! name, Microsoft.Extensions.VectorData.VectorStoreCollectionDefinition! definition) -> Microsoft.Extensions.VectorData.VectorStoreCollection<object!, System.Collections.Generic.Dictionary<string!, object?>!>!
+[RSP0001]override Respire.VectorData.RespireVectorStore.GetDynamicCollection(string! name, Microsoft.Extensions.VectorData.VectorStoreCollectionDefinition! definition) -> Microsoft.Extensions.VectorData.VectorStoreCollection<object!, System.Collections.Generic.Dictionary<string!, object?>!>!
+*REMOVED*override Respire.VectorData.RespireVectorStore.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+[RSP0001]override Respire.VectorData.RespireVectorStore.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+*REMOVED*override Respire.VectorData.RespireVectorStore.ListCollectionNamesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<string!>!
+[RSP0001]override Respire.VectorData.RespireVectorStore.ListCollectionNamesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<string!>!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.CollectionExistsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.CollectionExistsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.DeleteAsync(System.Collections.Generic.IEnumerable<string!>! keys, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.DeleteAsync(System.Collections.Generic.IEnumerable<string!>! keys, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.DeleteAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.DeleteAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.EnsureCollectionDeletedAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.EnsureCollectionDeletedAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.EnsureCollectionExistsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.EnsureCollectionExistsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetAsync(System.Collections.Generic.IEnumerable<string!>! keys, Microsoft.Extensions.VectorData.RecordRetrievalOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<TRecord!>!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetAsync(System.Collections.Generic.IEnumerable<string!>! keys, Microsoft.Extensions.VectorData.RecordRetrievalOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<TRecord!>!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetAsync(System.Linq.Expressions.Expression<System.Func<TRecord!, bool>!>! filter, int top, Microsoft.Extensions.VectorData.FilteredRecordRetrievalOptions<TRecord!>? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<TRecord!>!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetAsync(System.Linq.Expressions.Expression<System.Func<TRecord!, bool>!>! filter, int top, Microsoft.Extensions.VectorData.FilteredRecordRetrievalOptions<TRecord!>? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<TRecord!>!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetAsync(string! key, Microsoft.Extensions.VectorData.RecordRetrievalOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TRecord?>!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetAsync(string! key, Microsoft.Extensions.VectorData.RecordRetrievalOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TRecord?>!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.Name.get -> string!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.Name.get -> string!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.SearchAsync<TInput>(TInput searchValue, int top, Microsoft.Extensions.VectorData.VectorSearchOptions<TRecord!>? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.VectorData.VectorSearchResult<TRecord!>!>!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.SearchAsync<TInput>(TInput searchValue, int top, Microsoft.Extensions.VectorData.VectorSearchOptions<TRecord!>? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.VectorData.VectorSearchResult<TRecord!>!>!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.UpsertAsync(System.Collections.Generic.IEnumerable<TRecord!>! records, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.UpsertAsync(System.Collections.Generic.IEnumerable<TRecord!>! records, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*override Respire.VectorData.RespireVectorStoreCollection<TRecord>.UpsertAsync(TRecord! record, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[RSP0001]override Respire.VectorData.RespireVectorStoreCollection<TRecord>.UpsertAsync(TRecord! record, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+*REMOVED*static Respire.VectorData.RespireVectorDataFilterEncoding.DecodeTag(string! value) -> string!
+[RSP0001]static Respire.VectorData.RespireVectorDataFilterEncoding.DecodeTag(string! value) -> string!
+*REMOVED*static Respire.VectorData.RespireVectorDataFilterEncoding.EncodeNumber(double value) -> string!
+[RSP0001]static Respire.VectorData.RespireVectorDataFilterEncoding.EncodeNumber(double value) -> string!
+*REMOVED*static Respire.VectorData.RespireVectorDataFilterEncoding.EncodeTag(string! value) -> string!
+[RSP0001]static Respire.VectorData.RespireVectorDataFilterEncoding.EncodeTag(string! value) -> string!
+*REMOVED*static Respire.VectorData.RespireVectorDataFilterEncoding.EncodeTags(System.Collections.Generic.IEnumerable<string!>! values) -> string!
+[RSP0001]static Respire.VectorData.RespireVectorDataFilterEncoding.EncodeTags(System.Collections.Generic.IEnumerable<string!>! values) -> string!
+*REMOVED*static Respire.VectorData.RespireVectorDataFilterField.operator !=(Respire.VectorData.RespireVectorDataFilterField? left, Respire.VectorData.RespireVectorDataFilterField? right) -> bool
+[RSP0001]static Respire.VectorData.RespireVectorDataFilterField.operator !=(Respire.VectorData.RespireVectorDataFilterField? left, Respire.VectorData.RespireVectorDataFilterField? right) -> bool
+*REMOVED*static Respire.VectorData.RespireVectorDataFilterField.operator ==(Respire.VectorData.RespireVectorDataFilterField? left, Respire.VectorData.RespireVectorDataFilterField? right) -> bool
+[RSP0001]static Respire.VectorData.RespireVectorDataFilterField.operator ==(Respire.VectorData.RespireVectorDataFilterField? left, Respire.VectorData.RespireVectorDataFilterField? right) -> bool
+*REMOVED*static Respire.VectorData.RespireVectorDataFloat32.Decode(System.ReadOnlySpan<byte> bytes) -> System.ReadOnlyMemory<float>
+[RSP0001]static Respire.VectorData.RespireVectorDataFloat32.Decode(System.ReadOnlySpan<byte> bytes) -> System.ReadOnlyMemory<float>
+*REMOVED*static Respire.VectorData.RespireVectorDataFloat32.Encode(System.ReadOnlySpan<float> vector) -> byte[]!
+[RSP0001]static Respire.VectorData.RespireVectorDataFloat32.Encode(System.ReadOnlySpan<float> vector) -> byte[]!
+*REMOVED*static Respire.VectorData.RespireVectorDataTextField.operator !=(Respire.VectorData.RespireVectorDataTextField? left, Respire.VectorData.RespireVectorDataTextField? right) -> bool
+[RSP0001]static Respire.VectorData.RespireVectorDataTextField.operator !=(Respire.VectorData.RespireVectorDataTextField? left, Respire.VectorData.RespireVectorDataTextField? right) -> bool
+*REMOVED*static Respire.VectorData.RespireVectorDataTextField.operator ==(Respire.VectorData.RespireVectorDataTextField? left, Respire.VectorData.RespireVectorDataTextField? right) -> bool
+[RSP0001]static Respire.VectorData.RespireVectorDataTextField.operator ==(Respire.VectorData.RespireVectorDataTextField? left, Respire.VectorData.RespireVectorDataTextField? right) -> bool
+*REMOVED*static Respire.VectorData.RespireVectorDataVectorField.operator !=(Respire.VectorData.RespireVectorDataVectorField? left, Respire.VectorData.RespireVectorDataVectorField? right) -> bool
+[RSP0001]static Respire.VectorData.RespireVectorDataVectorField.operator !=(Respire.VectorData.RespireVectorDataVectorField? left, Respire.VectorData.RespireVectorDataVectorField? right) -> bool
+*REMOVED*static Respire.VectorData.RespireVectorDataVectorField.operator ==(Respire.VectorData.RespireVectorDataVectorField? left, Respire.VectorData.RespireVectorDataVectorField? right) -> bool
+[RSP0001]static Respire.VectorData.RespireVectorDataVectorField.operator ==(Respire.VectorData.RespireVectorDataVectorField? left, Respire.VectorData.RespireVectorDataVectorField? right) -> bool
+*REMOVED*virtual Respire.VectorData.RespireVectorDataHashMapper<TRecord>.FilterFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataFilterField!>!
+[RSP0001]virtual Respire.VectorData.RespireVectorDataHashMapper<TRecord>.FilterFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataFilterField!>!
+*REMOVED*virtual Respire.VectorData.RespireVectorDataJsonMapper<TRecord>.FilterFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataFilterField!>!
+[RSP0001]virtual Respire.VectorData.RespireVectorDataJsonMapper<TRecord>.FilterFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataFilterField!>!
+*REMOVED*virtual Respire.VectorData.RespireVectorDataMapper<TRecord>.DataFields.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchField!>!
+[RSP0001]virtual Respire.VectorData.RespireVectorDataMapper<TRecord>.DataFields.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchField!>!
+*REMOVED*virtual Respire.VectorData.RespireVectorDataMapper<TRecord>.TextFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataTextField!>!
+[RSP0001]virtual Respire.VectorData.RespireVectorDataMapper<TRecord>.TextFields.get -> System.Collections.Generic.IReadOnlyList<Respire.VectorData.RespireVectorDataTextField!>!

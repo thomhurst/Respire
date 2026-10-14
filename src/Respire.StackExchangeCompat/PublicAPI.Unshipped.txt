@@ -1,1 +1,119 @@
 #nullable enable
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ClientName.get -> string!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ClientName.get -> string!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.Close(bool allowCommandsToComplete = true) -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.Close(bool allowCommandsToComplete = true) -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.CloseAsync(bool allowCommandsToComplete = true) -> System.Threading.Tasks.Task!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.CloseAsync(bool allowCommandsToComplete = true) -> System.Threading.Tasks.Task!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.Configuration.get -> string!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.Configuration.get -> string!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConfigurationChanged -> System.EventHandler<StackExchange.Redis.EndPointEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConfigurationChanged -> System.EventHandler<StackExchange.Redis.EndPointEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConfigurationChangedBroadcast -> System.EventHandler<StackExchange.Redis.EndPointEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConfigurationChangedBroadcast -> System.EventHandler<StackExchange.Redis.EndPointEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConnectionFailed -> System.EventHandler<StackExchange.Redis.ConnectionFailedEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConnectionFailed -> System.EventHandler<StackExchange.Redis.ConnectionFailedEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConnectionRestored -> System.EventHandler<StackExchange.Redis.ConnectionFailedEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConnectionRestored -> System.EventHandler<StackExchange.Redis.ConnectionFailedEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.Dispose() -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.Dispose() -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.DisposeAsync() -> System.Threading.Tasks.ValueTask
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.DisposeAsync() -> System.Threading.Tasks.ValueTask
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ErrorMessage -> System.EventHandler<StackExchange.Redis.RedisErrorEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ErrorMessage -> System.EventHandler<StackExchange.Redis.RedisErrorEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetDatabase(int db = -1, object? asyncState = null) -> StackExchange.Redis.IDatabase!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetDatabase(int db = -1, object? asyncState = null) -> StackExchange.Redis.IDatabase!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetEndPoints(bool configuredOnly = false) -> System.Net.EndPoint![]!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetEndPoints(bool configuredOnly = false) -> System.Net.EndPoint![]!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetHashSlot(StackExchange.Redis.RedisKey key) -> int
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetHashSlot(StackExchange.Redis.RedisKey key) -> int
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(StackExchange.Redis.RedisKey key, object? asyncState = null, StackExchange.Redis.CommandFlags flags = StackExchange.Redis.CommandFlags.None) -> StackExchange.Redis.IServer!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(StackExchange.Redis.RedisKey key, object? asyncState = null, StackExchange.Redis.CommandFlags flags = StackExchange.Redis.CommandFlags.None) -> StackExchange.Redis.IServer!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(System.Net.EndPoint! endpoint, object? asyncState = null) -> StackExchange.Redis.IServer!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(System.Net.EndPoint! endpoint, object? asyncState = null) -> StackExchange.Redis.IServer!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(System.Net.IPAddress! host, int port) -> StackExchange.Redis.IServer!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(System.Net.IPAddress! host, int port) -> StackExchange.Redis.IServer!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(string! host, int port, object? asyncState = null) -> StackExchange.Redis.IServer!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(string! host, int port, object? asyncState = null) -> StackExchange.Redis.IServer!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(string! hostAndPort, object? asyncState = null) -> StackExchange.Redis.IServer!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServer(string! hostAndPort, object? asyncState = null) -> StackExchange.Redis.IServer!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServers() -> StackExchange.Redis.IServer![]!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetServers() -> StackExchange.Redis.IServer![]!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetSubscriber(object? asyncState = null) -> StackExchange.Redis.ISubscriber!
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetSubscriber(object? asyncState = null) -> StackExchange.Redis.ISubscriber!
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.HashSlot(StackExchange.Redis.RedisKey key) -> int
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.HashSlot(StackExchange.Redis.RedisKey key) -> int
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.HashSlotMoved -> System.EventHandler<StackExchange.Redis.HashSlotMovedEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.HashSlotMoved -> System.EventHandler<StackExchange.Redis.HashSlotMovedEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.IncludeDetailInExceptions.get -> bool
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.IncludeDetailInExceptions.get -> bool
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.IncludeDetailInExceptions.set -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.IncludeDetailInExceptions.set -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.InternalError -> System.EventHandler<StackExchange.Redis.InternalErrorEventArgs>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.InternalError -> System.EventHandler<StackExchange.Redis.InternalErrorEventArgs>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.IsConnected.get -> bool
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.IsConnected.get -> bool
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.IsConnecting.get -> bool
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.IsConnecting.get -> bool
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.OperationCount.get -> long
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.OperationCount.get -> long
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.PreserveAsyncOrder.get -> bool
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.PreserveAsyncOrder.get -> bool
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.PreserveAsyncOrder.set -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.PreserveAsyncOrder.set -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.PublishReconfigure(StackExchange.Redis.CommandFlags flags) -> long
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.PublishReconfigure(StackExchange.Redis.CommandFlags flags) -> long
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ResetStormLog() -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ResetStormLog() -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.ServerMaintenanceEvent -> System.EventHandler<StackExchange.Redis.Maintenance.ServerMaintenanceEvent>
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ServerMaintenanceEvent -> System.EventHandler<StackExchange.Redis.Maintenance.ServerMaintenanceEvent>
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.StormLogThreshold.get -> int
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.StormLogThreshold.get -> int
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.StormLogThreshold.set -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.StormLogThreshold.set -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.TimeoutMilliseconds.get -> int
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.TimeoutMilliseconds.get -> int
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.Wait(System.Threading.Tasks.Task! task) -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.Wait(System.Threading.Tasks.Task! task) -> void
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.Wait<T>(System.Threading.Tasks.Task<T>! task) -> T
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.Wait<T>(System.Threading.Tasks.Task<T>! task) -> T
+*REMOVED*Respire.StackExchangeCompat.RespireConnectionMultiplexer.WaitAll(params System.Threading.Tasks.Task![]! tasks) -> void
+[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.WaitAll(params System.Threading.Tasks.Task![]! tasks) -> void
+*REMOVED*Respire.StackExchangeCompat.RespireStackExchangeExtensions
+[RSP0006]Respire.StackExchangeCompat.RespireStackExchangeExtensions
+*REMOVED*override Respire.StackExchangeCompat.RespireConnectionMultiplexer.ToString() -> string!
+[RSP0006]override Respire.StackExchangeCompat.RespireConnectionMultiplexer.ToString() -> string!
+*REMOVED*static Respire.StackExchangeCompat.RespireConnectionMultiplexer.Create(Respire.RespireOptions! options) -> Respire.StackExchangeCompat.RespireConnectionMultiplexer!
+[RSP0006]static Respire.StackExchangeCompat.RespireConnectionMultiplexer.Create(Respire.RespireOptions! options) -> Respire.StackExchangeCompat.RespireConnectionMultiplexer!
+*REMOVED*static Respire.StackExchangeCompat.RespireConnectionMultiplexer.Wrap(Respire.RespireClient! client, bool ownsClient = false) -> Respire.StackExchangeCompat.RespireConnectionMultiplexer!
+[RSP0006]static Respire.StackExchangeCompat.RespireConnectionMultiplexer.Wrap(Respire.RespireClient! client, bool ownsClient = false) -> Respire.StackExchangeCompat.RespireConnectionMultiplexer!
+*REMOVED*static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ExecuteStackExchangeAsync(this Respire.IRespireClient! client, Respire.RespireCommand command, System.ReadOnlySpan<StackExchange.Redis.RedisValue> arguments, Respire.RespireCommandFlags flags = Respire.RespireCommandFlags.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<StackExchange.Redis.RedisResult!>
+[RSP0006]static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ExecuteStackExchangeAsync(this Respire.IRespireClient! client, Respire.RespireCommand command, System.ReadOnlySpan<StackExchange.Redis.RedisValue> arguments, Respire.RespireCommandFlags flags = Respire.RespireCommandFlags.None, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<StackExchange.Redis.RedisResult!>
+*REMOVED*static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ToRespireKey(this StackExchange.Redis.RedisKey key) -> Respire.RespireKey
+[RSP0006]static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ToRespireKey(this StackExchange.Redis.RedisKey key) -> Respire.RespireKey
+*REMOVED*static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ToRespireValue(this StackExchange.Redis.RedisValue value) -> Respire.RespireValue
+[RSP0006]static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ToRespireValue(this StackExchange.Redis.RedisValue value) -> Respire.RespireValue
+*REMOVED*static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ToStackExchangeResult(this Respire.RespireResult result) -> StackExchange.Redis.RedisResult!
+[RSP0006]static Respire.StackExchangeCompat.RespireStackExchangeExtensions.ToStackExchangeResult(this Respire.RespireResult result) -> StackExchange.Redis.RedisResult!
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.AddLibraryNameSuffix(string suffix) -> void
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.AddLibraryNameSuffix(string suffix) -> void
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.Configure(System.IO.TextWriter log) -> bool
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.Configure(System.IO.TextWriter log) -> bool
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConfigureAsync(System.IO.TextWriter log) -> System.Threading.Tasks.Task<bool>
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ConfigureAsync(System.IO.TextWriter log) -> System.Threading.Tasks.Task<bool>
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.ExportConfiguration(System.IO.Stream destination, StackExchange.Redis.ExportOptions options) -> void
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.ExportConfiguration(System.IO.Stream destination, StackExchange.Redis.ExportOptions options) -> void
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetCounters() -> StackExchange.Redis.ServerCounters
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetCounters() -> StackExchange.Redis.ServerCounters
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetStatus() -> string
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetStatus() -> string
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetStatus(System.IO.TextWriter log) -> void
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetStatus(System.IO.TextWriter log) -> void
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetStormLog() -> string
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.GetStormLog() -> string
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.PublishReconfigureAsync(StackExchange.Redis.CommandFlags flags) -> System.Threading.Tasks.Task<long>
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.PublishReconfigureAsync(StackExchange.Redis.CommandFlags flags) -> System.Threading.Tasks.Task<long>
+*REMOVED*~Respire.StackExchangeCompat.RespireConnectionMultiplexer.RegisterProfiler(System.Func<StackExchange.Redis.Profiling.ProfilingSession> profilingSessionProvider) -> void
+~[RSP0006]Respire.StackExchangeCompat.RespireConnectionMultiplexer.RegisterProfiler(System.Func<StackExchange.Redis.Profiling.ProfilingSession> profilingSessionProvider) -> void
