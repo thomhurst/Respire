@@ -11,6 +11,7 @@ using Respire.Pipeline.Settings;
 namespace Respire.Pipeline.Modules;
 
 [DependsOn<PackagePathsParserModule>]
+[DependsOn<VerifyCoreInternalsDependenciesModule>]
 public class UploadPackagesToNugetModule : Module<CommandResult[]>
 {
     private readonly IOptions<NuGetSettings> _nugetSettings;

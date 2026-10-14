@@ -1,0 +1,22 @@
+<Project>
+  <!-- NuGet gathers the referenced projects' actual PackageVersion values immediately
+       before GenerateNuspec. Pin only shipping friends of core, leaving public-only
+       consumers and external dependencies with their normal ranges. -->
+  <Target Name="_RespirePinCoreInternalsDependency"
+          AfterTargets="_GetProjectReferenceVersions"
+          Condition="'$(IsRespirePackageProject)' == 'true' And '$(MSBuildProjectName)' != 'Respire'">
+    <XmlPeek XmlInputPath="$(RepositoryRoot)src/Respire/Respire.csproj"
+             Query="/Project/ItemGroup/InternalsVisibleTo/@Include">
+      <Output TaskParameter="Result" ItemName="_RespireCoreFriend" />
+    </XmlPeek>
+    <PropertyGroup>
+      <_RespireCoreFriends>;@(_RespireCoreFriend);</_RespireCoreFriends>
+    </PropertyGroup>
+    <ItemGroup Condition="$(_RespireCoreFriends.Contains(';$(AssemblyName);'))">
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)"
+                                     Condition="'%(_ProjectReferencesWithVersions.Filename)' == 'Respire'">
+        <ProjectVersion>[%(_ProjectReferencesWithVersions.ProjectVersion)]</ProjectVersion>
+      </_ProjectReferencesWithVersions>
+    </ItemGroup>
+  </Target>
+</Project>
