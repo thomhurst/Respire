@@ -19,6 +19,7 @@ internal static class RespireConfiguration
         ClientAvailabilityZone = section.GetValue("ClientAvailabilityZone", options.ClientAvailabilityZone),
         ReplicaRefreshInterval = section.GetValue("ReplicaRefreshInterval", options.ReplicaRefreshInterval),
         UseCluster = section.GetValue("UseCluster", options.UseCluster),
+        IncludeCrossSlotKeyContext = section.GetValue("IncludeCrossSlotKeyContext", options.IncludeCrossSlotKeyContext),
         SentinelPrimaryName = section.GetValue("SentinelPrimaryName", options.SentinelPrimaryName),
         Username = section.GetValue("Username", options.Username),
         Password = section.GetValue("Password", options.Password),
