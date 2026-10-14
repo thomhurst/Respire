@@ -78,9 +78,9 @@ Public interface compatibility and the post-1.0 extension policy are described i
 - [Typed LCS matches](commands/strings-and-keys.md#longest-common-subsequence).
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   on dedicated connections.
-- [Typed immediate job queues](guides/job-queues.md) with bounded enqueue deduplication, scoped
-  handlers, visibility recovery, dead letters, fenced progress, retained completion events,
-  and enqueue-to-processing trace links.
+- [Typed job queues](guides/job-queues.md) with delayed scheduling, batch priority, TTL, durable
+  retry backoff, bounded enqueue deduplication, scoped handlers, visibility recovery, dead letters,
+  fenced progress, retained completion events, and enqueue-to-processing trace links.
 - [Hosted stream consumers](guides/stream-workers.md) with bounded concurrency, scoped typed
   handlers, idle recovery, delivery limits, dead-lettering, graceful draining, metrics, and
   W3C trace propagation.

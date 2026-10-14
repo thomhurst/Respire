@@ -16,6 +16,14 @@ public static class RespireJobQueueServiceCollectionExtensions
         this IServiceCollection services, string queueName, Func<T, byte[]> serialize, Func<byte[], T> deserialize,
         RespireStreamWorkerOptions? options = null)
         where THandler : class, IRespireStreamHandler<RespireJob<T>>
+        => services.AddRespireJobQueue<THandler, T>(queueName, serialize, deserialize, options, null);
+
+    /// <summary>Registers a typed queue with explicit scheduling and retry policy.</summary>
+    public static IServiceCollection AddRespireJobQueue<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, T>(
+        this IServiceCollection services, string queueName, Func<T, byte[]> serialize, Func<byte[], T> deserialize,
+        RespireStreamWorkerOptions? options, RespireJobQueueOptions? queueOptions)
+        where THandler : class, IRespireStreamHandler<RespireJob<T>>
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(serialize);
@@ -27,12 +35,15 @@ public static class RespireJobQueueServiceCollectionExtensions
         options ??= new RespireStreamWorkerOptions { DeliveryLimit = 5 };
         if (options.GroupStart != RespireStreamId.Beginning && options.GroupStart != (RespireStreamId)"0-0")
             throw new ArgumentException("Job queue groups must start at the beginning.", nameof(options));
+        queueOptions ??= new();
+        queueOptions.Validate();
         options = options with
         {
             DeadLetterStream = options.DeadLetterStream ?? RespireJobQueue<T>.GetDeadLetterStreamKey(queueName),
             JobEventsStream = stream + ":events",
             TraceParentField = "traceparent",
             TraceStateField = "tracestate",
+            JobQueue = queueOptions,
         };
         services.AddRespireStreamWorker<THandler, RespireJob<T>>(stream, RespireJobQueue<T>.ConsumerGroup,
             entry => RespireJobQueue<T>.Deserialize(entry, deserialize), options);

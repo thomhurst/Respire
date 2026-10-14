@@ -1,0 +1,158 @@
+using Respire.Internal;
+
+namespace Respire.Streaming;
+
+internal static class JobQueueScheduling
+{
+    internal static string[] Keys(string stream) => [stream, stream + ":scheduled", stream + ":due"];
+
+    internal static void ValidateKeys(IRespireClient client, string[] keys)
+    {
+        var resolved = keys.Select(key => client.ResolveKey(key).ToBytes()).ToArray();
+        for (var i = 1; i < resolved.Length; i++)
+        {
+            if (ClusterHash.GetSlot(resolved[0]) != ClusterHash.GetSlot(resolved[i])
+                || resolved.Take(i).Any(key => key.AsSpan().SequenceEqual(resolved[i])))
+                throw new ArgumentException("Queue keys must resolve to distinct keys in the same Cluster slot.");
+        }
+    }
+
+    internal static void ValidateDuration(TimeSpan duration, string name, bool allowZero = false)
+    {
+        if (duration < TimeSpan.Zero || (!allowZero && duration == TimeSpan.Zero)
+            || duration > TimeSpan.FromMilliseconds(int.MaxValue))
+            throw new ArgumentOutOfRangeException(name);
+    }
+
+    // Every script checks types and all cleanup permissions before its first write.
+    // Redis scripts are atomic, but errors do not undo writes: append/index failures
+    // roll back only the new staged entry, leaving the original pending job intact.
+    private const string Helpers = """
+        local function now()
+            local time = redis.call('TIME')
+            return tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+        end
+        local function checktype(key, expected)
+            local kind = redis.call('TYPE', key).ok
+            if kind ~= 'none' and kind ~= expected then error('WRONGTYPE job queue key') end
+        end
+        local function permit(command, ...)
+            if not redis.acl_check_cmd or not redis.acl_check_cmd(command, ...) then
+                error('NOPERM job scheduling requires Redis 7.0 and queue command permissions')
+            end
+        end
+        local function field(fields, name, fallback)
+            for i = 1, #fields, 2 do if fields[i] == name then return fields[i+1] end end
+            return fallback
+        end
+        local function stage(fields, due)
+            local id = redis.call('XADD', KEYS[2], '*', unpack(fields))
+            local indexed = redis.pcall('ZADD', KEYS[3], due, id)
+            if type(indexed) == 'table' and indexed.err then
+                redis.call('XDEL', KEYS[2], id)
+                return indexed
+            end
+            return id
+        end
+        checktype(KEYS[1], 'stream')
+        checktype(KEYS[2], 'stream')
+        checktype(KEYS[3], 'zset')
+
+        """;
+
+    private const string StagePermissions = """
+        permit('XADD', KEYS[2], '*', 'field', 'value')
+        permit('XDEL', KEYS[2], '0-0')
+        permit('ZADD', KEYS[3], 0, '0-0')
+
+        """;
+
+    internal static readonly RespireScript Enqueue = RespireScript.Create(Helpers + """
+        local existing = redis.call('GET', KEYS[4])
+        if existing then return {existing, 0} end
+
+        """ + StagePermissions + """
+        permit('ZREM', KEYS[3], '0-0')
+        permit('SET', KEYS[4], '0-0', 'PX', ARGV[3])
+        local clock = now()
+        local expires = tonumber(ARGV[6]) > 0 and clock + tonumber(ARGV[6]) or 0
+        local id = stage({'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2],
+            '_respire.job.priority', ARGV[5], '_respire.job.expires', tostring(expires),
+            '_respire.job.attempts', '0'}, clock + tonumber(ARGV[4]))
+        if type(id) == 'table' then return id end
+        local recorded = redis.pcall('SET', KEYS[4], id, 'PX', ARGV[3])
+        if type(recorded) == 'table' and recorded.err then
+            redis.call('ZREM', KEYS[3], id)
+            redis.call('XDEL', KEYS[2], id)
+            return recorded
+        end
+        return {id, 1}
+        """);
+
+    internal static readonly RespireScript Promote = RespireScript.Create(Helpers + """
+        permit('XADD', KEYS[1], '*', 'field', 'value')
+        permit('XDEL', KEYS[2], '0-0')
+        permit('ZREM', KEYS[3], '0-0')
+        local clock = now()
+        local ids = redis.call('ZRANGEBYSCORE', KEYS[3], '-inf', clock, 'LIMIT', 0, ARGV[1])
+        local entries = {}
+        for position, id in ipairs(ids) do
+            local rows = redis.call('XRANGE', KEYS[2], id, id)
+            if #rows ~= 1 then error('ERR scheduled job body is missing') end
+            table.insert(entries, {id = id, fields = rows[1][2], position = position,
+                priority = tonumber(field(rows[1][2], '_respire.job.priority', '0'))})
+        end
+        table.sort(entries, function(a, b)
+            if a.priority == b.priority then return a.position < b.position end
+            return a.priority > b.priority
+        end)
+        local promoted = 0
+        for _, entry in ipairs(entries) do
+            local expires = tonumber(field(entry.fields, '_respire.job.expires', '0'))
+            if expires == 0 or expires > clock then
+                redis.call('XADD', KEYS[1], '*', unpack(entry.fields))
+                promoted = promoted + 1
+            end
+            redis.call('ZREM', KEYS[3], entry.id)
+            redis.call('XDEL', KEYS[2], entry.id)
+        end
+        return promoted
+        """);
+
+    private const string Fence = """
+        local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
+        if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
+
+        """;
+
+    internal static readonly RespireScript Retry = RespireScript.Create(Helpers + Fence + StagePermissions + """
+        permit('XACK', KEYS[1], ARGV[1], ARGV[3])
+        local rows = redis.call('XRANGE', KEYS[1], ARGV[3], ARGV[3])
+        if #rows ~= 1 then return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
+        local fields = rows[1][2]
+        local clock = now()
+        local expires = tonumber(field(fields, '_respire.job.expires', '0'))
+        if expires > 0 and expires <= clock then return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3]) end
+        local attempts = tonumber(field(fields, '_respire.job.attempts', '0')) + tonumber(ARGV[4])
+        local updated = false
+        for i = 1, #fields, 2 do
+            if fields[i] == '_respire.job.attempts' then fields[i+1] = tostring(attempts); updated = true end
+        end
+        if not updated then table.insert(fields, '_respire.job.attempts'); table.insert(fields, tostring(attempts)) end
+        local id = stage(fields, clock + tonumber(ARGV[5]))
+        if type(id) == 'table' then return id end
+        redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
+        return 1
+        """);
+
+    // Return 1 for a live delivery, -1 for expired, 0 for a superseded attempt.
+    internal static readonly RespireScript CheckExpiry = RespireScript.Create(Fence + """
+        local time = redis.call('TIME')
+        local clock = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+        if tonumber(ARGV[5]) > 0 and tonumber(ARGV[5]) <= clock then
+            redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
+            return -1
+        end
+        return 1
+        """);
+}

@@ -2,8 +2,11 @@ namespace Respire.Streaming;
 
 /// <summary>A typed job delivery. A recovered delivery retains both its application ID and stream entry ID.</summary>
 /// <typeparam name="T">The application payload type.</typeparam>
-public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId) : IJobDelivery
+public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId) : IJobDelivery, IJobRetry
 {
+    private TimeSpan? _retryDelay;
+    TimeSpan? IJobRetry.RetryDelay => _retryDelay;
+
     private JobProgress? _progress;
 
     void IJobDelivery.Attach(JobProgress progress) => _progress = progress;
@@ -24,6 +27,15 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
         ArgumentOutOfRangeException.ThrowIfGreaterThan(percent, 100);
         return (_progress ?? throw new InvalidOperationException("Progress requires a hosted job delivery."))
             .ReportAsync(percent, cancellationToken);
+    }
+
+    /// <summary>Returns Nack and requests a delay from completion, overriding the queue backoff for this attempt.</summary>
+    /// <remarks>Return this result from the handler. The delivery limit still applies. Zero allows immediate retry.</remarks>
+    public RespireStreamWorkerResult RetryAfter(TimeSpan delay)
+    {
+        JobQueueScheduling.ValidateDuration(delay, nameof(delay), allowZero: true);
+        _retryDelay = delay;
+        return RespireStreamWorkerResult.Nack;
     }
 }
 

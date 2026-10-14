@@ -31,6 +31,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     throw new ArgumentException("Job event, source, and dead-letter streams must be distinct keys in one Cluster slot.");
             }
         }
+        if (options.JobQueue is not null)
+            JobQueueScheduling.ValidateKeys(client, JobQueueScheduling.Keys(stream));
         if (options.DeadLetterStream is { } deadLetter)
         {
             var sourceKey = client.ResolveKey(stream).ToBytes();
@@ -113,6 +115,9 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         {
             while (!readers.IsCancellationRequested)
             {
+                if (options.JobQueue is { } queue)
+                    await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Promote, [.. JobQueueScheduling.Keys(stream)],
+                        [queue.SchedulingBatchSize], readers.Token).ConfigureAwait(false);
                 Delivery[] deliveries;
                 var recoveredBatch = false;
                 if (cursor.HasValue)
@@ -136,6 +141,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 {
                     var remaining = options.RecoveryPollInterval - recoveryClock.Elapsed;
                     var wait = remaining < options.ReadWait ? remaining : options.ReadWait;
+                    if (options.JobQueue is { } scheduling && wait > scheduling.SchedulingPollInterval)
+                        wait = scheduling.SchedulingPollInterval;
                     if (wait <= TimeSpan.Zero) continue;
                     var entries = await client.Streams.ReadGroupOnceAsync(stream, group, consumer,
                         readOptions with { WaitFor = wait }, cancellationToken: readers.Token).ConfigureAwait(false);
@@ -205,7 +212,20 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
             throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
-        if (options.DeliveryLimit is { } limit && delivery.Attempt > limit)
+        var totalAttempts = delivery.Attempt;
+        if (options.JobQueue is not null)
+        {
+            var previous = delivery.Entry.GetString("_respire.job.attempts");
+            if (previous is not null) totalAttempts = checked(totalAttempts + long.Parse(previous, System.Globalization.CultureInfo.InvariantCulture));
+            var expires = delivery.Entry.GetString("_respire.job.expires");
+            if (expires is not null)
+            {
+                var live = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.CheckExpiry, [stream],
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, expires], _handlers.Token).ConfigureAwait(false);
+                if (live != 1) { observation.Outcome = live == -1 ? "expired" : "stale"; return; }
+            }
+        }
+        if (options.DeliveryLimit is { } limit && totalAttempts > limit)
         {
             observation.Outcome = await DeadLetterAsync(delivery, consumer, "delivery-limit", "").ConfigureAwait(false);
             return;
@@ -217,9 +237,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             RespireStreamWorkerResult result;
             var reason = "nack";
             var failureType = "";
+            TMessage? message = default;
             try
             {
-                var message = deserialize(delivery.Entry);
+                message = deserialize(delivery.Entry);
                 if (options.JobEventsStream is { } events && message is IJobDelivery job)
                     job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt));
                 result = await handler.HandleAsync(message, _handlers.Token).ConfigureAwait(false);
@@ -257,8 +278,16 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             }
             else if (result == RespireStreamWorkerResult.DeadLetter)
                 observation.Outcome = await DeadLetterAsync(delivery, consumer, "explicit", "").ConfigureAwait(false);
-            else if (options.DeliveryLimit is { } deliveryLimit && delivery.Attempt >= deliveryLimit)
+            else if (options.DeliveryLimit is { } deliveryLimit && totalAttempts >= deliveryLimit)
                 observation.Outcome = await DeadLetterAsync(delivery, consumer, reason, failureType).ConfigureAwait(false);
+            else if (options.JobQueue is { } queue
+                && ((message as IJobRetry)?.RetryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
+            {
+                var retried = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Retry, [.. JobQueueScheduling.Keys(stream)],
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, (long)Math.Ceiling(delay.TotalMilliseconds)],
+                    _handlers.Token).ConfigureAwait(false);
+                observation.Outcome = retried == 1 ? "nack" : "stale";
+            }
             else
             {
                 await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream],
