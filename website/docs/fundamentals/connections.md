@@ -149,7 +149,7 @@ The one-endpoint rule also applies to `RespireOptions.Endpoints` (throws `Respir
 - In Cluster mode, `sslHost` applies to every node. Use it only when every certificate covers that name.
 - `sslHost`, `sentinelSslHost`, `sslProtocols`, and `checkCertificateRevocation` are not URI parameters; with `rediss://`, set `TlsOptions` and `SentinelTlsOptions` in code.
 - Booleans accept `true`/`false`, case-insensitive; other values throw `RespireConfigurationException`.
-- Omitted ports default to 26379 for Sentinel, else 6379 (also with TLS). Bracket IPv6 to add a port: `[::1]:6380`.
+- Omitted ports default to 26379 for Sentinel, otherwise 6380 with TLS or 6379 without TLS. Bracket IPv6 to add a port: `[::1]:6380`.
 - Comma-delimited strings accept unknown and client-specific options. `configChannel`, `tiebreaker`, `resolveDns`, `version`, `setlib`, `highPriorityThreads`, `preserveAsyncOrder`, `writeBuffer`, `defaults`, `highIntegrity`, `sharedSubscriptionConnection`, `tcpKeepAlive`, `maintMovingEndpointType`, and `maintPostEventRelaxed` are ignored. Respire uses its own defaults and discovery behavior. URI query parameters remain strict.
 - Each ignored key logs warning `IgnoredConnectionStringOption` (141) once per client, without its value. Attach `LoggerFactory` to the parsed options before creating the client; parsing itself has no logger. Duplicate keys are deduplicated case-insensitively, and derived clients do not log again.
 - `proxy=None` and an empty `tunnel=` are accepted. Other proxy/tunnel values and `$COMMAND=...` remapping are rejected because silently ignoring them could change routing or commands. Linux abstract Unix sockets (`!@name`) are rejected with a filesystem-socket alternative (`!/path`).
