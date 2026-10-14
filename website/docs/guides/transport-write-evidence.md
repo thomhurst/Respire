@@ -10,9 +10,158 @@ This is an engineering evidence log, not a usage guide. **Application developers
 - **What it is.** Respire records whether each send attempt was definitely not written or may have reached Redis. This log states the limits of that record and keeps dated audits of the `run-transport-benchmarks` comparisons, newest first.
 - **Who needs it.** Contributors changing the transport write path, streaming uploads, batches, or connection selection, and reviewers auditing a transport benchmark run.
 - **What to configure.** Nothing. The only public feature that uses it is [`RespireOptions.RetryPolicy`](./command-retries); leave it `null` (the default) for no automatic retries.
-- **Status.** Write evidence works as specified. Only a definitely unwritten attempt can authorize a resend that the command's retry category would not otherwise allow. The latest audit (#1481) left transport performance acceptance unmet: latency and allocation results are mixed, with no production defect identified. Each dated section records issue state at its audit time.
+- **Status.** Write evidence works as specified. Only a definitely unwritten attempt can authorize a resend that the command's retry category would not otherwise allow. The [current disposition](#healthy-path-disposition-14-october-2026) leaves transport performance acceptance unmet: latency and allocation results are mixed, with no production defect identified. Closed predecessor issues are historical evidence, not current blockers.
 
 Write evidence never retries anything by itself. An ambiguous outcome cannot authorize an unsafe resend, and an unwritten streaming frame does not make the caller's stream replayable.
+
+## Healthy-path disposition: 14 October 2026
+
+This [#1693](https://github.com/thomhurst/Respire/issues/1693) audit checks the recorded
+comparisons against main `720e76eba9ea19486d2417d4c5812516af44f9ab`. The completed audits
+#1481, #1520, #1474 and #1214, and retry parent #862, are closed. Their closure did not
+establish aggregate performance acceptance. The dated numerical records below remain
+evidence for their pinned revisions, not measurements of current main. Large non-streamed
+SET issue #976 is also closed and is not reinstated as a blocker.
+
+Use the [per-path targets and decision rule](./command-retries#targets-and-decision-rule):
+zero incremental ownership allocation and a prospective 1% latency budget for identical
+operations, with narrow intervals and stable controls. That budget does not retroactively
+clear the original strict zero-cost goal. Error-metrics enabled/disabled are separate
+experiments, unrelated to retry policy Enabled/Disabled.
+
+### Later default-batch comparison
+
+[Run 38270087050](https://github.com/thomhurst/Respire/actions/runs/38270087050) measures
+the merged whole-unit batch implementation (#1530). Both controls pin
+`1b3a6cda08e70a0ffe47bf911697554273be84b3`; candidate and common fixture pin
+`29ac4cc4c599df2c59f4b76cec74be1f026513e6`, event head
+`cc6276ee565e4f35957d17d42f219f2eec4ad154`. Artifacts
+`transport-acceptance-comparison-disabled` (11759194825) and
+`transport-acceptance-comparison-enabled` (11759917041) were available and unexpired on
+14 October. Each contains 24 MediumRun cases, two launches and 15 actual workload iterations
+per launch on Linux, net10.0/SDK 10.0.401. All 4,320 actual workload samples across both
+three-phase comparisons are present in the JSON reports. These are **default retry policy**
+paths; error-metrics mode does not enable retries.
+
+The default batch allocation target is unmet in this library pair. Disabled error metrics,
+one connection, report A/candidate/B **11253/11503/11247 B** for 32 commands and
+**32407/33217/32410 B** for 100. Enabled metrics report **11253/11507/11249 B** and
+**32411/33210/32408 B**, respectively. The two-connection rows show the same roughly
+256/800-byte increases. Source comparison adds a `RetryAttempt` reference to each `Op` even
+when null; current main retains that field. An eight-byte-per-member layout increase is a
+specific hypothesis consistent with the scale, **not an isolated measurement of object size
+or attribution of the entire delta**. Construction-only allocation and layout controls
+must distinguish it from suspended completion/pool misses before changing that representation.
+
+Enabled metrics, one-connection/100-command batch latency is **367128.194 ns
+[365270.774, 368985.613]**, +1.29%/+2.01%, separated above both controls, with -0.70% drift.
+Disabled metrics separate above B for one-connection public pipeline, and above A for
+one-connection selection and small SET. B/A drift across rows is -2.58% to +9.53% disabled
+and -1.20% to +4.50% enabled. Every other row remains in the tables below; overlapping
+intervals and favorable rows do not establish aggregate acceptance.
+
+Candidate post-dispose managed ranges are **8246864–9045312 / 9061976–10000696 B** for
+one/two connections with metrics disabled, and **8243440–8820000 / 8973392–10038440 B**
+enabled. Each group includes 24 full-GC snapshots. These include caller arrays, runtime and
+pools; they do not establish a leak, reclamation or a cap. The artifact retains all four
+stages, both controls, POH, working set and private memory. Historical comparisons below
+cannot be subtracted from these totals to establish restoration.
+
+Two newer successful transport runs, [38308927654](https://github.com/thomhurst/Respire/actions/runs/38308927654)
+and [38311097881](https://github.com/thomhurst/Respire/actions/runs/38311097881), belong to
+[#1563](https://github.com/thomhurst/Respire/pull/1563) and
+[#1564](https://github.com/thomhurst/Respire/pull/1564), respectively. Both PRs closed without
+merging. They cannot certify main's flush or converter behavior. The corrected selection
+experiment below remains the specific provenance/causal control; this batch audit does not
+claim to rerun its diagnostic trace verifier.
+
+<details>
+<summary>Run 38270087050: error metrics disabled, all 24 cases</summary>
+
+| Case | A ns [interval] | Candidate ns [interval] | B ns [interval] | Candidate/A | Candidate/B | B/A drift | B/op A/candidate/B |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CircuitStreamedGet / Connections=1 | 194712.435 [191646.269, 197778.601] | 197514.566 [193033.024, 201996.108] | 192901.389 [190084.489, 195718.290] | +1.44% | +2.39% | -0.93% | 23334/24667/23202 |
+| CircuitStreamedGet / Connections=2 | 196101.362 [193469.160, 198733.565] | 198294.644 [195409.372, 201179.916] | 199191.364 [194841.071, 203541.657] | +1.12% | -0.45% | +1.58% | 22667/23151/23411 |
+| ClientPing / Connections=1 | 71435.596 [70755.286, 72115.905] | 72127.452 [71251.018, 73003.886] | 71875.819 [70487.986, 73263.651] | +0.97% | +0.35% | +0.62% | 184/181/183 |
+| ClientPing / Connections=2 | 72197.658 [71107.620, 73287.696] | 73590.540 [72452.319, 74728.761] | 72049.536 [70798.518, 73300.554] | +1.93% | +2.14% | -0.21% | 182/183/184 |
+| ClientServerError / Connections=1 | 81240.664 [79332.525, 83148.804] | 82016.500 [80740.364, 83292.636] | 81297.755 [79889.592, 82705.918] | +0.95% | +0.88% | +0.07% | 951/949/951 |
+| ClientServerError / Connections=2 | 82047.682 [80596.732, 83498.632] | 82392.437 [81212.355, 83572.520] | 82317.723 [81067.616, 83567.830] | +0.42% | +0.09% | +0.33% | 951/951/951 |
+| LargeSet / Connections=1 | 954725.012 [941914.556, 967535.467] | 950427.110 [931842.910, 969011.310] | 932235.884 [919902.713, 944569.055] | -0.45% | +1.95% | -2.36% | 177/176/176 |
+| LargeSet / Connections=2 | 952651.128 [939911.569, 965390.687] | 953462.308 [934297.474, 972627.142] | 951548.460 [941072.163, 962024.757] | +0.09% | +0.20% | -0.12% | 178/178/176 |
+| Pipeline / Connections=1 | 3130.421 [3093.005, 3167.837] | 3132.687 [3103.173, 3162.202] | 3112.516 [3086.728, 3138.305] | +0.07% | +0.65% | -0.57% | 7/7/7 |
+| Pipeline / Connections=2 | 3636.503 [3571.908, 3701.099] | 3682.883 [3631.863, 3733.902] | 3651.623 [3605.754, 3697.492] | +1.28% | +0.86% | +0.42% | 7/7/7 |
+| PublicPipeline / Connections=1 | 3173.662 [3141.666, 3205.657] | 3204.491 [3163.057, 3245.924] | 3091.785 [3048.462, 3135.107] | +0.97% | +3.65% | -2.58% | 6/6/6 |
+| PublicPipeline / Connections=2 | 3670.737 [3621.937, 3719.537] | 3702.377 [3641.905, 3762.849] | 3718.738 [3646.592, 3790.884] | +0.86% | -0.44% | +1.31% | 6/6/6 |
+| SelectConnection / Connections=1 | 0.973 [0.952, 0.995] | 1.146 [1.067, 1.225] | 1.066 [1.013, 1.119] | +17.71% | +7.47% | +9.53% | 0/0/0 |
+| SelectConnection / Connections=2 | 6.897 [6.789, 7.006] | 6.956 [6.879, 7.034] | 6.833 [6.780, 6.886] | +0.85% | +1.80% | -0.93% | 0/0/0 |
+| SmallSet / Connections=1 | 72940.010 [71727.162, 74152.857] | 75412.757 [74477.451, 76348.062] | 73731.619 [72458.955, 75004.284] | +3.39% | +2.28% | +1.09% | 175/176/175 |
+| SmallSet / Connections=2 | 74329.832 [73230.389, 75429.276] | 73459.268 [72192.605, 74725.931] | 74243.750 [72834.391, 75653.109] | -1.17% | -1.06% | -0.12% | 175/176/176 |
+| StandaloneBatch / Connections=1&count=100 | 173494.523 [171946.720, 175042.326] | 173651.267 [172061.515, 175241.020] | 172464.656 [171150.417, 173778.894] | +0.09% | +0.69% | -0.59% | 32407/33217/32410 |
+| StandaloneBatch / Connections=1&count=32 | 118577.584 [117515.916, 119639.253] | 119264.751 [118274.906, 120254.596] | 120508.661 [119356.951, 121660.371] | +0.58% | -1.03% | +1.63% | 11253/11503/11247 |
+| StandaloneBatch / Connections=2&count=100 | 171632.661 [170076.198, 173189.124] | 171177.223 [170006.916, 172347.529] | 172247.939 [171035.226, 173460.652] | -0.27% | -0.62% | +0.36% | 32413/33213/32418 |
+| StandaloneBatch / Connections=2&count=32 | 120441.728 [119614.583, 121268.872] | 122253.436 [121043.114, 123463.758] | 121120.755 [119736.635, 122504.874] | +1.50% | +0.94% | +0.56% | 11249/11504/11248 |
+| StreamedSetWithDelayedSource / Connections=1 | 9123093.078 [8989510.206, 9256675.951] | 9203173.723 [9096700.185, 9309647.261] | 9205089.628 [9148005.558, 9262173.698] | +0.88% | -0.02% | +0.90% | 12684/12714/12742 |
+| StreamedSetWithDelayedSource / Connections=2 | 9266207.406 [9197346.192, 9335068.621] | 9135568.970 [9040291.861, 9230846.078] | 9202195.963 [9138588.644, 9265803.282] | -1.41% | -0.72% | -0.69% | 12839/12652/12744 |
+| StreamedSetWithInstantSource / Connections=1 | 177366.668 [175577.377, 179155.959] | 176072.308 [174268.812, 177875.804] | 175508.977 [174028.631, 176989.324] | -0.73% | +0.32% | -1.05% | 5977/5910/5714 |
+| StreamedSetWithInstantSource / Connections=2 | 175915.295 [173820.930, 178009.660] | 175366.775 [172770.161, 177963.388] | 178288.977 [176417.284, 180160.670] | -0.31% | -1.64% | +1.35% | 5828/5807/5913 |
+
+</details>
+
+<details>
+<summary>Run 38270087050: error metrics enabled, all 24 cases</summary>
+
+| Case | A ns [interval] | Candidate ns [interval] | B ns [interval] | Candidate/A | Candidate/B | B/A drift | B/op A/candidate/B |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CircuitStreamedGet / Connections=1 | 393831.019 [389454.026, 398208.012] | 396136.140 [392188.801, 400083.479] | 396953.004 [393086.458, 400819.551] | +0.59% | -0.21% | +0.79% | 16115/17973/16384 |
+| CircuitStreamedGet / Connections=2 | 379724.721 [374566.208, 384883.234] | 380566.038 [375849.152, 385282.925] | 382809.199 [378147.204, 387471.194] | +0.22% | -0.59% | +0.81% | 19736/20740/20754 |
+| ClientPing / Connections=1 | 189799.558 [188861.213, 190737.902] | 189762.457 [188669.214, 190855.701] | 190547.895 [189739.611, 191356.179] | -0.02% | -0.41% | +0.39% | 184/184/184 |
+| ClientPing / Connections=2 | 191756.919 [191083.542, 192430.295] | 190874.023 [190131.373, 191616.673] | 190315.938 [189501.379, 191130.497] | -0.46% | +0.29% | -0.75% | 184/184/184 |
+| ClientServerError / Connections=1 | 221388.227 [220223.394, 222553.060] | 222413.700 [220816.258, 224011.143] | 221745.600 [220707.712, 222783.489] | +0.46% | +0.30% | +0.16% | 952/952/952 |
+| ClientServerError / Connections=2 | 222371.776 [221481.362, 223262.191] | 222822.056 [221752.345, 223891.768] | 222027.058 [221280.021, 222774.094] | +0.20% | +0.36% | -0.16% | 952/952/952 |
+| LargeSet / Connections=1 | 1833842.429 [1762998.027, 1904686.830] | 1850996.949 [1797246.418, 1904747.481] | 1822070.972 [1764181.577, 1879960.368] | +0.94% | +1.59% | -0.64% | 176/177/176 |
+| LargeSet / Connections=2 | 1839878.067 [1783495.954, 1896260.180] | 1807802.705 [1763033.501, 1852571.909] | 1839540.033 [1782366.467, 1896713.599] | -1.74% | -1.73% | -0.02% | 176/176/179 |
+| Pipeline / Connections=1 | 6753.221 [6722.237, 6784.206] | 6725.812 [6703.023, 6748.602] | 6718.745 [6685.866, 6751.625] | -0.41% | +0.11% | -0.51% | 7/7/7 |
+| Pipeline / Connections=2 | 7730.317 [7681.277, 7779.356] | 7709.444 [7658.022, 7760.866] | 7727.376 [7686.549, 7768.202] | -0.27% | -0.23% | -0.04% | 7/7/7 |
+| PublicPipeline / Connections=1 | 6777.352 [6749.800, 6804.903] | 6728.007 [6696.044, 6759.971] | 6729.645 [6704.959, 6754.330] | -0.73% | -0.02% | -0.70% | 6/6/6 |
+| PublicPipeline / Connections=2 | 7742.947 [7692.914, 7792.980] | 7789.974 [7726.955, 7852.993] | 7801.375 [7746.448, 7856.301] | +0.61% | -0.15% | +0.75% | 6/6/6 |
+| SelectConnection / Connections=1 | 2.657 [2.641, 2.674] | 2.660 [2.650, 2.671] | 2.683 [2.660, 2.705] | +0.11% | -0.83% | +0.95% | 0/0/0 |
+| SelectConnection / Connections=2 | 6.405 [6.393, 6.416] | 6.407 [6.392, 6.422] | 6.418 [6.393, 6.443] | +0.03% | -0.18% | +0.21% | 0/0/0 |
+| SmallSet / Connections=1 | 195475.303 [194312.028, 196638.577] | 194765.084 [193978.735, 195551.434] | 193127.860 [191775.281, 194480.440] | -0.36% | +0.85% | -1.20% | 176/176/176 |
+| SmallSet / Connections=2 | 195781.579 [194883.753, 196679.406] | 195154.093 [194388.380, 195919.805] | 194554.760 [193877.834, 195231.686] | -0.32% | +0.31% | -0.63% | 176/176/176 |
+| StandaloneBatch / Connections=1&count=100 | 362437.626 [360913.676, 363961.576] | 367128.194 [365270.774, 368985.613] | 359884.129 [358343.204, 361425.055] | +1.29% | +2.01% | -0.70% | 32411/33210/32408 |
+| StandaloneBatch / Connections=1&count=32 | 258343.258 [257406.067, 259280.448] | 257820.303 [256995.264, 258645.342] | 256061.245 [255028.348, 257094.143] | -0.20% | +0.69% | -0.88% | 11253/11507/11249 |
+| StandaloneBatch / Connections=2&count=100 | 360350.608 [358128.711, 362572.504] | 363017.051 [360465.161, 365568.942] | 364208.925 [361826.041, 366591.809] | +0.74% | -0.33% | +1.07% | 32404/33205/32411 |
+| StandaloneBatch / Connections=2&count=32 | 257357.350 [256477.758, 258236.943] | 256298.751 [254918.815, 257678.687] | 257400.178 [256495.544, 258304.813] | -0.41% | -0.43% | +0.02% | 11251/11508/11241 |
+| StreamedSetWithDelayedSource / Connections=1 | 9659671.255 [9330878.390, 9988464.120] | 9824190.109 [9606696.195, 10041684.024] | 10093879.237 [10010757.804, 10177000.670] | +1.70% | -2.67% | +4.50% | 12436/12623/12531 |
+| StreamedSetWithDelayedSource / Connections=2 | 9943612.622 [9807455.233, 10079770.012] | 10103976.023 [10043371.079, 10164580.968] | 10026391.937 [9834864.299, 10217919.574] | +1.61% | +0.77% | +0.83% | 12534/12697/12569 |
+| StreamedSetWithInstantSource / Connections=1 | 372178.705 [364154.106, 380203.305] | 370428.423 [365473.637, 375383.210] | 374862.882 [368375.773, 381349.991] | -0.47% | -1.18% | +0.72% | 5950/5910/5904 |
+| StreamedSetWithInstantSource / Connections=2 | 376647.176 [368237.240, 385057.113] | 368780.289 [362962.548, 374598.030] | 372537.265 [367286.126, 377788.405] | -2.09% | -1.01% | -1.09% | 5974/5951/5970 |
+
+</details>
+
+### Earlier causal evidence retained
+
+| Path / completed evidence | Disposition against the strict goal |
+| --- | --- |
+| Instant stream, run 38201983679 | Reused completed fill tasks remove an isolated 560 B allocation boundary. Public disabled one-connection A/candidate/B allocations are 6452/5953/6477 B/op, but latency is +4.50%/+2.45%, with candidate [370.357, 392.878] microseconds separated above A [361.582, 368.763] and overlapping B [367.266, 377.734]. Allocation improvement does not establish latency acceptance. |
+| Delayed stream, same run | Disabled two-connection latency [10133.532, 10274.091] microseconds is above both A [10000.222, 10118.057] and B [9741.874, 9892.959]; drift -2.40%. Enabled two-connection allocation is 12759 versus A/B 12547/12544 B/op. Nonzero suspension owners are understood; the historical deltas remain unattributed. |
+| Circuit GET, same run | Enabled one-connection allocation is A/candidate/B 22690/24192/23382 B/op; both candidate launches exceed all control launches. Overlapping latency intervals do not dispose of that increase. The earlier enabled two-connection slow launch remains unexplained. |
+| Batch, same run | Disabled one-connection/100-command allocations are 32398/32414/32408 B/op; enabled two-connection/100 latency is +4.83%/+2.00%, separated above A with +2.77% drift. Construction and suspended completion owners are identified, not the exact historical differences. |
+| PING, errors, small/large SET and raw/public pipeline | Preserve all rows in the complete tables; no blanket acceptance follows from favorable rows. SmallSet/two connections is +1.20%/+1.35% against both controls in the latest fill run. Each operation needs its own interval/allocation assessment. |
+| Connection selection, corrected run 38266422052 | Provenance passes for 128 processes. Identical production selection source still produces disabled one-connection +12.47% against both controls and enabled two-connection +30.63% B/A drift. This establishes a measurement-regime problem, not a production selection defect or equivalence. |
+
+The existing controls isolate completed fills, batch construction, public Task wrappers,
+actual suspension and pool-demand misses. They do not identify every byte of process-wide
+allocation or a cause for the historical slow launches. Current main retains the non-pooled
+per-attempt observation and the gathered-write lifetime barrier. Later transaction,
+circuit and endpoint changes prevent treating the old library pair as today's performance.
+No production change or new benchmark is justified by this audit alone. Before changing a
+remaining owner, use matching stacks and controlled suspension/retirement evidence; then
+request only `run-transport-benchmarks` for a material transport change and assess the pinned
+net10.0 result on a later pass. Preserve FIFO, cancellation, original failures, source
+generations and caller-buffer ownership. The historical per-process retention snapshots
+include 5,767,168 bytes of caller arrays and cannot establish isolated transport bytes,
+complete reclamation or a global owner cap. The limits below continue to apply.
 
 ## Ownership and retention limits
 
@@ -26,7 +175,7 @@ Gathered SET uses a separate ownership barrier. Array-backed payloads of at leas
 
 ## Aggregate child evidence audit: 2026-10-12 (#1481)
 
-**Aggregate transport performance acceptance remains unmet.** [#1481](https://github.com/thomhurst/Respire/issues/1481) completes the audit of the merged completed-fill, residual stream/GET, batch and selection deliverables. It does not certify a passing transport comparison. [#1474](https://github.com/thomhurst/Respire/issues/1474), [#1214](https://github.com/thomhurst/Respire/issues/1214) and [#862](https://github.com/thomhurst/Respire/issues/862) remain open. Native child [#1520](https://github.com/thomhurst/Respire/issues/1520) owns the remaining corrected selection comparison, with verified dependencies on #1480 and this audit. Large non-streamed SET remains #976's separate scope.
+**Aggregate transport performance acceptance remains unmet.** [#1481](https://github.com/thomhurst/Respire/issues/1481) completes the audit of the merged completed-fill, residual stream/GET, batch and selection deliverables. It does not certify a passing transport comparison. [#1474](https://github.com/thomhurst/Respire/issues/1474), [#1214](https://github.com/thomhurst/Respire/issues/1214) and [#862](https://github.com/thomhurst/Respire/issues/862) were open at that audit and are now closed. Native child [#1520](https://github.com/thomhurst/Respire/issues/1520) subsequently completed the corrected selection comparison, with verified dependencies on #1480 and this audit. Large non-streamed SET remains #976's separate scope.
 
 ### Pinned artifacts and coverage
 
@@ -123,13 +272,13 @@ Scheduling and frequency limits: per-task context-switch deltas cover only tasks
 
 The historical enabled two-connection 9.798/8.538 ns and disabled one-connection +17.80%/+18.49% regimes come from earlier processes without matching launch-bound evidence, so they remain unattributed. This run shows that similar shapes can arise from identical source, but it does not explain those processes. No unfavorable launch is excluded and no historical total is subtracted.
 
-This closes only the #1520 selection evidence gap. It does not clear the other public latency/allocation gaps from #1481. #1474, #1214 and #862 remain open until full aggregate acceptance is established; #976 remains separate.
+This closes only the #1520 selection evidence gap. It does not clear the other public latency/allocation gaps from #1481. #1474, #1214 and #862 were open at that audit; they are now closed without establishing full aggregate acceptance. #976 was separate and is now closed.
 
 #### Earlier selection capture: run 38195553203
 
 The audit above supersedes this run for selection. It is kept because its rejection motivated the corrected request. Run 38195553203 contains **128 selection processes**: 32 Dry/public processes and 96 separate diagnostic processes across both metric modes and three bracket phases. Every process has matching before/after identity, JIT code/tier output, perf-map addresses, scheduling snapshots and raw workload samples. Required overhead samples are present; no-subtraction and Dry controls omit them as designed. Diagnostic unroll factor is explicitly 16. Tiering-off controls stamp `DOTNET_TieredCompilation=0`. These checks establish capture provenance, not which tier ran throughout a timed iteration or a causal layout effect.
 
-The current full provenance gate rejects all six diagnostic phase/mode combinations with **`Missing affinity target`**. All **24 pinned launches** lack the later `affinityMask` identity. Their captured process/task masks are singleton masks, but the missing requested target prevents verification against the corrected control, and this run predates the pre-runtime `taskset` correction. Do not weaken the current verifier to accept the old artifacts. The remaining historical records were audited separately without treating affinity as verified. Local corrected captures at `a88a40e80fc397073e5bec48f6d845f999c76dd8` pass the current gate for 32 Linux diagnostic processes; shortened local sampling validates instrumentation, not the required pinned acceptance comparison. #1520 owns that specific remaining evidence gap and reuses the merged corrections.
+The current full provenance gate rejects all six diagnostic phase/mode combinations with **`Missing affinity target`**. All **24 pinned launches** lack the later `affinityMask` identity. Their captured process/task masks are singleton masks, but the missing requested target prevents verification against the corrected control, and this run predates the pre-runtime `taskset` correction. Do not weaken the current verifier to accept the old artifacts. The remaining historical records were audited separately without treating affinity as verified. Local corrected captures at `a88a40e80fc397073e5bec48f6d845f999c76dd8` pass the current gate for 32 Linux diagnostic processes; shortened local sampling validates instrumentation, not the required pinned acceptance comparison. #1520 subsequently completed that evidence gap using the merged corrections; its completed audit appears above.
 
 Frequency snapshots are absent in all 64 disabled-mode captures and present in all 64 enabled-mode captures. Enabled candidate public selection snapshots span 2,300,000–3,026,946 kHz only as recorded per launch; the exact per-launch ranges are retained in the machine-readable audit. Snapshot variation cannot establish frequency across an iteration or attribute a timing regime. No comparison of absolute means between these separate metric jobs identifies an instrumentation cost.
 
@@ -141,7 +290,7 @@ The selection method calls the connection multiplexer: one connection bypasses t
 
 Every full-GC sample retains **5,767,168 bytes of caller arrays**; process memory includes clients, pools, collector, runtime and background work. The tables retain before-connect, connected, after-churn and after-dispose ranges for each connection profile and phase, including working-set/private-memory growth and nonzero post-dispose POH values. They cannot prove isolated transport retention, complete reclamation or a global observation cap. The constant state per attempt, admission-waiter limits, unfinished write ownership and gathered lease barriers at the top of this guide remain the applicable contracts.
 
-This is a completed **negative aggregate disposition**. The fill-task cause is established locally and supported by both public launch allocations; residual stream and batch owners are identified with explicit sampling limits. Historical attribution, separated public timing rows, mixed allocation rows and the corrected selection comparison remain unestablished. #1474 must not close on this audit or on a successful workflow alone. #1214 and #862 remain open until their full acceptance is established; #976 remains separate. No defaults, ownership limits, FIFO, cancellation, source generation, original exceptions or mutation barriers change here.
+This is a completed **negative aggregate disposition**. The fill-task cause is established locally and supported by both public launch allocations; residual stream and batch owners are identified with explicit sampling limits. Historical attribution, separated public timing rows, mixed allocation rows and the corrected selection comparison remain unestablished. #1474 subsequently closed; this audit and a successful workflow alone did not establish acceptance. #1214 and #862 were open at that audit; their later closure did not establish full acceptance. #976 was separate and is now closed. No defaults, ownership limits, FIFO, cancellation, source generation, original exceptions or mutation barriers change here.
 
 ### Complete public evidence
 
@@ -731,7 +880,7 @@ The aggregate audit (#1481) at the top of this page supersedes this disposition.
 
 ### Pinned final-frame wait comparison
 
-**Aggregate transport performance acceptance remains unmet.** This audit completes the evidence disposition requested by [#1433](https://github.com/thomhurst/Respire/issues/1433). Further causal measurement and any resulting implementation are tracked in native child [#1474](https://github.com/thomhurst/Respire/issues/1474), which blocks [#1214](https://github.com/thomhurst/Respire/issues/1214). Both #1214 and [#862](https://github.com/thomhurst/Respire/issues/862) remain open. The merged write-outcome foundation and the two pooling fixes do not need reimplementation. No unchanged comparison was rerun for this audit.
+**Aggregate transport performance acceptance remains unmet.** This audit completes the evidence disposition requested by [#1433](https://github.com/thomhurst/Respire/issues/1433). At that audit, further causal measurement and any resulting implementation were tracked in native child [#1474](https://github.com/thomhurst/Respire/issues/1474), which then blocked [#1214](https://github.com/thomhurst/Respire/issues/1214). Both #1214 and [#862](https://github.com/thomhurst/Respire/issues/862) were open at that audit and are now closed. The merged write-outcome foundation and the two pooling fixes do not need reimplementation. No unchanged comparison was rerun for this audit.
 
 [Run 38141963234](https://github.com/thomhurst/Respire/actions/runs/38141963234) measures [PR #1434](https://github.com/thomhurst/Respire/pull/1434). Both baseline controls pin `3a6d7ef79707148eaa85dbc8106bea7d572e8b2e`; the candidate pins immutable merge `5fd8e478730a2df7ded8f9743306304382e1c426`, whose second parent is implementation head `0d882ced4c8e33b8b82ad3aa3e0dac65cb570deb`. The metadata head is the implementation head, not the measured merge. The artifacts are `transport-acceptance-comparison-disabled` (ID 11704970497) and `transport-acceptance-comparison-enabled` (ID 11704342219).
 
@@ -806,13 +955,13 @@ The fixed-engine fixture at source commit `355449d76` passes the original proven
 
 The corrected Linux launch wraps the managed executable in `taskset` before runtime startup, so newly created tasks inherit the requested singleton mask. The verifier requires usable process and main-task scheduling records at both measurement boundaries, and complete scheduling records for other tasks with a usable final status. Tasks that exit during capture may be absent; this does not establish their affinity throughout the iteration. A missing perf map remains an explicit evidence-gate failure and no longer aborts the benchmark host. Earlier gate successes cannot substitute for this stronger validation.
 
-The source distinction remains unchanged: one connection skips `_next` and its atomic increment; two connections execute `Interlocked.Increment` before selecting a healthy slot. Preserve that distinction when comparing native code, raw workload and overhead. Neither timed path reaches the streamed final-frame helper. #1481 owns the completed comparison's aggregate acceptance and disposition of both modes; #1474, #1214 and #862 remain open. The implementation PR requests `run-transport-benchmarks` and leaves asynchronous results for that later audit.
+The source distinction remains unchanged: one connection skips `_next` and its atomic increment; two connections execute `Interlocked.Increment` before selecting a healthy slot. Preserve that distinction when comparing native code, raw workload and overhead. Neither timed path reaches the streamed final-frame helper. #1481 owns the completed comparison's aggregate acceptance and disposition of both modes; #1474, #1214 and #862 were open at that audit and are now closed. The implementation PR requests `run-transport-benchmarks` and leaves asynchronous results for that later audit.
 
 ### Retention disposition and next measurement
 
 The ownership and retention limits above still apply. Each opt-in attempt owns one non-pooled observation with no payload/source history; limits are per attempt, not a global observation count or time cap. Source reuse remains generation-safe. The fixture does not invoke an opt-in attempt owner. All 1,536 full-GC samples retain 5,767,168 bytes of caller arrays; measured groups contain 24 samples per connection/stage. POH and whole-process memory ranges follow below. None measures isolated runtime pool retention, observation bytes or complete reclamation. Three connection owners and runtime/background state further prevent such an inference.
 
-#1474 is the required material diagnostic/implementation follow-up, with #1432 recorded as its closed prerequisite. It must attribute allocation types/stacks, controlled suspension and pool misses, capture each selection launch's code/tiering, and disposition circuit GET. Any resulting fix preserves FIFO, payload ownership, mutation barriers, exceptions, default limits and source generations. Its implementation PR requests `run-transport-benchmarks`; a later pass audits both completed metric modes without waiting or rerunning unchanged failures for green. #1214 stays open until its full acceptance is established, and #862 stays open for conservative retry-policy work.
+#1474 is the required material diagnostic/implementation follow-up, with #1432 recorded as its closed prerequisite. It must attribute allocation types/stacks, controlled suspension and pool misses, capture each selection launch's code/tiering, and disposition circuit GET. Any resulting fix preserves FIFO, payload ownership, mutation barriers, exceptions, default limits and source generations. Its implementation PR requests `run-transport-benchmarks`; a later pass audits both completed metric modes without waiting or rerunning unchanged failures for green. #1214 and #862 were still open at that audit; both are now closed, without this evidence establishing full performance acceptance.
 
 ### Complete case and launch evidence
 
@@ -1028,7 +1177,7 @@ On Windows x64, the unchanged read implementation at `becea358c6762202b592990711
 
 This does not establish a zero-allocation upload or attribute a historical process-wide launch delta. The first fill task and reader still allocate. Linked cancellation, suspended payload copying, cancellable write waits, fixture tasks and pooled-builder misses remain separate sites. Standalone batch allocation, selection code/tiering and scheduling, delayed uploads, and circuit-enabled streamed GET still require their own evidence. The normal public timing fixture retains every path; a new pinned comparison must audit both metric modes, all rows, raw launches, control drift and the retention limits above.
 
-The remaining native children are [residual stream/GET diagnosis #1478](https://github.com/thomhurst/Respire/issues/1478), [batch diagnosis #1479](https://github.com/thomhurst/Respire/issues/1479), [selection diagnosis #1480](https://github.com/thomhurst/Respire/issues/1480), and [final aggregate audit #1481](https://github.com/thomhurst/Respire/issues/1481). #1474, #1214 and #862 remain open. Whole-process memory with caller arrays still cannot establish isolated retention or a global observation cap. Large non-streamed SET copying/gather-send remains #976.
+The remaining native children are [residual stream/GET diagnosis #1478](https://github.com/thomhurst/Respire/issues/1478), [batch diagnosis #1479](https://github.com/thomhurst/Respire/issues/1479), [selection diagnosis #1480](https://github.com/thomhurst/Respire/issues/1480), and [final aggregate audit #1481](https://github.com/thomhurst/Respire/issues/1481). #1474, #1214 and #862 were open at that audit and are now closed. Whole-process memory with caller arrays still cannot establish isolated retention or a global observation cap. Large non-streamed SET copying/gather-send remains #976.
 
 ## Residual stream suspension diagnostic: 2026-10-12
 
@@ -1084,7 +1233,7 @@ The pinned final-frame comparison above remains the public acceptance evidence. 
 
 Circuit-enabled GET also remains required acceptance scope. In the enabled two-connection case, candidate launch means remain **220.570/266.072 us**, compared with A **217.189/217.518 us** and B **227.724/222.352 us**. Candidate aggregate interval **223.319–263.323 us** is separated and slower against A's **213.105–221.602 us**, while overlapping B's **221.917–228.345 us**. Overlap with B does not dispose of the separation against A. GET does not execute the changed SET wait during its timed region; setup warms SET. New allocation diagnostics cannot retroactively establish the old launch's scheduling, tiering, code layout or pool state. That regime remains unresolved rather than classified as harmless noise or attributed to completed fill tasks.
 
-No focused defect or historical regression cause is established by these sampled owners, so no transport behavior is changed. Derived-stream offload, source callbacks, original exceptions, caller ownership, FIFO, mutation barriers, source generations, defaults and per-attempt retention limits retain their existing contracts. These separate allocation diagnostics do not materially change the normal public timing fixture and do not request another unchanged public comparison. The material reader change already requested its pinned comparison in #1483. Final aggregate acceptance belongs to [#1481](https://github.com/thomhurst/Respire/issues/1481) under #1474; #1214 and #862 remain open.
+No focused defect or historical regression cause is established by these sampled owners, so no transport behavior is changed. Derived-stream offload, source callbacks, original exceptions, caller ownership, FIFO, mutation barriers, source generations, defaults and per-attempt retention limits retain their existing contracts. These separate allocation diagnostics do not materially change the normal public timing fixture and do not request another unchanged public comparison. The material reader change already requested its pinned comparison in #1483. The subsequent aggregate audit was [#1481](https://github.com/thomhurst/Respire/issues/1481) under #1474; #1214 and #862 were open at that audit and are now closed.
 
 ## Evidence audit: 2026-10-09
 
@@ -1102,7 +1251,7 @@ The fixture uses public PING, pipelined PING, small SET, a 5 MiB array-backed SE
 
 ### Audit disposition
 
-**The evidence audit is complete; aggregate transport performance acceptance remains unmet.** Issues [#1214](https://github.com/thomhurst/Respire/issues/1214) and [#862](https://github.com/thomhurst/Respire/issues/862) remain open. No unchanged benchmark was rerun.
+**The evidence audit is complete; aggregate transport performance acceptance remains unmet.** Issues [#1214](https://github.com/thomhurst/Respire/issues/1214) and [#862](https://github.com/thomhurst/Respire/issues/862) were open at that audit and are now closed. No unchanged benchmark was rerun.
 
 No public-command row has a slower 99.9% interval separated from both controls. All public-command rows overlap both controls except these: disabled one-connection server error, public pipeline and small SET, and disabled two-connection batches of 32/100 are faster than A with separated intervals while overlapping B; enabled one-connection delayed streaming is faster than both. Overlap does not prove equivalence or zero cost. Enabled internal raw pipeline with one connection is +1.16% versus A with separated slower intervals (6.679107–6.731860 us versus 6.601205–6.655855 us), but overlaps B (6.652778–6.699057 us). The entire per-row interval/delta audit follows below.
 
@@ -1370,7 +1519,7 @@ same case/launch coverage. Artifacts retain `metadata.json`, `allocations.nettra
 Diagnostic launch numbers identify their own processes; they are not the earlier
 BenchmarkDotNet timing launch numbers. These traces cannot retrospectively explain
 the historical deltas or automatically establish aggregate performance acceptance.
-The final #1474 audit owns that decision; #1214 and #862 remain open.
+The final #1474 audit owned that decision; #1214 and #862 were open at that audit and are now closed.
 
 ### Local causal evidence: 2026-10-12
 
