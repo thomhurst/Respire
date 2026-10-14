@@ -9,17 +9,30 @@ public class RespireException : Exception
     /// submitted or executed. General-purpose wrappers do not infer it from their inner exception,
     /// which may describe only one of several failed candidates.
     /// </remarks>
-    public RespireEndpoint? Endpoint { get => _endpoint; init => _endpoint = value; }
+    public RespireEndpoint? Endpoint
+    {
+        get => Volatile.Read(ref _endpoint)?.Value;
+        init => Volatile.Write(ref _endpoint, value is { } endpoint ? new EndpointHolder(endpoint) : null);
+    }
 
-    private RespireEndpoint? _endpoint;
+    // Publish an immutable reference so readers cannot observe a torn nullable struct.
+    private EndpointHolder? _endpoint;
+
+    private sealed class EndpointHolder(RespireEndpoint value)
+    {
+        internal RespireEndpoint Value { get; } = value;
+    }
 
     // Populate only at a boundary that knows the failed attempt. Never replace an origin
     // with a later retry's selection or a MOVED/ASK destination, and never wrap the error.
+    // Connection establishment/abort supplies the physical origin; response sources and
+    // deferred conversions use their captured endpoint. Observation completion is the fallback.
     internal static void PopulateEndpoint(Exception error, RespireEndpoint? endpoint)
     {
-        if (error is RespireException failure && endpoint.HasValue)
+        if (error is RespireException failure && endpoint.HasValue
+            && Volatile.Read(ref failure._endpoint) is null)
         {
-            lock (failure) failure._endpoint ??= endpoint;
+            Interlocked.CompareExchange(ref failure._endpoint, new EndpointHolder(endpoint.Value), null);
         }
     }
 
