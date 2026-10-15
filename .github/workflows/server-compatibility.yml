@@ -1,0 +1,68 @@
+name: Server compatibility
+
+on:
+  schedule:
+    - cron: '23 5 * * 2'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  # An unrelated label must not cancel a compatibility run already in progress.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  compatibility:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-server-compatibility'
+    name: ${{ matrix.server }} (net10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The platform minimum counts executed tests, excluding documented skips.
+        include:
+          - server: garnet
+            minimum-tests: 13
+          - server: dragonfly
+            minimum-tests: 14
+          - server: keydb
+            minimum-tests: 12
+    env:
+      RESPIRE_COMPATIBILITY_SERVER: ${{ matrix.server }}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    steps:
+      - name: Checkout tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up .NET 10
+        uses: ./.github/actions/setup-dotnet
+        with:
+          net8: 'false'
+      - name: Build compatibility tests
+        run: dotnet build tests/Respire.IntegrationTests -c Release -f net10.0
+      - name: Run compatibility tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p TestResults/compatibility
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build -- \
+            --treenode-filter '/*/*/ServerCompatibilityTests/*' \
+            --minimum-expected-tests ${{ matrix.minimum-tests }} \
+            --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility" \
+            --report-trx --report-trx-filename "${RESPIRE_COMPATIBILITY_SERVER}.trx" \
+            --hangdump --hangdump-timeout 5m \
+            2>&1 | tee "TestResults/compatibility/${RESPIRE_COMPATIBILITY_SERVER}.log"
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-compatibility-${{ matrix.server }}
+          path: TestResults/compatibility/
+          retention-days: 14

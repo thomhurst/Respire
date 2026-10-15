@@ -151,6 +151,7 @@ const sidebars = {
       type: 'category',
       label: 'Testing',
       items: [
+        'guides/server-compatibility',
         'guides/testing-containers',
         'guides/testing-sample',
         'guides/in-memory-testing',

@@ -186,6 +186,9 @@ are described in the guides below; the remaining pre-release work is tracked sep
   with a generated builder covering every client option and validation at host startup.
 - An [in-memory test server](guides/in-memory-testing.md) with controlled server time and `KEYS`/`SCAN` enumeration, [Redis/Valkey container fixtures](guides/testing-containers.md),
   and a [test sample](guides/testing-sample.md).
+- A focused [Garnet, Dragonfly and KeyDB compatibility suite](guides/server-compatibility.md)
+  runs weekly or on request, with pinned server versions and explicit incompatibility skips.
+  Its feature matrix describes the assessed scope rather than full Redis parity.
 - Samples: [.NET Aspire](integrations/aspire-sample.md),
   [ASP.NET Core](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AspNetCore),
   [Cluster](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.Cluster), and
