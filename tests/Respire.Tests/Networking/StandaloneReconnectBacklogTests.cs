@@ -15,6 +15,57 @@ public class StandaloneReconnectBacklogTests
     private static readonly byte[] ValueReply = "$5\r\nvalue\r\n"u8.ToArray();
 
     [Test]
+    public async Task SlowHeadKeepsLaterArrivalsQueuedAfterRecovery()
+    {
+        await using var fixture = await Fixture.CreateAsync(capacity: 1);
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = fixture.Client.GetStringAsync("slow").AsTask();
+        await fixture.Handshake.Task.WaitAsync(Limit);
+        fixture.Server.SuppressReply = command =>
+        {
+            if (command != "GET slow") return false;
+            received.TrySetResult();
+            return true;
+        };
+        await fixture.ReleaseAsync();
+        await received.Task.WaitAsync(Limit);
+        var second = fixture.Client.GetStringAsync("second").AsTask();
+        await Assert.That(second.IsCompleted).IsFalse();
+        await Assert.That(fixture.Server.ReceivedCommands.Contains("GET second")).IsFalse();
+        await Assert.That(async () => await fixture.Client.GetStringAsync("overflow").AsTask().WaitAsync(Limit))
+            .ThrowsExactly<RespireConnectionException>();
+        await fixture.Server.SendRawAsync(ValueReply, 1);
+        await Assert.That(await first.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(await second.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(await fixture.Client.GetStringAsync("healthy")).IsEqualTo("value");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NullCommandTimeoutStillAllowsCancellationAndDisposal(bool dispose)
+    {
+        await using var fixture = await Fixture.CreateAsync(disableCommandTimeout: true);
+        using var caller = new CancellationTokenSource();
+        var pending = fixture.Client.GetStringAsync("unsent", caller.Token).AsTask();
+        await fixture.Handshake.Task.WaitAsync(Limit);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        if (dispose)
+        {
+            await fixture.Client.DisposeAsync();
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<ObjectDisposedException>();
+        }
+        else
+        {
+            await caller.CancelAsync();
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await fixture.ReleaseAsync();
+            await Assert.That(await fixture.Client.GetStringAsync("healthy")).IsEqualTo("value");
+        }
+        await Assert.That(fixture.Server.ReceivedCommands.Contains("GET unsent")).IsFalse();
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments("string")]
     [Arguments("bytes")]
@@ -559,7 +610,7 @@ public class StandaloneReconnectBacklogTests
 
         internal static async Task<Fixture> CreateAsync(int capacity = 1024, TimeSpan? commandTimeout = null,
             RespireBacklogPolicy policy = RespireBacklogPolicy.Queue, RespireRetryPolicy? retryPolicy = null,
-            RespireReconnectPolicy? reconnectPolicy = null)
+            RespireReconnectPolicy? reconnectPolicy = null, bool disableCommandTimeout = false)
         {
             var server = new FakeRespServer(4, FakeRespServer.OkReply)
             {
@@ -576,7 +627,8 @@ public class StandaloneReconnectBacklogTests
                 var dials = 0;
                 var client = await RespireClient.ConnectAsync(Options(server.Port) with
                 {
-                    BacklogCapacity = capacity, BacklogPolicy = policy, CommandTimeout = commandTimeout ?? Limit,
+                    BacklogCapacity = capacity, BacklogPolicy = policy,
+                    CommandTimeout = disableCommandTimeout ? null : commandTimeout ?? Limit,
                     RetryPolicy = retryPolicy, ReconnectPolicy = reconnectPolicy,
                     TestingStreamFactory = resume is null ? null : async (host, port, token) =>
                     {

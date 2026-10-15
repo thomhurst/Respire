@@ -12,6 +12,39 @@ namespace Respire.Tests.Networking;
 public class ReconnectBacklogTests
 {
     [Test]
+    public async Task UnexpectedSelectionFailureOnlyFailsItsOwnWaiter()
+    {
+        await using var server = new FakeRespServer(1, FakeRespServer.OkReply);
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var failSelection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure = new InvalidOperationException("Unexpected selection failure");
+        var selections = 0;
+        var queue = new RespireConnectionMultiplexer.ReconnectBacklog(client.Core.Multiplexer, 4,
+            async token =>
+            {
+                if (Interlocked.Increment(ref selections) == 1)
+                {
+                    await failSelection.Task.WaitAsync(token);
+                    throw failure;
+                }
+                return client.Core.Multiplexer.GetConnection();
+            });
+        var dispatches = new ConcurrentQueue<int>();
+        ValueTask<int> Dispatch(int value) { dispatches.Enqueue(value); return new(value); }
+        var first = queue.EnqueueAsync((_, _) => Dispatch(1), deadline.Token).AsTask();
+        var second = queue.EnqueueAsync((_, _) => Dispatch(2), deadline.Token).AsTask();
+        await Assert.That(queue.Count).IsEqualTo(2);
+        failSelection.SetResult();
+        var error = await Assert.That(async () => await first.WaitAsync(deadline.Token))
+            .ThrowsExactly<InvalidOperationException>();
+        await Assert.That(error).IsSameReferenceAs(failure);
+        await Assert.That(await second.WaitAsync(deadline.Token)).IsEqualTo(2);
+        await Assert.That(dispatches.ToArray()).IsEquivalentTo(new[] { 2 });
+        await Assert.That(queue.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task RecoveryDrainsInOrderAndNeverReplaysADispatchedFailure()
     {
         await using var fixture = await Fixture.CreateAsync();

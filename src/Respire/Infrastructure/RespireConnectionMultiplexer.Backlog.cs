@@ -66,6 +66,7 @@ internal sealed partial class RespireConnectionMultiplexer
     internal sealed class ReconnectBacklog
     {
         private readonly RespireConnectionMultiplexer _owner;
+        private readonly Func<CancellationToken, ValueTask<RespireConnection>> _waitForConnection;
         private readonly Lock _gate = new();
         private readonly LinkedList<Entry> _pending = new();
         private volatile bool _running;
@@ -76,9 +77,11 @@ internal sealed partial class RespireConnectionMultiplexer
         internal int Count { get { lock (_gate) return _pending.Count; } }
         internal bool IsRunning => _running;
 
-        internal ReconnectBacklog(RespireConnectionMultiplexer owner, int capacity)
+        internal ReconnectBacklog(RespireConnectionMultiplexer owner, int capacity,
+            Func<CancellationToken, ValueTask<RespireConnection>>? waitForConnection = null)
         {
             _owner = owner;
+            _waitForConnection = waitForConnection ?? owner.WaitForBacklogConnectionAsync;
             Capacity = capacity;
             // The source and queue share the multiplexer's lifetime; cancellation removes
             // the registration. No per-command registration against the owner is retained.
@@ -157,7 +160,7 @@ internal sealed partial class RespireConnectionMultiplexer
                 try
                 {
                     using var wait = CancellationTokenSource.CreateLinkedTokenSource(entry.Token, _owner._stopConnecting.Token);
-                    var connection = await _owner.WaitForBacklogConnectionAsync(wait.Token).ConfigureAwait(false);
+                    var connection = await _waitForConnection(wait.Token).ConfigureAwait(false);
                     lock (_gate)
                     {
                         if (entry.Node is null) continue;
@@ -178,9 +181,21 @@ internal sealed partial class RespireConnectionMultiplexer
                 {
                     Stop();
                 }
-                catch (Exception error)
+                catch (RespireReconnectLimitException error)
                 {
                     lock (_gate) FailPendingLocked(error);
+                }
+                catch (Exception error)
+                {
+                    // An unexpected selection failure belongs to this waiter. Later
+                    // entries may still recover; only terminal exhaustion fails them all.
+                    lock (_gate)
+                    {
+                        if (entry.Node is null) continue;
+                        _pending.Remove(entry.Node);
+                        entry.Node = null;
+                        entry.Fail(error);
+                    }
                 }
             }
         }

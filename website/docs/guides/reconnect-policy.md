@@ -78,9 +78,17 @@ var options = new RespireOptions
 - New arrivals stay behind older queued operations while the backlog drains. The capacity counts
   waiting operations; a dispatched operation no longer occupies a waiting entry. A full queue
   rejects new work with `RespireConnectionException`.
+- The drain executes one operation at a time, waiting for its completion (including replies and
+  configured retries) before starting the next. This preserves ordering across whole batches,
+  transactions and retries, but temporarily prevents pipelining. A slow head operation delays
+  later arrivals even after recovery, and sustained traffic can fill the queue. Normal concurrent
+  dispatch resumes when it empties. Use `FailFast` when this recovery trade-off is unsuitable.
 - Each operation keeps its original `CommandTimeout` and caller cancellation through both queue
   wait and execution. Expiry while waiting throws `RespireTimeoutException` with diagnostics stage
   `Connecting`. A cancelled or expired entry is removed without being sent and releases capacity.
+- Setting `CommandTimeout = null` explicitly disables the deadline, including the queue wait.
+  With unlimited reconnect attempts, those callers can wait indefinitely. Supply caller
+  cancellation, a finite command timeout or a reconnect attempt limit to bound that wait.
 - Cancelling one operation does not cancel shared recovery. Terminal reconnect exhaustion fails
   pending work with `RespireReconnectLimitException`; disposing the client also ends pending waits.
 - Fire-and-forget still waits for admission. It does not promise successful execution or expose
@@ -95,7 +103,10 @@ This backlog currently covers initialized standalone primary command connections
 Sentinel and replica-routing integration is tracked in
 [#1717](https://github.com/thomhurst/Respire/issues/1717). Initial connection setup, dedicated
 connections, watched transactions, import sessions and server-local cursor continuations do not
-join this backlog. They retain their existing acquisition and recovery rules.
+join this backlog. The specialized `Locks` expiry-update and release paths also retain their
+existing acquisition and recovery rules and have no ordering guarantee relative to queued
+commands. In particular, `Locks.ResetExpiryAsync` can fail during replacement even with `Queue`
+selected. Lock acquisition (`SET NX PX`) and owner-token reads use ordinary queued command dispatch.
 
 Other behavior, with or without a reconnect policy:
 
