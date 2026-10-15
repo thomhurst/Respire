@@ -114,6 +114,10 @@ jobs:
           save ""
           CONF
           docker exec "$REDIS_CONTAINER" redis-server /tmp/cluster-ready.conf --daemonize yes
+          for attempt in {1..30}; do
+            if docker exec "$REDIS_CONTAINER" redis-cli -p 6380 PING | tr -d '\r' | grep -qx PONG; then break; fi
+            sleep 1
+          done
           docker exec "$REDIS_CONTAINER" redis-cli -p 6380 CLUSTER ADDSLOTSRANGE 0 16383
           for attempt in {1..30}; do
             if docker exec "$REDIS_CONTAINER" redis-cli -p 6380 CLUSTER INFO | tr -d '\r' | grep -qx 'cluster_state:ok'; then exit 0; fi

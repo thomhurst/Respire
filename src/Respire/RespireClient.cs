@@ -2468,7 +2468,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         TCommand command,
         CancellationToken cancellationToken,
         Action? onRedirect,
-        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline retryDeadline = default)
+        bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline retryDeadline = default,
+        RespireConnection? initialConnection = null)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -2477,12 +2478,33 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         ClusterRouter.DiscoveryRound? discovery = null;
         // Keep the budget across sends; successful selection does not imply the final route accepts the command.
         var discoveryPending = false;
+        if (_core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+            retryDeadline = CreateCircuitDeadline(retryDeadline);
+        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, retryDeadline, _core.Options.CommandTimeout);
         try
         {
-            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
+            if (initialConnection is null && cluster.ShouldBacklog(slot, readFrom))
+            {
+                return await SendBackloggedTrackedClusterAsync(operation, cluster, command, cancellationToken,
+                    slot, readFrom, onRedirect, track, observation, retryDeadline).ConfigureAwait(false);
+            }
+            RespireConnection connection;
+            try
+            {
+                connection = initialConnection
+                    ?? await cluster.GetReadConnectionAsync(slot, readFrom, backlogAcquisition.Token, observation).ConfigureAwait(false);
+            }
+            catch (RespireConnectionException error) when (initialConnection is null
+                && error is not RespireReconnectLimitException && cluster.ShouldBacklog(slot, readFrom))
+            {
+                return await SendBackloggedTrackedClusterAsync(operation, cluster, command, cancellationToken,
+                    slot, readFrom, onRedirect, track, observation, retryDeadline).ConfigureAwait(false);
+            }
             var sendAsking = false;
             for (var attempt = 0; ; attempt++)
             {
+                backlogAcquisition.CheckDeadline(operation, _core);
+                backlogAcquisition.Dispose();
                 RespValue response;
                 try
                 {
@@ -2498,8 +2520,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                     onRedirect?.Invoke();
                     continue;
@@ -2523,12 +2545,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: true, attempt, new(connection.Host, connection.Port));
                 else observation.Handled(error);
                 discoveryPending = true;
-                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, observation, preferredZone)
+                connection = await cluster.GetRedirectConnectionAsync(error, connection, backlogAcquisition.Token, slot, discovery, observation, preferredZone)
                     .ConfigureAwait(false);
                 if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                        connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                 }
                 discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -2538,9 +2560,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         catch (Exception error)
         {
             discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
+            if (error is OperationCanceledException canceled)
+            {
+                if (backlogAcquisition.IsCallerCancellation(canceled))
+                    throw new OperationCanceledException(canceled.Message, canceled, cancellationToken);
+                if (backlogAcquisition.IsDeadlineCancellation(canceled))
+                    throw backlogAcquisition.CreateTimeout(operation, _core, cause: canceled);
+            }
             throw;
         }
-        finally { discovery?.Finish(); }
+        finally { backlogAcquisition.Dispose(); discovery?.Finish(); }
     }
 
     private ValueTask<RespValue> SendTrackedOnConnectionAsync<TCommand>(
@@ -3070,20 +3099,20 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     internal ValueTask<RespValue> ResumeRetiredClusterSendAsync<TCommand>(
         string operation, TCommand command, RespireConnection source,
         RespireConnectionRetiredException error, RespireReadFrom readFrom, CancellationToken cancellationToken,
-        Action<Exception>? onRetry = null, RespireTelemetry.ErrorObservation observation = default)
+        Action<Exception>? onRetry = null, RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
         => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
             initialConnection: source, firstAttempt: 1, initialRetirement: error, readFromOverride: readFrom,
-            cursorReadFromOverride: EffectiveReadFrom, onRetry: onRetry, observation: observation);
+            cursorReadFromOverride: EffectiveReadFrom, onRetry: onRetry, observation: observation, retryDeadline: deadline);
 
     internal ValueTask<RespValue> ResumeRejectedClusterSendAsync<TCommand>(
         string operation, TCommand command, RespireConnection source,
         RespireServerException error, RespireReadFrom readFrom, CancellationToken cancellationToken,
-        Action<Exception>? onRetry = null, RespireTelemetry.ErrorObservation observation = default)
+        Action<Exception>? onRetry = null, RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
         => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
             initialConnection: source, firstAttempt: 1, initialRejection: error, readFromOverride: readFrom,
-            cursorReadFromOverride: EffectiveReadFrom, onRetry: onRetry, observation: observation);
+            cursorReadFromOverride: EffectiveReadFrom, onRetry: onRetry, observation: observation, retryDeadline: deadline);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -3127,9 +3156,36 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var discoveryPending = false;
         var ownsObservation = observeErrors && observation.IsEmpty;
         if (ownsObservation) observation = RespireTelemetry.ErrorObservation.Rent(force: true);
+        if (_core.Options.BacklogPolicy == RespireBacklogPolicy.Queue && command is not IStreamingRespCommand)
+            retryDeadline = CreateCircuitDeadline(retryDeadline);
+        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, retryDeadline, _core.Options.CommandTimeout);
         try
         {
             var connection = initialConnection;
+            if (connection is null && !cursorContinuation && command is not IStreamingRespCommand
+                && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                && cluster.ShouldBacklog(slot, readFrom))
+            {
+                return await SendBackloggedClusterAsync(operation, cluster, command, cancellationToken, slot, readFrom,
+                    storedProcedureName, noRedirect, firstAttempt, initialRetirement, initialRejection,
+                    allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
+                    cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
+                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+            }
+            if (initialRetirement is not null && !cursorContinuation && connection is not null
+                && cluster.ShouldBacklog(slot, readFrom) && !cluster.IsBacklogDraining(slot))
+            {
+                // The ready path proved this command unwritten before handing it back.
+                // Join the bounded queue if its replacement is still unavailable.
+                cluster.RecordRejection(ref discovery, connection, initialRetirement);
+                RecordRetryError(initialRetirement, Math.Max(0, errorAttempts - 1), scriptTelemetry, onRetry,
+                    observation, new(connection.Host, connection.Port));
+                return await SendBackloggedClusterAsync(operation, cluster, command, cancellationToken, slot, readFrom,
+                    storedProcedureName, noRedirect, firstAttempt, null, initialRejection,
+                    allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
+                    cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
+                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+            }
             if (connection is not null) lastEndpoint = new(connection.Host, connection.Port);
             if (connection is null && slot is { } cursorSlot && readFrom != RespireReadFrom.Primary
                 && command.ReadKind == ReadCommandKind.CursorRead)
@@ -3137,16 +3193,29 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 connection = await _core.ReadRouter.Cursors.GetClusterConnectionAsync(
                     cluster, cursorSlot, readFrom, cursorAffinity,
                     cursorAffinity is null && CursorCommandMetadata.IsCursorContinuation(in command),
-                    cancellationToken, observation).ConfigureAwait(false);
+                    backlogAcquisition.Token, observation).ConfigureAwait(false);
             }
-            connection ??= await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
+            try
+            {
+                connection ??= await cluster.GetReadConnectionAsync(slot, readFrom, backlogAcquisition.Token, observation).ConfigureAwait(false);
+            }
+            catch (RespireConnectionException error) when (initialConnection is null && !cursorContinuation
+                && command is not IStreamingRespCommand && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                && error is not RespireReconnectLimitException && cluster.ShouldBacklog(slot, readFrom))
+            {
+                return await SendBackloggedClusterAsync(operation, cluster, command, cancellationToken, slot, readFrom,
+                    storedProcedureName, noRedirect, firstAttempt, initialRetirement, initialRejection,
+                    allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
+                    cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
+                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+            }
             if (initialRetirement is not null)
             {
                 if (cursorContinuation) throw initialRetirement;
                 cluster.RecordRejection(ref discovery, connection, initialRetirement);
                 RecordRetryError(initialRetirement, Math.Max(0, errorAttempts - 1), scriptTelemetry, onRetry, observation, new(connection.Host, connection.Port));
                 discoveryPending = true;
-                connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                connection = await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                 discoveryPending = false;
             }
             var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
@@ -3156,7 +3225,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             {
                 RecordRetryError(initialRejection, Math.Max(0, errorAttempts - 1), scriptTelemetry, onRetry, observation, new(connection.Host, connection.Port));
                 connection = await cluster.GetOtherRoleReadConnectionAsync(
-                    slot!.Value, fallback, cancellationToken, discovery, observation).ConfigureAwait(false);
+                    slot!.Value, fallback, backlogAcquisition.Token, discovery, observation).ConfigureAwait(false);
                 readFrom = fallback.RecoveryPolicy;
             }
             else if (initialRejection is not null)
@@ -3169,11 +3238,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 RecordRetryError(initialRejection, Math.Max(0, errorAttempts - 1), scriptTelemetry, onRetry, observation, new(connection.Host, connection.Port));
                 discoveryPending = true;
                 connection = await cluster.GetRedirectConnectionAsync(
-                    initialRejection, connection, cancellationToken, slot, discovery, observation, preferredZone).ConfigureAwait(false);
+                    initialRejection, connection, backlogAcquisition.Token, slot, discovery, observation, preferredZone).ConfigureAwait(false);
                 if (initialRejection.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                        connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                 }
                 discoveryPending = false;
             }
@@ -3185,6 +3254,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             var sendAsking = initialRejection?.Code == RespireErrorCodes.Ask;
             for (var attempt = firstAttempt; ; attempt++)
             {
+                backlogAcquisition.CheckDeadline(operation, _core);
+                backlogAcquisition.Dispose();
                 if (hedgeOriginalRoute is not null)
                 {
                     if (!isHedge) hedgeOriginalRoute.Connection = connection;
@@ -3229,8 +3300,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -3249,12 +3320,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     cluster.RecordRejection(ref discovery, connection, error);
                     RecordRetryError(error, errorAttempts++, scriptTelemetry, onRetry, observation, new(connection.Host, connection.Port));
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, observation, preferredZone)
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, backlogAcquisition.Token, slot, discovery, observation, preferredZone)
                         .ConfigureAwait(false);
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                     }
                     discoveryPending = false;
 
@@ -3284,13 +3355,20 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     // surfaces MOVED and ASK, so it does not suppress this availability retry.
                     RecordRetryError(error, errorAttempts++, scriptTelemetry, onRetry, observation, new(connection.Host, connection.Port));
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, fallback, cancellationToken, discovery, observation).ConfigureAwait(false);
+                        slot!.Value, fallback, backlogAcquisition.Token, discovery, observation).ConfigureAwait(false);
                     readFrom = fallback.RecoveryPolicy;
                 }
             }
         }
         catch (Exception error)
         {
+            if (error is OperationCanceledException canceled)
+            {
+                if (backlogAcquisition.IsCallerCancellation(canceled))
+                    error = new OperationCanceledException(canceled.Message, canceled, cancellationToken);
+                else if (backlogAcquisition.IsDeadlineCancellation(canceled))
+                    error = backlogAcquisition.CreateTimeout(operation, _core, cause: canceled);
+            }
             discovery?.RecordCommandFailure(error, discoveryPending, slot, noRedirect, cancellationToken);
             if (discardServerErrors && RespireException.GetDefinitiveServerError(error) is { } serverError
                 && !ClusterRouter.CanRecover(serverError, slot))
@@ -3300,10 +3378,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 return default;
             }
             if (observeErrors) observation.Final(error);
+            ExceptionDispatchInfo.Throw(error);
             throw;
         }
         finally
         {
+            backlogAcquisition.Dispose();
             if (ownsObservation) observation.Dispose();
             if (!isHedge) hedgeOriginalRoute?.Complete();
             discovery?.Finish();
@@ -3613,25 +3693,49 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName,
-        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default)
+        bool allowReadFrom = false, RespireTelemetry.ErrorObservation observation = default,
+        RespireConnection? initialConnection = null, CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         var delegatedErrors = false;
         var mayCloseWithoutReply = RespireCommand.MayCloseWithoutReply(operation);
+        if (mayCloseWithoutReply && _core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+            deadline = CreateCircuitDeadline(deadline);
+        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
         try
         {
             if (mayCloseWithoutReply)
             {
                 var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-                var connection = await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null, observation: observation).ConfigureAwait(false);
+                if (initialConnection is null && cluster.ShouldBacklog(slot))
+                {
+                    await SendBackloggedClosingClusterAsync(operation, cluster, command, cancellationToken,
+                        slot, storedProcedureName, allowReadFrom, observation, deadline).ConfigureAwait(false);
+                    return;
+                }
+                RespireConnection connection;
+                try
+                {
+                    connection = initialConnection ?? await cluster.GetConnectionAsync(slot, backlogAcquisition.Token,
+                        discovery: null, observation: observation).ConfigureAwait(false);
+                }
+                catch (RespireConnectionException error) when (initialConnection is null
+                    && error is not RespireReconnectLimitException && cluster.ShouldBacklog(slot))
+                {
+                    await SendBackloggedClosingClusterAsync(operation, cluster, command, cancellationToken,
+                        slot, storedProcedureName, allowReadFrom, observation, deadline).ConfigureAwait(false);
+                    return;
+                }
                 for (var attempt = 0; ; attempt++)
                 {
+                    backlogAcquisition.CheckDeadline(operation, _core);
+                    backlogAcquisition.Dispose();
                     try
                     {
                         await SendFireAndForgetOnConnectionAsync(
-                                operation, connection, command, cancellationToken, storedProcedureName, observation)
+                                operation, connection, command, cancellationToken, storedProcedureName, observation, deadline)
                             .ConfigureAwait(false);
                         return;
                     }
@@ -3640,7 +3744,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         cluster.RecordRejection(ref discovery, connection, retirement);
                         observation.Handled(retirement);
                         discoveryPending = true;
-                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery, observation)
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, backlogAcquisition.Token, discovery, observation)
                             .ConfigureAwait(false);
                         discoveryPending = false;
                     }
@@ -3658,10 +3762,18 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         catch (Exception error)
         {
             discovery?.RecordCommandFailure(error, discoveryPending, cancellationToken);
+            if (error is OperationCanceledException canceled)
+            {
+                if (backlogAcquisition.IsCallerCancellation(canceled))
+                    error = new OperationCanceledException(canceled.Message, canceled, cancellationToken);
+                else if (backlogAcquisition.IsDeadlineCancellation(canceled))
+                    error = backlogAcquisition.CreateTimeout(operation, _core, cause: canceled);
+            }
             if (!delegatedErrors) observation.Final(error);
+            ExceptionDispatchInfo.Capture(error).Throw();
             throw;
         }
-        finally { discovery?.Finish(); }
+        finally { backlogAcquisition.Dispose(); discovery?.Finish(); }
     }
 
     private async ValueTask SendClusterWideFireAndForgetAsync<TCommand>(
@@ -3867,7 +3979,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, RespireConnection? initialConnection = null,
+        CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -3875,17 +3988,38 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _core.Options.ClientAvailabilityZone : null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
+        if (_core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+            deadline = CreateCircuitDeadline(deadline);
+        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
         try
         {
-            var connection = await cluster.GetReadConnectionAsync(slot, readFrom, cancellationToken, observation).ConfigureAwait(false);
+            if (initialConnection is null && cluster.ShouldBacklog(slot, readFrom))
+            {
+                return await SendBackloggedClusterBulkStreamAsync(operation, cluster, command, cancellationToken,
+                    slot, readFrom, observation, deadline).ConfigureAwait(false);
+            }
+            RespireConnection connection;
+            try
+            {
+                connection = initialConnection ?? await cluster.GetReadConnectionAsync(slot, readFrom,
+                    backlogAcquisition.Token, observation).ConfigureAwait(false);
+            }
+            catch (RespireConnectionException error) when (initialConnection is null
+                && error is not RespireReconnectLimitException && cluster.ShouldBacklog(slot, readFrom))
+            {
+                return await SendBackloggedClusterBulkStreamAsync(operation, cluster, command, cancellationToken,
+                    slot, readFrom, observation, deadline).ConfigureAwait(false);
+            }
             var sendAsking = false;
             var fallback = new ReadFallbackPolicy.RoleFallback(readFrom);
             for (var attempt = 0; ; attempt++)
             {
+                backlogAcquisition.CheckDeadline(operation, _core);
+                backlogAcquisition.Dispose();
                 try
                 {
                     var stream = await SendBulkStreamOnConnectionAsync(
-                        operation, connection, command, cancellationToken, sendAsking, observation).ConfigureAwait(false);
+                        operation, connection, command, cancellationToken, sendAsking, observation, deadline).ConfigureAwait(false);
                     return stream;
                 }
                 catch (RespireConnectionRetiredException retirement)
@@ -3897,8 +4031,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = sendAsking
-                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                        ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -3909,12 +4043,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     cluster.RecordRejection(ref discovery, connection, error);
                     observation.Handled(error);
                     discoveryPending = true;
-                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery, observation, preferredZone)
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, backlogAcquisition.Token, slot, discovery, observation, preferredZone)
                         .ConfigureAwait(false);
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, cancellationToken, discovery, observation, preferredZone).ConfigureAwait(false);
+                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
                     }
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -3924,7 +4058,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 {
                     observation.Handled(error);
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
-                        slot!.Value, fallback, cancellationToken, discovery, observation).ConfigureAwait(false);
+                        slot!.Value, fallback, backlogAcquisition.Token, discovery, observation).ConfigureAwait(false);
                     readFrom = fallback.RecoveryPolicy;
                 }
             }
@@ -3932,9 +4066,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         catch (Exception error)
         {
             discovery?.RecordCommandFailure(error, discoveryPending, slot, callerToken: cancellationToken);
+            if (error is OperationCanceledException canceled)
+            {
+                if (backlogAcquisition.IsCallerCancellation(canceled))
+                    throw new OperationCanceledException(canceled.Message, canceled, cancellationToken);
+                if (backlogAcquisition.IsDeadlineCancellation(canceled))
+                    throw backlogAcquisition.CreateTimeout(operation, _core, cause: canceled);
+            }
             throw;
         }
-        finally { discovery?.Finish(); }
+        finally { backlogAcquisition.Dispose(); discovery?.Finish(); }
     }
 
     private ValueTask<Stream?> SendBulkStreamOnConnectionAsync<TCommand>(

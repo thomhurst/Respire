@@ -30,6 +30,8 @@ public sealed partial class RespireClient
         where TSend : struct, IClusterReadySend<TResult>
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        if (cluster.IsBacklogDraining(slot))
+            return SendOnReadyClusterSlowAsync<TCommand, TResult, TSend>(operation, cluster, command, cancellationToken, sender, observation);
         RespireConnection? connection;
         // Acquisition throws only for cancellation or disposal, and both persist. The async
         // path acquires again, then observes and publishes that failure exactly as before.
@@ -37,7 +39,7 @@ public sealed partial class RespireClient
         // connection and advanced no round-robin; repeating it has no side effects.
         try { connection = cluster.TryAcquireReadyConnection(slot, cancellationToken); }
         catch (Exception) { connection = null; }
-        if (connection is null)
+        if (connection is null || cluster.IsBacklogDraining(slot))
             return SendOnReadyClusterSlowAsync<TCommand, TResult, TSend>(operation, cluster, command, cancellationToken, sender, observation);
 
         ValueTask<TResult> response;
@@ -97,7 +99,7 @@ public sealed partial class RespireClient
         try
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-            var connection = cluster.TryAcquireReadyConnection(slot, cancellationToken);
+            var connection = cluster.ShouldBacklog(slot) ? null : cluster.TryAcquireReadyConnection(slot, cancellationToken);
             RespValue response;
             if (connection is null)
             {

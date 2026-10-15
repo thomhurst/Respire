@@ -109,9 +109,17 @@ pending entries. Without an explicit policy, failed discovery rounds use Sentine
 backoff. Discovery timeouts propagate to the waiting head. The command's original deadline
 still bounds its entire wait and execution.
 
-This backlog covers initialized standalone and Sentinel primary command connections. Cluster
-integration is tracked in [#1735](https://github.com/thomhurst/Respire/issues/1735), and replica-read
-routing in [#1736](https://github.com/thomhurst/Respire/issues/1736). Initial connection setup, dedicated
+Cluster clients also queue unsent multiplexed commands after initialization. Each hash slot has
+its own FIFO and `BacklogCapacity` limit; unkeyed commands share a separate queue. A batch is
+grouped by slot, and each group occupies one entry. An unwatched transaction occupies one entry
+for its slot. Healthy slots continue independently while another slot recovers. Each queued head
+reselects the current owner and read policy before dispatch, so an owner change does not leave
+work waiting on the retired generation. Strict replica reads remain on replicas; primary fallback
+is allowed only by the configured read policy. Tracked reads retain their tracking prelude and
+mutations retain their cache fences. Circuits still govern acquisition and dispatch.
+
+Standalone/Sentinel replica routing is tracked in [#1736](https://github.com/thomhurst/Respire/issues/1736).
+Initial connection setup, dedicated
 connections, watched transactions, import sessions and server-local cursor continuations do not
 join this backlog. The specialized `Locks` expiry-update and release paths also retain their
 existing acquisition and recovery rules and have no ordering guarantee relative to queued
@@ -121,7 +129,7 @@ selected. Lock acquisition (`SET NX PX`) and owner-token reads use ordinary queu
 Other behavior, with or without a reconnect policy:
 
 - A command already accepted by a failed connection can still fail while replacement proceeds.
-- Operations outside the primary backlog, or with `FailFast`, can fail during replacement.
+- Operations outside the reconnect backlog, or with `FailFast`, can fail during replacement.
 - Each connection attempt keeps its `ConnectTimeout`. The policy does not retry the client's initial connection.
 - Command deadlines and caller cancellation bound their own waits. Cancelling one caller does not cancel shared recovery.
 - Disposing the client cancels scheduled delays and waits for recovery to finish.

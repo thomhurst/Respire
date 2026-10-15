@@ -2063,6 +2063,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Caller holds _nodesGate, including topology publication.
     private void SetSeedLocked(RespireConnectionMultiplexer node)
     {
+        // Initialization may succeed through a fallback seed while the configured first
+        // endpoint has never connected. Keep that history across seed retirement.
+        if (node.IsInitialized) Volatile.Write(ref _hasBacklogConnection, 1);
         var current = _identities.GetCurrent(node);
         if (!_identities.IsActive(current) || current.IsRetired)
             current = _masters.FirstOrDefault() ?? _identities.GetOrCreate(_seeds[0]);

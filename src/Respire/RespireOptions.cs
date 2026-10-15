@@ -313,12 +313,14 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
-    /// <summary>Admission policy during standalone or Sentinel primary recovery. Defaults to bounded FIFO waiting.</summary>
-    /// <remarks>Does not replay accepted commands or watched transactions. Cluster and replica-read routes
-    /// retain their existing recovery behavior.</remarks>
+    /// <summary>Admission policy during standalone, Sentinel primary and Cluster recovery. Defaults to bounded FIFO waiting.</summary>
+    /// <remarks>Cluster queues preserve slot ordering and reselect the current owner and configured read policy.
+    /// Does not replay accepted commands or watched transactions. Dedicated connections and standalone/Sentinel
+    /// replica routes retain their existing recovery behavior.</remarks>
     public RespireBacklogPolicy BacklogPolicy { get; init; } = RespireBacklogPolicy.Queue;
 
-    /// <summary>Maximum waiting operations per primary recovery backlog. A batch or transaction counts as one.
+    /// <summary>Maximum waiting operations per standalone endpoint, Sentinel primary or Cluster slot during reconnect.
+    /// A batch slot group or unwatched transaction counts as one.
     /// Defaults to 1024; overflow fails with <see cref="RespireConnectionException"/>.</summary>
     public int BacklogCapacity { get; init; } = 1024;
     internal string? ReconnectTelemetryScope { get; init; }
