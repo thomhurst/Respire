@@ -73,6 +73,33 @@ Respire.Streaming.RespireJobQueue<T>.PauseGroupAsync(string! group, System.Threa
 Respire.Streaming.RespireJobQueue<T>.ResumeGroupAsync(string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobQueue<T>.Enqueue(Respire.RespireTransactionBase! transaction, string! jobId, T payload, System.TimeSpan? deduplicationWindow = null) -> Respire.RespirePending<Respire.Streaming.RespireJobEnqueueResult>!
 Respire.Streaming.RespireJobQueue<T>.EnqueueScheduled(Respire.RespireTransactionBase! transaction, string! jobId, T payload, Respire.Streaming.RespireJobEnqueueOptions! options) -> Respire.RespirePending<Respire.Streaming.RespireJobEnqueueResult>!
+Respire.Streaming.RespireJobEvent.BatchKey.get -> string?
+Respire.Streaming.RespireJobBatchCallback<T>
+Respire.Streaming.RespireJobBatchCallback<T>.RespireJobBatchCallback(string! id, T payload) -> void
+Respire.Streaming.RespireJobBatchCallback<T>.Id.get -> string!
+Respire.Streaming.RespireJobBatchCallback<T>.Payload.get -> T
+Respire.Streaming.RespireJobBatchOptions<T>
+Respire.Streaming.RespireJobBatchOptions<T>.RespireJobBatchOptions() -> void
+Respire.Streaming.RespireJobBatchOptions<T>.OnSuccess.get -> Respire.Streaming.RespireJobBatchCallback<T>?
+Respire.Streaming.RespireJobBatchOptions<T>.OnSuccess.init -> void
+Respire.Streaming.RespireJobBatchOptions<T>.OnFailure.get -> Respire.Streaming.RespireJobBatchCallback<T>?
+Respire.Streaming.RespireJobBatchOptions<T>.OnFailure.init -> void
+Respire.Streaming.RespireJobBatchOptions<T>.OnComplete.get -> Respire.Streaming.RespireJobBatchCallback<T>?
+Respire.Streaming.RespireJobBatchOptions<T>.OnComplete.init -> void
+Respire.Streaming.RespireJobBatchStatus
+Respire.Streaming.RespireJobBatchStatus.Pending.get -> int
+Respire.Streaming.RespireJobBatchStatus.Succeeded.get -> int
+Respire.Streaming.RespireJobBatchStatus.Failed.get -> int
+Respire.Streaming.RespireJobBatchStatus.Cancelled.get -> int
+Respire.Streaming.RespireJobBatchStatus.IsSealed.get -> bool
+Respire.Streaming.RespireJobBatchStatus.CancellationRequested.get -> bool
+Respire.Streaming.RespireJobBatchStatus.IsCompleted.get -> bool
+Respire.Streaming.RespireJobQueue<T>.CreateBatchAsync(Respire.Streaming.RespireJobBatchOptions<T>? options = null, string? batchId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+Respire.Streaming.RespireJobQueue<T>.AddBatchJobAsync(string! batchId, string! jobId, T payload, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.SealBatchAsync(string! batchId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireJobQueue<T>.CancelBatchAsync(string! batchId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireJobQueue<T>.GetBatchStatusAsync(string! batchId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobBatchStatus?>
+Respire.Streaming.RespireJobQueue<T>.RemoveBatchAsync(string! batchId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJob<T>.Group.get -> string?
 Respire.Streaming.RespireJob<T>.Group.init -> void
 Respire.Streaming.RespireJobEnqueueOptions.Group.get -> string?

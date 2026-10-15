@@ -81,7 +81,7 @@ internal static class JobQueueFlows
             for _, id in ipairs(flowEvents) do redis.call('XDEL', KEYS[2], id) end
             if flowSaved then redis.call('SET', KEYS[4], originalFlow) end
         end
-        if KEYS[4] then
+        if KEYS[4] and not isBatch then
             activated, failedParents, flowAppends, flowEvents = {}, {}, {}, {}
             originalFlow = redis.call('GET', KEYS[4])
             if not originalFlow then return redis.error_reply('ERR missing job flow state') end

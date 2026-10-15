@@ -123,7 +123,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   queue-wide pause/resume and shared fixed-window admission limits, per-group concurrency leases,
   GCRA rate limits and pause/resume,
   fenced progress and bounded per-job logs, retained completion events, enqueue-to-processing trace links, nested
-  parent/child flows with retained results and failure policies, and durable
+  parent/child flows with retained results and failure policies, flat batches with atomic
+  success/failure/completion callback publication, progress counts and cooperative cancellation, and durable
   UTC cron/fixed-interval schedules with cross-instance tick deduplication and missed-tick policies.
 - [Reliable message queues](guides/reliable-queues.md) with per-delivery visibility timeouts,
   receipt-fenced ACK, delayed NACK, delivery limits, dead letters and optional send deduplication.
@@ -286,7 +287,7 @@ They track remaining work, not release commitments.
   release naming, package compatibility validation, and the remaining Orleans and
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
-  job groups and queue controls, batch callbacks,
+  job groups and queue controls, batch dashboard progress,
   client-side encryption, coordination APIs, and testing support.
   [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),

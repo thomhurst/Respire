@@ -16,6 +16,7 @@ public sealed class RespireJobEvent
             ? value : null;
         Reason = entry.GetString("reason");
         FlowKey = entry.GetString("flow_key");
+        BatchKey = entry.GetString("batch_key");
     }
 
     /// <summary>The event stream ID to persist after processing this event.</summary>
@@ -26,7 +27,7 @@ public sealed class RespireJobEvent
     public RespireStreamId EntryId { get; }
     /// <summary>The fenced delivery count, or zero for queue controls or a flow parent failed without execution.</summary>
     public long Attempt { get; }
-    /// <summary>One of progress, completed, dead-letter, paused, or resumed.</summary>
+    /// <summary>One of progress, completed, dead-letter, cancelled, paused, or resumed.</summary>
     public string Kind { get; }
     /// <summary>Progress from 0 through 100, or null for terminal events.</summary>
     public int? Percent { get; }
@@ -34,4 +35,6 @@ public sealed class RespireJobEvent
     public string? Reason { get; }
     /// <summary>The logical retained flow-state key, or null for an ordinary job or progress event.</summary>
     public string? FlowKey { get; }
+    /// <summary>The logical retained batch-state key for a member's terminal event, or null otherwise.</summary>
+    public string? BatchKey { get; }
 }
