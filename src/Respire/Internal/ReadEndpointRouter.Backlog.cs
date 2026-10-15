@@ -6,7 +6,10 @@ namespace Respire.Internal;
 internal sealed partial class ReadEndpointRouter
 {
     private RespireConnectionMultiplexer.ReconnectBacklog? _backlog;
+    // Recovery eligibility belongs to this topology, across all views and Sentinel generations.
     private int _hasSelectedConnection;
+
+    internal sealed class BacklogSelectionRequiredException : Exception { }
 
     internal bool IsBacklogDraining => Volatile.Read(ref _backlog)?.IsRunning == true;
     private bool CanQueue => core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
@@ -18,12 +21,15 @@ internal sealed partial class ReadEndpointRouter
     {
         ThrowIfDisposed();
         token.ThrowIfCancellationRequested();
+        ThrowIfNoConfiguredReplica(readFrom);
         if (CanQueue && IsBacklogDraining) return null;
         try
         {
-            var connection = await SelectBacklogHeadAsync(readFrom, token, observation, cursorRead, affinity).ConfigureAwait(false);
+            var connection = await SelectBacklogHeadAsync(readFrom, token, observation, cursorRead, affinity,
+                readyOnly: CanQueue).ConfigureAwait(false);
             return CanQueue && IsBacklogDraining ? null : connection;
         }
+        catch (BacklogSelectionRequiredException) { return null; }
         catch (Exception error) when (CanQueue && IsUnavailable(error, token))
         {
             ThrowIfTerminal(readFrom, error);
@@ -35,13 +41,22 @@ internal sealed partial class ReadEndpointRouter
         Func<RespireConnection, CancellationToken, ValueTask<T>> dispatch, CancellationToken token,
         RespireTelemetry.ErrorObservation observation, bool cursorRead = false, ReadAffinity? affinity = null)
     {
+        ThrowIfNoConfiguredReplica(readFrom);
+        // Dispatch only sends fresh cursors here. Selection may have pinned one before a
+        // concurrent drain won admission; no server has issued that cursor yet.
+        if (cursorRead && affinity is not null)
+        {
+            affinity.Replica = null;
+            affinity.Primary = null;
+        }
         RespireConnectionMultiplexer.ReconnectBacklog backlog;
         lock (_entriesGate)
         {
             ThrowIfDisposed();
             backlog = _backlog ??= new(core.Options.BacklogCapacity, _lifetime.Token,
                 ThrowIfDisposed, static () => null,
-                static _ => throw new InvalidOperationException("A read backlog head must supply its read policy."));
+                static _ => throw new InvalidOperationException("A read backlog head must supply its read policy."),
+                failAllOnTerminal: false);
         }
         return backlog.EnqueueAsync(dispatch, token, async wait =>
         {
@@ -62,17 +77,19 @@ internal sealed partial class ReadEndpointRouter
     }
 
     private async ValueTask<RespireConnection> SelectBacklogHeadAsync(RespireReadFrom readFrom,
-        CancellationToken token, RespireTelemetry.ErrorObservation observation, bool cursorRead, ReadAffinity? affinity)
+        CancellationToken token, RespireTelemetry.ErrorObservation observation, bool cursorRead, ReadAffinity? affinity,
+        bool readyOnly = false)
     {
         var connection = cursorRead
-            ? await GetCursorConnectionAsync(readFrom, affinity, false, token, observation).ConfigureAwait(false)
-            : await GetConnectionAsync(readFrom, token, observation).ConfigureAwait(false);
+            ? await GetCursorConnectionAsync(readFrom, affinity, false, token, observation, readyOnly).ConfigureAwait(false)
+            : await GetConnectionAsync(readFrom, token, observation, readyOnly).ConfigureAwait(false);
         if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
         return connection;
     }
 
     private void ThrowIfTerminal(RespireReadFrom readFrom, Exception error)
     {
+        ThrowIfNoConfiguredReplica(readFrom);
         // Cooldown and Nearest probe throttling may hide a terminal candidate error on
         // the next pass. Inspect current recovery owners without starting another attempt.
         // Sentinel can still replace a primary generation through discovery.
@@ -82,6 +99,8 @@ internal sealed partial class ReadEndpointRouter
         if (endpoints.Length == 0 && readFrom == RespireReadFrom.Replica) return;
         foreach (var endpoint in endpoints)
             if (!_entries.TryGetValue(endpoint, out var entry) || !IsExhausted(entry.RecoveryOwner)) return;
+        // A concurrent topology publication makes this exhaustion snapshot inconclusive.
+        // The head retries against that publication instead of failing on retired owners.
         if (!ReferenceEquals(endpoints, Volatile.Read(ref _replicas))) return;
         throw TerminalFailure(error);
 
@@ -91,6 +110,12 @@ internal sealed partial class ReadEndpointRouter
             try { owner.ThrowIfRecoveryExhausted(); return false; }
             catch (RespireReconnectLimitException) { return true; }
         }
+    }
+
+    private void ThrowIfNoConfiguredReplica(RespireReadFrom readFrom)
+    {
+        if (readFrom == RespireReadFrom.Replica && core.Sentinel is null && Volatile.Read(ref _replicas).Length == 0)
+            throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
     }
 
     private static RespireReconnectLimitException TerminalFailure(Exception error)

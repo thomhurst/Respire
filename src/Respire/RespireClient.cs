@@ -2835,7 +2835,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             : await SelectReplicaForDispatchAsync(operation, cancellationToken, readDeadline, observation, cursorRead, affinity).ConfigureAwait(false);
         if (connection is null)
         {
-            var snapshot = new BacklogCommand<TCommand>(command);
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
             return await RunReplicaBacklogAsync(operation, cancellationToken, readDeadline,
                 (ready, deadline) => SendOnConnectionAsync(operation, ready, snapshot, cancellationToken,
                     commandDeadline: deadline, allowStreamingConnectionReroute: !pinned, observation: observation),
@@ -3076,7 +3076,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, readDeadline, observation).ConfigureAwait(false);
                     if (connection is null)
                     {
-                        var snapshot = new BacklogCommand<TCommand>(command);
+                        var snapshot = new BacklogCommand<TCommand>(command, operation);
                         return await RunReplicaBacklogAsync(operation, cancellationToken, readDeadline,
                             (ready, deadline) => SendOnConnectionAsync(operation, ready,
                                 new MutationCommand<BacklogCommand<TCommand>>(snapshot, mutationFence), cancellationToken,
@@ -3699,7 +3699,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, deadline, observation).ConfigureAwait(false);
         if (connection is null)
         {
-            var snapshot = new BacklogCommand<TCommand>(command);
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
             await RunReplicaBacklogAsync(operation, cancellationToken, deadline, async (ready, originalDeadline) =>
             {
                 await SendFireAndForgetOnConnectionAsync(operation, ready, snapshot, cancellationToken,
@@ -4001,7 +4001,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, deadline, observation).ConfigureAwait(false);
         if (connection is null)
         {
-            var snapshot = new BacklogCommand<TCommand>(command);
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
             return await RunReplicaBacklogAsync(operation, cancellationToken, deadline,
                 (ready, originalDeadline) => SendBulkStreamOnConnectionAsync(operation, ready, snapshot,
                     cancellationToken, observation: observation, commandDeadline: originalDeadline), observation).ConfigureAwait(false);

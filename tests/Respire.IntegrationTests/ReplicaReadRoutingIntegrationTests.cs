@@ -188,6 +188,9 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
         {
             Endpoints = [fixture.DataEndpoints[0]],
             ReplicaEndpoints = [new("127.0.0.1", unavailable.Port)],
+            // This test asserts immediate selection failure. Queue mode now keeps a
+            // strict read pending after the preferred view successfully used the primary.
+            BacklogPolicy = RespireBacklogPolicy.FailFast,
         });
         await client.SetAsync("fallback-key", "available");
 

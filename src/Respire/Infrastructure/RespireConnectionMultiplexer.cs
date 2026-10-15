@@ -399,6 +399,20 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             ? GetSingleConnection()
             : GetConnection(Interlocked.Increment(ref _next));
 
+    // A ready-only read may yield to its bounded backlog before ROLE validation. Return
+    // the actual rotation ticket so that this handoff does not skip the unvalidated socket.
+    internal RespireConnection GetConnectionForReadSelection(string? preferredZone, out uint? rotation)
+    {
+        rotation = null;
+        if (_connections.Length == 1) return GetSingleConnection();
+        var start = Interlocked.Increment(ref _next);
+        rotation = start;
+        return GetConnection(start, preferredZone);
+    }
+
+    internal void RestoreReadSelectionRotation(uint rotation)
+        => Interlocked.CompareExchange(ref _next, unchecked(rotation - 1), rotation);
+
     // Diagnostics must not schedule reconnects or initialize an unused connection slot.
     internal RespireConnection? GetExistingHealthConnection()
     {

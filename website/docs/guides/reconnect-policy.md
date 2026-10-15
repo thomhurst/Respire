@@ -142,6 +142,8 @@ even if a ready connection becomes available; primary-only operations use their 
 An exhausted candidate does not prevent another eligible candidate from serving the read. When
 all eligible candidates report terminal exhaustion, the read fails. Initial acquisition failures,
 server-local cursor continuations and dedicated/blocking rentals retain their existing behavior.
+Strict `Replica` reads fail immediately when no standalone replicas are configured; only Sentinel
+discovery can populate an empty replica set during recovery.
 The backlog never replays an accepted read or an optional hedge. A streamed read releases the
 drain when its stream is returned; the consumer still owns reading and disposing that stream.
 

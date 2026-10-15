@@ -10,7 +10,7 @@ internal sealed partial class ReadEndpointRouter
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null)
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null, bool readyOnly = false)
     {
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
@@ -26,7 +26,7 @@ internal sealed partial class ReadEndpointRouter
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken, observation, attempt: attempt).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
@@ -40,7 +40,7 @@ internal sealed partial class ReadEndpointRouter
         }
 
         var endpoints = Volatile.Read(ref _replicas);
-        try { endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: primary is null).ConfigureAwait(false); }
+        try { endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: primary is null, readyOnly: readyOnly).ConfigureAwait(false); }
         catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
         {
             RecordCandidateFailure(observation, error);
@@ -48,91 +48,103 @@ internal sealed partial class ReadEndpointRouter
             lastError = ConnectionFailures.Combine(lastError, error);
         }
         var start = (uint)Interlocked.Increment(ref _nextReplica);
-        var best = new NearestReadSelection<Selection>(start, endpoints.Length + 1);
-        while (best.TryNext(out var index))
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Selection selection;
-            if (index == 0)
+            var best = new NearestReadSelection<Selection>(start, endpoints.Length + 1);
+            while (best.TryNext(out var index))
             {
-                if (primary is not { } selectedPrimary) continue;
-                // The round-robin primary socket can have a pending probe while a sibling is idle. With no
-                // idle sibling, keep that socket so its probe can still answer within the budget.
-                selection = NearestReadSelection.AvoidPendingProbe(selectedPrimary.Primary!, selectedPrimary.Connection, sampler)
-                    is { } idle ? selectedPrimary with { Connection = idle } : selectedPrimary;
-            }
-            else
-            {
-                if (attempt?.ContainsFailure(endpoints[index - 1]) == true) continue;
-                var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
-                if (entry is null || entry.IsCoolingDown) continue;
-                observation.UseEndpoint(entry.Endpoint, cancellationToken);
-                try
+                cancellationToken.ThrowIfCancellationRequested();
+                Selection selection;
+                if (index == 0)
                 {
-                    var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken).ConfigureAwait(false);
-                    if (connection is null) continue;
-                    selection = new(connection, entry, null);
+                    if (primary is not { } selectedPrimary) continue;
+                    // The round-robin primary socket can have a pending probe while a sibling is idle. With no
+                    // idle sibling, keep that socket so its probe can still answer within the budget.
+                    selection = NearestReadSelection.AvoidPendingProbe(selectedPrimary.Primary!, selectedPrimary.Connection, sampler)
+                        is { } idle ? selectedPrimary with { Connection = idle } : selectedPrimary;
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
+                else
                 {
-                    RecordCandidateFailure(observation, error, entry.Endpoint);
-                    lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, entry.Endpoint));
-                    TryRecordFailure(entry, error, nearest: true);
-                    continue;
+                    if (attempt?.ContainsFailure(endpoints[index - 1]) == true) continue;
+                    var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
+                    if (entry is null || entry.IsCoolingDown) continue;
+                    observation.UseEndpoint(entry.Endpoint, cancellationToken);
+                    try
+                    {
+                        var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken, readyOnly).ConfigureAwait(false);
+                        if (connection is null) continue;
+                        selection = new(connection, entry, null);
+                    }
+                    catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not (ObjectDisposedException or BacklogSelectionRequiredException))
+                    {
+                        RecordCandidateFailure(observation, error, entry.Endpoint);
+                        lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, entry.Endpoint));
+                        TryRecordFailure(entry, error, nearest: true);
+                        continue;
+                    }
+                }
+                if (!selection.Connection.IsAcceptingCommands) continue;
+                var latency = sampler.GetLatencyAsync(selection.Connection, default, probeDeadline: deadline);
+                if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
+                    best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
+            }
+            // Start every eligible probe before waiting so a fast later candidate is visible even
+            // when the first sample consumes the entire shared wait budget.
+            // The sampler owns shared probes. Only an admitted head may wait for their results.
+            if (readyOnly && best.HasPendingSamples) throw new BacklogSelectionRequiredException();
+            using var samplingWait = best.HasPendingSamples
+                ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
+            while (best.TryNextSample(out var pending))
+            {
+                var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken)
+                    .ConfigureAwait(false);
+                var candidate = pending.Candidate;
+                if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
+                    best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);
+            }
+            if (best.TryGet(out var selected))
+            {
+                if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
+                        ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
+                        : ReferenceEquals(selected.Primary, Core.Multiplexer))) return selected;
+                lastError ??= new RespireConnectionException("The read topology changed during selection.");
+            }
+            if (retry && Core.Sentinel is { } sentinel)
+            {
+                if (readyOnly) throw new BacklogSelectionRequiredException();
+                // A healthy cached candidate never waits for discovery. Once all candidates fail,
+                // join a pending/due refresh before the one bounded retry. The same endpoint can
+                // recover during that wait, so unchanged addresses do not suppress reselection.
+                try { await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false); }
+                catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+                {
+                    RecordCandidateFailure(observation, error);
+                    lastError = ConnectionFailures.Combine(lastError, error);
                 }
             }
-            if (!selection.Connection.IsAcceptingCommands) continue;
-            var latency = sampler.GetLatencyAsync(selection.Connection, default, probeDeadline: deadline);
-            if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
-                best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
-        }
-        // Start every eligible probe before waiting so a fast later candidate is visible even
-        // when the first sample consumes the entire shared wait budget.
-        using var samplingWait = best.HasPendingSamples
-            ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
-        while (best.TryNextSample(out var pending))
-        {
-            var latency = await NearestReadSelection.GetLatencyAsync(pending.Latency, samplingWait, cancellationToken)
-                .ConfigureAwait(false);
-            var candidate = pending.Candidate;
-            if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
-                best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);
-        }
-        if (best.TryGet(out var selected))
-        {
-            if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
-                    ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
-                    : ReferenceEquals(selected.Primary, Core.Multiplexer))) return selected;
-            lastError ??= new RespireConnectionException("The read topology changed during selection.");
-        }
-        if (retry && Core.Sentinel is { } sentinel)
-        {
-            // A healthy cached candidate never waits for discovery. Once all candidates fail,
-            // join a pending/due refresh before the one bounded retry. The same endpoint can
-            // recover during that wait, so unchanged addresses do not suppress reselection.
-            try { await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false); }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+            if (retry)
+                return await GetNearestAsync(cancellationToken, observation, retry: false, samplingDeadline: deadline,
+                    previousFailure: lastError, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+            if (attempt?.FirstFailure is { } original)
             {
-                RecordCandidateFailure(observation, error);
-                lastError = ConnectionFailures.Combine(lastError, error);
+                // Exclusions alone preserve the original exception. A later selection or
+                // discovery failure remains visible alongside that acquisition failure.
+                if (lastError is null || ReferenceEquals(lastError, original)) attempt.ThrowFirstFailure();
+                lastError = ConnectionFailures.Combine(original, lastError);
             }
+            throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
+                lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
         }
-        if (retry)
-            return await GetNearestAsync(cancellationToken, observation, retry: false, samplingDeadline: deadline,
-                previousFailure: lastError, attempt: attempt).ConfigureAwait(false);
-        if (attempt?.FirstFailure is { } original)
+        catch (BacklogSelectionRequiredException)
         {
-            // Exclusions alone preserve the original exception. A later selection or
-            // discovery failure remains visible alongside that acquisition failure.
-            if (lastError is null || ReferenceEquals(lastError, original)) attempt.ThrowFirstFailure();
-            lastError = ConnectionFailures.Combine(original, lastError);
+            // Handoff retries selection; keep its unused ticket unless a peer advanced it.
+            Interlocked.CompareExchange(ref _nextReplica, unchecked((int)start - 1), unchecked((int)start));
+            throw;
         }
-        throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
-            lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
     }
 
     private async ValueTask<RespireEndpoint[]> GetReplicaEndpointsAsync(CancellationToken cancellationToken,
-        bool waitForUnknown = true)
+        bool waitForUnknown = true, bool readyOnly = false)
     {
         var endpoints = Volatile.Read(ref _replicas);
         if (Core.Sentinel is { } sentinel && IsSentinelRefreshDue())
@@ -140,6 +152,7 @@ internal sealed partial class ReadEndpointRouter
             // Nearest can also serve its primary while the initial replica discovery runs.
             if (endpoints.Length == 0 && waitForUnknown)
             {
+                if (readyOnly) throw new BacklogSelectionRequiredException();
                 await RefreshSentinelReplicasAsync(sentinel, cancellationToken).ConfigureAwait(false);
                 endpoints = Volatile.Read(ref _replicas);
             }

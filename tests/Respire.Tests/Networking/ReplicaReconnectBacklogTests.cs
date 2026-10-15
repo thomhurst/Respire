@@ -175,6 +175,132 @@ public class ReplicaReconnectBacklogTests
     }
 
     [Test]
+    public async Task StrictReplicaWithNoConfiguredReplicasFailsAfterPrimaryFallback()
+    {
+        await using var primary = Server();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [],
+            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null,
+        });
+        // The public view API already rejects an empty configured set. Exercise the
+        // router boundary directly so its recovery gate cannot wait on a static empty set.
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.ReplicaPreferred, default, default);
+        var strict = router.SelectForDispatchAsync(RespireReadFrom.Replica, default, default).AsTask();
+        await Assert.That(async () => await strict.WaitAsync(Limit)).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(client.Core.ReadRouter.IsBacklogDraining).IsFalse();
+        await Assert.That(primary.ReceivedCommands.Contains("GET strict")).IsFalse();
+    }
+
+    [Test]
+    public async Task SentinelReplacementDialOwnsBoundedAdmissionBeforeWaiting()
+    {
+        await using var first = Server();
+        await using var replacement = Server();
+        int[] ports = [first.Port];
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                ? ReplicasReply(Volatile.Read(ref ports)) : "*0\r\n"u8.ToArray(),
+        };
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementDials = 0;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Protocol = RespProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            CommandTimeout = null, ConnectTimeout = Limit, BacklogCapacity = 2,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == replacement.Port)
+                {
+                    Interlocked.Increment(ref replacementDials);
+                    connecting.TrySetResult();
+                    await resume.Task.WaitAsync(token);
+                }
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var view = client.WithReadFrom(RespireReadFrom.Replica);
+        await view.GetStringAsync("warm");
+        Volatile.Write(ref ports, [replacement.Port]);
+        await client.Core.ReadRouter.RefreshNowAsync(default);
+        var head = view.GetStringAsync("first").AsTask();
+        await connecting.Task.WaitAsync(Limit);
+        await Assert.That(client.Core.ReadRouter.IsBacklogDraining).IsTrue();
+        using var caller = new CancellationTokenSource();
+        var cancelled = view.GetStringAsync("cancelled", caller.Token).AsTask();
+        var overflow = view.GetStringAsync("overflow").AsTask();
+        await Assert.That(async () => await overflow.WaitAsync(Limit)).ThrowsExactly<RespireConnectionException>();
+        await caller.CancelAsync();
+        var cancellation = await Assert.That(async () => await cancelled.WaitAsync(Limit)).Throws<OperationCanceledException>();
+        await Assert.That(cancellation!.CancellationToken).IsEqualTo(caller.Token);
+        var last = view.GetStringAsync("last").AsTask();
+        await Assert.That(replacementDials).IsEqualTo(1);
+        await Assert.That(replacement.ReceivedCommands.Count).IsEqualTo(0);
+        resume.TrySetResult();
+        await Assert.That(await head.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(await last.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(replacement.ReceivedCommands.ToArray())
+            .IsEquivalentTo(new[] { "ROLE", "GET first", "GET last" }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task FreshAffinitySelectedBeforeConcurrentDrainReselectsAfterReplacement()
+    {
+        await using var first = Server();
+        await using var replacement = Server();
+        int[] ports = [first.Port];
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                ? ReplicasReply(Volatile.Read(ref ports)) : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Protocol = RespProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            CommandTimeout = null, ConnectTimeout = Limit,
+        });
+        var router = client.Core.ReadRouter;
+        var fresh = new ReadAffinity();
+        var continuation = new ReadAffinity();
+        // Model the interleaving at selection/admission: the fresh scan has selected and
+        // pinned its first server, then another read starts draining before it can dispatch.
+        await router.SelectForDispatchAsync(RespireReadFrom.Replica, default, default, cursorRead: true, fresh);
+        await router.GetCursorConnectionAsync(RespireReadFrom.Replica, continuation, false, default, default);
+        var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var head = router.EnqueueAsync(RespireReadFrom.Replica, async (_, token) =>
+        {
+            dispatched.TrySetResult();
+            await resume.Task.WaitAsync(token);
+            return 0;
+        }, default, default).AsTask();
+        await dispatched.Task.WaitAsync(Limit);
+        var queued = router.EnqueueAsync(RespireReadFrom.Replica,
+            (connection, _) => ValueTask.FromResult(connection.Port), default, default, cursorRead: true, fresh).AsTask();
+        await Assert.That(fresh.IsPinned).IsFalse();
+        Volatile.Write(ref ports, [replacement.Port]);
+        await router.RefreshNowAsync(default);
+        resume.TrySetResult();
+        await head.WaitAsync(Limit);
+        await Assert.That(await queued.WaitAsync(Limit)).IsEqualTo(replacement.Port);
+        await Assert.That(fresh.Replica!.Endpoint.Port).IsEqualTo(replacement.Port);
+        await Assert.That(async () => await router.GetCursorConnectionAsync(
+            RespireReadFrom.Replica, continuation, true, default, default)).Throws<RespireConnectionException>();
+        await Assert.That(continuation.Replica!.Endpoint.Port).IsEqualTo(first.Port);
+    }
+
+    [Test]
     public async Task AcceptedFailureIsNotReplayed()
     {
         await using var fixture = await Fixture.CreateAsync();
