@@ -1,0 +1,266 @@
+[
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38484247008",
+    "stackExchangeRedis": "3.4.5",
+    "respireCommit": "17f617e3da1fef7e5317246db26b081be02f468f",
+    "archive": "38484247008.zip",
+    "sha256": "c9bf5d6bd16f719bf4e2ce051752b682920f23e83ba4febbcd36b511e415ff5d",
+    "files": [
+      {
+        "path": "BenchmarkRun-20261013-235213.log",
+        "sha256": "b6a2a707b4b1a7d1a8b29c572cf6edb0bec4906ff6632ee7b295e88c411b62b6"
+      },
+      {
+        "path": "project.assets.json",
+        "sha256": "4da24b7393eaa0140854b9b595878e3eb78d09537a1b9017b70aa868f21e3fb3"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-default.md",
+        "sha256": "38e73027fa89ddf525a5d7e82dc11e4b79a80930ae4ad9f90d807fc83bbc1e2a"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-full-compressed.json",
+        "sha256": "7478de63d89c8f20cbbf44acc8587909d9eef498ee866fa5b6af026105ca3e98"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-github.md",
+        "sha256": "6452a6f4fba99e8106d6d4698e54d626394b6c771766ec0f3f544131de2c9bc4"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report.csv",
+        "sha256": "acf6ee6817c165b8c60b3b2b9e8f01d8e2469484a8bd03814a8cc422eec19540"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report.html",
+        "sha256": "21e01974d34a75ff578ef4fb7645ddc23dea8728e393682f5d354e7c63cb1eb9"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-default.md",
+        "sha256": "a3af1322d784364e3a0f52034a8c7f20d29aec9131b68f72ba3e48e2e3d4119f"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-full-compressed.json",
+        "sha256": "a92bde259f92f682e9843173c99f7bb11ddf611281cc0d7de3762b957a204700"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-github.md",
+        "sha256": "d5dad404894d12b44365cae6450f7b94e73517961221f2eb307c2120e9dc7c80"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report.csv",
+        "sha256": "422235cdba6b5053fdbb614abf4d961e195ee5c35600f07a3e1591f49a300223"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report.html",
+        "sha256": "13fbbdd6822773fecd33581eb472f9e5dc51a9f0a2774c1a47b2b3b93d6efd82"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "8eceb5812b91d06325f384834ae6a73e3c95b38e8f1beb809a7edbf1c37fcf75"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "4f1d5d5fe5872dfa75c2913f62e8844939304b5ed41f2274afed029da01555b0"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "c60ce51530d86ba7849055e4954ebf402f8adf289c01404929c7309909e098a1"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "75719856f989bb46fd66f9381e4b521d859288316572bc99923ca47c100255b3"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "274665f544d336c0281491746bba73e99c7364404da97fafab3054c32c3422a1"
+      },
+      {
+        "path": "rig.txt",
+        "sha256": "5eaabb5bdb038366339eb0e9f8a7a44108832e0cdc21679cfecf7f601ffe9f4a"
+      }
+    ]
+  },
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38484250090",
+    "stackExchangeRedis": "4.0.127-alpha",
+    "respireCommit": "17f617e3da1fef7e5317246db26b081be02f468f",
+    "archive": "38484250090.zip",
+    "sha256": "3bcd5bb180554fbce4cad5fbbde531c45b6bcd5e4732956dd068e867c281bf44",
+    "files": [
+      {
+        "path": "BenchmarkRun-20261013-235546.log",
+        "sha256": "a7e0e72320019db8ae89696e7855a42d236a661654e743e271e1b97200387b67"
+      },
+      {
+        "path": "project.assets.json",
+        "sha256": "23cb0931d8d88dcd2e87d843e143a34c9bee46f822f660f9c8806d1d9defeda9"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientCacheComparisonBenchmarks-report-default.md",
+        "sha256": "22d5d6ef51312a8d54ea5b5d77f0f391695a9ffc678cf92c331fd7145656ae2d"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientCacheComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "be511b6e1d222ffd66bf7b5fc5b66dde447843f564f213e899abeb78398aedec"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientCacheComparisonBenchmarks-report-github.md",
+        "sha256": "3fc5da523474488b1598e6d22084c662ca496599e6a3fba58d8483df6cfd8986"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientCacheComparisonBenchmarks-report.csv",
+        "sha256": "094fef9e1da001febe2403295d54197f710c85b491059cd9dded51ebaf3ec82b"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientCacheComparisonBenchmarks-report.html",
+        "sha256": "b10d8292d4ba1f7eb9352b7c018406d5f061dde97efda364991b8d36acd8820f"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-default.md",
+        "sha256": "5d676b525dce9d3d0e60e5fea75927192ce2cb3e153862d2b6488bc1c5e9c7d2"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-full-compressed.json",
+        "sha256": "39b3e49720413b688a82f14a4d646dd07082021356ad9b04ec20e79e79801182"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-github.md",
+        "sha256": "e188a02110c417ce6fa4859be5e72fd82657d37da04f4632dcb89336b57a060b"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report.csv",
+        "sha256": "b46392a07c033b6aebe53fb8b7405c788e9416dea158788d051736396b705c33"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report.html",
+        "sha256": "4314fa3542042f8e16b26e03a58e7c40c3f5c001500c211b6332e14139780e88"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-default.md",
+        "sha256": "1f63c42a9654343f400b09fe92fb47c5b4e10ddcdb2847b4ffe81b114f4dab38"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-full-compressed.json",
+        "sha256": "10be1b04f9d2b3a38b2119090ae9f03779c34e6717302f237d2e3b23c58f9c82"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-github.md",
+        "sha256": "6e39ad55db42e86eaa3b4a1bb2752af1423ed943ecffb968358fc62024e3852c"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report.csv",
+        "sha256": "64a48cf45b8adc1ffb993394f10f91d8296297bbf10c45e5a90c5476118f859c"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report.html",
+        "sha256": "9e0b4cd881ae1556f856185cc55b2fd2a9ded849ac03658e202f2c9629a849e4"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "217e7bbbf5d0a45d72af2908e50646dc18f8a9a55bad4cea8bfebd44c0ac6fd5"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "223971fa1201e190667cdc8bc307dd7fd6cc42ae99589cb0b6be4029b5dd8b0e"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "34a129b89f74b7fdf94a816a7467ca4bd600d5bd7a29011202a22ca95979cbb2"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "5ccade2b088e54fa55e980b6884cda66d6ddf3311dbaeeed22157dbfef141954"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "339eda6cc7878ba0730eee2dece439441b060122f38e16a48e11f60ad55742df"
+      },
+      {
+        "path": "rig.txt",
+        "sha256": "1577f2a69e6b15d575ba3cc39adec3d160241d7d391675491023cd0e346870e0"
+      }
+    ]
+  },
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38664941232",
+    "stackExchangeRedis": "3.4.5",
+    "respireCommit": "7cd38895b99f4f4738caf9cd54275dee94d6d7a7",
+    "archive": "38664941232.zip",
+    "sha256": "3068a6abfa9009396239849677585f43f080fce797350799d023b72871db2b02",
+    "files": [
+      {
+        "path": "project.assets.json",
+        "sha256": "b302db5c847b85bed9c1692d21fb0ffcfd8b4166253aa956c7b928025382cab5"
+      },
+      {
+        "path": "Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-20261015-012024.log",
+        "sha256": "968e198b2be71d0d16e7c0b4d8e28d3af67919f61b963f170064314e82f352f9"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "71b54657526f648cd76baceff233a8fb1a4c2eb4d774ec70dc0f803c44977f61"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "8a53b854a291d41674a00575ea8dd5c40d928290084300cf2e244b50775b4ed3"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "fec05711d609fd36fb53e6516d756f65a4dd59cf3e4e6aa3351602416b96c5b2"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "bec610143f38b601ae22afd093b2fcb71edc5d65ee672d7c1ff457a3e170cb3c"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "ea0cc08681530eff1577765623da59a423ae19771b0c1afcca643542a0ed9c03"
+      },
+      {
+        "path": "rig.txt",
+        "sha256": "2351536b5e96b12dc1a637d9e9a1135dc2df7244214cd06a77564fc6a94ca026"
+      }
+    ]
+  },
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38664943357",
+    "stackExchangeRedis": "4.0.127-alpha",
+    "respireCommit": "7cd38895b99f4f4738caf9cd54275dee94d6d7a7",
+    "archive": "38664943357.zip",
+    "sha256": "aa0db198fba83018cd88192f28713ddd249989864c971c90c02069bed431b8bc",
+    "files": [
+      {
+        "path": "project.assets.json",
+        "sha256": "79a105ebfaf67ce58d2b77cd9edc1b79d228845e0e440ff6a5b29e7a70924ab2"
+      },
+      {
+        "path": "Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-20261015-012024.log",
+        "sha256": "5a75cb4b989dd99268c8c93b942ea8358523d4fbe2cb2e4d2e24014a7ed0212f"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "57eddc30a7b4cb3a12e348375ec7e323b6ef3930f7ac3f5d4c14ebbc279ccfc8"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "208b41d45f9d7dc1073491e7720199a79a4f149c470e867ca332091c8b2feac9"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "362dba14ee5cb0b8ad85b9c2dd2cf17a4843ad81d683d1066bd98b6c2be9d5c7"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "e490189d3ba28c1fd871b4ebd7cfb6a243ba9cc505375e03d30ee8e606001bcc"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "07fcb6178589d40e00e58357105b4a65e95b4fc78bbfca4359556bc8aa263321"
+      },
+      {
+        "path": "rig.txt",
+        "sha256": "7adbb73db5fcfa2db67d46903b0c8ec7b29b262936c3ec6ada394ec63a76d6d7"
+      }
+    ]
+  }
+]
