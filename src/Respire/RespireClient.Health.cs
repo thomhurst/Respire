@@ -40,7 +40,8 @@ public sealed partial class RespireClient : IRespireHealthProbe
             var started = Stopwatch.GetTimestamp();
             using var reply = await connection!.SendAsync(new RawCommand(RespCommands.Ping),
                 cancellationToken, commandName: "PING", pinToConnection: true).ConfigureAwait(false);
-            reply.ThrowIfError();
+            // The using scope owns the reply, including server errors.
+            if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage());
             if (reply.AsString() != "PONG") throw new RespireProtocolException("PING did not return PONG.");
             return new(endpoint, true, Stopwatch.GetElapsedTime(started));
         }
