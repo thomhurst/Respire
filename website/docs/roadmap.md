@@ -99,6 +99,8 @@ Public interface compatibility and the post-2.0 extension policy are described i
 - [Hosted stream consumers](guides/stream-workers.md) with bounded concurrency, scoped typed
   handlers, idle recovery, delivery limits, dead-lettering, graceful draining, metrics, and
   W3C trace propagation.
+- [Queue and stream dashboard](guides/stream-dashboard.md) for configured streams and job queues,
+  with group statistics, pending deliveries, dead letters, and authorized retry/delete actions.
 - [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): on Redis 8.6+,
   a retried `XADD` cannot duplicate the entry.
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus

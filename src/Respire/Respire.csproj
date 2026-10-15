@@ -38,6 +38,7 @@
     <InternalsVisibleTo Include="Respire.Compression.Zstd" />
     <InternalsVisibleTo Include="Respire.Testing" />
     <InternalsVisibleTo Include="Respire.Streaming" />
+    <InternalsVisibleTo Include="Respire.Streaming.Dashboard" />
     <InternalsVisibleTo Include="Respire.Streaming.Tests" />
     <!-- Tests inspect transport reuse. -->
     <InternalsVisibleTo Include="Respire.HealthChecks.Tests" />

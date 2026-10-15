@@ -15,7 +15,8 @@
       "tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj",
       "tests/Respire.VectorData.Tests/Respire.VectorData.Tests.csproj",
       "tests/Respire.AI.Tests/Respire.AI.Tests.csproj",
-      "tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj"
+      "tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj",
+      "tests/Respire.Streaming.Dashboard.Tests/Respire.Streaming.Dashboard.Tests.csproj"
     ]
   }
 }

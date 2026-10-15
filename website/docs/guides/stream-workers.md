@@ -8,6 +8,9 @@ description: Process Redis stream entries with scoped handlers, bounded concurre
 `Respire.Streaming` runs Redis consumer-group readers as hosted services. Each delivery goes to a
 scoped handler, which returns `Ack`, `Nack` or `DeadLetter`.
 
+The optional [queue and stream dashboard](stream-dashboard.md) provides authorized inspection
+of consumer groups, pending entries, and dead letters, with retry and delete actions.
+
 ```bash
 dotnet add package Respire.Streaming
 ```

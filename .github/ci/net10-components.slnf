@@ -13,6 +13,7 @@
       "tests/Respire.FusionCache.Tests/Respire.FusionCache.Tests.csproj",
       "tests/Respire.SignalR.Tests/Respire.SignalR.Tests.csproj",
       "tests/Respire.Streaming.Tests/Respire.Streaming.Tests.csproj",
+      "tests/Respire.Streaming.Dashboard.Tests/Respire.Streaming.Dashboard.Tests.csproj",
       "samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj",
       "samples/Respire.Samples.Resilience/Respire.Samples.Resilience.csproj",
       "samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj",

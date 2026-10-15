@@ -51,7 +51,8 @@ jobs:
             tests/Respire.SignalR.Tests \
             tests/Respire.VectorData.Tests \
             tests/Respire.AI.Tests \
-            tests/Respire.Streaming.Tests
+            tests/Respire.Streaming.Tests \
+            tests/Respire.Streaming.Dashboard.Tests
           do
             if [[ "$project" == tests/Respire.Tests ]]; then
               # Core tests own listener state; the HTML reporter adds a process-wide listener.

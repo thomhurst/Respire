@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Streaming.Dashboard</PackageId>
+    <Title>Respire.Streaming.Dashboard</Title>
+    <Description>Authorized ASP.NET Core operator dashboard for Redis streams and reliable job queues.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <InternalsVisibleTo Include="Respire.Streaming.Dashboard.Tests" />
+  </ItemGroup>
+</Project>
