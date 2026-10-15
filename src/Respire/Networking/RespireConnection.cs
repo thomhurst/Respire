@@ -282,6 +282,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     internal long ServerClientId => Volatile.Read(ref _serverClientId);
 
+    internal bool ClientTrackingEnabled { get; }
+
     private RespireConnection(
         Socket? socket, Stream? stream, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
@@ -300,6 +302,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         Host = host;
         Port = port;
+        ClientTrackingEnabled = options.EnableClientTracking;
         OperationMetricDatabase = options.Database;
         OperationMetricNamespace = options.Database.ToString(CultureInfo.InvariantCulture);
         OperationMetricTags = RespireTelemetry.CreateOperationMetricTags(

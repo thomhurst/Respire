@@ -26,17 +26,22 @@ public sealed partial class RespireClient
     // The original command retains admission callbacks and its logical fence; only serialization
     // uses the snapshot. Each transport source still retains its own fence until FIFO retirement.
     private ValueTask<RespValue> SendImmediateWithRetriesAsync<TCommand>(string operation, TCommand command,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool track = false)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool track = false, bool optOut = false)
         where TCommand : struct, IRespCommand
     {
+        if (ShouldSkipTracking(operation, in command))
+        {
+            track = true;
+            optOut = true;
+        }
         var deadline = CreateCircuitDeadline();
         cancellationToken.ThrowIfCancellationRequested();
         var backlogConnection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken) : null;
         var state = ImmediateRetryState.Rent(in command);
         if (UsesPrimaryBacklog && backlogConnection is null)
-            return SendBackloggedImmediateRetryAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
+            return SendBackloggedImmediateRetryAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track, optOut),
                 state, cancellationToken, deadline, observation, track);
-        return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
+        return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track, optOut),
             state, cancellationToken, deadline, observation, track, backlogConnection);
     }
 
@@ -338,12 +343,12 @@ public sealed partial class RespireClient
     }
 
     private readonly struct ImmediateRetryCommand<TCommand>(TCommand command, ImmediateRetryState state,
-        bool track) : IRespCommandWrapper where TCommand : struct, IRespCommand
+        bool track, bool optOut = false) : IRespCommandWrapper where TCommand : struct, IRespCommand
     {
-        public int GetWriteSizeHint() => checked(state.Frame.Length + (track ? new ClientCachingCommand().GetWriteSizeHint() : 0));
+        public int GetWriteSizeHint() => checked(state.Frame.Length + (track ? new ClientCachingCommand(optOut).GetWriteSizeHint() : 0));
         public void Write(ref RespWriter writer)
         {
-            if (track) new ClientCachingCommand().Write(ref writer);
+            if (track) new ClientCachingCommand(optOut).Write(ref writer);
             writer.WriteRaw(state.Frame.Span);
         }
         public ReadCommandKind ReadKind => command.ReadKind;

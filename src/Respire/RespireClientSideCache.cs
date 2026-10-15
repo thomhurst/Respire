@@ -26,6 +26,12 @@ public enum RespireClientTrackingMode
     /// invalidation traffic. Best for a small set of hot, narrowly prefixed keys.
     /// </summary>
     Broadcast,
+
+    /// <summary>
+    /// Redis tracks reads by default (CLIENT TRACKING OPTOUT). Reads through
+    /// <see cref="IRespireClient.WithoutClientCache"/> opt out with CLIENT CACHING NO.
+    /// </summary>
+    OptOut,
 }
 
 /// <summary>
@@ -66,11 +72,12 @@ public sealed record RespireClientSideCacheOptions
     /// Physical key prefixes eligible for caching. Empty (the default) caches every eligible key.
     /// </summary>
     /// <remarks>
-    /// Reads of other keys go straight to Redis and are not tracked. In OptIn mode, the per-key
+    /// Reads of other keys go straight to Redis. In OptIn mode they are not tracked. The per-key
     /// MGET path (typed calls, or raw calls with <see cref="CoalesceConcurrentMisses"/> enabled)
     /// tracks mixed covered/uncovered misses as one command but caches only covered replies.
     /// Raw MGET with coalescing disabled uses exact-query caching: any uncovered key makes
-    /// the whole reply uncached and leaves the command untracked. In
+    /// the whole reply uncached and leaves the command untracked in OptIn mode. OptOut can
+    /// track uncached reads; use WithoutClientCache() to opt out per call. In
     /// <see cref="RespireClientTrackingMode.Broadcast"/> mode the prefixes are also sent to Redis as
     /// BCAST PREFIX arguments. Prefixes are binary-safe, must not overlap or repeat, and are matched
     /// against physical keys: include any <see cref="IRespireClient.WithKeyPrefix(string)"/> prefix.
@@ -80,6 +87,11 @@ public sealed record RespireClientSideCacheOptions
 
     /// <summary>How Redis tracks cached keys. Defaults to <see cref="RespireClientTrackingMode.OptIn"/>.</summary>
     public RespireClientTrackingMode TrackingMode { get; init; }
+
+    /// <summary>Suppress invalidations caused by the tracking connection's own writes. Defaults to false.</summary>
+    /// <remarks>Local writes must update or evict local entries themselves. Respire keeps its
+    /// mutation eviction and in-flight read fences enabled, including on bypass views.</remarks>
+    public bool NoLoop { get; init; }
 
     // Optional behavior.
 
@@ -106,7 +118,7 @@ public sealed record RespireClientSideCacheOptions
 
     internal RespireClientSideCacheOptions ValidateAndSnapshot()
     {
-        Require(Enum.IsDefined(TrackingMode), nameof(TrackingMode), "must be OptIn or Broadcast");
+        Require(Enum.IsDefined(TrackingMode), nameof(TrackingMode), "must be OptIn, OptOut or Broadcast");
         Require(KeyPrefixes is not null, nameof(KeyPrefixes), "cannot be null");
         Require(MaxEntries >= 1, nameof(MaxEntries), "must be at least one");
         Require(MaxSizeBytes >= 1, nameof(MaxSizeBytes), "must be at least one");

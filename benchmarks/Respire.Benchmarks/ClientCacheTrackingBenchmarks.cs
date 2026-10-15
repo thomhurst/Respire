@@ -21,9 +21,9 @@ public class ClientCacheTrackingBenchmarks
     [ParamsSource(nameof(Modes))]
     public string Mode { get; set; } = "OptIn";
 
-    // Baseline builds predate BCAST. Their OPTIN cases still use this identical fixture.
+    // Baseline builds predate the additional modes. Their OPTIN cases use this identical fixture.
     public IEnumerable<string> Modes => Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1"
-        ? ["OptIn"] : ["OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"];
+        ? ["OptIn"] : ["OptIn", "OptOut", "OptOutNoLoop", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"];
 
     [GlobalSetup]
     public async Task Setup()
@@ -39,8 +39,14 @@ public class ClientCacheTrackingBenchmarks
         {
             // Reflection is confined to setup so this fixture compiles against the old API.
             var mode = typeof(RespireClientSideCacheOptions).GetProperty("TrackingMode")
-                ?? throw new InvalidOperationException("The selected build has no broadcast tracking support.");
-            mode.SetValue(cache, Enum.Parse(mode.PropertyType, "Broadcast"));
+                ?? throw new InvalidOperationException("The selected build has no configurable tracking support.");
+            mode.SetValue(cache, Enum.Parse(mode.PropertyType, Mode is "OptOut" or "OptOutNoLoop" ? "OptOut" : "Broadcast"));
+            if (Mode == "OptOutNoLoop")
+            {
+                var noLoop = typeof(RespireClientSideCacheOptions).GetProperty("NoLoop")
+                    ?? throw new InvalidOperationException("The selected build has no NOLOOP support.");
+                noLoop.SetValue(cache, true);
+            }
             if (Mode is "BroadcastPrefix" or "BroadcastManyPrefixes")
             {
                 var prefixes = typeof(RespireClientSideCacheOptions).GetProperty("KeyPrefixes")
