@@ -287,11 +287,10 @@ They track remaining work, not release commitments.
   ([#1694](https://github.com/thomhurst/Respire/issues/1694)) maps cancellation, disposal,
   replacement, late-reply, and reuse coverage. Its bounded tests and quiescent reference
   checks do not prove complete heap reclamation or every scheduler/topology combination.
-- [Remaining Orleans topology validation](https://github.com/thomhurst/Respire/issues/1799):
-  Cluster resharding, replica promotion/failover, abrupt silo death, and multi-host partitions. The completed
-  [silo lifecycle suite](guides/orleans-compatibility.md#silo-lifecycle-and-redis-recovery)
-  covers activation, provider-owned shutdown, stable Cluster routing, socket reconnect,
-  and Sentinel promotion; it does not establish support for every failure scenario.
+- [Orleans topology assessment](https://github.com/thomhurst/Respire/issues/1799):
+  lifecycle, provider-owned shutdown, completed Cluster slot moves, coordinated replica promotion,
+  Sentinel failover and abrupt silo death have acceptance coverage. Membership writes during
+  ASK migration remain unsupported; multi-host partitions need an independent-network test harness.
 - [Cluster availability-zone replica fallback timeout](https://github.com/thomhurst/Respire/issues/1749):
   investigate the failure under concurrent test load and validate recovery.
 

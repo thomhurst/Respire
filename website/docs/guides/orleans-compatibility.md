@@ -89,7 +89,7 @@ See the [adapter guide](stackexchange-interop.md) for script and flag limits.
 ## Tested scope
 
 `tests/Respire.Orleans.Acceptance.Tests` runs upstream provider scenarios against StackExchange.Redis and then
-the adapter, on .NET 8 and .NET 10 with RESP2 and RESP3. Five additional adapter-only scenarios start real
+the adapter, on .NET 8 and .NET 10 with RESP2 and RESP3. Nine additional adapter-only cases start real
 Orleans silo and client hosts. All containers use Redis **7.0.15**. Its `NOTICE.md` records sources and exclusions.
 
 | Provider | Covered |
@@ -114,12 +114,38 @@ grain uses the Orleans binary serializer; test-only reminder settings lower the 
 | Three-primary Redis Cluster, database 0 | The shared lifecycle scenario, including membership transactions, persistence scripts, reminder delivery and restart through native Cluster routing |
 | Standalone socket loss | Disconnect live Redis TCP connections with `CLIENT KILL`, reconnect with the same adapter and grain activation, write state and deliver reminders after recovery, join a second silo, then reactivate there and read the saved state |
 | Sentinel (one primary, one replica, three Sentinels) | Fence completed writes to the replica, stop the primary, observe the same native client connect to the promoted replica, continue grain writes/reminders, join a second silo, return the old primary as a replica, then verify state from a new activation |
+| Cluster slot migration | Move the membership key between primaries, finish slot ownership changes, then join another silo and use grain storage through the existing adapter. A separate case exercises ASK while the slot is importing/migrating: membership insertion fails without inserting the row, then recovers once migration completes |
+| Cluster with three primaries and three replicas | Coordinated `CLUSTER FAILOVER` on all three replicas while a silo is running; retain its activation, write state, receive reminders, join another silo, then reactivate there and read saved state |
+| Abrupt silo process death, standalone Redis | Start a second silo in a child process, kill it without graceful shutdown, and require the surviving silo to mark its row `Dead` within 60 seconds. The test logs elapsed detection time, verifies the survivor remains active, and calls a grain through client discovery |
 
 The topology cases use `Respire.Testing.Containers`, which runs each deployment in an isolated disposable
 container. They model server processes and protocol routing, not independent host or network failures.
 The socket-loss and replication-fence setup uses a separate administrative control connection only.
-The tests do not claim lossless writes during failover: Redis replication is asynchronous, and the Sentinel
-scenario explicitly fences the writes it expects to retain before stopping the primary.
+The tests do not claim lossless writes during failover: Redis replication is asynchronous. The Sentinel
+scenario fences the writes it expects to retain before stopping the primary; the Cluster scenario uses
+coordinated promotion, which synchronizes the replica before switching roles. Unplanned Cluster primary
+crashes and writes racing the promotion are not covered by that test.
+
+The silo-death deadline is a test bound, not a production eviction guarantee. Tests set one-second probes,
+membership refreshes and heartbeats, two missed probes, and one death vote. Production detection time
+depends on Orleans membership settings, cluster size, scheduling and connectivity. Eviction here means
+the membership row becomes `Dead`; historical rows need not be deleted immediately.
+
+### Supported topologies and CI limits
+
+Standalone Redis, database-0 Redis Cluster with stable slot ownership, and Sentinel are supported through
+the adapter within the coverage above. Cluster membership writes during **ASK migration are unsupported**:
+the adapter cannot move an in-progress watched transaction to an importing node without losing its watch.
+Schedule resharding outside membership changes, or expect provider operations to fail until the slot move
+completes. Successful post-move recovery does not establish uninterrupted membership availability.
+Support during the ASK phase is tracked in [#1820](https://github.com/thomhurst/Respire/issues/1820).
+
+Multi-host network partitions are **not validated in CI**. The Redis fixture publishes loopback endpoints
+and runs nodes in one container; silo hosts also advertise loopback. Disconnecting that container does not
+model asymmetric silo-to-silo, silo-to-Redis, or independent host failures. Such a test needs silos and Redis
+nodes with independently routable addresses and selective network fault injection (for example network
+namespaces and packet filters). The current CI fixture has no such harness. No partition-tolerance or
+split-brain claim follows from the socket-loss, process-death, or failover cases.
 
 For Cluster, set `RespireOptions.UseCluster = true`, configure reachable seed/advertised node endpoints,
 and use database **0**. Nonzero Cluster databases are unsupported. Provider transactions and scripts each
@@ -132,19 +158,18 @@ Run the suite from a repository checkout (requires Docker):
 
 ```powershell
 $env:RESPIRE_TEST_PROTOCOL = '2' # Repeat with '3'.
-dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release -f net10.0 -- --minimum-expected-tests 23
+dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release -f net10.0 -- --minimum-expected-tests 27
 # Repeat with -f net8.0 as well.
 ```
 
 Not validated:
 
-- Abrupt silo death, multi-host partitions, long outages, sustained stress, other serializers and datasets.
-- Cluster resharding, replica promotion, and failover during provider transactions. Native Cluster transactions
-  cannot follow ASK redirects during slot migration; this lifecycle assessment does not extend that contract.
+- Multi-host partitions, long outages, sustained stress, other serializers and datasets.
+- Unplanned Cluster primary crashes, failover racing provider transactions, and uninterrupted writes during ASK migration.
 - Provider-owned topology recovery, TLS/authentication changes, Redis data loss/restart without retained data,
   and simultaneous Redis and silo failures.
 - Grain directory, streaming, and journaling providers, and other Orleans versions.
 
-[Silo lifecycle and Redis recovery validation](https://github.com/thomhurst/Respire/issues/1695)
-tracks the first two gaps. The closed provider assessment does not establish support for
-these untested deployment scenarios.
+[Topology and silo-death assessment](https://github.com/thomhurst/Respire/issues/1799) extends the
+[original lifecycle assessment](https://github.com/thomhurst/Respire/issues/1695).
+Neither assessment establishes support for the untested deployment scenarios above.

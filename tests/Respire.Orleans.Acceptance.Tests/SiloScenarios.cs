@@ -19,7 +19,7 @@ namespace Respire.Orleans.Acceptance.Tests;
 
 // Real hosts use only the adapter. ProviderScenarios supplies the official-client control.
 [NotInParallel]
-public class SiloScenarios
+public partial class SiloScenarios
 {
     [Test]
     [Arguments(RespireContainerTopology.Standalone, true)]
@@ -179,13 +179,22 @@ public class SiloScenarios
         CommandTimeout = TimeSpan.FromSeconds(10)
     };
 
-    private static HostedScenario BuildSilo(ProviderConnections connections, string serviceId, string clusterId)
+    private static HostedScenario BuildSilo(ProviderConnections connections, string serviceId, string clusterId, bool fastDetection = false)
     {
         var (siloPort, gatewayPort) = FreePorts();
         var builder = new HostBuilder().ConfigureLogging(log => log.AddConsole().SetMinimumLevel(LogLevel.Warning));
         builder.UseOrleans(silo =>
         {
             silo.Configure<ClusterOptions>(options => { options.ServiceId = serviceId; options.ClusterId = clusterId; });
+            // Bound failure detection in the process-death scenario; these are not production defaults.
+            if (fastDetection) silo.Configure<ClusterMembershipOptions>(options =>
+            {
+                options.ProbeTimeout = TimeSpan.FromSeconds(1);
+                options.TableRefreshTimeout = TimeSpan.FromSeconds(1);
+                options.IAmAliveTablePublishTimeout = TimeSpan.FromSeconds(1);
+                options.NumMissedProbesLimit = 2;
+                options.NumVotesForDeathDeclaration = 1;
+            });
             silo.Configure<EndpointOptions>(options =>
             {
                 options.AdvertisedIPAddress = IPAddress.Loopback;
