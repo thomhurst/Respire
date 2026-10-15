@@ -15,10 +15,10 @@ APIs, function calls and mutations, script execution, dedicated blocking convert
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
 explicit pipeline/transaction members, WATCH setup, immediate hash imports,
-import-session acquisition, explicit health-probe rounds, typed RedisJSON, Probabilistic and Search operations.
-Managed locks, semaphores, countdown latches and the tracked coordination leases described below are also covered.
-This is **not a client-wide command-blocking policy**. Remaining composite coverage and
-the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
+import-session acquisition, explicit health-probe rounds, typed RedisJSON, Probabilistic, Search and TimeSeries operations.
+Managed locks, semaphores, countdown latches, rate limiters, Redlock groups and the tracked coordination leases
+described below are also covered. The [policy audit](#policy-boundaries-and-decorators) defines the limits:
+this is **not a client-wide command-blocking policy** for arbitrary decorators, composite adapters or wire commands.
 :::
 
 <!-- doc-test-tail-declaration: split-before=sealed class CommandAudit -->
@@ -111,18 +111,17 @@ or hook callbacks receive independent scopes. Prefixing, routing and mutation fe
 part of ordinary dispatch, including destination-only invalidation for merges. With no hook,
 typed calls do not create a hook scope.
 
-The module inventory distinguishes these remaining owners; raw execution coverage alone
+The module inventory distinguishes these result owners; raw execution coverage alone
 does not promise their outer typed result or composite lifetime:
 
-| Module | Result owner and remaining work |
+| Module | Result boundary |
 | --- | --- |
 | JSON | Typed deserialization, cardinality, text/numeric conversion, serialization and buffer cleanup are covered above; `Commands` transfers raw results. |
 | Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery are covered below. |
 | TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion are covered below. |
 | Probabilistic | Typed boolean/numeric/array and dump-chunk conversion and owned cleanup are covered above; Info and Top-K List transfer raw results. |
 
-This inventory does not establish a client-wide blocking policy; the final audit remains
-[#1708](https://github.com/thomhurst/Respire/issues/1708).
+External wrappers retain the boundaries described in [Policy boundaries and decorators](#policy-boundaries-and-decorators).
 
 ### Typed Search operations
 
@@ -158,8 +157,7 @@ which retain their own admission and completion. Suppression is never ambient. E
 `IRespireClient` decorators receive all dispatch, probes and cleanup through their public
 interface; Respire does not unwrap them. Their underlying client's raw-command hooks may
 therefore complete before the outer Search parser and observe recovery as separate calls.
-This does not establish a client-wide blocking policy; the final audit remains in
-[#1708](https://github.com/thomhurst/Respire/issues/1708).
+These decorator calls therefore have a different result boundary from native typed calls.
 
 ### TimeSeries result owners
 
@@ -182,7 +180,9 @@ chunks atomic or replay an uncertain write.
 Internal sends retain routing, key prefixing, retry rules, and cache mutation fences.
 Commands started by a hook or projection have their own owners. An external `IRespireClient`
 decorator retains its public `ExecuteAsync` dispatch and raw-result boundary; the module
-does not unwrap it. The client-wide policy disclaimer above still applies pending #1708.
+does not unwrap it. With native hooks, an initially canceled `FollowAsync` admits its first
+`TS.READ`, whether starting from an explicit timestamp or `New`. Cancellation between
+completed reads or yielded samples does not create another owner.
 
 ### Cache operation owners
 
@@ -457,11 +457,9 @@ with countdown latches ([#1767](https://github.com/thomhurst/Respire/issues/1767
 rate limiters ([#1768](https://github.com/thomhurst/Respire/issues/1768)), plus
 multi-client Redlock groups ([#1769](https://github.com/thomhurst/Respire/issues/1769)).
 
-The following paths also do not yet have a complete hook contract:
-remaining custom facet conversions and composite helpers.
-Some invoke covered helpers internally;
-that does not make their entire public operation covered. The final cross-route audit is
-tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
+Custom implementations of the client or its facets own their outer conversions and composite
+lifetimes. Calling covered native helpers does not give an external wrapper the native
+logical-owner contract; see [Policy boundaries and decorators](#policy-boundaries-and-decorators).
 
 Tracked scripts and correction sends belong to the surrounding lock, cache or coordination
 operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
@@ -505,8 +503,8 @@ This policy covers clients exposing Respire's native lock facet, including prefi
 An opaque custom client or lock-facet decorator cannot expose its underlying policy to the
 group: it retains its public per-node behavior, which can admit, reject or observe internal
 legs separately. Mixed groups therefore guarantee ordered group admission only for their
-native participants. This does not establish a client-wide blocking policy; the
-[#1708 audit](https://github.com/thomhurst/Respire/issues/1708) remains open.
+native participants. Applications requiring group admission must supply native lock facets
+for every participating client.
 
 ### Explicit aggregate members and WATCH
 
@@ -546,7 +544,96 @@ retry helper is a new WATCH and member execution, unlike internal retries of one
 `AggregateCommandHookTests` covers both hook combinations, no-wire rejection, final
 conversion failures, cancellation, empty aggregates, retries, watched aborts, durability
 and import member cleanup. This extends the ordinary (#1685) and specialized (#1707)
-boundaries; it does not establish client-wide coverage for the remaining composite owners.
+boundaries with explicit member-level policy.
+
+## Policy boundaries and decorators
+
+The [#1708 audit](https://github.com/thomhurst/Respire/issues/1708) covers native result owners,
+not arbitrary code implementing `IRespireClient` or a facet interface. Native custom facets
+(arrays, vectors, extended increments, LCS and stream configuration/acknowledgement commands)
+use the converted-response owner: their parsing and typed deserialization finish before
+completion. Array scans own each requested `ARSCAN` page; cancellation while consuming an
+already completed page does not change its successful outcome or admit another page.
+
+With a configured hook, valid initially canceled calls admit before reporting cancellation,
+including array scans, `HSCAN NOVALUES` pages and those custom facets. A rejecting policy
+wins over initial cancellation and receives one `Rejected` completion. An observing policy
+receives one `Canceled` completion with the caller's exception and token. Neither sends a
+command. Existing argument construction/preflight can still fail before admission; without
+a hook, each API retains its existing cancellation/validation order.
+
+| Client or wrapper | Admission and completion contract |
+| --- | --- |
+| `RespireClient` and native prefix/read-preference/cache-bypass views | Share the configured hook; the named native operation owns admission, conversion and foreground cleanup. |
+| Decorator returning a native facet unchanged | The native facet retains its owner. Returning `inner.Strings`, for example, preserves native GET admission. |
+| Decorator forwarding `ExecuteAsync` | The inner raw command retains admission and raw-result completion. A typed parser outside that call can fail after the hook reported success. |
+| Custom facet, interface default method or higher-level adapter composing public calls | Each forwarded native call retains its own boundary. There is no inferred outer scope, early admission before the wrapper's own side effects, or once-only completion for the whole composition. |
+| Native coordination/Redlock owner | Admits the documented logical name before its internal legs; background and owed recovery remain housekeeping. Opaque custom lock facets retain their public per-node behavior. |
+
+Respire deliberately does not unwrap decorators or discover a hook through reflection.
+Forwarding only a hook reference would be insufficient: internal wire legs would still
+re-admit, cleanup could be vetoed, and typed conversion could finish outside the scope.
+An external wrapper that needs its own policy must define and enforce that boundary itself.
+Native suppression is explicit on internal dispatch, never ambient; application work started
+by hooks, factories, serializers or projections remains independently admitted.
+
+Names describe **logical operations**, not a complete list of wire commands. For example,
+`GETORSET`, `LOCK ACQUIRE` and `RATE LIMIT ACQUIRE` can write through internal SET/EVAL legs;
+an EVAL or FCALL can execute arbitrary server-side commands. Denying `SET` alone does not
+deny every write. Context contains no keys or values and is not a server authorization
+boundary. Use server permissions for server-enforced access control.
+
+Housekeeping remains excluded: connection authentication/selection/tracking, topology and
+capability discovery, sampled health PINGs, retry/redirect legs, notification tracking reads,
+library recovery, background renewal and owed correction/cleanup. Explicit application
+probes and commands have their documented owners. Completion includes foreground cleanup;
+it does not wait for detached recovery or the lifetime of a transferred stream, lease or
+subscription. Fan-out/probe APIs returning errors as data report success when that final
+result is successfully returned.
+
+### Acceptance evidence
+
+The suites below exercise rejection before sends or cache/resource mutation, final outcome
+conversion, cancellation, reentrancy and once-only completion at the relevant boundary.
+They live under `tests/Respire.Tests/Networking`, except the cache adapter and coordination suites.
+
+| Owner family | Regression evidence |
+| --- | --- |
+| Ordinary, raw and custom facets (#1685, #1708) | `CommandHookTests`, including the custom-facet cancellation matrix, forwarded-view/decorator rejection, cache hits, retries and hedges. |
+| Scripts, blocking replies and pages (#1707) | `ScriptBlockingCommandHookTests`, `SpecializedCommandHookTests`, `ContinuousStreamCommandHookTests`. |
+| Streaming/subscriptions/functions/interpolation/XADD | `StreamingCommandHookTests`, `SubscriptionCommandHookTests`, `FunctionCommandHookTests`, `InterpolatedCommandHookTests`, `StreamAddCommandHookTests`. |
+| Aggregate members, WATCH, imports and health | `AggregateCommandHookTests`, `ImportHealthCommandHookTests`. |
+| Cache reads and cache-aside | `CacheCommandHookTests`; `Respire.Caching.Tests/DistributedCacheCommandHookTests`. |
+| Managed locks and coordination | `LockCommandHookTests`; `Respire.Coordination.Tests` hook suites for coordination, countdown latches, rate limiters and Redlock wire operations. |
+| Typed modules | `JsonCommandHookTests`, `SearchCommandHookTests`, `TimeSeriesCommandHookTests`, `ProbabilisticCommandHookTests`, including explicit decorator result-boundary tests. |
+
+### Recorded performance evidence
+
+These completed net10.0 label-driven comparisons are collected from the owner PRs. A/B
+denote the two baseline phases surrounding the candidate. They measure the cited heads
+and fixtures, not every public route or the combined final tree; the linked PRs retain
+head identifiers, allocation details and limitations. No universal speedup or exact
+allocation parity follows from short socket benchmarks.
+
+| Scope | Completed comparison and interpretation |
+| --- | --- |
+| Ordinary dispatch (#1710) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38657469136): -0.21% to +0.91% versus controls; typed scalar/pipeline allocations remain 0/44 B. [Cache parity](https://github.com/thomhurst/Respire/actions/runs/38657469560): string hits remain 0 B; misses within -1.52% to +1.66%. |
+| Script owners (#1721) | [Retry comparison](https://github.com/thomhurst/Respire/actions/runs/38668566833): ScriptLength -0.19% to +0.55%, overlapping intervals; predates later cancellation corrections. |
+| Resource owners (#1722) | [Large SET](https://github.com/thomhurst/Respire/actions/runs/38669554146): large values retain 0 B/op. [Pub/sub](https://github.com/thomhurst/Respire/actions/runs/38669554973): dispatch retains 32 B/op; launch variation limits latency conclusions. |
+| Server/cluster owners (#1726) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38671425912): -0.88% to +0.51%, overlapping intervals; shared helpers only. |
+| Functions (#1728) | [Retry owners](https://github.com/thomhurst/Respire/actions/runs/38674127973): FCALL_RO roughly -0.89% to +1.24%; overlapping intervals and noisy allocations. |
+| Interpolation (#1729) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38678467441): owned/leased means lower; fire-and-forget +4.95%/+9.56% with overlapping intervals and -4.20% baseline drift. No isolated regression established. |
+| XADD (#1730) | [Append comparison](https://github.com/thomhurst/Respire/actions/runs/38676293492): ordinary unconfigured allocation remains 320 B; idempotent unconfigured latency +20.65%/+23.59% has very wide intervals. This run is inconclusive for latency parity. |
+| Aggregate members (#1757) | [Conversion](https://github.com/thomhurst/Respire/actions/runs/38708223215): typed pipeline changes within -0.46% to +0.08%, still 44 B/op. |
+| Cache owners (#1758) | [Cache-aside](https://github.com/thomhurst/Respire/actions/runs/38711080715) and [contention](https://github.com/thomhurst/Respire/actions/runs/38711080432): all six/twelve cases completed; hot-helper allocation check passed. Timings are informational. |
+| Tracked coordination (#1759) | [Fenced locks](https://github.com/thomhurst/Respire/actions/runs/38712655367) and [semaphores](https://github.com/thomhurst/Respire/actions/runs/38712655332): standard-lease controls within -0.11% to +0.29%; candidate fenced/semaphore means 420.916/441.387 microseconds. |
+| Imports/health (#1760) | [Bounded comparison](https://github.com/thomhurst/Respire/actions/runs/38722557755): all 24 measured launches succeeded; see the [PR's fixture and precision limits](https://github.com/thomhurst/Respire/pull/1760). |
+| Rate limiters (#1771) | [Limiter comparison](https://github.com/thomhurst/Respire/actions/runs/38738350646): three candidate means within 0.7% of direct-script controls; predates the separate-client deny-list fix. |
+| Redlock (#1772) | [Group comparison](https://github.com/thomhurst/Respire/actions/runs/38740503273): no consistent latency regression, drift up to 5.91%; hook-free acquire/renew/dispose adds about 98 B (0.53%). Three connections to one server do not model cross-host performance. |
+
+Countdown latch, continuous-read and typed-module owner PRs did not report separate hosted
+comparisons. Their correctness suites and direct unconfigured branches are evidence of
+behavior and code shape, not measured performance parity.
 
 ## Order and outcomes
 

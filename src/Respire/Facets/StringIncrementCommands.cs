@@ -22,7 +22,7 @@ internal sealed partial class StringCommands
     public ValueTask<RespireIncrementResult<long>> IncrementExtendedAsync(RespireKey key, long by = 1,
         RespireIntegerIncrementOptions options = default, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return client.ConvertResponseAsync("INCREX", BuildIncrementExtended(client, key, by, options),
             cancellationToken, this, static (StringCommands _, in RespValue value) => ReadIntegerIncrement(in value));
     }
@@ -30,7 +30,7 @@ internal sealed partial class StringCommands
     public ValueTask<RespireIncrementResult<double>> IncrementExtendedAsync(RespireKey key, double by,
         RespireFloatIncrementOptions options = default, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return client.ConvertResponseAsync("INCREX", BuildIncrementExtended(client, key, by, options),
             cancellationToken, this, static (StringCommands _, in RespValue value) => ReadFloatIncrement(in value));
     }

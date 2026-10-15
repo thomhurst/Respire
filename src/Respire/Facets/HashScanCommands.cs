@@ -28,7 +28,8 @@ public partial interface IRespireHashCommands
     /// <summary>Reads one HSCAN NOVALUES page. Start with cursor zero; pass the returned cursor to continue.</summary>
     /// <remarks>Requires Redis 7.4. Keep the same key, server, and read policy across pages; restart after topology changes.
     /// A null countHint omits COUNT and uses the server's default; ScanFieldsAsync defaults to a hint of 250.
-    /// An already-canceled token returns a canceled ValueTask before validating arguments or sending a command.</remarks>
+    /// Without a command hook, an already-canceled token returns a canceled ValueTask before validating arguments.
+    /// With a hook, valid calls admit before cancellation is reported. Neither path sends a command.</remarks>
     ValueTask<RespireHashScanPage> ScanFieldsPageAsync(
         RespireKey key, ulong cursor = 0, string? match = null, int? countHint = null, CancellationToken cancellationToken = default);
 }
@@ -46,7 +47,7 @@ internal sealed partial class HashCommands
         var owner = DispatchResponseSource<RespireHashScanPage>.Start();
         try
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
                 return owner.Attach(ValueTask.FromCanceled<RespireHashScanPage>(cancellationToken));
             return owner.Attach(client.ConvertResponseAsync("HSCAN", ScanFieldsCommand(client, key, cursor, match, countHint), cancellationToken,
                 client, static (RespireClient _, in RespValue reply) => ParseFieldsPage(in reply), observation: owner.Observation));

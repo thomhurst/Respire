@@ -27,7 +27,7 @@ internal sealed partial class StringCommands
     {
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
             return CreateLcsIndexCommand(client, firstKey, secondKey, options);
         }
         catch (Exception error)
