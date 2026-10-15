@@ -13,7 +13,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
         return RunClusterBacklogAsync(operation, slot, readFrom, cancellationToken, deadline, observation,
             (ready, originalDeadline) => SendClusterBulkStreamAsync(operation, cluster, snapshot, cancellationToken,
                 observation, ready, originalDeadline));
@@ -25,7 +25,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
         await RunClusterBacklogAsync(operation, slot, RespireReadFrom.Primary, cancellationToken, deadline,
             observation, async (ready, originalDeadline) =>
             {
@@ -41,7 +41,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
         return RunClusterBacklogAsync(operation, slot, _readFrom, cancellationToken, deadline, observation,
             (ready, originalDeadline) => SendHedgedReadAsync(operation, snapshot, budget, flags, cancellationToken,
                 observation, observeErrors: false, initialConnection: ready, deadline: originalDeadline));
@@ -58,7 +58,7 @@ public sealed partial class RespireClient
         Action<Exception>? onRetry, RespireTelemetry.ErrorObservation observation, CommandDeadline retryDeadline)
         where TCommand : struct, IRespCommand
     {
-        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
         return RunClusterBacklogAsync(operation, slot, readFrom, cancellationToken, retryDeadline, observation,
             (ready, deadline) => SendClusterAsync(operation, cluster, snapshot, cancellationToken,
                 storedProcedureName, noRedirect, ready, firstAttempt, initialRetirement, initialRejection,
@@ -74,7 +74,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
         return RunClusterBacklogAsync(operation, slot, readFrom, cancellationToken, deadline, observation,
             (ready, originalDeadline) => SendTrackedClusterAsync(operation, cluster, snapshot, cancellationToken,
                 onRedirect, track, observation, originalDeadline, ready));

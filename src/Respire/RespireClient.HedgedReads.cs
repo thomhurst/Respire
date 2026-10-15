@@ -20,6 +20,9 @@ public sealed partial class RespireClient
         Exception? failure = null;
         var sent = false;
         var race = new HedgeRace();
+        if (_core.Cluster is not null && _core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+            deadline = CreateCircuitDeadline(deadline);
+        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
         try
         {
             var cluster = _core.Cluster;
@@ -27,9 +30,20 @@ public sealed partial class RespireClient
             if (initialConnection is null && cluster?.ShouldBacklog(slot, _readFrom) == true)
                 return await SendBackloggedHedgedClusterAsync(operation, command, budget, flags, cancellationToken,
                     observation, slot, deadline).ConfigureAwait(false);
-            connection = initialConnection ?? (cluster is null
-                ? await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false)
-                : await cluster.GetReadConnectionAsync(slot, _readFrom, cancellationToken, observation).ConfigureAwait(false));
+            try
+            {
+                connection = initialConnection ?? (cluster is null
+                    ? await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false)
+                    : await cluster.GetReadConnectionAsync(slot, _readFrom, backlogAcquisition.Token, observation).ConfigureAwait(false));
+            }
+            catch (RespireConnectionException error) when (initialConnection is null
+                && error is not RespireReconnectLimitException && cluster?.ShouldBacklog(slot, _readFrom) == true)
+            {
+                return await SendBackloggedHedgedClusterAsync(operation, command, budget, flags, cancellationToken,
+                    observation, slot, deadline).ConfigureAwait(false);
+            }
+            backlogAcquisition.CheckDeadline(operation, _core);
+            backlogAcquisition.Dispose();
             // Selection belongs to the caller, before either independently owned hedge leg starts.
             callerAttempts = observation.Attempts;
             budget.RecordRead();
@@ -119,11 +133,20 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
+            if (error is OperationCanceledException canceled)
+            {
+                if (backlogAcquisition.IsCallerCancellation(canceled))
+                    error = new OperationCanceledException(canceled.Message, canceled, cancellationToken);
+                else if (backlogAcquisition.IsDeadlineCancellation(canceled))
+                    error = backlogAcquisition.CreateTimeout(operation, _core, cause: canceled);
+            }
             failure = error;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
             throw;
         }
         finally
         {
+            backlogAcquisition.Dispose();
             race.DisposeLosers();
             if (connection is not null) RespireTelemetry.RecordHedgeExtraLoad(connection, sent);
             if (owner is not null)

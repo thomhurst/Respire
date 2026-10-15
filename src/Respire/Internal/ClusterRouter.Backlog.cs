@@ -13,7 +13,16 @@ internal sealed partial class ClusterRouter
     internal bool IsBacklogDraining(int? slot)
         => _backlogs.TryGetValue(slot ?? -1, out var queue) && queue.IsRunning;
 
+    internal Action<bool>? BacklogAdmissionCheckedForTests { get; set; }
+
     internal bool ShouldBacklog(int? slot, RespireReadFrom readFrom = RespireReadFrom.Primary)
+    {
+        var shouldBacklog = ShouldBacklogCore(slot, readFrom);
+        BacklogAdmissionCheckedForTests?.Invoke(shouldBacklog);
+        return shouldBacklog;
+    }
+
+    private bool ShouldBacklogCore(int? slot, RespireReadFrom readFrom)
     {
         if (_options.BacklogPolicy != RespireBacklogPolicy.Queue
             || Volatile.Read(ref _hasBacklogConnection) == 0 && !_primary.IsInitialized) return false;

@@ -296,6 +296,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         RespireConnection.CredentialSequenceLease credentialSequence = default;
         var returnWatchConnection = false;
         var sendAttempted = false;
+        var clusterBacklogDispatch = false;
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
@@ -331,6 +332,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     ? await _client.RunClusterBacklogAsync("MULTI/EXEC", clusterSlot, RespireReadFrom.Primary,
                         cancellationToken, deadline, observation, (ready, originalDeadline) =>
                         {
+                            clusterBacklogDispatch = true;
                             connection = ready;
                             deadline = originalDeadline;
                             return SendAsync();
@@ -555,17 +557,35 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 var cluster = core.Cluster;
                 acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
-                if (slot is null && cluster is { } flushCluster
-                    && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
-                {
-                    slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
-                    // A queued keyless entry was selected before its primary slot was known.
-                    // Retain dedicated WATCH/import leases, but reselect ordinary queued work.
-                    if (_watchConnection is null && !ConnectionPolicy.IsImportSession) connection = null;
-                }
                 for (;;)
                 {
-                    connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
+                    try
+                    {
+                        if (slot is null && cluster is { } flushCluster
+                            && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                        {
+                            slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
+                            // A queued keyless entry was selected before its primary slot was known.
+                            // Retain dedicated WATCH/import leases, but reselect ordinary queued work.
+                            if (_watchConnection is null && !ConnectionPolicy.IsImportSession) connection = null;
+                        }
+                        connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
+                    }
+                    catch (RespireConnectionException error) when (!sendAttempted && !clusterBacklogDispatch
+                        && _watchConnection is null && !ConnectionPolicy.IsImportSession && !_hasCursorContinuation
+                        && error is not RespireReconnectLimitException && cluster?.ShouldBacklog(slot) == true)
+                    {
+                        // Only initial acquisition is definitely unsent. Routing and command retries retain ownership later.
+                        acquisition.Dispose();
+                        return await _client.RunClusterBacklogAsync("MULTI/EXEC", slot, RespireReadFrom.Primary,
+                            cancellationToken, deadline, observation, (ready, originalDeadline) =>
+                            {
+                                clusterBacklogDispatch = true;
+                                connection = ready;
+                                deadline = originalDeadline;
+                                return SendAsync();
+                            }).ConfigureAwait(false);
+                    }
                     acquisition.Dispose();
                     acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                     if (core.Sentinel is not null)

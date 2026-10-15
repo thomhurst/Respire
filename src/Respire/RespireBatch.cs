@@ -455,6 +455,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     {
         var core = _client.Core;
         var operations = group ?? _ops;
+        var canBacklogInitialAcquisition = initialConnection is null;
         if (!deadline.IsSet) deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
         using var timeout = deadline.IsSet
             ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
@@ -485,19 +486,31 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 {
                     if (core.Cluster is { } cluster)
                     {
-                        if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                        try
                         {
-                            slot = await cluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
-                            initialConnection = null;
+                            if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                            {
+                                slot = await cluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
+                                initialConnection = null;
+                            }
+                            if (attempt > 1) await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
+                            // Retry groups hold no continuations, but a fresh cursor page must still record
+                            // the server that issues its cursor. Each attempt revalidates that pin, so the next
+                            // page finds the server that answered the final attempt.
+                            (connection, _) = attempt == 1 && initialConnection is not null
+                                && !operations.Exists(static op => op.IsCursorContinuation.HasValue) ? (initialConnection, null)
+                                : await AcquireGroupConnectionsAsync(slot, operations, readFrom, token,
+                                    operations[0].Observation).ConfigureAwait(false);
                         }
-                        if (attempt > 1) await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
-                        // Retry groups hold no continuations, but a fresh cursor page must still record
-                        // the server that issues its cursor. Each attempt revalidates that pin, so the next
-                        // page finds the server that answered the final attempt.
-                        (connection, _) = attempt == 1 && initialConnection is not null
-                            && !operations.Exists(static op => op.IsCursorContinuation.HasValue) ? (initialConnection, null)
-                            : await AcquireGroupConnectionsAsync(slot, operations, readFrom, token,
-                                operations[0].Observation).ConfigureAwait(false);
+                        catch (RespireConnectionException error) when (attempt == 1 && canBacklogInitialAcquisition
+                            && error is not RespireReconnectLimitException && !operations.Exists(static op => op.IsCursorRead)
+                            && cluster.ShouldBacklog(slot, readFrom))
+                        {
+                            // No attempt was submitted. The queued unit keeps these snapshots and starts
+                            // the retry owner only after recovery, without spending a command retry here.
+                            await RunBackloggedClusterGroupAsync(slot, operations, readFrom, callerToken, deadline).ConfigureAwait(false);
+                            return null;
+                        }
                         DeferredOperation.SetAttempts(operations, operations[0].Observation.Attempts);
                         DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
                     }
@@ -755,6 +768,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         // Read selection borrows the first pending's existing owner. Copy the completed
         // selection count to the other members before any command starts its own retries.
         var selectionObservation = operations[0].Observation;
+        if (!deadline.IsSet && _client.Core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+            deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
         var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _client.Core.Options.CommandTimeout);
         try
         {
@@ -766,6 +781,15 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 && !operations.Exists(static op => op.IsCursorContinuation.HasValue) ? (initialConnection, null)
                 : await AcquireGroupConnectionsAsync(slot, operations, readFrom, acquisition.Token, selectionObservation).ConfigureAwait(false);
             acquisition.CheckDeadline("PIPELINE", _client.Core);
+        }
+        catch (RespireConnectionException error) when (initialConnection is null
+            && error is not RespireReconnectLimitException && !operations.Exists(static op => op.IsCursorRead)
+            && _client.Core.Cluster!.ShouldBacklog(slot, readFrom))
+        {
+            // Acquisition submitted no member. Join once; a draining entry must not queue behind itself.
+            acquisition.Dispose();
+            await RunBackloggedClusterGroupAsync(slot, operations, readFrom, cancellationToken, deadline).ConfigureAwait(false);
+            return;
         }
         catch (Exception ex)
         {

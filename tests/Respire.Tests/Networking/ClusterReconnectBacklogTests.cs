@@ -38,6 +38,63 @@ public class ClusterReconnectBacklogTests
     }
 
     [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task GroupsQueueWhenInitialAcquisitionLosesConnectedRoute(bool transaction, bool retry, bool keyless)
+    {
+        await using var fixture = await Fixture.CreateAsync(disconnectOnCreate: false,
+            retryPolicy: retry ? new RespireRetryPolicy { MaxAttempts = 1 } : null);
+        var router = fixture.Client.Core.Cluster!;
+        var connection = fixture.Node.GetConnection();
+        var raced = false;
+        router.BacklogAdmissionCheckedForTests = shouldBacklog =>
+        {
+            router.BacklogAdmissionCheckedForTests = null;
+            if (shouldBacklog) throw new InvalidOperationException("The initial route must be healthy.");
+            raced = true;
+#pragma warning disable RESP009 // Inject the disconnect synchronously between the precheck and acquisition.
+            connection.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
+        };
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{fixture.Server.Port}\r\n");
+        fixture.Server.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => keyless ? topology : "*0\r\n"u8.ToArray(),
+            "MULTI" => FakeRespServer.OkReply,
+            "EXEC" => keyless ? "*1\r\n+OK\r\n"u8.ToArray() : "*1\r\n$5\r\nvalue\r\n"u8.ToArray(),
+            "FLUSHDB" => transaction ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply,
+            _ when command.StartsWith("GET ", StringComparison.Ordinal) => transaction
+                ? "+QUEUED\r\n"u8.ToArray() : ValueReply,
+            _ => null,
+        };
+        using var batch = fixture.Client.CreateBatch();
+        await using var tx = fixture.Client.CreateTransaction();
+        IRespireCommandQueue queue = transaction ? tx : batch;
+        var get = keyless ? default : transaction ? tx.GetString("{queue}race") : batch.GetString("{queue}race");
+        var flush = keyless ? queue.Server.FlushDatabase() : default;
+        var pending = transaction ? CommitAsync(tx) : batch.ExecuteAsync().AsTask();
+        await fixture.Connecting.Task.WaitAsync(Limit);
+        await Assert.That(raced).IsTrue();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await Assert.That(router.IsBacklogDraining(keyless ? null : ClusterHash.GetSlot("{queue}race"))).IsTrue();
+        await Assert.That(fixture.Server.ReceivedCommands.Any(IsApplicationCommand)).IsFalse();
+        await fixture.ReleaseAsync();
+        await pending.WaitAsync(Limit);
+#pragma warning disable RESP002 // Both execution branches were awaited through pending above.
+        if (keyless) await Assert.That(flush!.Result).IsTrue();
+        else await Assert.That(get!.Result).IsEqualTo("value");
+#pragma warning restore RESP002
+        await Assert.That(fixture.Server.ReceivedCommands.Count(command => command == (keyless ? "FLUSHDB" : "GET {queue}race"))).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RecoveryQueuesAfterInitialDiscoveryUsedFallbackSeed()
     {
         await using var fixture = await Fixture.CreateAsync(failPrimarySeed: true);
@@ -563,7 +620,8 @@ public class ClusterReconnectBacklogTests
 
         internal static async Task<Fixture> CreateAsync(int capacity = 1024, TimeSpan? commandTimeout = null,
             RespireBacklogPolicy policy = RespireBacklogPolicy.Queue, RespireReconnectPolicy? reconnectPolicy = null,
-            bool cache = false, bool circuit = false, RespireRetryPolicy? retryPolicy = null, bool failPrimarySeed = false)
+            bool cache = false, bool circuit = false, RespireRetryPolicy? retryPolicy = null, bool failPrimarySeed = false,
+            bool disconnectOnCreate = true)
         {
             var server = new FakeRespServer(8, FakeRespServer.OkReply)
             {
@@ -611,7 +669,7 @@ public class ClusterReconnectBacklogTests
                 var node = client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", server.Port));
                 client.Core.Cluster.SetSlotOwner(ClusterHash.GetSlot("{queue}key"), node);
                 Volatile.Write(ref gateReplacement, true);
-                await node.GetConnection().DisposeAsync();
+                if (disconnectOnCreate) await node.GetConnection().DisposeAsync();
                 return new(server, client, node, connecting, resume);
             }
             catch { await server.DisposeAsync(); throw; }
