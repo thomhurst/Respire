@@ -1,0 +1,196 @@
+[
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38696158383",
+    "stackExchangeRedis": "3.4.5",
+    "respireCommit": "21eee7459edb5cad574710907b154a29e78df9e2",
+    "archive": "38696158383.zip",
+    "sha256": "ef08d23e8e52905077bdc0676df92cd8246768bc8fb9be569793fe6547fef12b",
+    "files": [
+      {
+        "path": "project.assets.json",
+        "sha256": "c87e125391232fb42076b9a3e3b96f9093bd2e7ce1f79e709480ea40efbe202d"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-20261015-070625.log",
+        "sha256": "2dcc7a7132b2572d3606db98549b38054d0cb50ce7c1a96cf7fa4a8e14b47a26"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.Respire_PublishAndConsume-20261015-070734.nettrace",
+        "sha256": "3179007ce6887abe09a72bc0692e3ee1a65c567ff8c2592480fa7e3e8bce5e83"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.Respire_PublishAndConsume-20261015-070734.speedscope.json",
+        "sha256": "49ebe61472dcad8924238e937fcd023a2a391c2cddd124aae72e06f5335d65aa"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.StackExchange_PublishAndConsume-20261015-070727.nettrace",
+        "sha256": "c943c4b04f1d79ba48db96f6713471635c0b673a3c0f97806ff27ea245abd2fa"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.StackExchange_PublishAndConsume-20261015-070727.speedscope.json",
+        "sha256": "76f6b6981d6ffea3733467bae647eb06854e3d63d3071b68d8f16713194aad60"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "220fba5e50adcf5a9eff16a625115a8c317aaa7bbb4a8887ecedb2f94cc1dcaf"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "9824cd41a4017eec1770614b9bbdd34621d0b805125e90c237d16c2632bc67ee"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "90039bdbf119f630c84f2ac9f48eb10d37360254dbc9e095cdc98e5d6d7ff048"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "b668ea5b6aaa82cb0e05cfd89c5082e806a237fae2fbc6fa24ac978e7d80fa46"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "421747e77fff47ae381838372f5f5f25207e799f0035118b61c29002419699b5"
+      },
+      {
+        "path": "pubsub-profile/eventpipe.log",
+        "sha256": "fdc37238eddbfc0d3825efda4657f624afa39cb9987eb7ce34ac681ddf204a8c"
+      },
+      {
+        "path": "pubsub-profile/phases.json",
+        "sha256": "5e1bd203cc1c1b976288c07027e0b315aff12c9c0a2bf1fcfc0451dc31a68e36"
+      },
+      {
+        "path": "pubsub-profile/phases.log",
+        "sha256": "bd55f641527e5e5e8795be1696464b795110eda9562130c90b7fbbf93742ce6b"
+      },
+      {
+        "path": "pubsub-profile/summary.md",
+        "sha256": "92c8b700bb3cb5c1e8d40ba8137f733696b0dcdc3df05431698a061a1dc85c68"
+      },
+      {
+        "path": "Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-20261015-070417.log",
+        "sha256": "b59debd4fb70aed911e37b84a6954df8b4ae966aa6a9ad351d732486b76961c7"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "d8f15ca79e17f1a24a3919edf901d7ae57abab2c1eedf6c5e0aea575ad87209c"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "017ecb4b6542822a81fa7495d6d2f6816726d19b67d034472ffc821618879a37"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "a83def0f7d2484c6c8dbf380daac323d431210bb594d056c5d70faccc12c84f2"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "dbe0748f6f290d1da658f9818fd2c23a72449c55601875d3085a2dde58f2118d"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "d30aeee3dbdb54471f63cbe2fedb80f1ea06ffed743a8246e038b623aa6c8e40"
+      },
+      {
+        "path": "rig.txt",
+        "sha256": "fbe19ebb834e49058c3ce1e579a582c5b3962ad0eabcb3e641970030488c0e7e"
+      }
+    ]
+  },
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38696161089",
+    "stackExchangeRedis": "4.0.127-alpha",
+    "respireCommit": "21eee7459edb5cad574710907b154a29e78df9e2",
+    "archive": "38696161089.zip",
+    "sha256": "016acfbf8a21da1fdd73f02cb32908b1d234bb86794af98af2cc05edc7fe0aaa",
+    "files": [
+      {
+        "path": "project.assets.json",
+        "sha256": "0e207a16c771586cef8b4d11b4ac7b30646562441f8b59769650d45e28eb8b32"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-20261015-070605.log",
+        "sha256": "b224e1899fec1e77ee7a50b3fbdfee63a16df6fbf39b713825d2e755b0e437c5"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.Respire_PublishAndConsume-20261015-070700.nettrace",
+        "sha256": "b5d180d391a0f75b46fc89dd455185cba0c0414d400ac77cd4d169ef0aa8cd44"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.Respire_PublishAndConsume-20261015-070700.speedscope.json",
+        "sha256": "f212383b5fccc031da7cfc9830a703bc1a75493c26bba2ff6893f1b5399f0c01"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.StackExchange_PublishAndConsume-20261015-070653.nettrace",
+        "sha256": "957716bad9897fe226db42f3bd45967ca1bd56125c84903cbc183652dd41e488"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.StackExchange_PublishAndConsume-20261015-070653.speedscope.json",
+        "sha256": "ca12b896d2428d0cf6ca58103ba9bc1845ab30a6f4d782f8bcb92883a4458265"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "c346a5cc28e8d6b2e4b8232d719d716cc4122d4d1e1022a2751a20edd22ffac9"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "765c69366a877f0f1fda8da42d683d6b210bf195d10ef9588d6b9f7e5ccbde8a"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "d6d9196750e4db48a7402c0867c445d91d8a256b64d91ec8944260ab5df1d726"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "cbf7f0b4898a1f2b0114f00221ba2c25e0228740b817f9d844d813d620477807"
+      },
+      {
+        "path": "pubsub-profile/eventpipe/results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "1a8a1f10deac749a014c6fb586a81dc966505c034f1b5beeaa540fb7c628d240"
+      },
+      {
+        "path": "pubsub-profile/eventpipe.log",
+        "sha256": "898dc8eb3ee41113502ccef494fb16e143b337bdab7626f831dfde3b617cb996"
+      },
+      {
+        "path": "pubsub-profile/phases.json",
+        "sha256": "e0e6e75ed90f44bd286aca87023f40a5657bd2872d066625a2fbcac78db807fb"
+      },
+      {
+        "path": "pubsub-profile/phases.log",
+        "sha256": "0988392d7a18a114287f874c6e7502794be5d141ebdc620a83abbf28f15870f9"
+      },
+      {
+        "path": "pubsub-profile/summary.md",
+        "sha256": "9e92fc2cea1b716df803f3e39eb4fe0fb8557e2102633089a2cc3ca9d0c25dda"
+      },
+      {
+        "path": "Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-20261015-070408.log",
+        "sha256": "49c28f62b966779c873409aac824f6f52710ce282bfaa220e4fd40272cda2253"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-default.md",
+        "sha256": "9996dff7b1a475750b857ee0cea849358a8e38e7686e209032840832a4524742"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-full-compressed.json",
+        "sha256": "c14d60e671b51462f621d20e4fbee47697dcf3f1b0f0ef2f42582c255cee9065"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report-github.md",
+        "sha256": "cb8b2cca0d4da00295ccc26cfdb7d9637d1af087e0490feb3fc70696d53ac772"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.csv",
+        "sha256": "41783a84d5e379a327d7080875f08503e600dc04bbe46a69b925033269828cc2"
+      },
+      {
+        "path": "results/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks-report.html",
+        "sha256": "2c5250043494630eab8475379cfd385bfe6cb50ae41349f1ee24e7abebd68e14"
+      },
+      {
+        "path": "rig.txt",
+        "sha256": "5fe1783e9d6e5af80fa0347436f4e1f0244171b8c127422fa0fb1a730e0c8904"
+      }
+    ]
+  }
+]

@@ -1,0 +1,364 @@
+[
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38696158383",
+    "stackExchangeRedis": "3.4.5",
+    "comparisons": {
+      "StackExchange_PublishAndConsume": {
+        "meanMicroseconds": 230.88222271259016,
+        "standardDeviationMicroseconds": 1.663055738574526,
+        "allocatedBytes": 672,
+        "retainedIterations": 26
+      },
+      "Respire_PublishAndConsume": {
+        "meanMicroseconds": 233.90744044596354,
+        "standardDeviationMicroseconds": 1.7286521396504781,
+        "allocatedBytes": 400,
+        "retainedIterations": 30
+      }
+    },
+    "phases": {
+      "Respire": {
+        "synchronousReads": 1571,
+        "AckMicroseconds": {
+          "mean": 201.1735304,
+          "p50": 198.922,
+          "p95": 261.489,
+          "p99": 288.66
+        },
+        "AfterAckMicroseconds": {
+          "mean": 29.778545,
+          "p50": 28.954,
+          "p95": 75.855,
+          "p99": 98.534
+        }
+      },
+      "StackExchange.Redis": {
+        "synchronousReads": 1748,
+        "AckMicroseconds": {
+          "mean": 208.87356359999998,
+          "p50": 208.029,
+          "p95": 271.217,
+          "p99": 300.361
+        },
+        "AfterAckMicroseconds": {
+          "mean": 28.0222648,
+          "p50": 22.172,
+          "p95": 75.291,
+          "p99": 99.336
+        }
+      }
+    },
+    "traces": {
+      "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.Respire_PublishAndConsume-20261015-070734.speedscope.json": {
+        "publicationAndTransport": [
+          "Respire!Respire.Networking.AsyncFlushSignal.System.Threading.IThreadPoolWorkItem.Execute()",
+          "Respire!Respire.Networking.CompletionScheduler.ExecuteCore()",
+          "Respire!Respire.Networking.RespireConnection+<FlushLoopAsync>d__232.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection.DeliverPush(value class Respire.Protocol.RespValue&)",
+          "Respire!Respire.RespireClient.PublishAsync(value class Respire.RespireChannel,value class Respire.RespireValue,value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.RedisSubscriber.PublishAsync(value class StackExchange.Redis.RedisChannel,value class StackExchange.Redis.RedisValue,value class StackExchange.Redis.CommandFlags)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<FlushLoopAsync>d__232].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<FlushLoopAsync>d__232].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<FlushLoopAsync>d__232].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecuteFromThreadPool(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext(class System.Threading.Thread)"
+        ],
+        "deliveryAndConsumption": [
+          "Respire!Respire.Internal.SubscriptionBuffer+<ReadAllAsync>d__13.MoveNext()",
+          "Respire!Respire.Internal.SubscriptionBuffer+<ReadAllAsync>d__13.System.Collections.Generic.IAsyncEnumerator<Respire.RespireMessage>.MoveNextAsync()",
+          "Respire!Respire.Internal.SubscriptionBuffer.Write(value class Respire.RespireMessage)",
+          "Respire!Respire.Internal.SubscriptionHub.Deliver(int64,value class Respire.SubscriptionKind,value class System.ReadOnlySpan`1<unsigned int8>,value class System.ReadOnlySpan`1<unsigned int8>,bool,value class System.ReadOnlySpan`1<unsigned int8>)",
+          "Respire!Respire.Internal.SubscriptionHub.EnqueueMessage(class System.Collections.Generic.List`1<class Respire.RespireSubscription>,value class Respire.RespireChannel,value class System.Nullable`1<value class Respire.RespireChannel>,value class System.ReadOnlySpan`1<unsigned int8>,class System.Collections.Generic.List`1<value class System.ValueTuple`2<class Respire.RespireSubscription,class Respire.RespireSubscriptionGap>>&)",
+          "StackExchange.Redis!StackExchange.Redis.ChannelMessageQueue.ReadAsync(value class System.Threading.CancellationToken)",
+          "system.threading.channels!System.Threading.Channels.BoundedChannel`1+BoundedChannelReader[System.Byte].WaitToReadAsync(value class System.Threading.CancellationToken)",
+          "system.threading.channels!System.Threading.Channels.BoundedChannel`1+BoundedChannelWriter[System.Byte].TryWrite(!0)"
+        ],
+        "setupAndHarness": [
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.ReportResults(value class BenchmarkDotNet.Engines.RunResults)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.WriteLine(class System.String)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Dispose()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.GetExtraStats(value class BenchmarkDotNet.Engines.IterationData)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Measure(class System.Action`1<int64>,int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.MeasureWithGc(int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Run()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.RunIteration(value class BenchmarkDotNet.Engines.IterationData)",
+          "Respire!Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<HandshakeAsync>d__164.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10.MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].ExecuteFromThreadPool(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext(class System.Threading.Thread)"
+        ],
+        "runtimeLeaves": [
+          "System.Private.CoreLib!System.GC.RunFinalizers()",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Wait(int32,bool)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitForSignal(int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitNative(class Microsoft.Win32.SafeHandles.SafeWaitHandle,int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelSpinWaiter.Wait(int32,int32,bool)",
+          "System.Private.CoreLib!System.Threading.Monitor.Enter_Slowpath(class System.Object)",
+          "System.Private.CoreLib!System.Threading.Tasks.Task.InternalWaitCore(int32,value class System.Threading.CancellationToken)",
+          "System.Private.CoreLib!System.Threading.Thread.<PollGC>g__PollGCWorker|67_0()"
+        ],
+        "unresolvedLeafPresent": true,
+        "profileCount": 12
+      },
+      "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.StackExchange_PublishAndConsume-20261015-070727.speedscope.json": {
+        "publicationAndTransport": [
+          "Activity ExceptionHandling(00000000-0000-0000-0000-000000000000,instance void [Respire] Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234::MoveNext())",
+          "Respire!Respire.Networking.AsyncFlushSignal.System.Threading.IThreadPoolWorkItem.Execute()",
+          "Respire!Respire.Networking.CompletionScheduler.ExecuteCore()",
+          "Respire!Respire.Networking.RespireConnection+<FlushLoopAsync>d__232.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection.DeliverPush(value class Respire.Protocol.RespValue&)",
+          "Respire!Respire.RespireClient.PublishAsync(value class Respire.RespireChannel,value class Respire.RespireValue,value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.RedisSubscriber.PublishAsync(value class StackExchange.Redis.RedisChannel,value class StackExchange.Redis.RedisValue,value class StackExchange.Redis.CommandFlags)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecuteFromThreadPool(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext(class System.Threading.Thread)"
+        ],
+        "deliveryAndConsumption": [
+          "Respire!Respire.Internal.SubscriptionHub.Deliver(int64,value class Respire.SubscriptionKind,value class System.ReadOnlySpan`1<unsigned int8>,value class System.ReadOnlySpan`1<unsigned int8>,bool,value class System.ReadOnlySpan`1<unsigned int8>)",
+          "Respire!Respire.Internal.SubscriptionHub.EnqueueMessage(class System.Collections.Generic.List`1<class Respire.RespireSubscription>,value class Respire.RespireChannel,value class System.Nullable`1<value class Respire.RespireChannel>,value class System.ReadOnlySpan`1<unsigned int8>,class System.Collections.Generic.List`1<value class System.ValueTuple`2<class Respire.RespireSubscription,class Respire.RespireSubscriptionGap>>&)",
+          "StackExchange.Redis!StackExchange.Redis.ChannelMessageQueue.ReadAsync(value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.ChannelMessageQueue.Write(value class StackExchange.Redis.RedisChannel&,value class StackExchange.Redis.RedisValue&)",
+          "StackExchange.Redis!StackExchange.Redis.ConnectionMultiplexer.OnMessage(value class StackExchange.Redis.RedisChannel&,value class StackExchange.Redis.RedisChannel&,value class StackExchange.Redis.RedisValue&)"
+        ],
+        "setupAndHarness": [
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.ReportResults(value class BenchmarkDotNet.Engines.RunResults)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.WriteLine(class System.String)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Dispose()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.GetExtraStats(value class BenchmarkDotNet.Engines.IterationData)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Measure(class System.Action`1<int64>,int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.MeasureWithGc(int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Run()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.RunIteration(value class BenchmarkDotNet.Engines.IterationData)",
+          "Respire!Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<HandshakeAsync>d__164.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10.MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext(class System.Threading.Thread)"
+        ],
+        "runtimeLeaves": [
+          "System.Private.CoreLib!System.GC.RunFinalizers()",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Wait(int32,bool)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitForSignal(int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitNative(class Microsoft.Win32.SafeHandles.SafeWaitHandle,int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelSpinWaiter.Wait(int32,int32,bool)",
+          "System.Private.CoreLib!System.Threading.Monitor.Enter_Slowpath(class System.Object)",
+          "System.Private.CoreLib!System.Threading.Thread.<PollGC>g__PollGCWorker|67_0()"
+        ],
+        "unresolvedLeafPresent": true,
+        "profileCount": 13
+      }
+    }
+  },
+  {
+    "run": "https://github.com/thomhurst/Respire/actions/runs/38696161089",
+    "stackExchangeRedis": "4.0.127-alpha",
+    "comparisons": {
+      "StackExchange_PublishAndConsume": {
+        "meanMicroseconds": 125.68011616210937,
+        "standardDeviationMicroseconds": 2.187672148257897,
+        "allocatedBytes": 1064,
+        "retainedIterations": 30
+      },
+      "Respire_PublishAndConsume": {
+        "meanMicroseconds": 124.71249587402345,
+        "standardDeviationMicroseconds": 1.1154388023733324,
+        "allocatedBytes": 400,
+        "retainedIterations": 30
+      }
+    },
+    "phases": {
+      "Respire": {
+        "synchronousReads": 2389,
+        "AckMicroseconds": {
+          "mean": 128.0913246,
+          "p50": 130.595,
+          "p95": 163.571,
+          "p99": 179.095
+        },
+        "AfterAckMicroseconds": {
+          "mean": 16.9429188,
+          "p50": 16.632,
+          "p95": 39.922,
+          "p99": 54.796
+        }
+      },
+      "StackExchange.Redis": {
+        "synchronousReads": 3850,
+        "AckMicroseconds": {
+          "mean": 157.3255158,
+          "p50": 159.824,
+          "p95": 186.25,
+          "p99": 203.514
+        },
+        "AfterAckMicroseconds": {
+          "mean": 5.704508000000001,
+          "p50": 2.217,
+          "p95": 24.136,
+          "p99": 43.884
+        }
+      }
+    },
+    "traces": {
+      "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.Respire_PublishAndConsume-20261015-070700.speedscope.json": {
+        "publicationAndTransport": [
+          "Respire!Respire.Networking.AsyncFlushSignal.System.Threading.IThreadPoolWorkItem.Execute()",
+          "Respire!Respire.Networking.CompletionScheduler.ExecuteCore()",
+          "Respire!Respire.Networking.RespireConnection+<FlushLoopAsync>d__232.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection.DeliverPush(value class Respire.Protocol.RespValue&)",
+          "Respire!Respire.RespireClient.PublishAsync(value class Respire.RespireChannel,value class Respire.RespireValue,value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.PubSub.PublishAsync(value class StackExchange.Redis.RespPubSub,value class StackExchange.Redis.RedisChannel,value class StackExchange.Redis.RedisValue,value class StackExchange.Redis.CommandFlags,value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.RedisSubscriber.PublishAsync(value class StackExchange.Redis.RedisChannel,value class StackExchange.Redis.RedisValue,value class StackExchange.Redis.CommandFlags)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<FlushLoopAsync>d__232].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<FlushLoopAsync>d__232].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<FlushLoopAsync>d__232].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecuteFromThreadPool(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext(class System.Threading.Thread)"
+        ],
+        "deliveryAndConsumption": [
+          "Respire!Respire.Internal.SubscriptionBuffer+<ReadAllAsync>d__13.MoveNext()",
+          "Respire!Respire.Internal.SubscriptionBuffer+<ReadAllAsync>d__13.System.Collections.Generic.IAsyncEnumerator<Respire.RespireMessage>.MoveNextAsync()",
+          "Respire!Respire.Internal.SubscriptionBuffer.Write(value class Respire.RespireMessage)",
+          "Respire!Respire.Internal.SubscriptionHub.Deliver(int64,value class Respire.SubscriptionKind,value class System.ReadOnlySpan`1<unsigned int8>,value class System.ReadOnlySpan`1<unsigned int8>,bool,value class System.ReadOnlySpan`1<unsigned int8>)",
+          "Respire!Respire.Internal.SubscriptionHub.EnqueueMessage(class System.Collections.Generic.List`1<class Respire.RespireSubscription>,value class Respire.RespireChannel,value class System.Nullable`1<value class Respire.RespireChannel>,value class System.ReadOnlySpan`1<unsigned int8>,class System.Collections.Generic.List`1<value class System.ValueTuple`2<class Respire.RespireSubscription,class Respire.RespireSubscriptionGap>>&)",
+          "StackExchange.Redis!StackExchange.Redis.ChannelMessageQueue.ReadAsync(value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.RespPushDispatch.Deliver(value class RESPite.Messages.RespReader&,class StackExchange.Redis.ConnectionMultiplexer,value class RedisChannelOptions,bool)",
+          "system.threading.channels!System.Threading.Channels.BoundedChannel`1+BoundedChannelReader[System.Byte].WaitToReadAsync(value class System.Threading.CancellationToken)",
+          "system.threading.channels!System.Threading.Channels.BoundedChannel`1+BoundedChannelWriter[System.Byte].TryWrite(!0)"
+        ],
+        "setupAndHarness": [
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.ReportResults(value class BenchmarkDotNet.Engines.RunResults)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.WriteLine(class System.String)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Dispose()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.GetExtraStats(value class BenchmarkDotNet.Engines.IterationData)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Measure(class System.Action`1<int64>,int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.MeasureWithGc(int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Run()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.RunIteration(value class BenchmarkDotNet.Engines.IterationData)",
+          "Respire!Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<HandshakeAsync>d__164.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10.MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].ExecuteFromThreadPool(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext(class System.Threading.Thread)"
+        ],
+        "runtimeLeaves": [
+          "System.Private.CoreLib!System.GC.RunFinalizers()",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Wait(int32,bool)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitForSignal(int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitNative(class Microsoft.Win32.SafeHandles.SafeWaitHandle,int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelSpinWaiter.Wait(int32,int32,bool)",
+          "System.Private.CoreLib!System.Threading.Monitor.Enter_Slowpath(class System.Object)",
+          "System.Private.CoreLib!System.Threading.Tasks.Task.InternalWaitCore(int32,value class System.Threading.CancellationToken)",
+          "System.Private.CoreLib!System.Threading.Thread.<PollGC>g__PollGCWorker|67_0()"
+        ],
+        "unresolvedLeafPresent": true,
+        "profileCount": 13
+      },
+      "pubsub-profile/eventpipe/Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks.StackExchange_PublishAndConsume-20261015-070653.speedscope.json": {
+        "publicationAndTransport": [
+          "Respire!Respire.Networking.CompletionScheduler.ExecuteCore()",
+          "Respire!Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection.DeliverPush(value class Respire.Protocol.RespValue&)",
+          "Respire!Respire.RespireClient.PublishAsync(value class Respire.RespireChannel,value class Respire.RespireValue,value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.PubSub.PublishAsync(value class StackExchange.Redis.RespPubSub,value class StackExchange.Redis.RedisChannel,value class StackExchange.Redis.RedisValue,value class StackExchange.Redis.CommandFlags,value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.RedisSubscriber.PublishAsync(value class StackExchange.Redis.RedisChannel,value class StackExchange.Redis.RedisValue,value class StackExchange.Redis.CommandFlags)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecuteFromThreadPool(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<ReceiveLoopAsync>d__234].MoveNext(class System.Threading.Thread)"
+        ],
+        "deliveryAndConsumption": [
+          "Respire!Respire.Internal.SubscriptionBuffer.Write(value class Respire.RespireMessage)",
+          "Respire!Respire.Internal.SubscriptionHub.Deliver(int64,value class Respire.SubscriptionKind,value class System.ReadOnlySpan`1<unsigned int8>,value class System.ReadOnlySpan`1<unsigned int8>,bool,value class System.ReadOnlySpan`1<unsigned int8>)",
+          "Respire!Respire.Internal.SubscriptionHub.EnqueueMessage(class System.Collections.Generic.List`1<class Respire.RespireSubscription>,value class Respire.RespireChannel,value class System.Nullable`1<value class Respire.RespireChannel>,value class System.ReadOnlySpan`1<unsigned int8>,class System.Collections.Generic.List`1<value class System.ValueTuple`2<class Respire.RespireSubscription,class Respire.RespireSubscriptionGap>>&)",
+          "StackExchange.Redis!StackExchange.Redis.ChannelMessageQueue.ReadAsync(value class System.Threading.CancellationToken)",
+          "StackExchange.Redis!StackExchange.Redis.ChannelMessageQueue.Write(value class StackExchange.Redis.RedisChannel&,value class StackExchange.Redis.RedisValue&)",
+          "StackExchange.Redis!StackExchange.Redis.ConnectionMultiplexer.OnMessage(value class StackExchange.Redis.RedisChannel&,value class StackExchange.Redis.RedisChannel&,value class StackExchange.Redis.RedisValue&)",
+          "StackExchange.Redis!StackExchange.Redis.RespPushDispatch.Deliver(value class RESPite.Messages.RespReader&,class StackExchange.Redis.ConnectionMultiplexer,value class RedisChannelOptions,bool)"
+        ],
+        "setupAndHarness": [
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.ReportResults(value class BenchmarkDotNet.Engines.RunResults)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.SendSignal(value class BenchmarkDotNet.Engines.HostSignal)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.AnonymousPipesHost.WriteLine(class System.String)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine..ctor(class BenchmarkDotNet.Engines.IHost,class BenchmarkDotNet.Characteristics.IResolver,class System.Action,class System.Action,class System.Action,class System.Action`1<int64>,class System.Action`1<int64>,class BenchmarkDotNet.Jobs.Job,class System.Action,class System.Action,class System.Action,class System.Action,int64,bool,class System.String)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Dispose()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.GetExtraStats(value class BenchmarkDotNet.Engines.IterationData)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Measure(class System.Action`1<int64>,int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.MeasureWithGc(int64)",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.Run()",
+          "BenchmarkDotNet!BenchmarkDotNet.Engines.Engine.RunIteration(value class BenchmarkDotNet.Engines.IterationData)",
+          "Respire!Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156.MoveNext()",
+          "Respire!Respire.Networking.RespireConnection+<HandshakeAsync>d__164.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13.MoveNext()",
+          "Respire.ComparisonBenchmarks!Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10.MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Cleanup>d__13].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.ComparisonBenchmarks.PubSubComparisonBenchmarks+<Setup>d__10].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.Threading.Tasks.VoidTaskResult,Respire.Networking.RespireConnection+<HandshakeAsync>d__164].MoveNext(class System.Threading.Thread)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].ExecutionContextCallback(class System.Object)",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext()",
+          "System.Private.CoreLib!System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1+AsyncStateMachineBox`1[System.__Canon,Respire.Networking.RespireConnection+<ConnectCoreAsync>d__156].MoveNext(class System.Threading.Thread)"
+        ],
+        "runtimeLeaves": [
+          "System.Private.CoreLib!System.GC.RunFinalizers()",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.Wait(int32,bool)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitForSignal(int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelLifoSemaphore.WaitNative(class Microsoft.Win32.SafeHandles.SafeWaitHandle,int32)",
+          "System.Private.CoreLib!System.Threading.LowLevelSpinWaiter.Wait(int32,int32,bool)",
+          "System.Private.CoreLib!System.Threading.Monitor.Enter_Slowpath(class System.Object)",
+          "System.Private.CoreLib!System.Threading.Thread.<PollGC>g__PollGCWorker|67_0()"
+        ],
+        "unresolvedLeafPresent": true,
+        "profileCount": 14
+      }
+    }
+  }
+]
