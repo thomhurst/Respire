@@ -10,7 +10,8 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 In these Linux Redis-container measurements, Respire is faster for concurrent and pipelined
 GETs against both StackExchange.Redis versions. Most single-operation timings against 3.4.5
 show no established latency advantage. Against 4.0.127-alpha, the ordinary-operation and
-local GET cache-hit comparisons favor Respire, while publish-to-consume pub/sub is slower.
+local GET cache-hit comparisons favor Respire. Publish-to-consume pub/sub shows no established
+latency advantage: the latest runs tie both versions, and an earlier 4.0 run was slower.
 These results describe the measured commits and rigs, not a guarantee for every workload.
 
 ## Measured comparisons: October 2026
@@ -126,21 +127,34 @@ per completed GET, **not individual request latency**. Approximate throughput be
 
 ### Publish-to-consume pub/sub
 
-These are the corrected runs, using RESP3 on both clients, one consuming subscriber, and
+These measurements use RESP3 on both clients, one consuming subscriber, and
 an 18-byte `Hello, subscriber!` payload. The timed operation awaits publication and consumption
 of the message. Respire throws if the subscription ends or reports a delivery gap.
 This measures delivery, not just the PUBLISH acknowledgement, and does not cover fan-out.
+
+The latest unprofiled Medium/two-launch runs at
+[`21eee745`](https://github.com/thomhurst/Respire/commit/21eee7459edb5cad574710907b154a29e78df9e2)
+report:
+
+| StackExchange version | Run | Respire μs | StackExchange μs | Allocated Respire / StackExchange | Respire classification |
+| --- | --- | --- | --- | --- | --- |
+| 3.4.5 | [38696158383](https://github.com/thomhurst/Respire/actions/runs/38696158383) | 233.9 ± 1.15 | 230.9 ± 1.21 | 400 B / 672 B | Same (ratio 1.01) |
+| 4.0.127-alpha | [38696161089](https://github.com/thomhurst/Respire/actions/runs/38696161089) | 124.7 ± 0.75 | 125.7 ± 1.46 | 400 B / 1064 B | Same (ratio 0.99) |
+
+The earlier corrected runs at `7cd38895` remain valid observations on their own rigs:
 
 | StackExchange version | Respire μs | StackExchange μs | Allocated Respire / StackExchange | Respire classification |
 | --- | --- | --- | --- | --- |
 | 3.4.5 | 225.7 ± 0.89 | 222.9 ± 1.41 | 400 B / 672 B | Same |
 | 4.0.127-alpha | 174.0 ± 1.30 | 154.5 ± 3.85 | 399 B / 1046 B | Slower |
 
-Lower allocation does not cancel the latency result: 3.4.5 is `Same`, and 4.0.127-alpha
-classifies Respire as `Slower` (reported ratio 1.13).
-[#1745](https://github.com/thomhurst/Respire/issues/1745) tracks profiling and improvement
-of both comparisons. The original full-run pub/sub reports are retained for audit only;
-they lack the timed delivery-gap check and are superseded by these results.
+The 3.4.5 comparison remains `Same`. The earlier 4.0 `Slower` result (ratio 1.13) used
+AMD EPYC 9V74; the new tie used Intel Xeon Platinum 8573C. This does not demonstrate an
+improvement or a regression between versions or commits. Lower allocation in all four
+runs does not cancel the latency findings. The original full-suite pub/sub reports lack
+the timed delivery-gap guard and remain superseded; both tables here retain that guard.
+
+#### Acknowledgement and consumer diagnostics
 
 The follow-up investigation separates time to the PUBLISH acknowledgement from the
 remaining wait through consumer completion and UTF-8 decoding, and records how often
@@ -148,13 +162,73 @@ the subscriber read is already complete. Delivery can overlap acknowledgement, s
 the remaining phase is not an independent measure of delivery latency. Both phases
 retain real message consumption and the delivery-gap guard.
 
-Manual comparison runs can enable `profile-pubsub` to retain these raw phase samples,
-percentiles and separate EventPipe CPU/threading diagnostics with the rig metadata.
-Instrumentation affects the diagnostic timings; only the unprofiled BenchmarkDotNet
-reports support latency and allocation comparisons. CPU samples cannot by themselves
-explain off-CPU scheduling delays. These diagnostics do not establish an improvement:
-the 3.4 tie and 4.0 slower result above remain the published findings until the
-follow-up measurements are reviewed.
+Each new run also retained 5,000 samples per client after 500 warmups, alternating client
+order, validating payload and recipient count, and recording synchronous read completion.
+Times below are **instrumented diagnostic microseconds**, not client performance comparisons:
+
+| Dependency | Client | Ack mean / P95 | After-ack mean / P95 / P99 | Synchronous reads |
+| --- | --- | --- | --- | --- |
+| 3.4.5 | Respire | 201.174 / 261.489 | 29.779 / 75.855 / 98.534 | 1571 / 5000 |
+| 3.4.5 | StackExchange | 208.874 / 271.217 | 28.022 / 75.291 / 99.336 | 1748 / 5000 |
+| 4.0.127-alpha | Respire | 128.091 / 163.571 | 16.943 / 39.922 / 54.796 | 2389 / 5000 |
+| 4.0.127-alpha | StackExchange | 157.326 / 186.250 | 5.705 / 24.136 / 43.884 | 3850 / 5000 |
+
+The 3.4 residual distributions are similar. Against 4.0, Respire's residual mean is
+11.238 μs longer, while its acknowledgement mean is 29.235 μs shorter. A subscriber
+has more time to become ready when acknowledgement takes longer: the residual and
+synchronous-read differences alone cannot establish slower delivery or a redundant hop.
+The probe also adds timestamps, cancellation/deadline handling and validation; its phase
+sums must not replace the unprofiled comparison above.
+
+The separate ShortRun EventPipe/threading passes show these paths in both Respire traces:
+`PublishAsync`, `FlushLoopAsync`, `ReceiveLoopAsync`, `CompletionScheduler.ExecuteCore`,
+`SubscriptionHub.EnqueueMessage`, `SubscriptionBuffer.Write`, the bounded readiness
+channel, and `SubscriptionBuffer.ReadAllAsync`. The StackExchange traces include
+`RedisSubscriber.PublishAsync`, `ChannelMessageQueue.Write` and `ConnectionMultiplexer.OnMessage`;
+the 4.0 trace also includes `PubSub.PublishAsync` and `RespPushDispatch.Deliver`.
+This locates the publication, delivery and consumer paths, but does not identify a
+removable bottleneck. All four traces also include connection/handshake setup, BDN engine
+work, thread-pool waits/spinning, GC-related frames and unresolved `?!?` leaves. Setup
+creates both clients even when only one client's method is benchmarked.
+
+The <a href={useBaseUrl('benchmarks/2026-10-pubsub/analysis.json')}>derived analysis</a>
+retains exact observed frame names and recalculated phase percentiles. Its stack inventory
+uses positive-duration exported intervals ending in `CPU_TIME` to establish frame presence
+only. Whole-process inclusive weights, exporter intervals and runtime wait frames must not
+be interpreted as per-operation CPU cost, kernel scheduling delay, or Redis server time.
+The raw `.nettrace` files remain available for deeper attribution.
+
+Threading diagnostics reported completed work items per operation of **3.8389 / 4.4043**
+(Respire / StackExchange 3.4) and **3.6802 / 5.2412** (Respire / StackExchange 4.0).
+Lock contentions were **0.0210 / 0.0054** and **0.0034 / 0.0176**, respectively. These
+process-wide instrumented counts do not isolate the subscription buffer or the critical
+path. Neither a consistent excess of Respire work items nor a consistent contention
+disadvantage appears across the two rigs; fewer work items alone cannot establish lower latency.
+
+#### Investigation outcome
+
+[#1745](https://github.com/thomhurst/Respire/issues/1745) concludes with **no safe latency
+improvement demonstrated by this evidence**, using its explicit profiling-only outcome.
+The code review considered these changes:
+
+| Candidate | Evidence and disposition |
+| --- | --- |
+| Inline readiness continuations | `SubscriptionBuffer.Write` signals while holding the buffer gate, within the hub's routing gate. Enabling synchronous continuations could run consumer work on the receive path under those gates. The traces and work-item counts do not establish a redundant hop worth that change. |
+| Remove buffering or routing synchronization | The hub gate orders epoch checks and enqueueing against reconnect markers. The buffer gate protects bounded messages and ordered/coalesced gaps. Contention counts do not attribute a latency bottleneck to either gate; removing them would require a new correctness design. |
+| Skip payload ownership or decoding | The receive payload is copied once for the subscription targets, and the benchmark consumes text. The profiles do not establish copying/decoding as the cause; bypassing ownership or returning before consumption would change the operation being measured. |
+
+These decisions follow the measured-source
+[`SubscriptionBuffer`](https://github.com/thomhurst/Respire/blob/21eee7459edb5cad574710907b154a29e78df9e2/src/Respire/PubSub/SubscriptionBuffer.cs)
+and [`SubscriptionHub`](https://github.com/thomhurst/Respire/blob/21eee7459edb5cad574710907b154a29e78df9e2/src/Respire/PubSub/SubscriptionHub.cs).
+No runtime behavior changed in this conclusion, so there is no new delivery, gap, ordering,
+cancellation or disposal behavior to validate. This is not proof that optimization is
+impossible. A future candidate needs an isolated attribution experiment, a controlled
+before/after comparison on the same rig, and correctness coverage for those contracts.
+Fan-out, slow consumers, reconnects and other payload sizes remain outside this measurement.
+
+Manual comparison runs can enable `profile-pubsub` to reproduce the diagnostic collection.
+Only the unprofiled reports support the published latency/allocation comparisons; the
+instrumented ShortRun results do not establish a win.
 
 ### Client-side cache hits and server reads
 
@@ -198,7 +272,7 @@ ties are also explicitly covered by [#1744](https://github.com/thomhurst/Respire
 
 ### Provenance and preserved evidence
 
-All four runs used BenchmarkDotNet **0.15.8**, **net10.0**, SDK **10.0.402**, runtime
+The four original runs used BenchmarkDotNet **0.15.8**, **net10.0**, SDK **10.0.402**, runtime
 **10.0.13**, X64 RyuJIT, Medium with **two launches**, **10 warmups** and **15 measurement
 iterations** per launch. They ran on GitHub-hosted `ubuntu-latest`, Ubuntu **24.04.5 LTS**,
 runner image **ubuntu24 20261004.327.1**, kernel **6.17.0-1022-azure**, with **4 logical /
@@ -216,6 +290,16 @@ comparison, not a remote deployment, Cluster, Sentinel, TLS, or .NET 8 measureme
 | Full suite, Oct 13–14 | 4.0.127-alpha | [38484250090](https://github.com/thomhurst/Respire/actions/runs/38484250090) | AMD EPYC 9V74 | x86-64-v4 | <a href={useBaseUrl('benchmarks/2026-10-comparison/38484250090.zip')}>ZIP</a> |
 | Corrected pub/sub, Oct 15 | 3.4.5 | [38664941232](https://github.com/thomhurst/Respire/actions/runs/38664941232) | AMD EPYC 7763 | x86-64-v3 | <a href={useBaseUrl('benchmarks/2026-10-comparison/38664941232.zip')}>ZIP</a> |
 | Corrected pub/sub, Oct 15 | 4.0.127-alpha | [38664943357](https://github.com/thomhurst/Respire/actions/runs/38664943357) | AMD EPYC 9V74 | x86-64-v3 | <a href={useBaseUrl('benchmarks/2026-10-comparison/38664943357.zip')}>ZIP</a> |
+| Pub/sub follow-up, Oct 15 | 3.4.5 | [38696158383](https://github.com/thomhurst/Respire/actions/runs/38696158383) | AMD EPYC 7763 | x86-64-v3 | <a href={useBaseUrl('benchmarks/2026-10-pubsub/38696158383.zip')}>ZIP</a> |
+| Pub/sub follow-up, Oct 15 | 4.0.127-alpha | [38696161089](https://github.com/thomhurst/Respire/actions/runs/38696161089) | Intel Xeon Platinum 8573C | x86-64-v4 | <a href={useBaseUrl('benchmarks/2026-10-pubsub/38696161089.zip')}>ZIP</a> |
+
+The two pub/sub follow-ups used source `21eee7459edb5cad574710907b154a29e78df9e2` from
+[#1748](https://github.com/thomhurst/Respire/pull/1748), the same BDN/SDK/runtime versions,
+Medium settings, Redis image ID and port-mapped endpoint above. Their runner images were
+**ubuntu24 20261012.334.1** (3.4.5) and **ubuntu24 20261004.327.1** (4.0), both Ubuntu
+24.04.5 with kernel 6.17.0-1022-azure and 4 logical / 2 physical cores. Each completed
+two unprofiled comparison cases and two separately instrumented ShortRun cases. Both
+unprofiled comparisons classify Respire as `Same`; instrumentation is excluded from those tables.
 
 The ordinary/cache results used Respire source commit
 [`17f617e3da1fef7e5317246db26b081be02f468f`](https://github.com/thomhurst/Respire/tree/17f617e3da1fef7e5317246db26b081be02f468f/benchmarks/Respire.ComparisonBenchmarks)
@@ -240,9 +324,21 @@ The <a href={useBaseUrl('benchmarks/2026-10-comparison/manifest.json')}>SHA-256 
 records archive and individual-file hashes, commits, versions, and run links. These copies
 remain available after the original Actions artifacts' 90-day retention expires.
 
+The pub/sub follow-up ZIPs additionally preserve phase samples and summaries, diagnostic
+logs, both clients' EventPipe `.nettrace` and speedscope files, and instrumented reports:
+**22 byte-verified files per run**. Their separate
+<a href={useBaseUrl('benchmarks/2026-10-pubsub/manifest.json')}>SHA-256 manifest</a> records
+every archived file. Download both ZIPs, that manifest and
+<a href={useBaseUrl('benchmarks/2026-10-pubsub/analyze.py')}>analyze.py</a> into one directory,
+then run `python analyze.py` to verify the hashes and reproduce `analysis.json` without
+running benchmarks. The archives retain full unprofiled distributions, allocations and
+rig/source provenance as well as the diagnostic evidence.
+
 This completes the measured publication scope of
-[#1625](https://github.com/thomhurst/Respire/issues/1625); the linked latency and pub/sub
-follow-ups remain open. It does not establish a universal performance advantage.
+[#1625](https://github.com/thomhurst/Respire/issues/1625) and the pub/sub investigation
+[#1745](https://github.com/thomhurst/Respire/issues/1745). The server-operation latency
+follow-up is tracked separately in [#1744](https://github.com/thomhurst/Respire/issues/1744).
+It does not establish a universal performance advantage.
 
 ## Automatic pipelining
 

@@ -245,9 +245,11 @@ described above. They are not release commitments.
 
 - [Published StackExchange.Redis 3.4.5 and 4.0.127-alpha comparisons](./performance#measured-comparisons-october-2026):
   Linux measurements and durable raw evidence cover ordinary operations, pipelines, pub/sub,
-  and local caches. [Server-operation latency ties](https://github.com/thomhurst/Respire/issues/1744)
-  and [pub/sub latency](https://github.com/thomhurst/Respire/issues/1745) remain open follow-ups;
-  publication does not establish a universal performance advantage.
+  and local caches. [Pub/sub profiling](https://github.com/thomhurst/Respire/issues/1745)
+  found no safe latency improvement supported by the collected evidence: the latest runs tie
+  both versions, and the earlier 4.0 slowdown remains valid for its original rig.
+  [Server-operation latency ties](https://github.com/thomhurst/Respire/issues/1744) remain
+  a separate follow-up; publication does not establish a universal performance advantage.
 - [Completed healthy-path retry and transport performance audit](https://github.com/thomhurst/Respire/issues/1693):
   enabled retries allocate and add work even when commands succeed. The audit documents
   remaining acceptance gaps and targets for future optimization; its closure does not
