@@ -137,6 +137,37 @@ public class CommonMisuseAnalyzerTests
     [Test]
     [Arguments("net8.0")]
     [Arguments("net10.0")]
+    public Task NestedMessageLoopCollections(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
+        class Consumer
+        {
+            async Task Read(RespireSubscription subscription, Task<CancellationToken> tokenTask)
+            {
+                // Initial collection setup is outside a subscription consumer.
+                await foreach (var message in subscription.WithCancellation(tokenTask.Result))
+                {
+                    await foreach (var inner in subscription.WithCancellation({|RESP012:tokenTask.Result|}).ConfigureAwait(false))
+                        {|RESP012:Thread.Sleep(1)|};
+                    _ = Task.Run(async () =>
+                    {
+                        await foreach (var deferred in subscription.WithCancellation(tokenTask.Result)) { }
+                    });
+                }
+                // Also cover a nested loop used directly as the outer loop body.
+                await foreach (var message in subscription)
+                    await foreach (var inner in subscription.WithCancellation({|RESP012:tokenTask.Result|}))
+                        {|RESP012:Thread.Sleep(2)|};
+                subscription.DeliveryGap += async gap =>
+                {
+                    await foreach (var inner in subscription.WithCancellation({|RESP012:tokenTask.Result|}))
+                        {|RESP012:Thread.Sleep(3)|};
+                };
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
     public Task MessageStreamImplementations(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
         interface IMessageStream : IAsyncEnumerable<RespireMessage> { }
         class MessageStream : IMessageStream

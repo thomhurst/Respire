@@ -90,7 +90,11 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
         // Work scheduled in another delegate/local function does not block this consumer.
         if (operation is IAnonymousFunctionOperation or ILocalFunctionOperation or INameOfOperation) return;
         if (operation is IForEachLoopOperation { IsAsynchronous: true } loop && IsMessageStream(loop.Collection.Type))
-            return; // Its own registered action reports the body once.
+        {
+            // Collection setup runs inside this consumer; the nested action only inspects its body.
+            Inspect(context, loop.Collection, reported);
+            return;
+        }
 
         string? blocking = null;
         if (SyncOverAsyncAnalyzer.GetAwaitable(operation) is not null)
