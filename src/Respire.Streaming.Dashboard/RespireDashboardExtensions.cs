@@ -20,7 +20,7 @@ public static class RespireDashboardExtensions
         var options = new RespireDashboardOptions();
         configure(options);
         // Freeze the allowlist when registration completes, before any request can observe it.
-        var frozen = new RespireDashboardOptions { EntryLimit = options.EntryLimit };
+        var frozen = new RespireDashboardOptions { EntryLimit = options.EntryLimit, MetricsHistoryMinutes = options.MetricsHistoryMinutes };
         foreach (var stream in options.Streams)
             frozen.Streams.Add(new() { Name = stream.Name, Stream = stream.Stream, Group = stream.Group,
                 DeadLetterStream = stream.DeadLetterStream, IsJobQueue = stream.IsJobQueue });

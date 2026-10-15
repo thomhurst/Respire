@@ -654,6 +654,47 @@ Their dimensions contain only the configured, bounded `TelemetryName` and fixed 
 values. Job IDs, entry IDs, payloads, and raw queue keys are not metric dimensions. Choose a
 fixed application role for `TelemetryName`, not a per-tenant or per-job name.
 
+## Bounded completion metrics
+
+Set `MetricsRetentionMinutes` in `RespireJobQueueOptions` to retain one-minute counters:
+
+```csharp
+services.AddRespireJobQueue<OrderHandler, Order>("orders", serialize, deserialize,
+    new RespireStreamWorkerOptions { DeliveryLimit = 5 },
+    new RespireJobQueueOptions { MetricsRetentionMinutes = 60 });
+
+var history = await RespireJobMetrics.ReadAsync(client, queue.StreamKey, minutes: 60);
+```
+
+The default, `0`, disables recording. Values from 1 to 1440 retain that many UTC minutes,
+including the current partial minute, using the Redis server clock. No TimeSeries module is
+needed. Each queue uses one hash at its source key plus `:metrics`, with at most one field per
+retained minute plus a retention field. Slots are reused, and the whole hash expires when the
+last recorded minute leaves the window, even when the queue is idle. Reads return oldest first,
+are bounded to 1440 buckets, and filter out expired slots. A missing hash returns an empty list.
+
+`Completed` counts acknowledged deliveries. `Failed` counts terminal dead letters, including
+explicit rejection and exhausted retries. Intermediate handler exceptions and retry attempts,
+expired jobs, and flow parents failed without being delivered are excluded. An operator retry
+creates a new delivery and may contribute a later completion. Empty minutes show zero; this also
+includes minutes before recording began and gaps while metrics were disabled. Retained history
+is shared across all workers for the queue, not partitioned by application job ID or job group.
+
+Counters commit in the same fenced Lua operation as the terminal event and acknowledgement.
+Stale consumers and replay after a lost reply do not increment them again. Enabled and disabled
+metrics add **zero extra per-job commands**; enabling metrics adds server-side work to completion.
+Storage/type/ACL errors leave the delivery pending rather than silently omitting its counter.
+Use the `run-job-metrics-benchmarks` PR label for the focused net10 performance comparison and
+command-count audit.
+
+All enabled workers must agree on retention. To change it, stop the queue's workers and delete
+only its `:metrics` key, or wait for that key to expire, then restart with the new retention.
+Disabling metrics leaves existing history to expire naturally. Enable recording on all workers
+to avoid gaps; Redis persistence and eviction still govern whether history survives server loss.
+Alongside existing worker permissions, allow `TIME`, `HGET`, `HSET`, `HDEL`, `PTTL`, `PEXPIREAT`,
+`PERSIST` and `DEL` on the metrics hash (the last three support expiry and rollback).
+History readers need script execution, `TIME` and `HGET`.
+
 ## Storage and delivery guarantees
 
 Queue names must be nonblank and cannot contain braces. The generated ready stream is

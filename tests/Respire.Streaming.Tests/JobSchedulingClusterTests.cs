@@ -42,6 +42,10 @@ public class JobSchedulingClusterTests
             await Assert.That(second.GetString("_respire.job.attempts")).IsEqualTo("1");
             await Assert.That(second.GetString("_respire.job.id")).IsEqualTo("id{untrusted}");
             await Assert.That(second.GetString("_respire.job.group")).IsEqualTo("tenant:{other}:東京");
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobQueueIntegrationTests.JobScript("CompleteWithMetrics"),
+                [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":metrics"],
+                [group, "owner", second.Id.Value, 1, "completed", "", "", 0, Array.Empty<byte>(), 5])).IsEqualTo(1);
+            await Assert.That((await RespireJobMetrics.ReadAsync(client, queue.StreamKey)).Sum(bucket => bucket.Completed)).IsEqualTo(1);
             await queue.EnqueueScheduledAsync("controlled", "payload", new() { Group = "controlled" });
             await queue.SetRateLimitAsync(new() { PermitLimit = 1, Window = TimeSpan.FromHours(1) });
             await queue.PauseAsync();

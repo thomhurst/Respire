@@ -33,6 +33,7 @@ internal static class DashboardPage
             details{margin-top:12px}summary{cursor:pointer;color:var(--blue);width:fit-content}.fields{margin:12px 0;display:grid;grid-template-columns:minmax(100px,1fr) minmax(0,3fr);gap:8px 18px;font-size:13px}.fields dt{overflow-wrap:anywhere;font-weight:600}.fields dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:Consolas,monospace}
             .actions{display:flex;align-items:flex-start;flex-wrap:wrap;gap:12px 20px;margin-top:16px}.actions details{margin:0}.actions p{max-width:60ch}.actions form{margin:0}button{font:inherit;cursor:pointer;border:1px solid var(--blue);border-radius:5px;background:var(--blue);color:white;padding:7px 14px}button:hover{filter:brightness(.9)}.delete{background:var(--paper);border-color:var(--red);color:var(--red)}
             .note{font-size:13px;color:var(--muted);max-width:75ch;margin:12px 0 0}footer{font-size:13px;color:var(--muted);padding:0 0 24px}
+            .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:24px}.charts figure{margin:0}.charts figcaption{font-weight:600}.chart{display:block;width:100%;height:auto;margin:8px 0}.chart-times{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
             @media(max-width:760px){.layout{grid-template-columns:1fr;padding:18px 12px;gap:18px}nav{position:static}nav a{display:inline-block;margin:0 12px 4px 0}.stream-head,.section{padding:18px 16px}.stats{gap:12px 22px}.fields{grid-template-columns:1fr;gap:4px}.fields dd{margin-bottom:8px}header{padding:20px}.dead{padding:12px}}
             </style></head><body><header><div class="brand">Respire</div><div class="heading"><h1>Queues and streams</h1><a class="refresh" href="
             """);
@@ -91,6 +92,7 @@ internal static class DashboardPage
                 .Append("</dd></div><div><dt>Limiter hits</dt><dd>")
                 .Append(stream.RateLimitHits is { } hits ? N(hits) : "—")
                 .Append("</dd></div></dl><p class=\"note\">Cumulative denied reader admissions. Jobs remain queued and retain their retry budget.</p></section>");
+            RenderMetrics(html, stream.Metrics);
         }
         html.Append("<section class=\"section\"><h3>Consumer groups</h3>");
         if (stream.SourceUnavailable) html.Append("<p class=\"notice\">Source inspection unavailable.</p>");
@@ -154,6 +156,48 @@ internal static class DashboardPage
                 .Append("<p class=\"note\">Look up retained log lines from any attempt, including completed and failed jobs.</p></section>");
         }
         html.Append("</article>");
+    }
+
+    private static void RenderMetrics(StringBuilder html, IReadOnlyList<RespireJobMetricBucket>? buckets)
+    {
+        html.Append("<section class=\"section\"><h3>Completion history</h3>");
+        if (buckets is null)
+            html.Append("<p class=\"notice\">Metrics history unavailable.</p>");
+        else if (buckets.Count == 0)
+            html.Append("<p class=\"empty\">No retained metrics. Enable metrics on the queue workers to record terminal deliveries.</p>");
+        else
+        {
+            html.Append("<div class=\"charts\">");
+            Chart(html, buckets, false);
+            Chart(html, buckets, true);
+            html.Append("</div><p class=\"note\">UTC minutes; the latest minute is partial. Completed counts acknowledged jobs; failed counts terminal dead letters. Retry attempts, expired jobs and dependency failures without a delivery are excluded. Missing buckets show zero, including before recording began or while metrics were disabled.</p><details><summary>View minute counts</summary><div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Minute (UTC)</th><th scope=\"col\">Completed</th><th scope=\"col\">Failed</th></tr></thead><tbody>");
+            foreach (var bucket in buckets)
+                html.Append("<tr><td>").Append(bucket.Minute.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+                    .Append("</td><td>").Append(N(bucket.Completed)).Append("</td><td>").Append(N(bucket.Failed)).Append("</td></tr>");
+            html.Append("</tbody></table></div></details>");
+        }
+        html.Append("</section>");
+    }
+
+    private static void Chart(StringBuilder html, IReadOnlyList<RespireJobMetricBucket> buckets, bool failures)
+    {
+        var title = failures ? "Failed jobs / minute" : "Completed jobs / minute";
+        var max = Math.Max(1, buckets.Max(bucket => failures ? bucket.Failed : bucket.Completed));
+        html.Append("<figure><figcaption>").Append(title).Append("</figcaption><svg class=\"chart\" viewBox=\"0 0 480 150\" role=\"img\" aria-label=\"")
+            .Append(title).Append("; exact counts in the table below\"><title>").Append(title)
+            .Append("</title><path d=\"M36 10V126H474\" fill=\"none\" stroke=\"#cbd6e0\"/><text x=\"0\" y=\"18\" font-size=\"11\" fill=\"#516577\">")
+            .Append(N(max)).Append("</text><text x=\"20\" y=\"130\" font-size=\"11\" fill=\"#516577\">0</text><polyline fill=\"none\" stroke=\"")
+            .Append(failures ? "#9a223c" : "#135ea8").Append("\" stroke-width=\"2\" points=\"");
+        for (var i = 0; i < buckets.Count; i++)
+        {
+            var value = failures ? buckets[i].Failed : buckets[i].Completed;
+            html.Append((36 + 438.0 * i / Math.Max(1, buckets.Count - 1)).ToString("0.##", CultureInfo.InvariantCulture)).Append(',')
+                .Append((126 - 110.0 * value / max).ToString("0.##", CultureInfo.InvariantCulture)).Append(' ');
+        }
+        if (buckets.Count == 1)
+            html.Append("474,").Append((126 - 110.0 * (failures ? buckets[0].Failed : buckets[0].Completed) / max).ToString("0.##", CultureInfo.InvariantCulture));
+        html.Append("\"/></svg><div class=\"chart-times\"><span>").Append(buckets[0].Minute.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture))
+            .Append(" UTC</span><span>").Append(buckets[^1].Minute.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(" UTC</span></div></figure>");
     }
 
     private static void Form(StringBuilder html, int index, RespireStreamId id, string action, string label, string path, string tokenFieldName, string requestToken)

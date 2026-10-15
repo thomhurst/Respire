@@ -38,6 +38,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         if (options.JobEventsStream is not null)
         {
             JobQueueScheduling.ValidateKeys(client, [stream, JobQueueControls.Key(stream), options.JobEventsStream, options.DeadLetterStream!]);
+            if (options.JobQueue?.MetricsRetentionMinutes > 0)
+                JobQueueScheduling.ValidateKeys(client, [stream, options.JobEventsStream, options.DeadLetterStream!, stream + ":metrics"]);
             if (options.JobQueue?.RateLimit is { } rate)
                 await client.Scripts.ExecuteIntegerAsync(JobQueueControls.Configure, [JobQueueControls.Key(stream)],
                     [rate.PermitLimit, (long)Math.Ceiling(rate.Window.TotalMilliseconds), "initialize"], stoppingToken).ConfigureAwait(false);
@@ -343,10 +345,9 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 // ConsumeAsync treats acknowledgement cancellation as expected only after
                 // readers stop. StopAsync and Dispose must therefore cancel readers first.
                 var acknowledged = options.JobEventsStream is { } events
-                    ? await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
-                            ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete, CompletionKeys(delivery, events, false),
+                    ? await client.Scripts.ExecuteIntegerAsync(CompletionScript(options.DeleteAcknowledgedEntries), CompletionKeys(delivery, events, false),
                         [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "completed", "", "",
-                            jobResult is null ? 0 : 1, jobResult ?? []], _handlers.Token).ConfigureAwait(false)
+                            jobResult is null ? 0 : 1, jobResult ?? [], options.JobQueue?.MetricsRetentionMinutes ?? 0], _handlers.Token).ConfigureAwait(false)
                     : await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
                         ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
@@ -384,8 +385,9 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         if (_handlers.IsCancellationRequested) return "canceled";
         var completed = options.JobEventsStream is { } events
-            ? await client.Scripts.ExecuteIntegerAsync(JobQueueScripts.Complete, CompletionKeys(delivery, events, true),
-                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "dead-letter", reason, failureType],
+            ? await client.Scripts.ExecuteIntegerAsync(CompletionScript(false), CompletionKeys(delivery, events, true),
+                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "dead-letter", reason, failureType,
+                    0, Array.Empty<byte>(), options.JobQueue?.MetricsRetentionMinutes ?? 0],
                 _handlers.Token).ConfigureAwait(false)
             : await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
             [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, reason, failureType],
@@ -396,11 +398,22 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private RespireKey[] CompletionKeys(Delivery delivery, string events, bool deadLetter)
     {
+        RespireKey[] keys;
         if (delivery.Entry.GetString("_respire.job.flow") is not { } flow)
-            return deadLetter ? [stream, events, options.DeadLetterStream!] : [stream, events];
-        JobQueueScheduling.ValidateKeys(client, [stream, events, options.DeadLetterStream!, flow]);
-        return [stream, events, options.DeadLetterStream!, flow];
+            keys = deadLetter ? [stream, events, options.DeadLetterStream!] : [stream, events];
+        else
+        {
+            JobQueueScheduling.ValidateKeys(client, options.JobQueue?.MetricsRetentionMinutes > 0
+                ? [stream, events, options.DeadLetterStream!, flow, stream + ":metrics"]
+                : [stream, events, options.DeadLetterStream!, flow]);
+            keys = [stream, events, options.DeadLetterStream!, flow];
+        }
+        return options.JobQueue?.MetricsRetentionMinutes > 0 ? [.. keys, stream + ":metrics"] : keys;
     }
+
+    private RespireScript CompletionScript(bool delete) => options.JobQueue?.MetricsRetentionMinutes > 0
+        ? delete ? JobQueueScripts.CompleteAndDeleteWithMetrics : JobQueueScripts.CompleteWithMetrics
+        : delete ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete;
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {

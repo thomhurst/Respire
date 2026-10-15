@@ -8,6 +8,9 @@ public sealed class RespireDashboardOptions
 
     /// <summary>Maximum pending and dead-letter entries displayed per stream, from 1 to 200. Defaults to 50.</summary>
     public int EntryLimit { get; set; } = 50;
+
+    /// <summary>Maximum one-minute history buckets displayed per job queue, from 1 to 1440. Defaults to 60.</summary>
+    public int MetricsHistoryMinutes { get; set; } = 60;
 }
 
 /// <summary>A stream and consumer group that an operator may inspect and manage.</summary>

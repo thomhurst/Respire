@@ -9,13 +9,14 @@ internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
     double? DeliveriesPerSecond, string? Error, bool SourceUnavailable = false, bool DeadLettersUnavailable = false,
-    bool? IsPaused = null, long? RateLimitHits = null);
+    bool? IsPaused = null, long? RateLimitHits = null, IReadOnlyList<RespireJobMetricBucket>? Metrics = null);
 
 internal sealed class DashboardState
 {
     private readonly IRespireClient _client;
     private readonly RespireDashboardStream[] _streams;
     private readonly int _limit;
+    private readonly int _metricsHistoryMinutes;
     private readonly (long Count, long Timestamp)?[] _samples;
     private readonly SemaphoreSlim _readGate = new(1, 1);
     private readonly TimeProvider _clock;
@@ -29,10 +30,12 @@ internal sealed class DashboardState
     {
         ArgumentNullException.ThrowIfNull(client);
         if (options.EntryLimit is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(options));
+        if (options.MetricsHistoryMinutes is < 1 or > 1440) throw new ArgumentOutOfRangeException(nameof(options));
         if (options.Streams.Count is < 1 or > 100) throw new ArgumentException("Configure between 1 and 100 streams.", nameof(options));
         _client = client;
         _clock = clock ?? TimeProvider.System;
         _limit = options.EntryLimit;
+        _metricsHistoryMinutes = options.MetricsHistoryMinutes;
         _streams = options.Streams.Select(s => new RespireDashboardStream
         {
             Name = s.Name, Stream = s.Stream, Group = s.Group,
@@ -85,6 +88,7 @@ internal sealed class DashboardState
                 var deadLettersUnavailable = false;
                 bool? paused = null;
                 long? rateLimitHits = null;
+                IReadOnlyList<RespireJobMetricBucket>? metrics = null;
                 if (stream.IsJobQueue)
                 {
                     try
@@ -97,6 +101,14 @@ internal sealed class DashboardState
                     catch (RespireException)
                     {
                         error = "Queue controls unavailable. Check the control key and Redis permissions.";
+                    }
+                    try
+                    {
+                        metrics = await RespireJobMetrics.ReadAsync(_client, stream.Stream, _metricsHistoryMinutes, token).ConfigureAwait(false);
+                    }
+                    catch (RespireException)
+                    {
+                        error = (error is null ? "" : error + " ") + "Metrics history unavailable. Check the metrics key and Redis permissions.";
                     }
                 }
                 try
@@ -143,7 +155,7 @@ internal sealed class DashboardState
                     _samples[i] = (current, now);
                 }
                 result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
-                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits);
+                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics);
             }).ConfigureAwait(false);
             _snapshot = new(result);
             _snapshotTimestamp = _clock.GetTimestamp();

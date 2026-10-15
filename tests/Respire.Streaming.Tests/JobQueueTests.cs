@@ -10,6 +10,17 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test]
+    [Arguments(-1)]
+    [Arguments(1441)]
+    public async Task InvalidMetricsRetentionIsRejected(int retention)
+    {
+        var services = new ServiceCollection();
+        await Assert.That(() => services.AddRespireJobQueue<JobQueueIntegrationTests.MetricsHandler, string>(
+            "test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, null,
+            new() { MetricsRetentionMinutes = retention })).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task GroupIsPartOfTheEnvelopeButDeliveryControlsAreNot()
     {
         var ungrouped = new RespireJob<string>("id", "payload", "1-0");
