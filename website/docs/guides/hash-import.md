@@ -92,4 +92,9 @@ What happens to the session after an error:
 
 After an uncertain send, some imports may have run. Check your data before retrying.
 
+[Command hooks](command-hooks.md#imports-bulk-writes-and-health-probes) admit session acquisition
+as `HIMPORT OPEN` before connection setup, and each immediate operation by its HIMPORT
+subcommand. Completion follows conversion and cleanup. Rejection preserves fieldsets.
+Disposal and automatic expiry are unconditional cleanup and never require hook admission.
+
 `RespireFakeServer` from `Respire.Testing` ([in-memory testing](in-memory-testing.md)) supports all four operations with the same per-connection isolation, overwrite behavior, validation, and WATCH invalidation. Real servers must support HIMPORT; opening a session does not check for it.

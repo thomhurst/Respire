@@ -57,6 +57,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-hedge-ownership.yml` | `run-hedge-ownership-benchmarks` |
 | `benchmark-idle-read-watchdog.yml` | `run-idle-read-watchdog-benchmarks` |
 | `benchmark-inflight.yml` | `run-inflight-benchmarks` |
+| `benchmark-import-health-hooks.yml` | `run-import-health-hook-benchmarks` |
 | `benchmark-key-prefix.yml` | `run-key-prefix-benchmarks` |
 | `benchmark-large-command-serialization.yml` | `run-large-command-serialization-benchmarks`, `run-large-command-original-benchmarks` |
 | `benchmark-local-initialization.yml` | `run-local-initialization-benchmarks` |
