@@ -16,7 +16,9 @@ public sealed partial class RespireClient
         var owner = observation.IsEmpty ? DispatchResponseSource<RespValue>.Start() : null;
         if (owner is not null) observation = owner.Observation;
         Exception? failure = null;
-        if (_core.Cluster is null || _core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+        if (_core.Cluster is null)
+            commandDeadline = CreateReplicaDispatchDeadline(commandDeadline);
+        else if (_core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
             commandDeadline = CreateCircuitDeadline(commandDeadline);
         var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, commandDeadline, _core.Options.CommandTimeout);
         try

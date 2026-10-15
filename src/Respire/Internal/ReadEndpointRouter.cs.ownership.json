@@ -18,7 +18,7 @@
     {
       "Name": "standalone-cursor-read-selection",
       "Role": "borrower",
-      "Member": "Respire.Internal.ReadEndpointRouter.GetCursorConnectionAsync(RespireReadFrom,ReadAffinity?,bool,CancellationToken,RespireTelemetry.ErrorObservation,bool):ValueTask<RespireConnection>",
+      "Member": "Respire.Internal.ReadEndpointRouter.GetCursorConnectionAsync(RespireReadFrom,ReadAffinity?,bool,CancellationToken,RespireTelemetry.ErrorObservation,bool,bool):ValueTask<RespireConnection>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Keep cursor selection failures with the enclosing caller, including fresh-cursor reselection."
     }

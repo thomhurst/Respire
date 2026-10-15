@@ -2827,7 +2827,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         // server. A fresh circuit-admitted scan instead reselects below, so the pin follows the
         // server that answers.
         var pinned = CursorCommandMetadata.HasServerCursor(in command);
-        var readDeadline = CreateCircuitDeadline();
+        var readDeadline = CreateReplicaDispatchDeadline();
         var cursorRead = readKind == ReadCommandKind.CursorRead;
         var connection = cursorRead && (continuation || affinity?.IsPinned == true)
             ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
@@ -3083,7 +3083,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 var readDeadline = default(CommandDeadline);
                 if (allowReadFrom && command.ReadKind != ReadCommandKind.None && _readFrom != RespireReadFrom.Primary)
                 {
-                    readDeadline = CreateCircuitDeadline();
+                    readDeadline = CreateReplicaDispatchDeadline();
                     connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, readDeadline, observation).ConfigureAwait(false);
                     if (connection is null)
                     {
@@ -3694,7 +3694,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         string? storedProcedureName, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var deadline = CreateCircuitDeadline();
+        var deadline = CreateReplicaDispatchDeadline();
         if (CursorCommandMetadata.IsServerCursorContinuation(in command))
         {
             var pinned = await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, null, true,
@@ -4008,7 +4008,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var deadline = CreateCircuitDeadline();
+        var deadline = CreateReplicaDispatchDeadline();
         var connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, deadline, observation).ConfigureAwait(false);
         if (connection is null)
         {
@@ -5152,7 +5152,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             var readDeadline = default(CommandDeadline);
             if (script.IsReadOnly && _readFrom != RespireReadFrom.Primary)
             {
-                readDeadline = CreateCircuitDeadline();
+                readDeadline = CreateReplicaDispatchDeadline();
                 connection = await SelectReplicaForDispatchAsync(script.EvalShaOperation, cancellationToken, readDeadline, observation).ConfigureAwait(false);
                 if (connection is null)
                 {

@@ -23,7 +23,7 @@ internal sealed partial class ReadEndpointRouter
     internal sealed class BacklogSelectionRequiredException : Exception { }
 
     internal bool IsBacklogDraining => Volatile.Read(ref _backlog)?.IsRunning == true;
-    private bool CanQueue(RespireReadFrom readFrom) => core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
+    internal bool CanQueue(RespireReadFrom readFrom) => core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
         && (Volatile.Read(ref _selectionHistory) & (readFrom == RespireReadFrom.Replica ? SelectedReplica : SelectedConnection)) != 0;
 
     internal async ValueTask<RespireConnection?> SelectForDispatchAsync(RespireReadFrom readFrom,

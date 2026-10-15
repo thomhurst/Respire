@@ -24,6 +24,60 @@ public class ReplicaReconnectBacklogTests
     [Arguments("script")]
     [Arguments("fire-and-forget")]
     [Arguments("hedged")]
+    [Arguments("cursor")]
+    public async Task InitialReplicaAcquisitionDoesNotSpendCommandTimeout(string surface)
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commandTimeout = TimeSpan.FromMilliseconds(500);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, ConnectTimeout = Limit,
+            CommandTimeout = commandTimeout, RetryPolicy = null,
+            HedgedReads = surface == "hedged" ? new() { Delay = TimeSpan.FromMilliseconds(1) } : null,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == replica.Port)
+                {
+                    connecting.TrySetResult();
+                    await resume.Task.WaitAsync(token);
+                }
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        await using var view = client.WithReadFrom(RespireReadFrom.Replica);
+        var pending = ExecuteAsync((RespireClient)view, surface, "first");
+        try
+        {
+            await connecting.Task.WaitAsync(Limit);
+            // Keep setup held beyond the command budget, but inside ConnectTimeout.
+            await Task.Delay(commandTimeout + TimeSpan.FromMilliseconds(200));
+            await Assert.That(pending.IsCompleted).IsFalse();
+            await Assert.That(client.Core.ReadRouter.IsBacklogDraining).IsFalse();
+        }
+        finally { resume.TrySetResult(); }
+        await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("value");
+    }
+
+    [Test]
+    [Arguments("string")]
+    [Arguments("bytes")]
+    [Arguments("typed")]
+    [Arguments("raw")]
+    [Arguments("stream")]
+    [Arguments("function")]
+    [Arguments("script")]
+    [Arguments("fire-and-forget")]
+    [Arguments("hedged")]
     public async Task UnsentReadWaitsForRoleValidatedReplacement(string surface)
     {
         await using var fixture = await Fixture.CreateAsync(hedged: surface == "hedged");
@@ -777,6 +831,8 @@ public class ReplicaReconnectBacklogTests
                 using (var reader = new StreamReader(stream!)) return await reader.ReadToEndAsync();
             case "raw":
                 using (var result = await view.ExecuteAsync(RespireCommands.String.GET, key)) return result.AsString()!;
+            case "cursor":
+                using (var result = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) return result.AsString()!;
             case "function":
                 using (var result = await view.ExecuteAsync(RespireCommands.Scripting.FCALL_RO, ["read-function", 0])) return result.AsString()!;
             case "script":

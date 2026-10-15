@@ -5,10 +5,19 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
+    // Initial connection/ROLE acquisition keeps its existing connection budget. Only a
+    // previously usable route starts the command deadline before recovery selection.
+    private CommandDeadline CreateReplicaDispatchDeadline(CommandDeadline deadline = default)
+        => _core.ReadRouter.CanQueue(_readFrom) ? CreateCircuitDeadline(deadline) : deadline;
+
     private async ValueTask<T> RunReplicaBacklogAsync<T>(string operation, CancellationToken callerToken,
         CommandDeadline deadline, Func<RespireConnection, CommandDeadline, ValueTask<T>> dispatch,
         RespireTelemetry.ErrorObservation observation, bool cursorRead = false, ReadAffinity? affinity = null)
     {
+        // Eligibility can become true during an initially cold selection, for example
+        // when another caller establishes the route and starts a drain. Bound admission
+        // from here when that caller did not already carry a recovery deadline.
+        deadline = CreateCircuitDeadline(deadline);
         var acquisition = new CommandAcquisitionScope(callerToken, deadline, _core.Options.CommandTimeout);
         try
         {
