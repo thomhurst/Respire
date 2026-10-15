@@ -25,7 +25,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly byte[][] _replies;
     private readonly Dictionary<int, int> _replyDelays = [];
     private volatile (string Prefix, int Milliseconds)[] _commandDelays = [];
-    private volatile (string Prefix, Task Gate)[] _commandGates = [];
+    private volatile (string Prefix, Task Gate, Action? OnReceived)[] _commandGates = [];
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,9 +183,10 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// until <paramref name="gate"/> completes. The command is recorded first, so a test can see
     /// it arrive and act while its reply is still guaranteed to be pending. Like
     /// <see cref="DelayCommand"/>, the gate also holds back later commands on the same connection.
+    /// The optional callback signals arrival before waiting on the gate.
     /// </summary>
-    public void GateCommand(string commandPrefix, Task gate)
-        => _commandGates = [.. _commandGates, (commandPrefix, gate)];
+    public void GateCommand(string commandPrefix, Task gate, Action? onReceived = null)
+        => _commandGates = [.. _commandGates, (commandPrefix, gate, onReceived)];
 
     /// <summary>Injects a server-initiated frame (e.g. a pub/sub message) onto the wire.</summary>
     public async Task SendRawAsync(byte[] frame)
@@ -341,10 +342,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
                         }
                     }
 
-                    foreach (var (prefix, gate) in _commandGates)
+                    foreach (var (prefix, gate, onReceived) in _commandGates)
                     {
                         if (commandText.StartsWith(prefix, StringComparison.Ordinal))
                         {
+                            onReceived?.Invoke();
                             await gate.WaitAsync(_cts.Token);
                         }
                     }

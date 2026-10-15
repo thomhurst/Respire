@@ -549,25 +549,81 @@ public class ClusterScanTests
     public Task ModernPageRetirementPreservesAcceptedRepliesAndCheckpoint()
         => AssertRetirementPreservesAcceptedPagesAsync(modern: true);
 
+    [Test]
+    // This test supplies its own bounded load; avoid multiplying the runner's concurrency.
+    [NotInParallel]
+    public Task ModernPageRetirementPreservesAcceptedRepliesUnderConcurrentLoad()
+        => Task.WhenAll(Enumerable.Range(0, 8).Select(_ => AssertRetirementPreservesAcceptedPagesAsync(modern: true)));
+
     internal static async Task AssertRetirementPreservesAcceptedPagesAsync(bool modern = false)
     {
+        // Prepare wire data before starting asynchronous work. Hash-slot searches do not
+        // belong in server callbacks or in the watchdog budget for retirement/discovery.
+        var firstKey = KeyInSlot(0);
+        var secondKey = KeyInSlot(8192);
+        var firstComplete = Page("0", firstKey);
+        var secondComplete = Page("0", secondKey);
+        var firstPosition = Page("position-{" + firstKey + "}-opaque");
+        var secondPosition = Page("position-{" + secondKey + "}-opaque");
+        var finalMetadata = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseMetadata = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var cluster = new ScanCluster();
-        cluster.First.Scan = _ => Page("0", KeyInSlot(0));
-        cluster.Second.Scan = _ => Page("0", KeyInSlot(8192));
+        cluster.First.Scan = _ => firstComplete;
+        cluster.Second.Scan = _ => secondComplete;
         if (modern)
         {
             cluster.First.Capability = cluster.Second.Capability = Supported;
             cluster.First.ClusterScan = command => command.StartsWith("CLUSTERSCAN 0 ")
-                ? Page("position-{" + TagInSlot(0) + "}-opaque") : Page("0", KeyInSlot(0));
-            cluster.Second.ClusterScan = command => command.StartsWith("CLUSTERSCAN 0 ")
-                ? Page("position-{" + TagInSlot(8192) + "}-opaque") : Page("0", KeyInSlot(8192));
+                ? firstPosition : firstComplete;
+            cluster.Second.ClusterScan = command =>
+            {
+                if (command.StartsWith("CLUSTERSCAN 0 ")) return secondPosition;
+                // Hold the metadata validation after the replacement's final data page.
+                // Arrival proves discovery reached the replacement while the old socket is full.
+                cluster.Second.Server.GateCommand("CLUSTER NODES", releaseMetadata.Task,
+                    () => finalMetadata.TrySetResult());
+                return secondComplete;
+            };
         }
         await using var client = await cluster.ConnectAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, cancellationToken: timeout.Token);
-        if (modern) first = await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: timeout.Token);
         var router = client.Core.Cluster!;
-        var old = await router.GetConnectionAsync(8192, timeout.Token, discovery: null, observation: default);
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        var phases = new ConcurrentQueue<string>();
+        Respire.Networking.RespireConnection? old = null;
+        Task<Respire.Protocol.RespValue>[] accepted = [];
+        async Task<T> ObserveAsync<T>(string phase, Func<CancellationToken, Task<T>> action)
+        {
+            // Bound lack of progress in each phase, rather than cancel accepted replies
+            // when concurrent setup/earlier pages have consumed a shared wall-clock budget.
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            phases.Enqueue($"{phase} at {elapsed.ElapsedMilliseconds} ms");
+            try { return await action(timeout.Token); }
+            catch (Exception error) when (error is RespireTimeoutException
+                || error is OperationCanceledException && timeout.IsCancellationRequested)
+            {
+                throw new TimeoutException($"Retirement timed out during {phase} at {elapsed.ElapsedMilliseconds} ms. " +
+                    $"Phases: {string.Join(", ", phases)}. Old pending: {old?.PendingResponseCount}; " +
+                    $"accepted replies: {string.Join(", ", accepted.Select(task => task.Status))}; " +
+                    $"retiring generations: {client.GetClusterRetirementSnapshot()!.RetiringGenerationCount}. " +
+                    $"First commands: {string.Join(", ", cluster.First.Server.ReceivedCommands)}. " +
+                    $"Second commands: {string.Join(", ", cluster.Second.Server.ReceivedCommands.Zip(cluster.Second.Server.ReceivedConnectionIds, (command, id) => $"{id}:{command}"))}.", error);
+            }
+        }
+        Task ObserveCompletionAsync(string phase, Task task)
+            => ObserveAsync(phase, async token => { await task.WaitAsync(token); return true; });
+        Task<RespireClusterScanPage> ReadPageAsync(string phase, RespireClusterScanCursor cursor)
+            => ObserveAsync(phase, token => client.Keys.ScanClusterPageAsync(cursor, cancellationToken: token).AsTask());
+        var first = await ReadPageAsync("first initial page", RespireClusterScanCursor.Start);
+        if (modern)
+        {
+            await Assert.That(first.Keys).IsEmpty();
+            await Assert.That(first.Cursor.CompletedSlotCount).IsEqualTo(0);
+            first = await ReadPageAsync("first final page", first.Cursor);
+        }
+        var checkpoint = first.Cursor.ToString();
+        await Assert.That(first.Keys).IsEquivalentTo([firstKey]);
+        await Assert.That(first.Cursor.CompletedSlotCount).IsEqualTo(8192);
+        old = await ObserveAsync("old connection", token => router.GetConnectionAsync(8192, token, discovery: null, observation: default).AsTask());
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pings = 0;
         cluster.Second.Server.SuppressReply = command =>
@@ -576,9 +632,12 @@ public class ClusterScanTests
             if (Interlocked.Increment(ref pings) == 4) full.TrySetResult();
             return true;
         };
-        var accepted = Enumerable.Range(0, 4)
-            .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
-        await full.Task.WaitAsync(timeout.Token);
+        // Deliberately retain these replies until SendRawAsync below. A phase timeout must
+        // fail the test, not complete these tasks before the explicit reply release.
+        // Client disposal aborts them if the test exits early.
+        accepted = Enumerable.Range(0, 4)
+            .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), armCommandDeadline: false).AsTask()).ToArray();
+        await ObserveCompletionAsync("four accepted PINGs", full.Task);
         cluster.First.BeforeMetadata = () =>
         {
             cluster.First.BeforeMetadata = null;
@@ -596,10 +655,30 @@ public class ClusterScanTests
             ];
             typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!.Invoke(router, [ranges, version, generation]);
         };
-        var final = await client.Keys.ScanClusterPageAsync(first.Cursor, cancellationToken: timeout.Token);
-        if (modern) final = await client.Keys.ScanClusterPageAsync(final.Cursor, cancellationToken: timeout.Token);
+        var final = await ReadPageAsync("replacement initial page", first.Cursor);
+        if (modern)
+        {
+            await Assert.That(final.Keys).IsEmpty();
+            await Assert.That(final.Cursor.CompletedSlotCount).IsEqualTo(8192);
+            var finalPage = ReadPageAsync("replacement final page", final.Cursor);
+            try
+            {
+                await ObserveCompletionAsync("replacement final metadata arrival", finalMetadata.Task);
+                await Assert.That(finalPage.IsCompleted).IsFalse();
+                await Assert.That(old.PendingResponseCount).IsEqualTo(4);
+                await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
+                await Assert.That(client.GetClusterRetirementSnapshot()!.RetiringGenerationCount).IsEqualTo(1);
+            }
+            finally
+            {
+                releaseMetadata.TrySetResult();
+                final = await finalPage;
+            }
+        }
         await Assert.That(final.Cursor.IsComplete).IsTrue();
-        await Assert.That(final.Keys).IsEquivalentTo([KeyInSlot(8192)]);
+        await Assert.That(final.Cursor.CompletedSlotCount).IsEqualTo(16384);
+        await Assert.That(final.Keys).IsEquivalentTo([secondKey]);
+        await Assert.That(first.Cursor.ToString()).IsEqualTo(checkpoint);
         await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(modern ? 0 : 1);
         await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(modern ? 0 : 1);
         if (modern)
@@ -608,13 +687,14 @@ public class ClusterScanTests
             await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("CLUSTERSCAN "))).IsEqualTo(2);
         }
         await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
-        await cluster.Second.Server.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
+        await ObserveCompletionAsync("release accepted replies",
+            cluster.Second.Server.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0));
         foreach (var task in accepted)
         {
-            using var reply = await task.WaitAsync(timeout.Token);
+            using var reply = await ObserveAsync("accepted PONG", token => task.WaitAsync(token));
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
         }
-        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+        await ObserveCompletionAsync("retirement drain", router.WaitForRetirementAsync());
     }
 
     [Test]
