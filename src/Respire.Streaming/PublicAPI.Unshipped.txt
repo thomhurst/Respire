@@ -1,4 +1,45 @@
 #nullable enable
+Respire.Streaming.RespireJobEvent.FlowKey.get -> string?
+Respire.Streaming.RespireJob<T>.Complete(byte[]! result) -> Respire.Streaming.RespireStreamWorkerResult
+Respire.Streaming.RespireJob<T>.GetChildResultsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobFlowResult!>!>
+Respire.Streaming.RespireJobQueue<T>.EnqueueFlowAsync(string! flowId, Respire.Streaming.RespireJobFlow<T>! root, Respire.Streaming.RespireJobFlowFailurePolicy failurePolicy = Respire.Streaming.RespireJobFlowFailurePolicy.FailParent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.GetFlowResultsAsync(string! flowId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobFlowResult!>!>
+Respire.Streaming.RespireJobFlowFailurePolicy
+Respire.Streaming.RespireJobFlowFailurePolicy.FailParent = 0 -> Respire.Streaming.RespireJobFlowFailurePolicy
+Respire.Streaming.RespireJobFlowFailurePolicy.Ignore = 1 -> Respire.Streaming.RespireJobFlowFailurePolicy
+Respire.Streaming.RespireJobFlowFailurePolicy.Continue = 2 -> Respire.Streaming.RespireJobFlowFailurePolicy
+Respire.Streaming.RespireJobFlow<T>
+Respire.Streaming.RespireJobFlow<T>.RespireJobFlow(string! Id, T Payload) -> void
+Respire.Streaming.RespireJobFlow<T>.Id.get -> string!
+Respire.Streaming.RespireJobFlow<T>.Id.init -> void
+Respire.Streaming.RespireJobFlow<T>.Payload.get -> T
+Respire.Streaming.RespireJobFlow<T>.Payload.init -> void
+Respire.Streaming.RespireJobFlow<T>.Children.get -> System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobFlow<T>!>!
+Respire.Streaming.RespireJobFlow<T>.Children.init -> void
+Respire.Streaming.RespireJobFlow<T>.Deconstruct(out string! Id, out T Payload) -> void
+Respire.Streaming.RespireJobFlow<T>.<Clone>$() -> Respire.Streaming.RespireJobFlow<T>!
+Respire.Streaming.RespireJobFlow<T>.Equals(Respire.Streaming.RespireJobFlow<T>? other) -> bool
+override Respire.Streaming.RespireJobFlow<T>.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJobFlow<T>.GetHashCode() -> int
+override Respire.Streaming.RespireJobFlow<T>.ToString() -> string!
+static Respire.Streaming.RespireJobFlow<T>.operator ==(Respire.Streaming.RespireJobFlow<T>? left, Respire.Streaming.RespireJobFlow<T>? right) -> bool
+static Respire.Streaming.RespireJobFlow<T>.operator !=(Respire.Streaming.RespireJobFlow<T>? left, Respire.Streaming.RespireJobFlow<T>? right) -> bool
+Respire.Streaming.RespireJobFlowResult
+Respire.Streaming.RespireJobFlowResult.RespireJobFlowResult(string! Id, string! Status, byte[]? Result) -> void
+Respire.Streaming.RespireJobFlowResult.Id.get -> string!
+Respire.Streaming.RespireJobFlowResult.Id.init -> void
+Respire.Streaming.RespireJobFlowResult.Status.get -> string!
+Respire.Streaming.RespireJobFlowResult.Status.init -> void
+Respire.Streaming.RespireJobFlowResult.Result.get -> byte[]?
+Respire.Streaming.RespireJobFlowResult.Result.init -> void
+Respire.Streaming.RespireJobFlowResult.Deconstruct(out string! Id, out string! Status, out byte[]? Result) -> void
+Respire.Streaming.RespireJobFlowResult.<Clone>$() -> Respire.Streaming.RespireJobFlowResult!
+Respire.Streaming.RespireJobFlowResult.Equals(Respire.Streaming.RespireJobFlowResult? other) -> bool
+override Respire.Streaming.RespireJobFlowResult.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJobFlowResult.GetHashCode() -> int
+override Respire.Streaming.RespireJobFlowResult.ToString() -> string!
+static Respire.Streaming.RespireJobFlowResult.operator ==(Respire.Streaming.RespireJobFlowResult? left, Respire.Streaming.RespireJobFlowResult? right) -> bool
+static Respire.Streaming.RespireJobFlowResult.operator !=(Respire.Streaming.RespireJobFlowResult? left, Respire.Streaming.RespireJobFlowResult? right) -> bool
 Respire.Streaming.RespireJob<T>.ReportProgressAsync(int percent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobEvent
 Respire.Streaming.RespireJobEvent.Attempt.get -> long

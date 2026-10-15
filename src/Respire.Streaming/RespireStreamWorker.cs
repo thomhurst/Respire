@@ -247,17 +247,21 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             var reason = "nack";
             var failureType = "";
             TimeSpan? retryDelay = null;
+            byte[]? jobResult = null;
             try
             {
                 var message = deserialize(delivery.Entry);
                 if (options.JobEventsStream is { } events && message is IJobDelivery job)
-                    job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt));
+                    job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt,
+                        delivery.Entry.GetString("_respire.job.flow"),
+                        int.Parse(delivery.Entry.GetString("_respire.job.node") ?? "0", System.Globalization.CultureInfo.InvariantCulture)));
                 result = await handler.HandleAsync(message, _handlers.Token).ConfigureAwait(false);
                 if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
                     throw new InvalidOperationException("The stream handler returned an unknown completion result.");
                 if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
                     throw new InvalidOperationException("DeadLetter completion requires a configured dead-letter stream.");
                 retryDelay = (message as IJobRetry)?.RetryDelay;
+                jobResult = (message as IJobDelivery)?.Result;
             }
             catch (OperationCanceledException) when (_handlers.IsCancellationRequested)
             { observation.Outcome = "canceled"; return; }
@@ -279,8 +283,9 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 // readers stop. StopAsync and Dispose must therefore cancel readers first.
                 var acknowledged = options.JobEventsStream is { } events
                     ? await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
-                            ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete, [stream, events],
-                        [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "completed"], _handlers.Token).ConfigureAwait(false)
+                            ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete, CompletionKeys(delivery, events, false),
+                        [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "completed", "", "",
+                            jobResult is null ? 0 : 1, jobResult ?? []], _handlers.Token).ConfigureAwait(false)
                     : await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
                         ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], _handlers.Token).ConfigureAwait(false);
@@ -318,7 +323,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         if (_handlers.IsCancellationRequested) return "canceled";
         var completed = options.JobEventsStream is { } events
-            ? await client.Scripts.ExecuteIntegerAsync(JobQueueScripts.Complete, [stream, events, options.DeadLetterStream!],
+            ? await client.Scripts.ExecuteIntegerAsync(JobQueueScripts.Complete, CompletionKeys(delivery, events, true),
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "dead-letter", reason, failureType],
                 _handlers.Token).ConfigureAwait(false)
             : await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter, [stream, options.DeadLetterStream!],
@@ -326,6 +331,14 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             _handlers.Token).ConfigureAwait(false);
         if (completed == 1) _telemetry.DeadLetter(reason);
         return completed switch { 1 => "dead-letter", -1 => "deleted", _ => "stale" };
+    }
+
+    private RespireKey[] CompletionKeys(Delivery delivery, string events, bool deadLetter)
+    {
+        if (delivery.Entry.GetString("_respire.job.flow") is not { } flow)
+            return deadLetter ? [stream, events, options.DeadLetterStream!] : [stream, events];
+        JobQueueScheduling.ValidateKeys(client, [stream, events, options.DeadLetterStream!, flow]);
+        return [stream, events, options.DeadLetterStream!, flow];
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

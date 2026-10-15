@@ -9,7 +9,7 @@ namespace Respire.Streaming;
 /// <remarks>The client is caller-owned. Enqueue deduplication does not make processing exactly once;
 /// handlers must tolerate redelivery. Reserve this queue's generated key namespace for its exclusive use.
 /// Requires Redis 7.0 or later, script execution, GET/SET on deduplication keys, and XADD/XDEL on the stream.</remarks>
-public sealed class RespireJobQueue<T>
+public sealed partial class RespireJobQueue<T>
 {
     /// <summary>The consumer group shared by all hosted workers for a queue.</summary>
     public const string ConsumerGroup = "respire-jobs";
