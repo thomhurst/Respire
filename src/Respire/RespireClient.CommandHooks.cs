@@ -129,7 +129,9 @@ public sealed partial class RespireClient
         if (!fireAndForget && _core.Cluster is not null
             && DynamicCommandRouting.IsClusterWideMutation(parsed.Operation, args))
             ValidateClusterWideFlags(parsed.Operation, flags);
-        // Raw descriptors may contain inline arguments. Never expose those as command names.
-        return command.IsCallerSupplied ? parsed.Operation : command.Name;
+        // Normalize parent descriptors and raw subcommand arguments alike, without exposing arguments.
+        return parsed.Words.Length == 1 && args.Length > 0
+            ? KnownRawOperation(parsed.Operation, args[0]) ?? parsed.Operation
+            : parsed.Operation;
     }
 }

@@ -10,6 +10,45 @@ namespace Respire.Tests.Networking;
 public class CommandHookTests
 {
     [Test]
+    [Arguments("owned")]
+    [Arguments("lease")]
+    [Arguments("forget")]
+    public async Task SubcommandAdmissionUsesTheSameNameForEveryDescriptor(string route)
+    {
+        await using var server = Server();
+        var rejected = new InvalidOperationException("SCRIPT FLUSH denied");
+        var hook = new RecordingHook
+        {
+            Before = context => { if (context.Command == "SCRIPT FLUSH") throw rejected; },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+        var baseline = server.CommandsSeen;
+        (RespireCommand Command, RespireValue[] Args)[] cases =
+        [
+            (RespireCommands.Scripting.SCRIPT, ["FLUSH"]),
+            (RespireCommands.Scripting.SCRIPT_FLUSH, []),
+            ((RespireCommand)"SCRIPT", ["FLUSH"]),
+            ((RespireCommand)"script flush", []),
+        ];
+        foreach (var (command, args) in cases)
+        {
+            var error = await Failure(async () =>
+            {
+                if (route == "forget") await client.ExecuteFireAndForgetAsync(command, args);
+                else if (route == "lease") { using var result = await client.ExecuteLeaseAsync(command, args); }
+                else { using var result = await client.ExecuteAsync(command, args); }
+            });
+            await Assert.That(error).IsSameReferenceAs(rejected);
+        }
+        await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        await Assert.That(hook.Entered.Count).IsEqualTo(cases.Length);
+        await Assert.That(hook.Entered.All(c => c.Command == "SCRIPT FLUSH")).IsTrue();
+        await Assert.That(hook.Completed.Count).IsEqualTo(cases.Length);
+        await Assert.That(hook.Completed.All(c => c.Outcome == RespireCommandOutcome.Rejected
+            && ReferenceEquals(c.Error, rejected))).IsTrue();
+    }
+
+    [Test]
     [Arguments("owned", false, false)]
     [Arguments("owned", false, true)]
     [Arguments("owned", true, false)]
