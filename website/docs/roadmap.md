@@ -218,7 +218,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   activation, persistent state, reminder delivery, graceful restart, shared and provider-owned shutdown,
   stable three-primary Cluster routing, completed Cluster slot moves, coordinated replica promotion,
   abrupt silo death, socket reconnect, and Sentinel primary promotion on .NET 8/10 with RESP2/RESP3.
-  Membership writes during ASK migration remain unsupported; unplanned Cluster failover and
+  Membership inserts, updates, stale-version rejection and heartbeats during ASK migration are covered; unplanned Cluster failover and
   multi-host partitions remain unvalidated.
 
 ### Retries and write outcomes
@@ -298,7 +298,7 @@ They track remaining work, not release commitments.
 - [Orleans topology assessment](https://github.com/thomhurst/Respire/issues/1799):
   lifecycle, provider-owned shutdown, completed Cluster slot moves, coordinated replica promotion,
   Sentinel failover and abrupt silo death have acceptance coverage. Membership writes during
-  ASK migration remain unsupported; multi-host partitions need an independent-network test harness.
+  ASK migration are covered; multi-host partitions need an independent-network test harness.
 - [Cluster availability-zone replica fallback timeout](https://github.com/thomhurst/Respire/issues/1749):
   investigate the failure under concurrent test load and validate recovery.
 

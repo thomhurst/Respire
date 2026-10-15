@@ -84,7 +84,7 @@ internal sealed class CompatTransaction(CompatDatabase database) : CompatDatabas
             try { await previous.ConfigureAwait(false); }
             catch { /* The earlier execution retains its own failure. */ }
             token.ThrowIfCancellationRequested();
-            var client = DatabaseOwner.Client.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache();
+            var client = (RespireClient)DatabaseOwner.Client.WithReadFrom(RespireReadFrom.Primary).WithoutClientCache();
             if (commands.Length == 0 && conditions.Length == 0)
             {
                 // Upstream uses PING for an empty result-bearing Execute. Preserve connection
@@ -92,7 +92,7 @@ internal sealed class CompatTransaction(CompatDatabase database) : CompatDatabas
                 await client.PingAsync(token).ConfigureAwait(false);
                 return true;
             }
-            await using var transaction = await client.CreateTransactionAsync(
+            await using var transaction = await client.CreateCompatibilityTransactionAsync(
                 conditions.Select(static condition => condition.Key).ToArray(), token).ConfigureAwait(false);
             var satisfied = true;
             foreach (var condition in conditions)

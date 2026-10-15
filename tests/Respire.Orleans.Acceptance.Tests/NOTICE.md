@@ -71,8 +71,9 @@ the existing `RespireContainerFixture` with Redis 7.0.15:
   replica, continue provider operations, join a second silo, return the old primary
   as a replica, and read persisted state from a new activation.
 - Cluster migration (two cases): transfer the membership key, publish its new slot owner,
-  and join a silo through the existing adapter. The ASK variant asserts that insertion
-  during migration fails without inserting the row, then recovers after migration completes.
+  and join a silo through the existing adapter. The ASK variant inserts and updates a row,
+  rejects duplicate inserts and stale versions without partial writes, and updates its
+  heartbeat while migration remains open.
 - Six-node Cluster: coordinated promotion of all three replicas while a silo runs,
   followed by state/reminder operations, another silo joining and reactivation there.
   This uses the test-only `ClusterDeployment`, also pinned to Redis 7.0.15.
@@ -92,7 +93,8 @@ full upstream suite. Sustained parallel stress, large hash-ring distributions,
 all persistence datasets/serializers, multi-host partitions, unplanned Cluster primary
 crashes, failover racing provider transactions, and provider-owned topology recovery remain
 unvalidated. Nonzero Cluster databases and combined Cluster/Sentinel configuration
-are unsupported, as are membership writes while slot migration returns ASK.
+are unsupported. ASK membership coverage does not promise uninterrupted availability
+when topology changes race an already established watched transaction.
 Multi-host partitions cannot be represented by this CI fixture: Redis processes share
 one container and silos advertise loopback. Independent addresses and selective network
 fault injection are prerequisites; killing a process or its TCP connections is not a

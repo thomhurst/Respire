@@ -1560,6 +1560,38 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
     public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
+        => CreateTransactionAsync(watchKeys, cancellationToken, followSetupRedirects: false);
+
+    // The compatibility adapter owns condition evaluation and has not queued any writes yet.
+    // Only this setup phase can start a fresh WATCH on an importing node.
+    internal ValueTask<RespireWatchedTransaction> CreateCompatibilityTransactionAsync(
+        RespireKey[] watchKeys, CancellationToken cancellationToken)
+        => _core.Cluster is null
+            ? CreateTransactionAsync(watchKeys, cancellationToken)
+            : CreateCompatibilityClusterTransactionAsync(watchKeys, cancellationToken);
+
+    private async ValueTask<RespireWatchedTransaction> CreateCompatibilityClusterTransactionAsync(
+        RespireKey[] watchKeys, CancellationToken cancellationToken)
+    {
+        var duration = _core.Options.CommandTimeout;
+        using var timeout = duration is { } value ? CommandTimeoutCancellation.Create(cancellationToken, value) : null;
+        try
+        {
+            return await CreateTransactionAsync(watchKeys.AsSpan(), timeout?.Token ?? cancellationToken,
+                followSetupRedirects: true).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+        catch (OperationCanceledException error) when (timeout is not null && timeout.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("WATCH", duration!.Value, error);
+        }
+    }
+
+    private ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
+        ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken, bool followSetupRedirects)
     {
         var owner = DispatchResponseSource<RespireWatchedTransaction>.Start();
         var observation = owner.Observation;
@@ -1569,7 +1601,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             if (_core.Options.CommandHook is null || watchKeys.Length == 0)
                 cancellationToken.ThrowIfCancellationRequested();
             if (watchKeys.Length == 0)
-                return owner.Attach(new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this)));
+                return owner.Attach(new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this,
+                    allowUnwatchedAsk: followSetupRedirects)));
             // Resolve and own keys before the first await so routing and WATCH use the same bytes.
             var keys = MapKeys(watchKeys);
             int? slot = null;
@@ -1582,9 +1615,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             // The asynchronous setup takes ownership only after preflight succeeds.
             return owner.Attach(_core.Options.CommandHook is { } hook
                 ? CommandHookScope.RunAsync(hook, "WATCH", cancellationToken,
-                    (Client: this, Keys: keys, Slot: slot, Token: cancellationToken, Observation: observation),
-                    static s => s.Client.CreateWatchedTransactionAsync(s.Keys, s.Slot, s.Token, s.Observation))
-                : CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation));
+                    (Client: this, Keys: keys, Slot: slot, Token: cancellationToken, Observation: observation, Follow: followSetupRedirects),
+                    static s => s.Client.CreateWatchedTransactionAsync(s.Keys, s.Slot, s.Token, s.Observation, s.Follow))
+                : CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation, followSetupRedirects));
         }
         catch (Exception error)
         {
@@ -1595,7 +1628,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     private async ValueTask<RespireWatchedTransaction> CreateWatchedTransactionAsync(
         RespireValue[] watchKeys, int? slot, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, bool followSetupRedirects)
     {
         try
         {
@@ -1603,46 +1636,69 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             var cluster = _core.Cluster;
             var pool = cluster is null ? await _core.GetDedicatedPoolAsync(cancellationToken, observation).ConfigureAwait(false)
                 : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null, observation).ConfigureAwait(false);
-            // The owning pool must follow the lease through commit/disposal, even if topology changes.
-            RespireConnection connection;
-            if (cluster is null)
-                (pool, connection) = await _core.RentDedicatedConnectionAsync(pool, cancellationToken, observation).ConfigureAwait(false);
-            else
-                (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken, discovery: null, observation: observation).ConfigureAwait(false);
-            try
+            RespireServerException? askRedirect = null;
+            RespireConnection? redirectSource = null;
+            for (var attempt = 0; ; attempt++)
             {
-                var command = new CmdN(Verbs.Watch, watchKeys);
-                // WATCH owns this dedicated socket; circuit admission must not reroute it.
-                using var reply = await SendOnConnectionAsync("WATCH", connection,
-                    new ProtocolCommand<CmdN>(command), cancellationToken,
-                    allowStreamingConnectionReroute: _core.Circuits is null, observation: observation).ConfigureAwait(false);
-                if (_core.ClientCache is { } cache)
-                {
-                    // Tracking pushes use other sockets and may lag writes processed before WATCH.
-                    // Also fence reads already in flight so they cannot restore a pre-WATCH value.
-                    foreach (var key in watchKeys) cache.Invalidate(key.AsKey());
-                }
-                return new RespireWatchedTransaction(this, connection, pool, slot);
-            }
-            catch (Exception error)
-            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // The owning pool must follow the lease through commit/disposal, even if topology changes.
+                RespireConnection connection;
+                if (cluster is null)
+                    (pool, connection) = await _core.RentDedicatedConnectionAsync(pool, cancellationToken, observation).ConfigureAwait(false);
+                else
+                    (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool,
+                        new ClusterRouter.DedicatedRoute(slot, AskRedirect: askRedirect, RedirectSource: redirectSource),
+                        cancellationToken, discovery: null, observation: observation).ConfigureAwait(false);
                 try
                 {
-                    // Circuit rejection submits no WATCH; cancellation and I/O can leave state or unread replies.
-                    if (error is RespireCircuitOpenException) pool.Return(connection);
-                    else await pool.DiscardAsync(connection).ConfigureAwait(false);
+                    var command = new CmdN(Verbs.Watch, watchKeys);
+                    // WATCH owns this dedicated socket; circuit admission must not reroute it.
+                    using var reply = await SendOnConnectionAsync("WATCH", connection,
+                        new ProtocolCommand<CmdN>(command), cancellationToken,
+                        sendAsking: askRedirect is not null,
+                        allowStreamingConnectionReroute: askRedirect is null && _core.Circuits is null, observation: observation).ConfigureAwait(false);
+                    if (_core.ClientCache is { } cache)
+                    {
+                        // Tracking pushes use other sockets and may lag writes processed before WATCH.
+                        // Also fence reads already in flight so they cannot restore a pre-WATCH value.
+                        foreach (var key in watchKeys) cache.Invalidate(key.AsKey());
+                    }
+                    return new RespireWatchedTransaction(this, connection, pool, slot, requiresAsking: askRedirect is not null);
                 }
-                catch (Exception)
+                catch (Exception error)
                 {
-                    // The pool reports cleanup failures. Preserve the original WATCH failure.
+                    try
+                    {
+                        // Circuit rejection submits no WATCH; cancellation and I/O can leave state or unread replies.
+                        if (error is RespireCircuitOpenException) pool.Return(connection);
+                        else await pool.DiscardAsync(connection).ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // The pool reports cleanup failures. Preserve the original WATCH failure.
+                    }
+                    if (cluster is not null && error is RespireServerException rejection
+                        && ClusterRouter.CanRecover(rejection, slot))
+                    {
+                        cluster.LearnWatchedRoute(rejection, connection, slot);
+                        if (followSetupRedirects && attempt < ClusterRouter.RedirectLimit
+                            && ClusterRouter.IsRedirect(rejection)
+                            && ClusterRouter.TryParseRedirect(rejection, connection.Host, out var redirectedSlot, out _)
+                            && redirectedSlot == slot)
+                        {
+                            // The rejected socket has been discarded. No condition reads or writes
+                            // have run, so the next socket starts an entirely new watched attempt.
+                            pool = await cluster.GetRedirectDedicatedPoolAsync(rejection, connection,
+                                cancellationToken, slot, discovery: null, observation).ConfigureAwait(false);
+                            askRedirect = rejection.Code == RespireErrorCodes.Ask ? rejection : null;
+                            redirectSource = connection;
+                            observation.Handled(rejection);
+                            continue;
+                        }
+                        throw new RespireTransactionRetryException(rejection);
+                    }
+                    throw;
                 }
-                if (cluster is not null && error is RespireServerException rejection
-                    && ClusterRouter.CanRecover(rejection, slot))
-                {
-                    cluster.LearnWatchedRoute(rejection, connection, slot);
-                    throw new RespireTransactionRetryException(rejection);
-                }
-                throw;
             }
         }
         catch (Exception error)

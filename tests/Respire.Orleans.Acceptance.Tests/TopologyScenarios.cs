@@ -31,21 +31,40 @@ public partial class SiloScenarios
         var target = (source + 1) % 3;
         var before = await table.ReadAll();
         await redis.BeginMigration(source, target, slot, key);
-        if (exerciseAsk)
+        try
         {
-            var entry = new MembershipEntry
+            if (exerciseAsk)
             {
-                SiloAddress = SiloAddress.New(new IPEndPoint(IPAddress.Loopback, 11001), 1),
-                HostName = "localhost", SiloName = "migration-probe", Status = SiloStatus.Joining,
-                StartTime = DateTime.UtcNow, IAmAliveTime = DateTime.UtcNow
-            };
-            var error = await Assert.ThrowsAsync<RespireTransactionRetryException>(() => table.InsertRow(entry, before.Version.Next()));
-            Assert.Equal("ASK", error.ServerError.Code);
-            var rejected = await table.ReadAll();
-            Assert.Equal(before.Version.Version, rejected.Version.Version);
-            Assert.DoesNotContain(rejected.Members, row => row.Item1.SiloAddress.Equals(entry.SiloAddress));
+                var entry = new MembershipEntry
+                {
+                    SiloAddress = SiloAddress.New(new IPEndPoint(IPAddress.Loopback, 11001), 1),
+                    HostName = "localhost", SiloName = "migration-probe", Status = SiloStatus.Joining,
+                    StartTime = DateTime.UtcNow, IAmAliveTime = DateTime.UtcNow
+                };
+                Assert.True(await table.InsertRow(entry, before.Version.Next()));
+                var inserted = await table.ReadRow(entry.SiloAddress);
+                var row = Assert.Single(inserted.Members);
+                Assert.Equal(before.Version.Next().Version, inserted.Version.Version);
+                Assert.False(await table.InsertRow(entry, inserted.Version.Next())); // duplicate
+                entry.Status = SiloStatus.ShuttingDown;
+                Assert.False(await table.UpdateRow(entry, row.Item2, before.Version.Next())); // stale version
+                var rejected = await table.ReadRow(entry.SiloAddress);
+                Assert.Equal(inserted.Version.Version, rejected.Version.Version);
+                Assert.Equal(SiloStatus.Joining, Assert.Single(rejected.Members).Item1.Status);
+                Assert.True(await table.UpdateRow(entry, row.Item2, inserted.Version.Next()));
+                var heartbeat = entry.IAmAliveTime.AddSeconds(10);
+                await table.UpdateIAmAlive(new MembershipEntry { SiloAddress = entry.SiloAddress, IAmAliveTime = heartbeat });
+                var updated = await table.ReadRow(entry.SiloAddress);
+                Assert.Equal(inserted.Version.Next().Version, updated.Version.Version);
+                Assert.Equal(SiloStatus.ShuttingDown, Assert.Single(updated.Members).Item1.Status);
+                Assert.Equal(heartbeat, Assert.Single(updated.Members).Item1.IAmAliveTime);
+            }
         }
-        await redis.FinishMigration(target, slot);
+        finally
+        {
+            // Restore routability before host shutdown even when an assertion fails.
+            await redis.FinishMigration(target, slot);
+        }
 
         // The existing adapter has cached the old route. A new silo writes membership through it.
         await using var joined = BuildSilo(connections, serviceId, clusterId);

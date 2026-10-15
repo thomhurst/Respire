@@ -114,7 +114,7 @@ grain uses the Orleans binary serializer; test-only reminder settings lower the 
 | Three-primary Redis Cluster, database 0 | The shared lifecycle scenario, including membership transactions, persistence scripts, reminder delivery and restart through native Cluster routing |
 | Standalone socket loss | Disconnect live Redis TCP connections with `CLIENT KILL`, reconnect with the same adapter and grain activation, write state and deliver reminders after recovery, join a second silo, then reactivate there and read the saved state |
 | Sentinel (one primary, one replica, three Sentinels) | Fence completed writes to the replica, stop the primary, observe the same native client connect to the promoted replica, continue grain writes/reminders, join a second silo, return the old primary as a replica, then verify state from a new activation |
-| Cluster slot migration | Move the membership key between primaries, finish slot ownership changes, then join another silo and use grain storage through the existing adapter. A separate case exercises ASK while the slot is importing/migrating: membership insertion fails without inserting the row, then recovers once migration completes |
+| Cluster slot migration | Move the membership key between primaries, finish slot ownership changes, then join another silo and use grain storage through the existing adapter. While the slot is importing/migrating, insert and update membership rows, reject duplicate inserts and stale table versions without partial writes, and update heartbeats through ASK routing |
 | Cluster with three primaries and three replicas | Coordinated `CLUSTER FAILOVER` on all three replicas while a silo is running; retain its activation, write state, receive reminders, join another silo, then reactivate there and read saved state |
 | Abrupt silo process death, standalone Redis | Start a second silo in a child process, kill it without graceful shutdown, and require the surviving silo to mark its row `Dead` within 60 seconds. The test logs elapsed detection time, verifies the survivor remains active, and calls a grain through client discovery |
 
@@ -133,12 +133,24 @@ the membership row becomes `Dead`; historical rows need not be deleted immediate
 
 ### Supported topologies and CI limits
 
-Standalone Redis, database-0 Redis Cluster with stable slot ownership, and Sentinel are supported through
-the adapter within the coverage above. Cluster membership writes during **ASK migration are unsupported**:
-the adapter cannot move an in-progress watched transaction to an importing node without losing its watch.
-Schedule resharding outside membership changes, or expect provider operations to fail until the slot move
-completes. Successful post-move recovery does not establish uninterrupted membership availability.
-Support during the ASK phase is tracked in [#1820](https://github.com/thomhurst/Respire/issues/1820).
+Standalone Redis, database-0 Redis Cluster (including membership writes during ASK migration), and
+Sentinel are supported through the adapter within the coverage above. When WATCH receives ASK, the
+adapter discards the rejected connection and establishes a fresh WATCH on the importing node with
+`ASKING`. It evaluates the original conditions again, then sends `ASKING` and `MULTI` on that same
+watched connection before the queued commands and `EXEC`. A concurrent write still aborts the watch;
+a stale membership version still returns `false` without changing the row or table version.
+
+WATCH setup follows at most the native Cluster redirect limit and shares one `CommandTimeout` budget
+across its attempts. Closing the adapter with `allowCommandsToComplete: false` cancels setup. Once
+WATCH succeeds, commit-time routing errors and connection failures propagate; the adapter never
+replays an accepted or ambiguous commit. Applications must still tolerate failed membership operations
+when topology changes race a transaction. Native `CreateTransactionAsync` retains its explicit
+`RespireTransactionRetryException` contract on Cluster rejections.
+
+The provider's unconditional read transactions also handle ASK: only a complete routing rejection
+can start one new attempt on an exclusive importing connection, using `ASKING` before `MULTI`.
+An EXEC result array, including partial command errors, is never replayed. Errors from the importing
+attempt propagate to the caller.
 
 Multi-host network partitions are **not validated in CI**. The Redis fixture publishes loopback endpoints
 and runs nodes in one container; silo hosts also advertise loopback. Disconnecting that container does not
@@ -165,7 +177,7 @@ dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release -f net10.
 Not validated:
 
 - Multi-host partitions, long outages, sustained stress, other serializers and datasets.
-- Unplanned Cluster primary crashes, failover racing provider transactions, and uninterrupted writes during ASK migration.
+- Unplanned Cluster primary crashes, failover racing provider transactions, and uninterrupted availability during arbitrary topology changes.
 - Provider-owned topology recovery, TLS/authentication changes, Redis data loss/restart without retained data,
   and simultaneous Redis and silo failures.
 - Grain directory, streaming, and journaling providers, and other Orleans versions.
