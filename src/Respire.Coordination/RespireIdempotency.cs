@@ -143,6 +143,8 @@ public sealed class RespireIdempotency
     {
         using var result = await CoordinationCommandHooks.ExecuteAsync(_client, script, [key], arguments, cancellationToken)
             .ConfigureAwait(false);
+        if (result.Type != RespireDataType.Integer)
+            throw new RespireProtocolException("Redis returned an invalid idempotency transition outcome.");
         return result.AsInteger() switch
         {
             0 => false,

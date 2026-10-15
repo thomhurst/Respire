@@ -47,6 +47,24 @@ public class IdempotencyWireTests
     }
 
     [Test]
+    [Arguments("+OK\r\n")]
+    [Arguments("$1\r\n0\r\n")]
+    [Arguments("$-1\r\n")]
+    [Arguments("*1\r\n:1\r\n")]
+    [Arguments(":2\r\n")]
+    public async Task MalformedTransitionRepliesFail(string response)
+    {
+        var reply = Encoding.ASCII.GetBytes(response);
+        await using var server = new FakeRespServer(reply, reply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var store = new RespireIdempotency(client);
+        await Assert.That(async () => await store.CompleteAsync("key", "owner", default))
+            .Throws<RespireProtocolException>();
+        await Assert.That(async () => await store.AbandonAsync("key", "owner"))
+            .Throws<RespireProtocolException>();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task HooksObserveEachLogicalOperationAndCanRejectBeforeDispatch(bool reject)
