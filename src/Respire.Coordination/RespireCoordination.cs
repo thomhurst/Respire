@@ -9,16 +9,17 @@ public sealed class RespireCoordination
 {
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
+    internal IRespireClient Client => _client;
 
     private readonly struct FencedLockWaitTarget(
         RespireCoordination coordination, RespireKey leaseKey, RespireKey counterKey, long milliseconds)
         : IRespireNotificationWaitTarget<RespireFencedLock>
     {
-        public async ValueTask TrackAsync(CancellationToken cancellationToken)
-            => _ = await coordination._client.Strings.GetStringAsync(leaseKey, cancellationToken).ConfigureAwait(false);
+        public ValueTask TrackAsync(CancellationToken cancellationToken)
+            => CoordinationCommandHooks.TrackAsync(coordination._client, leaseKey, null, cancellationToken);
 
         public ValueTask<RespireTtlResult> GetTimeToLiveAsync(CancellationToken cancellationToken)
-            => coordination._client.Keys.ExpiryAsync(leaseKey, cancellationToken);
+            => CoordinationCommandHooks.ExpiryAsync(coordination._client, leaseKey, null, cancellationToken);
 
         public async ValueTask<(bool Succeeded, RespireFencedLock Result)> TryAsync(CancellationToken cancellationToken)
         {
@@ -32,16 +33,16 @@ public sealed class RespireCoordination
         RespireCoordination coordination, RespireKey hashKey, RespireKey field, long milliseconds)
         : IRespireNotificationWaitTarget<RespireCoordinationLease>
     {
-        public async ValueTask TrackAsync(CancellationToken cancellationToken)
-            => _ = await coordination._client.Hashes.GetBytesAsync(hashKey, field, cancellationToken).ConfigureAwait(false);
+        public ValueTask TrackAsync(CancellationToken cancellationToken)
+            => CoordinationCommandHooks.TrackAsync(coordination._client, hashKey, field, cancellationToken);
 
         public ValueTask<RespireTtlResult> GetTimeToLiveAsync(CancellationToken cancellationToken)
-            => coordination._client.Hashes.ExpiryAsync(hashKey, field, cancellationToken);
+            => CoordinationCommandHooks.ExpiryAsync(coordination._client, hashKey, field, cancellationToken);
 
         public async ValueTask<(bool Succeeded, RespireCoordinationLease Result)> TryAsync(CancellationToken cancellationToken)
         {
             var duration = TimeSpan.FromMilliseconds(milliseconds);
-            var lease = await coordination.TryAcquireLeaseAsync(hashKey, field, duration, cancellationToken)
+            var lease = await coordination.TryAcquireLeaseUnhookedAsync(hashKey, field, duration, cancellationToken)
                 .ConfigureAwait(false);
             return lease is null ? (false, default!) : (true, lease);
         }
@@ -357,6 +358,12 @@ public sealed class RespireCoordination
     public ValueTask<RespireFencedLockAttempt> TryAcquireFencedLockAsync(
         RespireKey key, RespireKey fencingCounterKey, TimeSpan duration,
         CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LOCK ACQUIRE FENCED", cancellationToken,
+            (Owner: this, Key: key, Counter: fencingCounterKey, Duration: duration, Token: cancellationToken), static s => s.Owner.TryAcquireFencedLockUnhookedAsync(s.Key, s.Counter, s.Duration, s.Token));
+
+    private ValueTask<RespireFencedLockAttempt> TryAcquireFencedLockUnhookedAsync(
+        RespireKey key, RespireKey fencingCounterKey, TimeSpan duration,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
@@ -384,6 +391,12 @@ public sealed class RespireCoordination
 
     private ValueTask<RespireReadWriteLockAttempt> TryAcquireReadWriteLockAsync(
         RespireKey key, TimeSpan duration, bool isWriter, CancellationToken cancellationToken)
+        => CoordinationCommandHooks.RunAsync(_client, isWriter ? "LOCK ACQUIRE WRITE" : "LOCK ACQUIRE READ", cancellationToken,
+            (Owner: this, Key: key, Duration: duration, Writer: isWriter, Token: cancellationToken),
+            static s => s.Owner.TryAcquireReadWriteLockUnhookedAsync(s.Key, s.Duration, s.Writer, s.Token));
+
+    private ValueTask<RespireReadWriteLockAttempt> TryAcquireReadWriteLockUnhookedAsync(
+        RespireKey key, TimeSpan duration, bool isWriter, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
@@ -397,7 +410,7 @@ public sealed class RespireCoordination
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
         var role = isWriter ? WriterRole : ReaderRole;
-        using var response = await _client.Scripts.ExecuteLeaseAsync(AcquireReadWriteLock, [key],
+        using var response = await CoordinationCommandHooks.ExecuteAsync(_client, AcquireReadWriteLock, [key],
             [owner.Bytes, milliseconds, role], cancellationToken).ConfigureAwait(false);
         if (response.AsInteger() != 1) return default;
 
@@ -407,7 +420,8 @@ public sealed class RespireCoordination
             TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started);
         if (validity <= TimeSpan.Zero)
         {
-            _ = lease.DisposeAsync();
+            await CorrectionCoordinator.WaitAsync(lease.DisposeUnhookedAsync().AsTask(), BestEffortCleanupTimeout)
+                .ConfigureAwait(false);
             return default;
         }
         try
@@ -417,7 +431,8 @@ public sealed class RespireCoordination
         }
         catch (OperationCanceledException)
         {
-            _ = lease.DisposeAsync();
+            await CorrectionCoordinator.WaitAsync(lease.DisposeUnhookedAsync().AsTask(), BestEffortCleanupTimeout)
+                .ConfigureAwait(false);
             throw;
         }
     }
@@ -436,7 +451,13 @@ public sealed class RespireCoordination
     /// Cancellation or connection loss after Redis accepts acquisition can leave an unreturned
     /// lease until its server-side duration elapses.
     /// </remarks>
-    public async ValueTask<RespireFencedLock> AcquireFencedLockAsync(
+    public ValueTask<RespireFencedLock> AcquireFencedLockAsync(
+        RespireKey key, RespireKey fencingCounterKey, TimeSpan duration,
+        CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LOCK WAIT FENCED", cancellationToken,
+            (Owner: this, Key: key, Counter: fencingCounterKey, Duration: duration, Token: cancellationToken), static s => s.Owner.AcquireFencedLockUnhookedAsync(s.Key, s.Counter, s.Duration, s.Token));
+
+    private async ValueTask<RespireFencedLock> AcquireFencedLockUnhookedAsync(
         RespireKey key, RespireKey fencingCounterKey, TimeSpan duration,
         CancellationToken cancellationToken = default)
     {
@@ -469,7 +490,12 @@ public sealed class RespireCoordination
     /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
     /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
     /// </remarks>
-    public async ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
+    public ValueTask<RespireCoordinationLease?> TryAcquireLeaseAsync(
+        RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "COORDINATION LEASE ACQUIRE", cancellationToken,
+            (Owner: this, Key: hashKey, Field: field, Duration: duration, Token: cancellationToken), static s => s.Owner.TryAcquireLeaseUnhookedAsync(s.Key, s.Field, s.Duration, s.Token));
+
+    private async ValueTask<RespireCoordinationLease?> TryAcquireLeaseUnhookedAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = ValidateLease(hashKey, field, duration);
@@ -485,7 +511,7 @@ public sealed class RespireCoordination
         {
             if (concreteClient is null)
             {
-                using var response = await _client.Scripts.ExecuteLeaseAsync(AcquireHashFieldLease, [hashKey],
+                using var response = await CoordinationCommandHooks.ExecuteAsync(_client, AcquireHashFieldLease, [hashKey],
                     [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 acquired = !response.IsNull && response.AsInteger() != 0;
             }
@@ -546,7 +572,12 @@ public sealed class RespireCoordination
     /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
     /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
     /// </remarks>
-    public async ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
+    public ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
+        RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "COORDINATION LEASE WAIT", cancellationToken,
+            (Owner: this, Key: hashKey, Field: field, Duration: duration, Token: cancellationToken), static s => s.Owner.AcquireLeaseUnhookedAsync(s.Key, s.Field, s.Duration, s.Token));
+
+    private async ValueTask<RespireCoordinationLease> AcquireLeaseUnhookedAsync(
         RespireKey hashKey, RespireKey field, TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = ValidateLease(hashKey, field, duration);
@@ -699,7 +730,7 @@ public sealed class RespireCoordination
     private static async Task ReleaseOnCurrentClusterOwnerAsync(
         RespireClient client, RespireKey hashKey, RespireKey field, RespireLockToken owner)
     {
-        using var response = await client.Scripts.ExecuteLeaseAsync(
+        using var response = await CoordinationCommandHooks.ExecuteAsync(client,
             ReleaseHashFieldLease, [hashKey], [field, owner.Bytes], CancellationToken.None).ConfigureAwait(false);
     }
 
@@ -742,7 +773,7 @@ public sealed class RespireCoordination
     internal async ValueTask<bool> RenewHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, long milliseconds, CancellationToken cancellationToken)
     {
-        using var response = await _client.Scripts.ExecuteLeaseAsync(RenewHashFieldLease, [hashKey],
+        using var response = await CoordinationCommandHooks.ExecuteAsync(_client, RenewHashFieldLease, [hashKey],
             [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -750,7 +781,7 @@ public sealed class RespireCoordination
     internal async ValueTask<bool> VerifyHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, CancellationToken cancellationToken)
     {
-        using var response = await _client.Scripts.ExecuteLeaseAsync(VerifyHashFieldLease, [hashKey],
+        using var response = await CoordinationCommandHooks.ExecuteAsync(_client, VerifyHashFieldLease, [hashKey],
             [field, owner.Bytes], cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -758,7 +789,7 @@ public sealed class RespireCoordination
     internal async ValueTask<bool> ReleaseHashFieldLeaseAsync(
         RespireKey hashKey, RespireKey field, RespireLockToken owner, CancellationToken cancellationToken)
     {
-        using var response = await _client.Scripts.ExecuteLeaseAsync(ReleaseHashFieldLease, [hashKey],
+        using var response = await CoordinationCommandHooks.ExecuteAsync(_client, ReleaseHashFieldLease, [hashKey],
             [field, owner.Bytes], cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -768,7 +799,7 @@ public sealed class RespireCoordination
     {
         var owner = RespireLock.NewToken();
         var started = Stopwatch.GetTimestamp();
-        using var response = await _client.Scripts.ExecuteLeaseAsync(AcquireFencedLock, [key, counterKey],
+        using var response = await CoordinationCommandHooks.ExecuteAsync(_client, AcquireFencedLock, [key, counterKey],
             [owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
         if (response.IsNull) return default;
 
@@ -791,7 +822,7 @@ public sealed class RespireCoordination
         }
         finally
         {
-            if (!transferred) await lease.DisposeAsync().ConfigureAwait(false);
+            if (!transferred) await lease.DisposeUnhookedAsync().ConfigureAwait(false);
         }
     }
 }

@@ -194,12 +194,16 @@ internal sealed class RespireRedlockNodes
     }
 
     /// <summary>Releases a token everywhere; each node wait is bounded by the node timeout, not the caller.</summary>
-    internal async ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token)
+    internal async ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token, bool observeHooks = false)
     {
         var released = await RunAsync(
             async (client, cancellation) =>
             {
-                _ = await client.Locks.ReleaseAsync(key, token, cancellation).ConfigureAwait(false);
+                // An owed correction cannot be rejected by the application policy. Explicit
+                // Redlock release retains the per-node public lock boundaries.
+                _ = await (!observeHooks && client.Locks is LockCommands locks
+                    ? locks.ReleaseUnhookedAsync(key, token, cancellation)
+                    : client.Locks.ReleaseAsync(key, token, cancellation)).ConfigureAwait(false);
                 return true;
             },
             CancellationToken.None).ConfigureAwait(false);
@@ -381,7 +385,7 @@ public sealed class RespireRedlock : IAsyncDisposable
         {
             if (Volatile.Read(ref _releaseConfirmed) != 0) return false;
             Volatile.Write(ref _released, 1);
-            var confirmed = await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
+            var confirmed = await _nodes.ReleaseAsync(Key, Token, observeHooks: true).ConfigureAwait(false);
             if (confirmed) Volatile.Write(ref _releaseConfirmed, 1);
             return confirmed;
         }

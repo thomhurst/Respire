@@ -15,6 +15,7 @@ APIs, function calls and mutations, script execution, dedicated blocking convert
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
 explicit pipeline/transaction members and WATCH setup.
+Managed locks, semaphores and the tracked coordination leases described below are also covered.
 This is **not a client-wide command-blocking policy**. Remaining composite coverage and
 the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 :::
@@ -210,13 +211,59 @@ requested page separately. Completion includes parsing that page, before its ite
 yielded. Rejecting a later page prevents its send while leaving earlier pages delivered.
 Cancellation between yielded items is outside the already completed page.
 
-The following paths do not yet have a complete hook contract:
-remaining custom facet conversions, imports, and composite helpers
-such as managed locks. Some invoke covered helpers internally;
-that does not make their entire public operation covered. The remaining owners are tracked
-in [#1755](https://github.com/thomhurst/Respire/issues/1755) (locks/coordination) and
-[#1756](https://github.com/thomhurst/Respire/issues/1756) (imports/diagnostics), followed
-by the final cross-route audit in [#1708](https://github.com/thomhurst/Respire/issues/1708).
+### Locks and tracked coordination
+
+These composite operations use logical names, rather than the Redis command selected by
+capability fallback. Rejecting `SET` or `EVALSHA` alone does not reject a lock operation.
+Use the names in this table when applying a policy to these APIs.
+
+| Public operation | Hook name |
+| --- | --- |
+| `Locks.AcquireAsync`, `AcquireOrThrowAsync`, `TryTakeAsync` (including polling and `keepAlive`) | `LOCK ACQUIRE` |
+| Token-based or managed lock release, renewal, owner lookup/verification | `LOCK RELEASE`, `LOCK RENEW`, `LOCK VERIFY` |
+| Managed lock disposal; explicit keep-alive start/stop | `LOCK DISPOSE`; `LOCK KEEPALIVE START`, `LOCK KEEPALIVE STOP` |
+| Semaphore acquisition and lease verification, renewal, release, disposal | `SEMAPHORE ACQUIRE`, `SEMAPHORE VERIFY`, `SEMAPHORE RENEW`, `SEMAPHORE RELEASE`, `SEMAPHORE DISPOSE` |
+| Immediate fenced lock acquisition; notification-assisted waiting | `LOCK ACQUIRE FENCED`; `LOCK WAIT FENCED` |
+| Read/write lock acquisition | `LOCK ACQUIRE READ`, `LOCK ACQUIRE WRITE` |
+| Read/write lock verification, renewal, release, disposal | `LOCK VERIFY READWRITE`, `LOCK RENEW READWRITE`, `LOCK RELEASE READWRITE`, `LOCK DISPOSE READWRITE` |
+| Hash-field lease immediate acquisition; notification-assisted waiting | `COORDINATION LEASE ACQUIRE`; `COORDINATION LEASE WAIT` |
+| Hash-field lease verification, renewal, release, disposal | `COORDINATION LEASE VERIFY`, `COORDINATION LEASE RENEW`, `COORDINATION LEASE RELEASE`, `COORDINATION LEASE DISPOSE` |
+
+Fenced lock handles delegate to managed locks and use their `LOCK` names for subsequent
+operations. Admission precedes tracked connection setup, mutation fences, ownership changes
+and notification waiting. One completion includes contention polling, native/Lua capability
+fallback, final result conversion and foreground correction/cleanup. A failed
+`AcquireOrThrowAsync` completes as `Failed`; an unsuccessful acquisition attempt is `Succeeded`.
+Each caller joining a managed lock release receives its own scope around its result.
+
+Rejecting release or disposal leaves the handle available for a later attempt; rejecting
+keep-alive stop leaves renewal running. Completion reports the public API's outcome, including
+its existing cleanup exception-swallowing rules. Disposal does not admit a nested release.
+An unsuccessful acquisition attempt has no resource to dispose and creates no disposal scope.
+
+Background renewal, detached cleanup retries, tracked script legs, `CLIENT ID`/`CLIENT KILL`
+fences and notification tracking reads are housekeeping inside or following the owning operation;
+they do not ask policy permission again. Bounded foreground cleanup can hand remaining recovery
+to the existing background queue. Completion does not promise that detached recovery has ended.
+Rejecting `LOCK RENEW` does not stop background keep-alive renewals; use acquisition or
+`LOCK KEEPALIVE START` admission to control their start.
+The acquisition scope ends when it returns the handle, not at the end of the lease's lifetime.
+Application calls from callbacks still receive independent scopes. Coordination coverage applies
+to a concrete `RespireClient`; custom `IRespireClient` decorators retain their own dispatch behavior.
+
+This is the tracked-owner inventory for [#1755](https://github.com/thomhurst/Respire/issues/1755).
+Countdown latch operations (including notification waits and compatibility fallback), rate
+limiters and multi-client Redlock groups still require their own composite boundaries in
+the [#1708 audit](https://github.com/thomhurst/Respire/issues/1708). Their lower-level hooks do
+not establish a once-only outer operation contract.
+
+The following paths also do not yet have a complete hook contract:
+remaining custom facet conversions, imports, and composite helpers.
+Some invoke covered helpers internally;
+that does not make their entire public operation covered. Imports and diagnostics are tracked
+in [#1756](https://github.com/thomhurst/Respire/issues/1756), followed by the final cross-route
+audit in [#1708](https://github.com/thomhurst/Respire/issues/1708).
+
 
 Tracked scripts and correction sends belong to the surrounding lock, cache or coordination
 operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
@@ -266,8 +313,10 @@ boundaries; it does not establish client-wide coverage for the remaining composi
 
 ## Order and outcomes
 
-After argument construction and preflight validation, `OnExecuting` runs synchronously
+For ordinary commands, after argument construction and preflight validation, `OnExecuting` runs synchronously
 before the covered operation dispatches or reads the cache. It can return any state object.
+Composite coordination owners admit before entering their operation; validation performed
+inside that operation is reported as a failed admitted call.
 Throwing rejects the operation and produces one `Rejected` completion with that same
 exception and null state. This also applies when admission throws a cancellation exception.
 
