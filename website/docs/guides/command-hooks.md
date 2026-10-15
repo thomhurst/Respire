@@ -12,7 +12,8 @@ Client views created with a key prefix, read preference, or cache bypass share t
 :::important Scope
 Supported routes include ordinary converted-response commands, interpolated and non-interpolated Execute
 APIs, function calls and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
-streaming results, subscription setup/teardown, specialized server operations and cluster scan pages.
+streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
+multi-key and partial hash cache reads, cache-aside factories and distributed-cache operations.
 This is **not a client-wide command-blocking policy**. Remaining specialized dispatch and
 aggregate coverage are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 :::
@@ -57,6 +58,34 @@ conversion in those helpers. Native sends, ready connections, replica routing, a
 query-cache hits use the same boundary. Single-key GET admission precedes cache lookup,
 so rejecting a cached read also prevents returning its value. Each caller of a coalesced
 cache miss receives its own admission and completion.
+
+### Cache operation owners
+
+`Strings.GetManyAsync` (including typed overloads) admits one `MGET` before any cache
+lookup. Completion includes combining resident and fetched values, retries, generation
+rechecks, and every selected typed conversion. Raw Execute MGET calls keep their own
+result boundary without admitting the internal cached read again. `Hashes.GetManyAsync`
+uses one `HMGET`, including partial field hits and the remaining fetched fields;
+`Hashes.GetAllAsync<T>` includes its dictionary and typed-value conversion in `HGETALL`.
+Other cacheable facet reads that use the converted-response helpers retain that same
+conversion boundary on both cache hits and misses.
+
+`GetOrSetAsync<T>` admits one logical `GETORSET` after factory/expiry validation and
+before cache lookup, tracking, or factory execution. Completion includes factory execution,
+serialization, conditional insertion, mutation-fence cleanup, and final deserialization.
+Internal GET and SET legs do not produce additional hook events. Calls made by the
+application factory or a hook receive independent scopes. Each coalesced caller has its
+own scope and cancellation outcome; canceling one caller can leave the shared producer
+running for other callers. The boundary also applies to `WithoutClientCache` views.
+
+`RespireDistributedCache` backed by a concrete `RespireClient` (including prefixed views)
+admits `GET` for Get/TryGet, `SET` for both Set overloads, `REFRESH` for Refresh, and
+`UNLINK` for Remove. Synchronous entry points use the same scopes. These are logical
+adapter operations, even when the implementation sends scripts. Admission precedes
+buffer coalescing, codecs and tracked setup. Completion includes decoding or destination
+writes, foreground TTL corrections, and result/lease cleanup. Internal scripts, fallback
+and correction sends do not create extra events. An opaque custom `IRespireClient`
+decorator does not expose its underlying hook to the adapter and is outside this contract.
 
 Non-interpolated `ExecuteAsync`, `ExecuteLeaseAsync`, and `ExecuteFireAndForgetAsync`
 are covered for both catalog descriptors and caller-supplied command names. Raw command
@@ -181,8 +210,8 @@ yielded. Rejecting a later page prevents its send while leaving earlier pages de
 Cancellation between yielded items is outside the already completed page.
 
 The following paths do not yet have a complete hook contract:
-multi-key cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
-such as managed locks or cache-aside factories. Some invoke covered helpers internally;
+remaining custom facet conversions, imports, and composite helpers
+such as managed locks. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction
 members also remain outside this command hook. Use the separate
 [pipeline hook](batches-and-transactions.md#observe-or-reject-explicit-executions) for

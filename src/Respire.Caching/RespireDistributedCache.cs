@@ -232,7 +232,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// <inheritdoc/>
     public async Task<byte[]?> GetAsync(string key, CancellationToken token = default)
         => await DispatchResponseSource<byte[]?>.Run((Cache: this, Key: key, Token: token),
-            static (state, owner) => state.Cache.GetCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
+            static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
+                ? CommandHookScope.RunAsync(hook, "GET", state.Token, (state.Cache, state.Key, state.Token, Owner: owner),
+                    static s => s.Cache.GetCoreAsync(s.Key, s.Token, s.Owner),
+                    static s => { ArgumentNullException.ThrowIfNull(s.Key, "key"); return "GET"; })
+                : state.Cache.GetCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<byte[]?> GetCoreAsync(string key, CancellationToken token,
@@ -259,7 +263,17 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// <inheritdoc/>
     public ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
         => DispatchResponseSource<bool>.Run((Cache: this, Key: key, Destination: destination, Token: token),
-            static (state, owner) => state.Cache.TryGetCoreAsync(state.Key, state.Destination, state.Token, owner));
+            static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
+                ? CommandHookScope.RunAsync(hook, "GET", state.Token,
+                    (state.Cache, state.Key, state.Destination, state.Token, Owner: owner),
+                    static s => s.Cache.TryGetCoreAsync(s.Key, s.Destination, s.Token, s.Owner),
+                    static s =>
+                    {
+                        ArgumentNullException.ThrowIfNull(s.Key, "key");
+                        ArgumentNullException.ThrowIfNull(s.Destination, "destination");
+                        return "GET";
+                    })
+                : state.Cache.TryGetCoreAsync(state.Key, state.Destination, state.Token, owner));
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> TryGetCoreAsync(string key, IBufferWriter<byte> destination,
@@ -298,7 +312,17 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         {
             ArgumentNullException.ThrowIfNull(value);
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(
-                SetCoreAsync(key, value, options, token, owner.Observation)))).AsTask();
+                _wireClient?.Core.Options.CommandHook is { } hook
+                    ? CommandHookScope.RunAsync(hook, "SET", token,
+                        (Cache: this, Key: key, Value: value, Options: options, Token: token, owner.Observation),
+                        static s => s.Cache.SetCoreAsync(s.Key, s.Value, s.Options, s.Token, s.Observation),
+                        static s =>
+                        {
+                            ArgumentNullException.ThrowIfNull(s.Key, "key");
+                            ArgumentNullException.ThrowIfNull(s.Options, "options");
+                            return "SET";
+                        })
+                    : SetCoreAsync(key, value, options, token, owner.Observation)))).AsTask();
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
@@ -313,13 +337,26 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         var owner = DispatchResponseSource<bool>.Start();
         try
         {
-            // Coalesce segments for the span-based codec; configured encoding then creates its own
-            // frame array, which remains owned through the send. The two buffers are intentional.
             return DispatchResponseSource.Complete(owner.Attach(DispatchResponseSource.Await(
-                SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token, owner.Observation))));
+                _wireClient?.Core.Options.CommandHook is { } hook
+                    ? CommandHookScope.RunAsync(hook, "SET", token,
+                        (Cache: this, Key: key, Value: value, Options: options, Token: token, owner.Observation),
+                        static s => s.Cache.SetSequenceCoreAsync(s.Key, s.Value, s.Options, s.Token, s.Observation),
+                        static s =>
+                        {
+                            ArgumentNullException.ThrowIfNull(s.Key, "key");
+                            ArgumentNullException.ThrowIfNull(s.Options, "options");
+                            return "SET";
+                        })
+                    : SetSequenceCoreAsync(key, value, options, token, owner.Observation))));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
+
+    private ValueTask SetSequenceCoreAsync(string key, ReadOnlySequence<byte> value,
+        DistributedCacheEntryOptions options, CancellationToken token, RespireTelemetry.ErrorObservation observation)
+        // Coalesce only after admission. The encoded frame remains owned through the send.
+        => SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token, observation);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     private async ValueTask SetCoreAsync(string key, ReadOnlyMemory<byte> value, DistributedCacheEntryOptions options,
@@ -603,7 +640,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     public async Task RefreshAsync(string key, CancellationToken token = default)
         => await DispatchResponseSource.Complete(DispatchResponseSource<bool>.Run(
             (Cache: this, Key: key, Token: token),
-            static (state, owner) => state.Cache.RefreshCoreAsync(state.Key, state.Token, owner))).ConfigureAwait(false);
+            static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
+                ? CommandHookScope.RunAsync(hook, "REFRESH", state.Token, (state.Cache, state.Key, state.Token, Owner: owner),
+                    static s => s.Cache.RefreshCoreAsync(s.Key, s.Token, s.Owner),
+                    static s => { ArgumentNullException.ThrowIfNull(s.Key, "key"); return "REFRESH"; })
+                : state.Cache.RefreshCoreAsync(state.Key, state.Token, owner))).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> RefreshCoreAsync(string key, CancellationToken token,
@@ -622,7 +663,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// <inheritdoc/>
     public async Task RemoveAsync(string key, CancellationToken token = default)
         => await DispatchResponseSource.Run((Cache: this, Key: key, Token: token),
-            static (state, owner) => state.Cache.RemoveCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
+            static (state, owner) => state.Cache._wireClient?.Core.Options.CommandHook is { } hook
+                ? CommandHookScope.RunAsync(hook, "UNLINK", state.Token, (state.Cache, state.Key, state.Token, Owner: owner),
+                    static s => s.Cache.RemoveCoreAsync(s.Key, s.Token, s.Owner),
+                    static s => { ArgumentNullException.ThrowIfNull(s.Key, "key"); return "UNLINK"; })
+                : state.Cache.RemoveCoreAsync(state.Key, state.Token, owner)).ConfigureAwait(false);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     private async ValueTask RemoveCoreAsync(string key, CancellationToken token,
