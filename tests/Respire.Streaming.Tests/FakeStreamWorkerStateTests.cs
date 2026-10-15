@@ -16,7 +16,7 @@ public class FakeStreamWorkerStateTests
         await using var server = new RespireFakeServer(clock);
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
         for (var i = 1; i <= 3; i++)
-            await client.Streams.AddAsync("s", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+            await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
         await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("s", "g", "a", new() { Count = 2 });
         clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -55,7 +55,7 @@ public class FakeStreamWorkerStateTests
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
-        await client.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, ("f", "value"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         var entries = await client.Streams.ReadGroupOnceAsync("s", "g", "a");
         await entries.Single().AckAsync();

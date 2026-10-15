@@ -11,7 +11,7 @@ public partial interface IBatchStreamCommands
     /// <summary>Appends fields with an auto-generated id. Redis: XADD.</summary>
     RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
     /// <summary>Appends with id/trimming options; null when NOMKSTREAM skips an absent stream. Redis: XADD.</summary>
-    RespirePending<RespireStreamId?> Add(RespireKey key, StreamAddOptions options,
+    RespirePending<RespireStreamId?> Add(RespireKey key, RespireStreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
     /// <summary>Number of entries. Redis: XLEN.</summary>
     RespirePending<long> Count(RespireKey key);
@@ -36,7 +36,7 @@ internal sealed partial class BatchStreamCommands(IPendingSink sink) : IBatchStr
             StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), default, fields, snapshotValues: sink.DefersSerialization),
             static (_, value) => new RespireStreamId(ResponseReader.String(in value)));
 
-    public RespirePending<RespireStreamId?> Add(RespireKey key, StreamAddOptions options,
+    public RespirePending<RespireStreamId?> Add(RespireKey key, RespireStreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, RespireStreamId?>("XADD",
             StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), options, fields, snapshotValues: sink.DefersSerialization),

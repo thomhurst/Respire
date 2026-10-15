@@ -4,12 +4,12 @@
       "Type": "Respire.IBitmapCommands",
       "OwnerType": "Respire.BitmapCommands",
       "Members": [
-        "FieldAsync(RespireKey,BitFieldOperation,CancellationToken):ValueTask<long?[]>",
-        "FieldAsync(RespireKey,ReadOnlySpan<BitFieldOperation>,CancellationToken):ValueTask<long?[]>",
-        "FieldAsync(RespireKey,params ReadOnlySpan<BitFieldOperation>):ValueTask<long?[]>",
-        "FieldReadOnlyAsync(RespireKey,BitFieldOperation,CancellationToken):ValueTask<long?[]>",
-        "FieldReadOnlyAsync(RespireKey,ReadOnlySpan<BitFieldOperation>,CancellationToken):ValueTask<long?[]>",
-        "FieldReadOnlyAsync(RespireKey,params ReadOnlySpan<BitFieldOperation>):ValueTask<long?[]>",
+        "FieldAsync(RespireKey,RespireBitFieldOperation,CancellationToken):ValueTask<long?[]>",
+        "FieldAsync(RespireKey,ReadOnlySpan<RespireBitFieldOperation>,CancellationToken):ValueTask<long?[]>",
+        "FieldAsync(RespireKey,params ReadOnlySpan<RespireBitFieldOperation>):ValueTask<long?[]>",
+        "FieldReadOnlyAsync(RespireKey,RespireBitFieldOperation,CancellationToken):ValueTask<long?[]>",
+        "FieldReadOnlyAsync(RespireKey,ReadOnlySpan<RespireBitFieldOperation>,CancellationToken):ValueTask<long?[]>",
+        "FieldReadOnlyAsync(RespireKey,params ReadOnlySpan<RespireBitFieldOperation>):ValueTask<long?[]>",
         "GetAsync(RespireKey,long,CancellationToken):ValueTask<bool>",
         "OperateAsync(BitOperation,RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
         "OperateAsync(BitOperation,RespireKey,RespireKey,CancellationToken):ValueTask<long>",
@@ -25,35 +25,35 @@
   "Boundaries": [],
   "NonRoutes": [
     {
-      "Member": "Respire.BitFieldEncoding.Signed(int):BitFieldEncoding",
+      "Member": "Respire.RespireBitFieldEncoding.Signed(int):RespireBitFieldEncoding",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldEncoding.Unsigned(int):BitFieldEncoding",
+      "Member": "Respire.RespireBitFieldEncoding.Unsigned(int):RespireBitFieldEncoding",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldOffset.Bits(long):BitFieldOffset",
+      "Member": "Respire.RespireBitFieldOffset.Bits(long):RespireBitFieldOffset",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldOffset.Fields(long):BitFieldOffset",
+      "Member": "Respire.RespireBitFieldOffset.Fields(long):RespireBitFieldOffset",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldOperation.Get(BitFieldEncoding,BitFieldOffset):BitFieldOperation",
+      "Member": "Respire.RespireBitFieldOperation.Get(RespireBitFieldEncoding,RespireBitFieldOffset):RespireBitFieldOperation",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldOperation.Increment(BitFieldEncoding,BitFieldOffset,long):BitFieldOperation",
+      "Member": "Respire.RespireBitFieldOperation.Increment(RespireBitFieldEncoding,RespireBitFieldOffset,long):RespireBitFieldOperation",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldOperation.Set(BitFieldEncoding,BitFieldOffset,long):BitFieldOperation",
+      "Member": "Respire.RespireBitFieldOperation.Set(RespireBitFieldEncoding,RespireBitFieldOffset,long):RespireBitFieldOperation",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.BitFieldOperation.SetOverflow(BitFieldOverflow):BitFieldOperation",
+      "Member": "Respire.RespireBitFieldOperation.SetOverflow(RespireBitFieldOverflow):RespireBitFieldOperation",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     }
   ]

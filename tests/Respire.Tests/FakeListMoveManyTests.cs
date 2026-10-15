@@ -173,10 +173,10 @@ public class FakeListMoveManyTests
         await Assert.That(await client.Lists.MoveManyAsync("s", "wrong", 4, countMode: ListMoveCountMode.Exactly)).IsNull();
         await Assert.That(async () => await client.Lists.MoveManyAsync("s", "wrong", 2)).Throws<RespireServerException>();
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["a", "b", "c"], CollectionOrdering.Matching);
-        await Assert.That(await client.Lists.MoveManyAsync("s", "s", 2, to: ListSide.Left))
+        await Assert.That(await client.Lists.MoveManyAsync("s", "s", 2, to: RespireListSide.Left))
             .IsEquivalentTo(["b", "a"], CollectionOrdering.Matching);
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["b", "a", "c"], CollectionOrdering.Matching);
-        await Assert.That(await client.Lists.MoveManyAsync("s", "s", 99, order: ListMoveOrder.Bulk))
+        await Assert.That(await client.Lists.MoveManyAsync("s", "s", 99, order: RespireListMoveOrder.Bulk))
             .IsEquivalentTo(["b", "a", "c"], CollectionOrdering.Matching);
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(await client.Lists.CountAsync("s")).IsEqualTo(0);

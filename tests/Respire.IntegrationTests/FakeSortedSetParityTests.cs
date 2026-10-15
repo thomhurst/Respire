@@ -177,7 +177,7 @@ public class FakeSortedSetParityTests(RedisTestContainer fixture)
         {
             Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync(command, args); };
             await invalid.Should().ThrowAsync<RespireServerException>();
-            (await client.SortedSets.RangeWithScoresAsync("key")).Should().Equal(new SortedSetEntry("a", 1), new SortedSetEntry("b", 2));
+            (await client.SortedSets.RangeWithScoresAsync("key")).Should().Equal(new RespireSortedSetEntry("a", 1), new RespireSortedSetEntry("b", 2));
         }
         (await Number(client, "ZINTERCARD", 2, "key", "key", "LIMIT", 1, "limit", 0)).Should().Be(2);
         await client.Sets.AddAsync("set", "a", "other");
@@ -226,9 +226,9 @@ public class FakeSortedSetParityTests(RedisTestContainer fixture)
         var first = batch.SortedSets.Pop<int>("key");
         var last = batch.SortedSets.PopMany<int>("key", 2, descending: true);
         await batch.ExecuteAsync();
-        entries.Result.Should().Equal(new SortedSetEntry<int>(10, 1), new SortedSetEntry<int>(20, 2), new SortedSetEntry<int>(30, 3));
-        first.Result.Should().Be(new SortedSetEntry<int>(10, 1));
-        last.Result.Should().Equal(new SortedSetEntry<int>(30, 3), new SortedSetEntry<int>(20, 2));
+        entries.Result.Should().Equal(new RespireSortedSetEntry<int>(10, 1), new RespireSortedSetEntry<int>(20, 2), new RespireSortedSetEntry<int>(30, 3));
+        first.Result.Should().Be(new RespireSortedSetEntry<int>(10, 1));
+        last.Result.Should().Equal(new RespireSortedSetEntry<int>(30, 3), new RespireSortedSetEntry<int>(20, 2));
         (await client.SortedSets.PopAsync<int>("key")).Should().BeNull();
         var json = System.Text.Json.JsonSerializer.Serialize(new Payload(7, "seven"));
         await client.SortedSets.AddAsync("json", json, 7);

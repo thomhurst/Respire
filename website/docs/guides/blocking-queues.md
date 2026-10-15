@@ -41,8 +41,8 @@ Move a job atomically from a pending queue to a processing queue:
 string? job = await redis.Lists.MoveAsync(
     source: "jobs:pending",
     destination: "jobs:processing",
-    from: ListSide.Right,
-    to: ListSide.Left,
+    from: RespireListSide.Right,
+    to: RespireListSide.Left,
     waitFor: TimeSpan.FromSeconds(30),
     cancellationToken: stoppingToken);
 ```

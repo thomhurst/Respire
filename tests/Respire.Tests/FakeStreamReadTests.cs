@@ -14,7 +14,7 @@ public class FakeStreamReadTests
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("f", "value"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         await Assert.That(async () =>
         {
             using var reply = await client.ExecuteAsync("XREAD", "COUNT", long.MaxValue, "MAXCOUNT", 1, "STREAMS", "events", "0");
@@ -32,7 +32,7 @@ public class FakeStreamReadTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
         foreach (var key in new[] { "one", "two" })
         {
-            for (var i = 1; i <= 3; i++) await client.Streams.AddAsync(key, new StreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 100)));
+            for (var i = 1; i <= 3; i++) await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 100)));
             await client.Streams.CreateGroupAsync(key, "g", "0");
         }
         var options = new StreamReadOptions { Count = 2, MaxCount = 3 };
@@ -59,7 +59,7 @@ public class FakeStreamReadTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var options = new StreamReadOptions { MaxCount = 1, MaxSize = 1, WaitFor = Timeout.InfiniteTimeSpan };
         var read = client.Streams.ReadAsync(options, "events", cancellationToken: timeout.Token).AsTask();
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("f", "first"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "first"));
         await Assert.That((await read)[0].Id).IsEqualTo((RespireStreamId)"1-0");
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         var blocked = client.Streams.ReadAsync(options, "events", "1-0", cancel.Token).AsTask();

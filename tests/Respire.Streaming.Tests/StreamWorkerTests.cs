@@ -604,7 +604,7 @@ public partial class StreamWorkerTests
             MinimumIdleTime = TimeSpan.FromSeconds(1), RecoveryPollInterval = TimeSpan.FromMilliseconds(20),
         });
         for (var i = 1; i <= 22; i++)
-            await fixture.View.Streams.AddAsync("events", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+            await fixture.View.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "abandoned", new() { Count = 22 });
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -623,7 +623,7 @@ public partial class StreamWorkerTests
     {
         await using var fixture = await Fixture.CreateAsync(options: new() { ConsumerName = "stable" });
         for (var i = 1; i <= 2; i++)
-            await fixture.View.Streams.AddAsync("events", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+            await fixture.View.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await fixture.View.Streams.ReadGroupOnceAsync("events", "workers", "stable-0", new() { Count = 2 });
         await fixture.View.Streams.RemoveAsync("events", ["1-0"]);

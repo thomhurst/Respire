@@ -13,12 +13,12 @@ public class CommandInputBenchmarks
     private long _increment = 1;
 
     [Benchmark]
-    public BitFieldOperation CreateBitFieldOperation()
-        => BitFieldOperation.Increment(BitFieldEncoding.Signed(_bitFieldWidth), BitFieldOffset.Fields(_bitFieldIndex), _increment);
+    public RespireBitFieldOperation CreateBitFieldOperation()
+        => RespireBitFieldOperation.Increment(RespireBitFieldEncoding.Signed(_bitFieldWidth), RespireBitFieldOffset.Fields(_bitFieldIndex), _increment);
 
     [Benchmark]
-    public GeoSearchShape CreateGeoSearchShape()
-        => GeoSearchShape.Box(10, 20, GeoUnit.Kilometers);
+    public RespireGeoSearchShape CreateGeoSearchShape()
+        => RespireGeoSearchShape.Box(10, 20, RespireGeoUnit.Kilometers);
 
     [Benchmark]
     public GeoSearchOrigin CreateGeoSearchOrigin()

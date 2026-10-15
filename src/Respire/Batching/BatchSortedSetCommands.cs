@@ -51,24 +51,24 @@ public partial interface IBatchSortedSetCommands
     RespirePending<long> Count(RespireKey key);
 
     /// <summary>Removes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
-    RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false);
+    RespirePending<RespireSortedSetEntry?> Pop(RespireKey key, bool descending = false);
 
     /// <summary>Removes and deserializes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false);
+    RespirePending<RespireSortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false);
 
     /// <summary>
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
     /// </summary>
-    RespirePending<SortedSetEntry[]> PopMany(
+    RespirePending<RespireSortedSetEntry[]> PopMany(
         RespireKey key, long count, bool descending = false);
 
     /// <summary>Removes members and deserializes them with their scores. Redis: ZPOPMIN / ZPOPMAX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<SortedSetEntry<T>[]> PopMany<T>(RespireKey key, long count, bool descending = false);
+    RespirePending<RespireSortedSetEntry<T>[]> PopMany<T>(RespireKey key, long count, bool descending = false);
 
     /// <summary>Removes members whose scores are within the inclusive range. Redis: ZREMRANGEBYSCORE.</summary>
     RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max);
@@ -97,13 +97,13 @@ public partial interface IBatchSortedSetCommands
     RespirePending<T[]> Range<T>(RespireKey key, long start = 0, long stop = -1, bool descending = false);
 
     /// <summary>Members with scores by rank range. Redis: ZRANGE WITHSCORES.</summary>
-    RespirePending<SortedSetEntry[]> RangeWithScores(
+    RespirePending<RespireSortedSetEntry[]> RangeWithScores(
         RespireKey key, long start = 0, long stop = -1, bool descending = false);
 
     /// <summary>Members and scores by rank, with members deserialized. Redis: ZRANGE WITHSCORES.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<SortedSetEntry<T>[]> RangeWithScores<T>(
+    RespirePending<RespireSortedSetEntry<T>[]> RangeWithScores<T>(
         RespireKey key, long start = 0, long stop = -1, bool descending = false);
 
     /// <summary>Members with scores within the inclusive score range. Redis: ZRANGE BYSCORE.</summary>
@@ -127,14 +127,14 @@ public partial interface IBatchSortedSetCommands
         bool descending = false);
 
     /// <summary>Members and scores within a score range, optionally paged. Redis: ZRANGE BYSCORE WITHSCORES.</summary>
-    RespirePending<SortedSetEntry[]> RangeByScoreWithScores(
+    RespirePending<RespireSortedSetEntry[]> RangeByScoreWithScores(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false);
 
     /// <summary>Members and scores within a score range, with members deserialized.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<SortedSetEntry<T>[]> RangeByScoreWithScores<T>(
+    RespirePending<RespireSortedSetEntry<T>[]> RangeByScoreWithScores<T>(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false);
 
@@ -221,42 +221,42 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
             "ZCARD", new Cmd1(Verbs.ZCard, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Integer(in v));
 
-    public RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false)
+    public RespirePending<RespireSortedSetEntry?> Pop(RespireKey key, bool descending = false)
     {
         var command = SortedSetCommands.PopCommand(descending);
-        return sink.Add<Cmd1, SortedSetEntry?>(
+        return sink.Add<Cmd1, RespireSortedSetEntry?>(
             command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
             static (c, v) => SortedSetCommands.ParseEntry(in v));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false)
+    public RespirePending<RespireSortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false)
     {
         var command = SortedSetCommands.PopCommand(descending);
-        return sink.Add<Cmd1, SortedSetEntry<T>?>(
+        return sink.Add<Cmd1, RespireSortedSetEntry<T>?>(
             command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
             static (c, v) => SortedSetCommands.ParseEntry<T>(c, in v));
     }
 
-    public RespirePending<SortedSetEntry[]> PopMany(
+    public RespirePending<RespireSortedSetEntry[]> PopMany(
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         var command = SortedSetCommands.PopCommand(descending);
-        return sink.Add<Cmd2, SortedSetEntry[]>(
+        return sink.Add<Cmd2, RespireSortedSetEntry[]>(
             command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
             static (c, v) => SortedSetCommands.ParseEntries(in v));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<SortedSetEntry<T>[]> PopMany<T>(
+    public RespirePending<RespireSortedSetEntry<T>[]> PopMany<T>(
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         var command = SortedSetCommands.PopCommand(descending);
-        return sink.Add<Cmd2, SortedSetEntry<T>[]>(
+        return sink.Add<Cmd2, RespireSortedSetEntry<T>[]>(
             command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
             static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v));
     }
@@ -321,28 +321,28 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
                 "ZRANGE", new Cmd3(Verbs.ZRange, sink.Client.Key(in key), start, stop),
                 static (c, v) => c.DeserializeArray<T>(in v));
 
-    public RespirePending<SortedSetEntry[]> RangeWithScores(
+    public RespirePending<RespireSortedSetEntry[]> RangeWithScores(
         RespireKey key, long start = 0, long stop = -1, bool descending = false)
         => descending
-            ? sink.Add<Cmd5, SortedSetEntry[]>(
+            ? sink.Add<Cmd5, RespireSortedSetEntry[]>(
                 "ZRANGE",
                 new Cmd5(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.REVValue, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries(in v))
-            : sink.Add<Cmd4, SortedSetEntry[]>(
+            : sink.Add<Cmd4, RespireSortedSetEntry[]>(
                 "ZRANGE",
                 new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries(in v));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<SortedSetEntry<T>[]> RangeWithScores<T>(
+    public RespirePending<RespireSortedSetEntry<T>[]> RangeWithScores<T>(
         RespireKey key, long start = 0, long stop = -1, bool descending = false)
         => descending
-            ? sink.Add<Cmd5, SortedSetEntry<T>[]>(
+            ? sink.Add<Cmd5, RespireSortedSetEntry<T>[]>(
                 "ZRANGE",
                 new Cmd5(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.REVValue, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v))
-            : sink.Add<Cmd4, SortedSetEntry<T>[]>(
+            : sink.Add<Cmd4, RespireSortedSetEntry<T>[]>(
                 "ZRANGE",
                 new Cmd4(Verbs.ZRange, sink.Client.Key(in key), start, stop, CommandOptionFrames.WITHSCORESValue),
                 static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v));
@@ -385,10 +385,10 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
                     "BYSCORE", offset, count, descending, withScores: false)),
             static (c, v) => c.DeserializeArray<T>(in v));
 
-    public RespirePending<SortedSetEntry[]> RangeByScoreWithScores(
+    public RespirePending<RespireSortedSetEntry[]> RangeByScoreWithScores(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false)
-        => sink.Add<Cmd1N, SortedSetEntry[]>(
+        => sink.Add<Cmd1N, RespireSortedSetEntry[]>(
             "ZRANGE",
             new Cmd1N(
                 Verbs.ZRange,
@@ -400,10 +400,10 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatch
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<SortedSetEntry<T>[]> RangeByScoreWithScores<T>(
+    public RespirePending<RespireSortedSetEntry<T>[]> RangeByScoreWithScores<T>(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false)
-        => sink.Add<Cmd1N, SortedSetEntry<T>[]>(
+        => sink.Add<Cmd1N, RespireSortedSetEntry<T>[]>(
             "ZRANGE",
             new Cmd1N(
                 Verbs.ZRange,

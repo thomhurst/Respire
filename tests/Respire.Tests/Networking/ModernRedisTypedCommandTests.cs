@@ -9,13 +9,13 @@ namespace Respire.Tests.Networking;
 public class ModernRedisTypedCommandTests
 {
     [Test]
-    [Arguments(ExpireWhen.Always, "")]
-    [Arguments(ExpireWhen.NotExists, " NX")]
-    [Arguments(ExpireWhen.Exists, " XX")]
-    [Arguments(ExpireWhen.GreaterThan, " GT")]
-    [Arguments(ExpireWhen.LessThan, " LT")]
+    [Arguments(RespireExpireWhen.Always, "")]
+    [Arguments(RespireExpireWhen.NotExists, " NX")]
+    [Arguments(RespireExpireWhen.Exists, " XX")]
+    [Arguments(RespireExpireWhen.GreaterThan, " GT")]
+    [Arguments(RespireExpireWhen.LessThan, " LT")]
     public async Task HashFieldExpiry_UsesSharedConditionsForImmediateAndDeferredCommands(
-        ExpireWhen when, string condition)
+        RespireExpireWhen when, string condition)
     {
         var reply = "*1\r\n:1\r\n"u8.ToArray();
         await using var server = new FakeRespServer(reply, reply, reply, reply);
@@ -70,7 +70,7 @@ public class ModernRedisTypedCommandTests
 
         var expiries = await client.Hashes.ExpiryAsync("hash", "a", "b", "c");
         var expireResults = await client.Hashes.ExpireAsync(
-            "hash", TimeSpan.FromMilliseconds(2500), ExpireWhen.GreaterThan, "a", "b", "c", "d");
+            "hash", TimeSpan.FromMilliseconds(2500), RespireExpireWhen.GreaterThan, "a", "b", "c", "d");
         var expireAtResults = await client.Hashes.ExpireAsync(
             "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456789)), "a");
         var persistResults = await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "a", "b", "c");
@@ -205,9 +205,9 @@ public class ModernRedisTypedCommandTests
             "$5\r\nvalue\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
+        await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), RespireExpireWhen.GreaterThan);
         await client.Keys.ExpireAsync(
-            "key", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)), ExpireWhen.NotExists);
+            "key", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)), RespireExpireWhen.NotExists);
         await client.Keys.ExpireAsync("key", RespireExpiry.Persist);
         await client.Strings.GetAndExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(3)));
         await client.Strings.GetAndExpireAsync(
@@ -233,7 +233,7 @@ public class ModernRedisTypedCommandTests
         await Assert.That(async () => await client.Hashes.ExpireAsync("hash", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Hashes.ExpireAsync(
-            "hash", TimeSpan.FromSeconds(1), (ExpireWhen)42, "field"))
+            "hash", TimeSpan.FromSeconds(1), (RespireExpireWhen)42, "field"))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Hashes.SetExpireAsync("hash", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
@@ -243,7 +243,7 @@ public class ModernRedisTypedCommandTests
         await Assert.That(async () => await client.Keys.ExpireAsync("key", RespireExpiry.None))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Keys.ExpireAsync(
-            "key", RespireExpiry.Persist, ExpireWhen.Exists))
+            "key", RespireExpiry.Persist, RespireExpireWhen.Exists))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Strings.GetAndExpireAsync("key", RespireExpiry.Keep))
             .Throws<ArgumentException>();

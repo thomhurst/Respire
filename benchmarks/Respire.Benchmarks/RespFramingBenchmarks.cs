@@ -121,7 +121,7 @@ public class RespFramingPublicBenchmarks
     public ValueTask<bool> SetWithExpiry() => _client.Strings.SetAsync(_setKey, _value, _expiry);
 
     [Benchmark]
-    public ValueTask<SortedSetEntry[]> ReverseRangeWithScores()
+    public ValueTask<RespireSortedSetEntry[]> ReverseRangeWithScores()
         => _client.SortedSets.RangeWithScoresAsync(_rangeKey, 0, -1, descending: true);
 
     [Benchmark(OperationsPerInvoke = 8)]

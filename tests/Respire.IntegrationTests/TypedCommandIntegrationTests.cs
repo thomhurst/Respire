@@ -16,8 +16,8 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var key = $"sorted:single-pop:{Guid.NewGuid():N}";
         await client.SortedSets.AddAsync(key, 7, 1.5);
         await client.SortedSets.AddAsync(key, 9, 2.5);
-        (await client.SortedSets.PopAsync(key)).Should().Be(new SortedSetEntry("7", 1.5));
-        (await client.SortedSets.PopAsync<int>(key, descending: true)).Should().Be(new SortedSetEntry<int>(9, 2.5));
+        (await client.SortedSets.PopAsync(key)).Should().Be(new RespireSortedSetEntry("7", 1.5));
+        (await client.SortedSets.PopAsync<int>(key, descending: true)).Should().Be(new RespireSortedSetEntry<int>(9, 2.5));
         (await client.SortedSets.PopAsync(key)).Should().BeNull();
         (await client.SortedSets.PopAsync<int>(key)).Should().BeNull();
 
@@ -26,7 +26,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var batched = batch.SortedSets.Pop<int>(key);
         var absent = batch.SortedSets.Pop(key);
         await batch.ExecuteAsync();
-        batched.Result.Should().Be(new SortedSetEntry<int>(7, 1.5));
+        batched.Result.Should().Be(new RespireSortedSetEntry<int>(7, 1.5));
         absent.Result.Should().BeNull();
 
         await client.SortedSets.AddAsync(key, 9, 2.5);
@@ -34,7 +34,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var transactional = transaction.SortedSets.Pop(key, descending: true);
         var absentTyped = transaction.SortedSets.Pop<int>(key);
         await transaction.CommitAsync();
-        transactional.Result.Should().Be(new SortedSetEntry("9", 2.5));
+        transactional.Result.Should().Be(new RespireSortedSetEntry("9", 2.5));
         absentTyped.Result.Should().BeNull();
     }
 
@@ -52,7 +52,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Sets.PopManyAsync(setKey, 2)).Should().BeEmpty();
         await client.SortedSets.AddAsync(sortedKey, 7, 1.5);
         (await client.SortedSets.PopManyAsync<int>(sortedKey, 2)).Should()
-            .Equal(new SortedSetEntry<int>(7, 1.5));
+            .Equal(new RespireSortedSetEntry<int>(7, 1.5));
         (await client.SortedSets.PopManyAsync(sortedKey, 2)).Should().BeEmpty();
         (await client.SortedSets.PopManyAsync<int>(sortedKey, 2)).Should().BeEmpty();
 
@@ -63,7 +63,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var entries = batch.SortedSets.PopMany(sortedKey, 2);
         await batch.ExecuteAsync();
         members.Result.Should().Equal("three");
-        entries.Result.Should().Equal(new SortedSetEntry("9", 2.5));
+        entries.Result.Should().Equal(new RespireSortedSetEntry("9", 2.5));
 
         await client.SortedSets.AddAsync(sortedKey, 11, 3.5);
         var transaction = client.CreateTransaction();
@@ -72,7 +72,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var absentEntries = transaction.SortedSets.PopMany(sortedKey, 2);
         await transaction.CommitAsync();
         absentMembers.Result.Should().BeEmpty();
-        typedEntries.Result.Should().Equal(new SortedSetEntry<int>(11, 3.5));
+        typedEntries.Result.Should().Equal(new RespireSortedSetEntry<int>(11, 3.5));
         absentEntries.Result.Should().BeEmpty();
     }
 
@@ -85,17 +85,17 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var absentKey = $"stream:absent:{suffix}";
 
         var notCreated = await client.Streams.AddAsync(
-            absentKey, new StreamAddOptions { CreateStream = false }, ("type", "ignored"));
+            absentKey, new RespireStreamAddOptions { CreateStream = false }, ("type", "ignored"));
         notCreated.Should().BeNull();
         (await client.ExistsAsync(absentKey)).Should().BeFalse();
 
         var firstId = await client.Streams.AddAsync(
-            key, new StreamAddOptions { Id = "1-0" }, ("type", "first"));
+            key, new RespireStreamAddOptions { Id = "1-0" }, ("type", "first"));
         firstId.Should().Be((RespireStreamId)"1-0");
-        await client.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("type", "second"));
+        await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("type", "second"));
         await client.Streams.AddAsync(
             key,
-            new StreamAddOptions { Id = "3-0", MaxLength = 2, ApproximateTrim = false },
+            new RespireStreamAddOptions { Id = "3-0", MaxLength = 2, ApproximateTrim = false },
             ("type", "third"));
 
         (await client.Streams.CountAsync(key)).Should().Be(2);
@@ -113,8 +113,8 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var key = $"stream:recovery:{suffix}";
         var group = $"workers:{suffix}";
 
-        await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("type", "first"));
-        await client.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("type", "second"));
+        await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("type", "first"));
+        await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("type", "second"));
         (await client.Streams.CreateGroupAsync(key, group, RespireStreamId.Beginning)).Should().BeTrue();
 
         var delivered = new List<RespireStreamEntry>();
@@ -203,17 +203,17 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Bitmaps.SetBitCountAsync("union")).Should().Be(2);
 
         (await client.Bitmaps.FieldAsync(
-            "fields", BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0), 5), BitFieldOperation.Increment(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0), 2)))
+            "fields", RespireBitFieldOperation.Set(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0), 5), RespireBitFieldOperation.Increment(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0), 2)))
             .Should().Equal(0, 7);
         (await client.Bitmaps.FieldReadOnlyAsync(
-            "fields", BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))))
+            "fields", RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))))
             .Should().Equal(7);
         (await client.Bitmaps.FieldAsync(
             "fields",
-            BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(1), 255),
-            BitFieldOperation.Get(BitFieldEncoding.Signed(8), BitFieldOffset.Bits(8)),
-            BitFieldOperation.SetOverflow(BitFieldOverflow.Fail),
-            BitFieldOperation.Increment(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(1), 1)))
+            RespireBitFieldOperation.Set(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Fields(1), 255),
+            RespireBitFieldOperation.Get(RespireBitFieldEncoding.Signed(8), RespireBitFieldOffset.Bits(8)),
+            RespireBitFieldOperation.SetOverflow(RespireBitFieldOverflow.Fail),
+            RespireBitFieldOperation.Increment(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Fields(1), 1)))
             .Should().Equal(0, -1, null);
     }
 
@@ -257,7 +257,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             setMembers.Add(member);
         }
 
-        var sortedEntries = new List<SortedSetEntry>();
+        var sortedEntries = new List<RespireSortedSetEntry>();
         await foreach (var entry in client.SortedSets.ScanAsync(sortedSetKey, countHint: 1))
         {
             sortedEntries.Add(entry);
@@ -271,8 +271,8 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         setMembers.Should().BeEquivalentTo("alpha", "alpine");
         sortedEntries.Should().BeEquivalentTo(new[]
         {
-            new SortedSetEntry("ada", 1.5),
-            new SortedSetEntry("grace", 2.5),
+            new RespireSortedSetEntry("ada", 1.5),
+            new RespireSortedSetEntry("grace", 2.5),
         });
 
         await client.DeleteAsync(hashKey, setKey, sortedSetKey);
@@ -300,7 +300,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             ("three", 3),
             ("four", 4));
         (await client.SortedSets.PopManyAsync(sortedSetKey, count: 1)).Should()
-            .Equal(new SortedSetEntry("one", 1));
+            .Equal(new RespireSortedSetEntry("one", 1));
         (await client.SortedSets.RemoveRangeByScoreAsync(sortedSetKey, 2, 3)).Should().Be(2);
         (await client.SortedSets.RemoveRangeByRankAsync(sortedSetKey, 0, 0)).Should().Be(1);
         (await client.SortedSets.CountAsync(sortedSetKey)).Should().Be(0);
@@ -337,7 +337,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             .Should().Equal("three", "four");
         (await client.SortedSets.RangeByScoreWithScoresAsync(
             scores, new RespireScoreRange(2, double.PositiveInfinity), count: 2, descending: true))
-            .Should().Equal(new SortedSetEntry("four", 4), new SortedSetEntry("three", 3));
+            .Should().Equal(new RespireSortedSetEntry("four", 4), new RespireSortedSetEntry("three", 3));
         (await client.SortedSets.CountByScoreAsync(scores, aboveOne)).Should().Be(3);
 
         var middle = new RespireLexRange("beta", RespireLexBound.Exclusive("zulu"));
@@ -385,7 +385,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         await client.SortedSets.AddAsync(typed, 9, 2);
         (await client.SortedSets.RangeAsync<int>(typed)).Should().Equal(7, 9);
         (await client.SortedSets.RangeByScoreAsync<int>(typed, 1, 2)).Should().Equal(7, 9);
-        var expected = new[] { new SortedSetEntry<int>(7, 1.5), new SortedSetEntry<int>(9, 2) };
+        var expected = new[] { new RespireSortedSetEntry<int>(7, 1.5), new RespireSortedSetEntry<int>(9, 2) };
         (await client.SortedSets.RangeWithScoresAsync<int>(typed)).Should().Equal(expected);
         (await client.SortedSets.RangeByScoreWithScoresAsync<int>(
             typed, new RespireScoreRange(1, 2))).Should().Equal(expected);
@@ -401,10 +401,10 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 
         (await client.Geo.AddAsync(
             "cities",
-            new GeoEntry(-0.1276, 51.5072, "london"),
-            new GeoEntry(2.3522, 48.8566, "paris"))).Should().Be(2);
+            new RespireGeoEntry(-0.1276, 51.5072, "london"),
+            new RespireGeoEntry(2.3522, 48.8566, "paris"))).Should().Be(2);
 
-        (await client.Geo.DistanceAsync("cities", "london", "paris", GeoUnit.Kilometers))
+        (await client.Geo.DistanceAsync("cities", "london", "paris", RespireGeoUnit.Kilometers))
             .Should().BeInRange(340, 350);
         (await client.Geo.HashAsync("cities", "london", "missing"))
             .Should().SatisfyRespectively(
@@ -418,14 +418,14 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var results = await client.Geo.SearchAsync(
             "cities",
             GeoSearchOrigin.FromMember("london"),
-            GeoSearchShape.Circle(400, GeoUnit.Kilometers),
+            RespireGeoSearchShape.Circle(400, RespireGeoUnit.Kilometers),
             new GeoSearchOptions { Sort = GeoSortOrder.Ascending, IncludeDistance = true });
         results.Select(static result => result.Member).Should().Equal("london", "paris");
         results[0].Distance.Should().BeApproximately(0, 0.001);
 
         (await client.Geo.SearchStoreAsync(
             "nearby", "cities", GeoSearchOrigin.FromMember("london"),
-            GeoSearchShape.Circle(400, GeoUnit.Kilometers))).Should().Be(2);
+            RespireGeoSearchShape.Circle(400, RespireGeoUnit.Kilometers))).Should().Be(2);
     }
 
     [Test]

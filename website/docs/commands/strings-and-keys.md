@@ -230,13 +230,13 @@ RespireTtl ttl = await redis.Keys.ExpiryAsync("session:42");
 
 await redis.Keys.ExpireAsync("session:42", RespireExpiry.Persist);
 await redis.Keys.ExpireAsync("report", RespireExpiry.At(DateTimeOffset.UtcNow.AddDays(1)));
-await redis.Keys.ExpireAsync("lease", TimeSpan.FromMinutes(10), ExpireWhen.GreaterThan);
+await redis.Keys.ExpireAsync("lease", TimeSpan.FromMinutes(10), RespireExpireWhen.GreaterThan);
 
 var value = await redis.Strings.GetAndExpireAsync("session:42", TimeSpan.FromMinutes(30));
 CachedJob? job = await redis.Strings.GetAndDeleteAsync<CachedJob>("jobs:next");
 ```
 
-- `Keys.ExpireAsync` and queued `Keys.Expire` accept `ExpireWhen.NotExists` (`NX`), `Exists` (`XX`), `GreaterThan` (`GT`), and `LessThan` (`LT`). Relative inputs send `PEXPIRE` and absolute inputs `PEXPIREAT`. `RespireExpiry.Persist` sends `PERSIST`, which rejects conditions.
+- `Keys.ExpireAsync` and queued `Keys.Expire` accept `RespireExpireWhen.NotExists` (`NX`), `Exists` (`XX`), `GreaterThan` (`GT`), and `LessThan` (`LT`). Relative inputs send `PEXPIRE` and absolute inputs `PEXPIREAT`. `RespireExpiry.Persist` sends `PERSIST`, which rejects conditions.
 - Generic get-and forms deserialize with the client serializer.
 - Hash fields use `GetAndRemoveAsync` and `GetAndExpireAsync`. Removing the last field deletes the hash.
 

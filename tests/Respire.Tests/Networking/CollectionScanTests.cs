@@ -54,8 +54,8 @@ public class CollectionScanTests
 
         await Assert.That(entries).IsEquivalentTo(new[]
         {
-            new SortedSetEntry("one", 1.5),
-            new SortedSetEntry("two", 2),
+            new RespireSortedSetEntry("one", 1.5),
+            new RespireSortedSetEntry("two", 2),
         });
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("ZSCAN scores 0 MATCH *o COUNT 10");
     }

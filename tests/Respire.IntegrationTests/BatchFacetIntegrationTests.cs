@@ -119,7 +119,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         ranked.Result.Should().Be(2);
         score.Result.Should().Be(58);
         leaderboard.Result.Should().Equal(
-            new SortedSetEntry("grace", 58), new SortedSetEntry("ada", 42));
+            new RespireSortedSetEntry("grace", 58), new RespireSortedSetEntry("ada", 42));
     }
 
     [Test]
@@ -136,10 +136,10 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var geoAdded = batch.Geo.Add(
             "batch:cities", entries:
             [
-                new GeoEntry(-0.1276, 51.5072, "london"),
-                new GeoEntry(2.3522, 48.8566, "paris"),
+                new RespireGeoEntry(-0.1276, 51.5072, "london"),
+                new RespireGeoEntry(2.3522, 48.8566, "paris"),
             ]);
-        var distance = batch.Geo.Distance("batch:cities", "london", "paris", GeoUnit.Kilometers);
+        var distance = batch.Geo.Distance("batch:cities", "london", "paris", RespireGeoUnit.Kilometers);
         var positions = batch.Geo.Position("batch:cities", "london", "missing");
 
         await batch.ExecuteAsync();

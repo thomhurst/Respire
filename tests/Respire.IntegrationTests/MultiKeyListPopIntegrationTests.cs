@@ -9,23 +9,23 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
     public enum PopMode { Immediate, Batch, Transaction, Blocking }
 
     [Test]
-    [Arguments(2, PopMode.Immediate, ListSide.Left)]
-    [Arguments(2, PopMode.Immediate, ListSide.Right)]
-    [Arguments(2, PopMode.Batch, ListSide.Left)]
-    [Arguments(2, PopMode.Batch, ListSide.Right)]
-    [Arguments(2, PopMode.Transaction, ListSide.Left)]
-    [Arguments(2, PopMode.Transaction, ListSide.Right)]
-    [Arguments(2, PopMode.Blocking, ListSide.Left)]
-    [Arguments(2, PopMode.Blocking, ListSide.Right)]
-    [Arguments(3, PopMode.Immediate, ListSide.Left)]
-    [Arguments(3, PopMode.Immediate, ListSide.Right)]
-    [Arguments(3, PopMode.Batch, ListSide.Left)]
-    [Arguments(3, PopMode.Batch, ListSide.Right)]
-    [Arguments(3, PopMode.Transaction, ListSide.Left)]
-    [Arguments(3, PopMode.Transaction, ListSide.Right)]
-    [Arguments(3, PopMode.Blocking, ListSide.Left)]
-    [Arguments(3, PopMode.Blocking, ListSide.Right)]
-    public async Task PopMany_SelectsFirstNonemptyKeyAndPreservesOrder(int protocol, PopMode mode, ListSide side)
+    [Arguments(2, PopMode.Immediate, RespireListSide.Left)]
+    [Arguments(2, PopMode.Immediate, RespireListSide.Right)]
+    [Arguments(2, PopMode.Batch, RespireListSide.Left)]
+    [Arguments(2, PopMode.Batch, RespireListSide.Right)]
+    [Arguments(2, PopMode.Transaction, RespireListSide.Left)]
+    [Arguments(2, PopMode.Transaction, RespireListSide.Right)]
+    [Arguments(2, PopMode.Blocking, RespireListSide.Left)]
+    [Arguments(2, PopMode.Blocking, RespireListSide.Right)]
+    [Arguments(3, PopMode.Immediate, RespireListSide.Left)]
+    [Arguments(3, PopMode.Immediate, RespireListSide.Right)]
+    [Arguments(3, PopMode.Batch, RespireListSide.Left)]
+    [Arguments(3, PopMode.Batch, RespireListSide.Right)]
+    [Arguments(3, PopMode.Transaction, RespireListSide.Left)]
+    [Arguments(3, PopMode.Transaction, RespireListSide.Right)]
+    [Arguments(3, PopMode.Blocking, RespireListSide.Left)]
+    [Arguments(3, PopMode.Blocking, RespireListSide.Right)]
+    public async Task PopMany_SelectsFirstNonemptyKeyAndPreservesOrder(int protocol, PopMode mode, RespireListSide side)
     {
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
@@ -36,21 +36,21 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
         var popped = await PopMany(view, mode, ["missing", selected, "later"], 2, side);
         popped.Should().NotBeNull();
         popped!.Value.Key.Should().Be(selected);
-        popped.Value.Values.Should().Equal(side == ListSide.Left ? ["a", "b"] : ["d", "c"]);
+        popped.Value.Values.Should().Equal(side == RespireListSide.Left ? ["a", "b"] : ["d", "c"]);
         (await view.Lists.CountAsync(popped.Value.Key)).Should().Be(2);
         (await view.Lists.RangeAsync("later")).Should().Equal("untouched");
         var remaining = await PopMany(view, mode, [selected], 20, side);
-        remaining!.Value.Values.Should().Equal(side == ListSide.Left ? ["c", "d"] : ["b", "a"]);
+        remaining!.Value.Values.Should().Equal(side == RespireListSide.Left ? ["c", "d"] : ["b", "a"]);
         (await PopMany(view, mode, [selected], 1, side)).Should().BeNull();
         (await client.Keys.ExistsAsync(selected)).Should().BeFalse();
     }
 
     [Test]
-    [Arguments(2, ListSide.Left)]
-    [Arguments(2, ListSide.Right)]
-    [Arguments(3, ListSide.Left)]
-    [Arguments(3, ListSide.Right)]
-    public async Task PopOne_ReturnsSelectedBinaryKeyAndTimeout(int protocol, ListSide side)
+    [Arguments(2, RespireListSide.Left)]
+    [Arguments(2, RespireListSide.Right)]
+    [Arguments(3, RespireListSide.Left)]
+    [Arguments(3, RespireListSide.Right)]
+    public async Task PopOne_ReturnsSelectedBinaryKeyAndTimeout(int protocol, RespireListSide side)
     {
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
@@ -61,7 +61,7 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
         var result = await view.Lists.PopAsync(["missing", selected, "later"], TimeSpan.FromSeconds(1), side);
         result.Should().NotBeNull();
         result!.Value.Key.Should().Be(selected);
-        result.Value.Value.Should().Be(side == ListSide.Left ? "a" : "b");
+        result.Value.Value.Should().Be(side == RespireListSide.Left ? "a" : "b");
         (await view.Lists.CountAsync(result.Value.Key)).Should().Be(1);
         (await view.Lists.RangeAsync("later")).Should().Equal("untouched");
         (await view.Lists.PopAsync(["missing"], TimeSpan.FromMilliseconds(10), side)).Should().BeNull();
@@ -70,23 +70,23 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, PopMode.Immediate, ListSide.Left)]
-    [Arguments(2, PopMode.Immediate, ListSide.Right)]
-    [Arguments(2, PopMode.Batch, ListSide.Left)]
-    [Arguments(2, PopMode.Batch, ListSide.Right)]
-    [Arguments(2, PopMode.Transaction, ListSide.Left)]
-    [Arguments(2, PopMode.Transaction, ListSide.Right)]
-    [Arguments(2, PopMode.Blocking, ListSide.Left)]
-    [Arguments(2, PopMode.Blocking, ListSide.Right)]
-    [Arguments(3, PopMode.Immediate, ListSide.Left)]
-    [Arguments(3, PopMode.Immediate, ListSide.Right)]
-    [Arguments(3, PopMode.Batch, ListSide.Left)]
-    [Arguments(3, PopMode.Batch, ListSide.Right)]
-    [Arguments(3, PopMode.Transaction, ListSide.Left)]
-    [Arguments(3, PopMode.Transaction, ListSide.Right)]
-    [Arguments(3, PopMode.Blocking, ListSide.Left)]
-    [Arguments(3, PopMode.Blocking, ListSide.Right)]
-    public async Task WrongType_IsPreserved(int protocol, PopMode mode, ListSide side)
+    [Arguments(2, PopMode.Immediate, RespireListSide.Left)]
+    [Arguments(2, PopMode.Immediate, RespireListSide.Right)]
+    [Arguments(2, PopMode.Batch, RespireListSide.Left)]
+    [Arguments(2, PopMode.Batch, RespireListSide.Right)]
+    [Arguments(2, PopMode.Transaction, RespireListSide.Left)]
+    [Arguments(2, PopMode.Transaction, RespireListSide.Right)]
+    [Arguments(2, PopMode.Blocking, RespireListSide.Left)]
+    [Arguments(2, PopMode.Blocking, RespireListSide.Right)]
+    [Arguments(3, PopMode.Immediate, RespireListSide.Left)]
+    [Arguments(3, PopMode.Immediate, RespireListSide.Right)]
+    [Arguments(3, PopMode.Batch, RespireListSide.Left)]
+    [Arguments(3, PopMode.Batch, RespireListSide.Right)]
+    [Arguments(3, PopMode.Transaction, RespireListSide.Left)]
+    [Arguments(3, PopMode.Transaction, RespireListSide.Right)]
+    [Arguments(3, PopMode.Blocking, RespireListSide.Left)]
+    [Arguments(3, PopMode.Blocking, RespireListSide.Right)]
+    public async Task WrongType_IsPreserved(int protocol, PopMode mode, RespireListSide side)
     {
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
@@ -101,7 +101,7 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
     }
 
     private static async Task<RespireListPopManyResult?> PopMany(
-        IRespireClient client, PopMode mode, RespireKey[] keys, long count, ListSide side)
+        IRespireClient client, PopMode mode, RespireKey[] keys, long count, RespireListSide side)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
             return await (mode == PopMode.Blocking

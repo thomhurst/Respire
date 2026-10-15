@@ -18,10 +18,10 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
         try
         {
             byte[] producer = [0, 255, 32], message = [254, 0];
-            var manual = new StreamAddOptions { Idempotency = StreamIdempotency.Manual(producer, message) };
-            var automatic = new StreamAddOptions { Idempotency = StreamIdempotency.Automatic(producer) };
+            var manual = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual(producer, message) };
+            var automatic = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Automatic(producer) };
             Array.Fill(producer, (byte)'x'); Array.Fill(message, (byte)'x');
-            StreamAddOptions[] options = [manual, manual, manual with { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255, 32 }, "distinct") },
+            RespireStreamAddOptions[] options = [manual, manual, manual with { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255, 32 }, "distinct") },
                 manual with { Idempotency = StreamIdempotency.Manual("other-producer", new byte[] { 254, 0 }) }, automatic, automatic, automatic];
             string[] values = ["first", "ignored", "first", "first", "auto", "auto", "changed"];
             List<RespireStreamId?> ids = [];
@@ -46,7 +46,7 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
             entries[0].GetString("f").Should().Be("first");
             (await view.Streams.AddAsync("missing", manual with { CreateStream = false }, ("f", "v"))).Should().BeNull();
             // The 8.6 compatibility floor supports production but deliberately rejects XNACK (8.8+).
-            Func<Task> unsupported = async () => await view.Streams.NegativeAcknowledgeAsync("events", "g", StreamNackMode.Fail, "1-0");
+            Func<Task> unsupported = async () => await view.Streams.NegativeAcknowledgeAsync("events", "g", RespireStreamNackMode.Fail, "1-0");
             await unsupported.Should().ThrowAsync<RespireServerException>();
             await view.Keys.DeleteAsync("events");
             await client.DisposeAsync();
@@ -72,10 +72,10 @@ public class LegacyStreamIdempotencyIntegrationTests(RedisTestContainer fixture)
         {
             foreach (var mode in new[] { StreamIdempotency.Automatic("p"), StreamIdempotency.Manual("p", "i") })
             {
-                Func<Task> write = async () => await client.Streams.AddAsync(key, new StreamAddOptions { Idempotency = mode }, ("f", "v"));
+                Func<Task> write = async () => await client.Streams.AddAsync(key, new RespireStreamAddOptions { Idempotency = mode }, ("f", "v"));
                 await write.Should().ThrowAsync<RespireServerException>();
             }
-            Func<Task> nack = async () => await client.Streams.NegativeAcknowledgeAsync(key, "g", StreamNackMode.Fail, "1-0");
+            Func<Task> nack = async () => await client.Streams.NegativeAcknowledgeAsync(key, "g", RespireStreamNackMode.Fail, "1-0");
             await nack.Should().ThrowAsync<RespireServerException>();
             (await client.Keys.ExistsAsync(key)).Should().BeFalse();
         }

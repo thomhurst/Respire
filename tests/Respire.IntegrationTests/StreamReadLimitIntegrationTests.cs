@@ -19,7 +19,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
         foreach (var client in new[] { fakeClient, redisClient })
         {
             (await client.Streams.AcknowledgeAsync(key, "absent", "1-0")).Should().Be(0);
-            await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("field", "value"));
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("field", "value"));
             (await client.Streams.AcknowledgeAsync(key, "absent", "1-0")).Should().Be(0);
         }
     }
@@ -45,7 +45,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
         await using (var transaction = observer.CreateTransaction())
         {
             for (var i = 1; i <= 3; i++)
-                _ = transaction.Streams.Add(name, new StreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 100)));
+                _ = transaction.Streams.Add(name, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 100)));
             await transaction.CommitAsync(timeout.Token);
         }
         (await read).Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"1-0");
@@ -83,7 +83,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
         foreach (var client in clients)
             foreach (var key in new[] { "one", "two" })
                 for (var i = 1; i <= 3; i++)
-                    await client.Streams.AddAsync(key, new StreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 50)));
+                    await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 50)));
         foreach (var budget in new[] { 1, 50, 100, 120, 160, 200, 250, 300, 400, 500, 1000 })
         {
             var options = new StreamReadOptions { Count = 2, MaxCount = 3, MaxSize = budget };
@@ -122,7 +122,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
         foreach (var key in new[] { "one", "two" })
         {
             for (var i = 1; i <= 3; i++)
-                await client.Streams.AddAsync(key, new StreamAddOptions { Id = $"{i}-0" }, ("value", new string('x', 200)));
+                await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("value", new string('x', 200)));
             if (group) await client.Streams.CreateGroupAsync(key, "g", "0");
         }
         (RespireKey Key, RespireStreamId After)[] streams = [("one", group ? ">" : "0"), ("two", group ? ">" : "0")];

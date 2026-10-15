@@ -34,7 +34,7 @@ public partial interface IHashCommands
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, string field, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, ExpireWhen when, string field, CancellationToken cancellationToken);
+    ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, RespireExpireWhen when, string field, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, string field, CancellationToken cancellationToken);
@@ -224,13 +224,13 @@ public partial interface IHashCommands
 
     /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when,
+        RespireExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken);
 
@@ -304,7 +304,7 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         => ExpireAsync(key, expiry, [field], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, ExpireWhen when, string field, CancellationToken cancellationToken)
+    public ValueTask<HashFieldExpiryResult[]> ExpireAsync(RespireKey key, RespireExpiry expiry, RespireExpireWhen when, string field, CancellationToken cancellationToken)
         => ExpireAsync(key, expiry, when, [field], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -846,7 +846,7 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 
     private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
-        => ExpireBorrowedAsync(key, expiry, ExpireWhen.Always, fields, CancellationToken.None, observation);
+        => ExpireBorrowedAsync(key, expiry, RespireExpireWhen.Always, fields, CancellationToken.None, observation);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
@@ -858,10 +858,10 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
 
     private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => ExpireBorrowedAsync(key, expiry, ExpireWhen.Always, fields, cancellationToken, observation);
+        => ExpireBorrowedAsync(key, expiry, RespireExpireWhen.Always, fields, cancellationToken, observation);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields)
     {
         var owner = DispatchResponseSource<HashFieldExpiryResult[]>.Start();
         try { return owner.Attach(ExpireBorrowedAsync(key, expiry, when, fields, owner.Observation)); }
@@ -869,13 +869,13 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
     }
 
     private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when, ReadOnlySpan<string> fields, RespireTelemetry.ErrorObservation observation)
         => ExpireBorrowedAsync(key, expiry, when, fields, CancellationToken.None, observation);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when,
+        RespireExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken)
     {
@@ -887,13 +887,13 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
     private ValueTask<HashFieldExpiryResult[]> ExpireBorrowedAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when,
+        RespireExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (expiry.IsPersist)
         {
-            if (when != ExpireWhen.Always)
+            if (when != RespireExpireWhen.Always)
             {
                 throw new ArgumentException("HPERSIST does not support NX, XX, GT, or LT.", nameof(when));
             }
@@ -925,7 +925,7 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
         Verb verb,
         RespireKey key,
         long value,
-        ExpireWhen when,
+        RespireExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.HashFieldExpiryResultArrayAsync(
@@ -1160,7 +1160,7 @@ internal sealed partial class HashCommands(RespireClient client) : IHashCommands
     }
 
     internal static RespireValue[] ExpireFieldsBlock(
-        long milliseconds, ExpireWhen when, ReadOnlySpan<string> fields)
+        long milliseconds, RespireExpireWhen when, ReadOnlySpan<string> fields)
     {
         ValidateFields(fields);
         var condition = KeyCommands.ExpireWhenToken(when);

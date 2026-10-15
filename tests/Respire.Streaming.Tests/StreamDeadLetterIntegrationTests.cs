@@ -78,7 +78,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         foreach (var client in new[] { real, fake })
         {
             var fields = Enumerable.Range(0, fieldCount).Select(index => ($"field-{index}", (RespireValue)$"value-{index}")).ToArray();
-            await client.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, fields);
+            await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, fields);
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
             if (fieldCount > 1024)
@@ -109,7 +109,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions());
         foreach (var client in new[] { real, fake })
         {
-            await client.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, ("payload", "body"));
+            await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
             using (await client.ExecuteAsync("XDEL", ["s", "1-0"])) { }
@@ -134,7 +134,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             with { Protocol = (RespProtocol)protocol });
         foreach (var client in new[] { real, fake })
         {
-            await client.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, ("payload", "body"));
+            await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "owner");
             await client.Strings.SetAsync("dlq", "keep");
@@ -152,7 +152,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task AclPreflightRejectsBothMutationsBeforeDeadLetterWrite(string deniedCommand, bool deletedSource)
     {
         await using var admin = await RespireClient.ConnectAsync(redis.ConnectionString);
-        await admin.Streams.AddAsync("s", new StreamAddOptions { Id = "1-0" }, ("payload", "body"));
+        await admin.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
         await admin.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         await admin.Streams.ReadGroupOnceAsync("s", "g", "owner");
         if (deletedSource)
@@ -187,7 +187,7 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
         await using var server = new RespireFakeServer();
         await using var root = await RespireClient.ConnectAsync(useFake ? server.CreateOptions() : RespireOptions.Parse(redis.ConnectionString));
         var client = root.WithKeyPrefix("{worker}tenant:");
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("payload", new byte[] { 0xff, 0, 13, 10 }));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("payload", new byte[] { 0xff, 0, 13, 10 }));
         var abandoned = new HandlerState { Park = true };
         await using (var stopped = CreateWorker(client, abandoned, "nack", 2))
         {

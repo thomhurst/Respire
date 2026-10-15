@@ -386,7 +386,7 @@ Respire.RespireTransactionBase | method Delete(params ReadOnlySpan<RespireKey>) 
 Respire.RespireTransactionBase | method DisposeAsync() : ValueTask
 Respire.RespireTransactionBase | method Execute(RespireCommand, params RespireValue[]) : RespirePending<RespireResult>
 Respire.RespireTransactionBase | method Exists(RespireKey) : RespirePending<bool>
-Respire.RespireTransactionBase | method Expire(RespireKey, RespireExpiry, ExpireWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Expire(RespireKey, RespireExpiry, RespireExpireWhen) : RespirePending<bool>
 Respire.RespireTransactionBase | method GetBytes(RespireKey) : RespirePending<byte[]?>
 Respire.RespireTransactionBase | method GetString(RespireKey) : RespirePending<string?>
 Respire.RespireTransactionBase | method Get`1(RespireKey) : RespirePending<T?>

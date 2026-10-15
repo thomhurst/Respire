@@ -22,7 +22,7 @@ public partial interface IBatchKeyCommands
 
     /// <summary>Sets, updates, or removes a key's expiry. Redis: PEXPIRE/PEXPIREAT/PERSIST.</summary>
     RespirePending<bool> Expire(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always);
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when = RespireExpireWhen.Always);
 
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
@@ -89,7 +89,7 @@ internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCom
             static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<bool> Expire(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always)
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when = RespireExpireWhen.Always)
     {
         var condition = KeyCommands.ExpireWhenToken(when);
         if (expiry.IsPersist)

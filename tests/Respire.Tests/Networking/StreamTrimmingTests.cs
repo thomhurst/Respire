@@ -39,7 +39,7 @@ public class StreamTrimmingTests
         byte[] key = "events"u8.ToArray();
         foreach (var trim in options)
         {
-            var add = new StreamAddOptions { Id = "1-0", MaxLength = trim.MaxLength, MinId = trim.MinId,
+            var add = new RespireStreamAddOptions { Id = "1-0", MaxLength = trim.MaxLength, MinId = trim.MinId,
                 ApproximateTrim = trim.Approximate, Limit = trim.Limit };
             if (queue is null)
             {
@@ -83,7 +83,7 @@ public class StreamTrimmingTests
         ];
         foreach (var trim in invalid)
         {
-            var add = new StreamAddOptions { MaxLength = trim.MaxLength, MinId = trim.MinId,
+            var add = new RespireStreamAddOptions { MaxLength = trim.MaxLength, MinId = trim.MinId,
                 ApproximateTrim = trim.Approximate, Limit = trim.Limit };
             var trimError = await Assert.That(async () => await client.Streams.TrimAsync("events", trim))
                 .Throws<ArgumentException>();
@@ -116,7 +116,7 @@ public class StreamTrimmingTests
         });
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
-        var options = new StreamAddOptions { Limit = 1 };
+        var options = new RespireStreamAddOptions { Limit = 1 };
         var error = await Assert.That(async () => await client.Streams.AddAsync("events", options, ("field", "value")))
             .ThrowsExactly<ArgumentException>();
         await Assert.That(error!.ParamName).IsEqualTo("options");
@@ -131,11 +131,11 @@ public class StreamTrimmingTests
     [Test]
     public async Task AddOptionEqualityIncludesBothNewFields()
     {
-        var original = new StreamAddOptions { MinId = "1-0", Limit = 10 };
+        var original = new RespireStreamAddOptions { MinId = "1-0", Limit = 10 };
         await Assert.That(original == original with { MinId = "2-0" }).IsFalse();
         await Assert.That(original == original with { Limit = 11 }).IsFalse();
         await Assert.That(original == original with { ApproximateTrim = true, CreateStream = true }).IsTrue();
-        await Assert.That(default(StreamAddOptions).ApproximateTrim).IsTrue();
+        await Assert.That(default(RespireStreamAddOptions).ApproximateTrim).IsTrue();
         await Assert.That(default(StreamTrimOptions).Approximate).IsFalse();
     }
 }

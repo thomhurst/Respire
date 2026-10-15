@@ -36,7 +36,7 @@ public partial class ErrorMetricsTests
             switch (route)
             {
                 case "BLPOP": await client.Lists.PopAsync(keys, TimeSpan.Zero, cancellationToken: guard.Token); break;
-                case "BRPOP": await client.Lists.PopAsync(keys, TimeSpan.Zero, ListSide.Right, guard.Token); break;
+                case "BRPOP": await client.Lists.PopAsync(keys, TimeSpan.Zero, RespireListSide.Right, guard.Token); break;
                 case "LMPOP": await client.Lists.PopManyAsync(keys, cancellationToken: guard.Token); break;
                 case "BLMPOP": await client.Lists.PopManyAsync(keys, waitFor: TimeSpan.Zero, cancellationToken: guard.Token); break;
                 case "ZMPOP": await client.SortedSets.PopManyAsync(keys, cancellationToken: guard.Token); break;

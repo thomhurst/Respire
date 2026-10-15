@@ -11,7 +11,7 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
     [Test]
     [MatrixDataSource]
     public async Task ModesReleaseOwnershipAndPreservePerIdPelState([Matrix(2, 3)] int protocol,
-        [Matrix(0, 1, 2)] int surface, [Matrix(StreamNackMode.Silent, StreamNackMode.Fail, StreamNackMode.Fatal)] StreamNackMode mode)
+        [Matrix(0, 1, 2)] int surface, [Matrix(RespireStreamNackMode.Silent, RespireStreamNackMode.Fail, RespireStreamNackMode.Fatal)] RespireStreamNackMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
@@ -39,11 +39,11 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
             var pending = await view.Streams.PendingAsync("events", "g");
             pending.Select(x => x.Id.Value).Should().Equal("1-0", "2-0");
             pending.Should().OnlyContain(x => x.Consumer == "" && x.IdleTime == TimeSpan.FromMilliseconds(-1));
-            var expected = mode switch { StreamNackMode.Silent => 0, StreamNackMode.Fail => 1, _ => long.MaxValue };
+            var expected = mode switch { RespireStreamNackMode.Silent => 0, RespireStreamNackMode.Fail => 1, _ => long.MaxValue };
             pending.Should().OnlyContain(x => x.DeliveryCount == expected);
             (await view.Streams.CountAsync("events")).Should().Be(3);
             (await view.Streams.PendingSummaryAsync("events", "g")).Count.Should().Be(2);
-            if (mode != StreamNackMode.Fatal)
+            if (mode != RespireStreamNackMode.Fatal)
             {
                 var claimed = await view.Streams.ClaimAsync("events", "g", "next", TimeSpan.FromDays(365), "1-0", "2-0");
                 claimed.Should().HaveCount(2);
@@ -56,7 +56,7 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
     [Test]
     [MatrixDataSource]
     public async Task ForceAndRetryCountOverrideEachMode([Matrix(2, 3)] int protocol,
-        [Matrix(StreamNackMode.Silent, StreamNackMode.Fail, StreamNackMode.Fatal)] StreamNackMode mode)
+        [Matrix(RespireStreamNackMode.Silent, RespireStreamNackMode.Fail, RespireStreamNackMode.Fatal)] RespireStreamNackMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
@@ -67,7 +67,7 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
             (await view.Streams.NegativeAcknowledgeAsync("events", "g", mode, new() { Force = true }, ["1-0", "99-0"])).Should().Be(1);
             var first = (await view.Streams.PendingAsync("events", "g")).Single();
             first.Consumer.Should().BeEmpty();
-            first.DeliveryCount.Should().Be(mode == StreamNackMode.Fatal ? long.MaxValue : 0);
+            first.DeliveryCount.Should().Be(mode == RespireStreamNackMode.Fatal ? long.MaxValue : 0);
             (await view.Streams.NegativeAcknowledgeAsync("events", "g", mode, new() { Force = true, RetryCount = 7 }, ["1-0", "2-0", "99-0"])).Should().Be(2);
             var pending = await view.Streams.PendingAsync("events", "g");
             pending.Should().HaveCount(2).And.OnlyContain(x => x.DeliveryCount == 7 && x.Consumer == "");
@@ -90,16 +90,16 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
         byte[] group = [255, 0, 32];
         try
         {
-            await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             using var created = await client.ExecuteAsync(RespireCommands.Stream.XGROUP_CREATE, key, group, "0");
-            (await client.Streams.NegativeAcknowledgeAsync(key, group, StreamNackMode.Fail, new() { Force = true }, ["1-0"])).Should().Be(1);
+            (await client.Streams.NegativeAcknowledgeAsync(key, group, RespireStreamNackMode.Fail, new() { Force = true }, ["1-0"])).Should().Be(1);
         }
         finally { await client.Keys.DeleteAsync(key); }
     }
 
     private static async Task SeedAsync(IRespireClient client)
     {
-        for (var id = 1; id <= 3; id++) await client.Streams.AddAsync("events", new StreamAddOptions { Id = $"{id}-0" }, ("f", "v"));
+        for (var id = 1; id <= 3; id++) await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{id}-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("events", "g", RespireStreamId.Beginning);
     }
 }

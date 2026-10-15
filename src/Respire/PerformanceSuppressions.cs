@@ -4,13 +4,13 @@ using System.Diagnostics.CodeAnalysis;
 // See docs/PERFORMANCE_ANALYZERS.md before adding or changing an exception.
 
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
-    Scope = "type", Target = "~T:Respire.BitFieldOperation",
+    Scope = "type", Target = "~T:Respire.RespireBitFieldOperation",
     Justification = "Command-building token consumed by the encoder; it is not an equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
     Scope = "type", Target = "~T:Respire.GeoSearchOrigin",
     Justification = "Command-building choice consumed by the GEO encoder; it is not an equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
-    Scope = "type", Target = "~T:Respire.GeoSearchShape",
+    Scope = "type", Target = "~T:Respire.RespireGeoSearchShape",
     Justification = "Command-building choice consumed by the GEO encoder; it is not an equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
     Scope = "type", Target = "~T:Respire.RespireCommand",

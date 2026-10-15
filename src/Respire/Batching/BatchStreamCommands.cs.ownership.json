@@ -5,7 +5,7 @@
       "OwnerType": "Respire.BatchStreamCommands",
       "Members": [
         "Acknowledge(RespireKey,string,params ReadOnlySpan<RespireStreamId>):RespirePending<long>",
-        "Add(RespireKey,StreamAddOptions,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<RespireStreamId?>",
+        "Add(RespireKey,RespireStreamAddOptions,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<RespireStreamId?>",
         "Add(RespireKey,params ReadOnlySpan<(stringField,RespireValueValue)>):RespirePending<RespireStreamId>",
         "Count(RespireKey):RespirePending<long>",
         "Range(RespireKey,RespireStreamId?,RespireStreamId?,int?,bool):RespirePending<RespireStreamEntry[]>",

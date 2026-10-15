@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Which end of a list an operation targets.</summary>
-public enum ListSide
+public enum RespireListSide
 {
     /// <summary>The head, or left-hand side, of the list.</summary>
     Left,
@@ -144,10 +144,10 @@ public partial interface IListCommands
     /// Atomically moves an element between lists and returns it; null when the source is empty.
     /// Redis: LMOVE / BLMOVE.
     /// </summary>
-    ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default);
+    ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, CancellationToken cancellationToken = default);
 
     /// <summary>Returns immediately without waiting for new data.</summary>
-    ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default);
+    ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, CancellationToken cancellationToken = default);
 
     /// <summary>Number of elements in the list (0 when missing). Redis: LLEN.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -588,14 +588,14 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
             .ConfigureAwait(false);
     }
 
-    public ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default)
+    public ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, CancellationToken cancellationToken = default)
         => MoveCoreAsync(source, destination, from, to, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
 
-    public ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right, CancellationToken cancellationToken = default)
+    public ValueTask<string?> MoveAsync(RespireKey source, RespireKey destination, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, CancellationToken cancellationToken = default)
         => MoveCoreAsync(source, destination, from, to, null, cancellationToken);
 
     private ValueTask<string?> MoveCoreAsync(
-        RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right,
+        RespireKey source, RespireKey destination, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
@@ -604,11 +604,11 @@ internal sealed partial class ListCommands(RespireClient client) : IListCommands
     }
 
     private ValueTask<string?> MoveBorrowedAsync(
-        RespireKey source, RespireKey destination, ListSide from, ListSide to,
+        RespireKey source, RespireKey destination, RespireListSide from, RespireListSide to,
         TimeSpan? waitFor, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        RespireValue fromSide = from == ListSide.Left ? "LEFT" : "RIGHT";
-        RespireValue toSide = to == ListSide.Left ? "LEFT" : "RIGHT";
+        RespireValue fromSide = from == RespireListSide.Left ? "LEFT" : "RIGHT";
+        RespireValue toSide = to == RespireListSide.Left ? "LEFT" : "RIGHT";
         if (waitFor is not { } wait)
         {
             return client.StringOrNullAsync(

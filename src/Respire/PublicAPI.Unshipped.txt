@@ -175,19 +175,19 @@ Respire.IArrayCommands.InsertAsync(Respire.RespireKey key, Respire.RespireValue 
 Respire.IArrayCommands.RingAsync(Respire.RespireKey key, long size, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
 Respire.IArrayCommands.SetAsync(Respire.RespireKey key, ulong index, Respire.RespireValue value, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
 Respire.IArrayCommands.SetManyAsync(Respire.RespireKey key, Respire.RespireArrayItem item, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<ulong>
-Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, Respire.BitFieldOperation operation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
-Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, Respire.BitFieldOperation get, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, Respire.RespireBitFieldOperation operation, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, Respire.RespireBitFieldOperation get, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
 Respire.IBitmapCommands.OperateAsync(Respire.BitOperation operation, Respire.RespireKey destination, Respire.RespireKey sourceKey, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
 Respire.IFunctionCommands.ExecuteAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.IFunctionCommands.ExecuteAsync<T>(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
 Respire.IFunctionCommands.ExecuteIntegerAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
 Respire.IFunctionCommands.ExecuteSpanAsync(Respire.RespireFunction! function, Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> args, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireResult>
 Respire.IFunctionCommands.ExecuteStringAsync(Respire.RespireFunction! function, Respire.RespireKey key, Respire.RespireValue[]? args = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
-Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, Respire.GeoEntry entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
-Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoEntry entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, Respire.RespireGeoEntry entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.RespireGeoEntry entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
 Respire.IGeoCommands.HashAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
-Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.GeoPosition?[]!>
-Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireGeoPosition?[]!>
+Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
 Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
 Respire.IHashCommands.ExpiryAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireTtl>
 Respire.IHashCommands.ExpiryTimeAsync(Respire.RespireKey key, Respire.ExpiryTimePrecision precision, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireExpiryTime[]!>
@@ -268,13 +268,13 @@ Respire.ISortedSetCommands.UnionStoreAsync(Respire.RespireKey destination, Respi
 Respire.IStreamCommands.AcknowledgeAndRemoveAsync(Respire.RespireKey key, string! group, Respire.StreamReferencePolicy policy, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamDeletionResult[]!>
 Respire.IStreamCommands.AcknowledgeAsync(Respire.RespireKey key, string! group, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
 Respire.IStreamCommands.AddAsync(Respire.RespireKey key, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId>
-Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.StreamAddOptions options, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
+Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.RespireStreamAddOptions options, (string! Field, Respire.RespireValue Value) field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
 Respire.IStreamCommands.ClaimAsync(Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamEntry[]!>
 Respire.IStreamCommands.ClaimAsync(Respire.StreamClaimOptions options, Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamEntry[]!>
 Respire.IStreamCommands.ClaimIdsAsync(Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId[]!>
 Respire.IStreamCommands.ClaimIdsAsync(Respire.StreamClaimOptions options, Respire.RespireKey key, string! group, string! consumer, System.TimeSpan minIdle, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId[]!>
-Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
-Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.StreamNackOptions options, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, Respire.StreamNackOptions options, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
 Respire.IStreamCommands.RemoveAsync(Respire.RespireKey key, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
 Respire.IStreamCommands.RemoveAsync(Respire.RespireKey key, Respire.StreamReferencePolicy policy, Respire.RespireStreamId ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamDeletionResult[]!>
 Respire.IStringCommands.GetManyAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
@@ -408,16 +408,16 @@ Respire.IListCommands.LeftPopAsync(Respire.RespireKey key, System.Threading.Canc
 Respire.IListCommands.LeftPopAsync<T>(Respire.RespireKey key, System.TimeSpan? waitFor, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
 Respire.IListCommands.LeftPopAsync<T>(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
 *REMOVED*Respire.IListCommands.MoveAsync(Respire.RespireKey source, Respire.RespireKey destination, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, System.TimeSpan? waitFor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
-Respire.IListCommands.MoveAsync(Respire.RespireKey source, Respire.RespireKey destination, System.TimeSpan? waitFor, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
-Respire.IListCommands.MoveAsync(Respire.RespireKey source, Respire.RespireKey destination, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Respire.IListCommands.MoveAsync(Respire.RespireKey source, Respire.RespireKey destination, System.TimeSpan? waitFor, Respire.RespireListSide from = Respire.RespireListSide.Left, Respire.RespireListSide to = Respire.RespireListSide.Right, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
+Respire.IListCommands.MoveAsync(Respire.RespireKey source, Respire.RespireKey destination, Respire.RespireListSide from = Respire.RespireListSide.Left, Respire.RespireListSide to = Respire.RespireListSide.Right, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
 *REMOVED*Respire.IListCommands.MoveManyAsync(Respire.RespireKey source, Respire.RespireKey destination, long count = 1, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.ListMoveOrder order = Respire.ListMoveOrder.OneByOne, System.TimeSpan? waitFor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]?>
-Respire.IListCommands.MoveManyAsync(Respire.RespireKey source, Respire.RespireKey destination, System.TimeSpan? waitFor, long count = 1, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.ListMoveOrder order = Respire.ListMoveOrder.OneByOne, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]?>
-Respire.IListCommands.MoveManyAsync(Respire.RespireKey source, Respire.RespireKey destination, long count = 1, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.ListMoveOrder order = Respire.ListMoveOrder.OneByOne, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]?>
+Respire.IListCommands.MoveManyAsync(Respire.RespireKey source, Respire.RespireKey destination, System.TimeSpan? waitFor, long count = 1, Respire.RespireListSide from = Respire.RespireListSide.Left, Respire.RespireListSide to = Respire.RespireListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.RespireListMoveOrder order = Respire.RespireListMoveOrder.OneByOne, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]?>
+Respire.IListCommands.MoveManyAsync(Respire.RespireKey source, Respire.RespireKey destination, long count = 1, Respire.RespireListSide from = Respire.RespireListSide.Left, Respire.RespireListSide to = Respire.RespireListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.RespireListMoveOrder order = Respire.RespireListMoveOrder.OneByOne, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]?>
 *REMOVED*Respire.IListCommands.PopAsync(System.ReadOnlySpan<Respire.RespireKey> keys, System.TimeSpan waitFor, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopResult?>
-Respire.IListCommands.PopAsync(System.ReadOnlySpan<Respire.RespireKey> keys, System.TimeSpan? waitFor, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopResult?>
+Respire.IListCommands.PopAsync(System.ReadOnlySpan<Respire.RespireKey> keys, System.TimeSpan? waitFor, Respire.RespireListSide side = Respire.RespireListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopResult?>
 *REMOVED*Respire.IListCommands.PopManyAsync(System.ReadOnlySpan<Respire.RespireKey> keys, long count = 1, Respire.ListSide side = Respire.ListSide.Left, System.TimeSpan? waitFor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
-Respire.IListCommands.PopManyAsync(System.ReadOnlySpan<Respire.RespireKey> keys, System.TimeSpan? waitFor, long count = 1, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
-Respire.IListCommands.PopManyAsync(System.ReadOnlySpan<Respire.RespireKey> keys, long count = 1, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
+Respire.IListCommands.PopManyAsync(System.ReadOnlySpan<Respire.RespireKey> keys, System.TimeSpan? waitFor, long count = 1, Respire.RespireListSide side = Respire.RespireListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
+Respire.IListCommands.PopManyAsync(System.ReadOnlySpan<Respire.RespireKey> keys, long count = 1, Respire.RespireListSide side = Respire.RespireListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
 *REMOVED*Respire.IListCommands.RightPopAsync(Respire.RespireKey key, System.TimeSpan? waitFor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
 Respire.IListCommands.RightPopAsync(Respire.RespireKey key, System.TimeSpan? waitFor, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
 Respire.IListCommands.RightPopAsync(Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string?>
@@ -440,9 +440,9 @@ Respire.IStreamCommands.ReadAsync(Respire.RespireKey key, Respire.RespireStreamI
 *REMOVED*Respire.IStreamCommands.ReadAsync(System.ReadOnlySpan<(Respire.RespireKey Key, Respire.RespireStreamId After)> streams, int? count = null, System.TimeSpan? waitFor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamReadResult[]!>
 Respire.IStreamCommands.ReadAsync(System.ReadOnlySpan<(Respire.RespireKey Key, Respire.RespireStreamId After)> streams, System.TimeSpan? waitFor, int? count = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamReadResult[]!>
 Respire.IStreamCommands.ReadAsync(System.ReadOnlySpan<(Respire.RespireKey Key, Respire.RespireStreamId After)> streams, int? count = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamReadResult[]!>
-Respire.IListCommands.PopAsync(Respire.RespireKey key, System.TimeSpan? waitFor, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopResult?>
-Respire.IListCommands.PopManyAsync(Respire.RespireKey key, System.TimeSpan? waitFor, long count = 1, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
-Respire.IListCommands.PopManyAsync(Respire.RespireKey key, long count = 1, Respire.ListSide side = Respire.ListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
+Respire.IListCommands.PopAsync(Respire.RespireKey key, System.TimeSpan? waitFor, Respire.RespireListSide side = Respire.RespireListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopResult?>
+Respire.IListCommands.PopManyAsync(Respire.RespireKey key, System.TimeSpan? waitFor, long count = 1, Respire.RespireListSide side = Respire.RespireListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
+Respire.IListCommands.PopManyAsync(Respire.RespireKey key, long count = 1, Respire.RespireListSide side = Respire.RespireListSide.Left, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireListPopManyResult?>
 Respire.ISortedSetCommands.PopAsync(Respire.RespireKey key, System.TimeSpan? waitFor, bool descending, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopResult?>
 Respire.ISortedSetCommands.PopAsync<T>(Respire.RespireKey key, System.TimeSpan? waitFor, bool descending, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetPopResult<T>?>
 Respire.StreamReadOptions.IsBlocking.get -> bool
@@ -454,3 +454,443 @@ Respire.RespireCrossSlotException.ConflictingKeyHex.get -> string?
 Respire.RespireCrossSlotException.RespireCrossSlotException(string! commandName, int expectedSlot, int conflictingSlot) -> void
 Respire.RespireOptions.IncludeCrossSlotKeyContext.get -> bool
 Respire.RespireOptions.IncludeCrossSlotKeyContext.init -> void
+*REMOVED*Respire.BitFieldEncoding
+Respire.RespireBitFieldEncoding
+*REMOVED*Respire.BitFieldEncoding.BitFieldEncoding() -> void
+Respire.RespireBitFieldEncoding.RespireBitFieldEncoding() -> void
+*REMOVED*Respire.BitFieldEncoding.Equals(Respire.BitFieldEncoding other) -> bool
+Respire.RespireBitFieldEncoding.Equals(Respire.RespireBitFieldEncoding other) -> bool
+*REMOVED*Respire.BitFieldEncoding.IsSigned.get -> bool
+Respire.RespireBitFieldEncoding.IsSigned.get -> bool
+*REMOVED*Respire.BitFieldEncoding.Width.get -> int
+Respire.RespireBitFieldEncoding.Width.get -> int
+*REMOVED*Respire.BitFieldOffset
+Respire.RespireBitFieldOffset
+*REMOVED*Respire.BitFieldOffset.BitFieldOffset() -> void
+Respire.RespireBitFieldOffset.RespireBitFieldOffset() -> void
+*REMOVED*Respire.BitFieldOffset.Equals(Respire.BitFieldOffset other) -> bool
+Respire.RespireBitFieldOffset.Equals(Respire.RespireBitFieldOffset other) -> bool
+*REMOVED*Respire.BitFieldOffset.IsFieldIndex.get -> bool
+Respire.RespireBitFieldOffset.IsFieldIndex.get -> bool
+*REMOVED*Respire.BitFieldOffset.Value.get -> long
+Respire.RespireBitFieldOffset.Value.get -> long
+*REMOVED*Respire.BitFieldOperation
+Respire.RespireBitFieldOperation
+*REMOVED*Respire.BitFieldOperation.BitFieldOperation() -> void
+Respire.RespireBitFieldOperation.RespireBitFieldOperation() -> void
+*REMOVED*Respire.BitFieldOverflow
+Respire.RespireBitFieldOverflow
+*REMOVED*Respire.BitFieldOverflow.Fail = 2 -> Respire.BitFieldOverflow
+Respire.RespireBitFieldOverflow.Fail = 2 -> Respire.RespireBitFieldOverflow
+*REMOVED*Respire.BitFieldOverflow.Saturate = 1 -> Respire.BitFieldOverflow
+Respire.RespireBitFieldOverflow.Saturate = 1 -> Respire.RespireBitFieldOverflow
+*REMOVED*Respire.BitFieldOverflow.Wrap = 0 -> Respire.BitFieldOverflow
+Respire.RespireBitFieldOverflow.Wrap = 0 -> Respire.RespireBitFieldOverflow
+*REMOVED*Respire.ExpireWhen
+Respire.RespireExpireWhen
+*REMOVED*Respire.ExpireWhen.Always = 0 -> Respire.ExpireWhen
+Respire.RespireExpireWhen.Always = 0 -> Respire.RespireExpireWhen
+*REMOVED*Respire.ExpireWhen.Exists = 2 -> Respire.ExpireWhen
+Respire.RespireExpireWhen.Exists = 2 -> Respire.RespireExpireWhen
+*REMOVED*Respire.ExpireWhen.GreaterThan = 3 -> Respire.ExpireWhen
+Respire.RespireExpireWhen.GreaterThan = 3 -> Respire.RespireExpireWhen
+*REMOVED*Respire.ExpireWhen.LessThan = 4 -> Respire.ExpireWhen
+Respire.RespireExpireWhen.LessThan = 4 -> Respire.RespireExpireWhen
+*REMOVED*Respire.ExpireWhen.NotExists = 1 -> Respire.ExpireWhen
+Respire.RespireExpireWhen.NotExists = 1 -> Respire.RespireExpireWhen
+*REMOVED*Respire.GeoEntry
+Respire.RespireGeoEntry
+*REMOVED*Respire.GeoEntry.Deconstruct(out double Longitude, out double Latitude, out Respire.RespireValue Member) -> void
+Respire.RespireGeoEntry.Deconstruct(out double Longitude, out double Latitude, out Respire.RespireValue Member) -> void
+*REMOVED*Respire.GeoEntry.Equals(Respire.GeoEntry other) -> bool
+Respire.RespireGeoEntry.Equals(Respire.RespireGeoEntry other) -> bool
+*REMOVED*Respire.GeoEntry.GeoEntry() -> void
+Respire.RespireGeoEntry.RespireGeoEntry() -> void
+*REMOVED*Respire.GeoEntry.GeoEntry(double Longitude, double Latitude, Respire.RespireValue Member) -> void
+Respire.RespireGeoEntry.RespireGeoEntry(double Longitude, double Latitude, Respire.RespireValue Member) -> void
+*REMOVED*Respire.GeoEntry.Latitude.get -> double
+Respire.RespireGeoEntry.Latitude.get -> double
+*REMOVED*Respire.GeoEntry.Latitude.init -> void
+Respire.RespireGeoEntry.Latitude.init -> void
+*REMOVED*Respire.GeoEntry.Longitude.get -> double
+Respire.RespireGeoEntry.Longitude.get -> double
+*REMOVED*Respire.GeoEntry.Longitude.init -> void
+Respire.RespireGeoEntry.Longitude.init -> void
+*REMOVED*Respire.GeoEntry.Member.get -> Respire.RespireValue
+Respire.RespireGeoEntry.Member.get -> Respire.RespireValue
+*REMOVED*Respire.GeoEntry.Member.init -> void
+Respire.RespireGeoEntry.Member.init -> void
+*REMOVED*Respire.GeoPosition
+Respire.RespireGeoPosition
+*REMOVED*Respire.GeoPosition.Deconstruct(out double Longitude, out double Latitude) -> void
+Respire.RespireGeoPosition.Deconstruct(out double Longitude, out double Latitude) -> void
+*REMOVED*Respire.GeoPosition.Equals(Respire.GeoPosition other) -> bool
+Respire.RespireGeoPosition.Equals(Respire.RespireGeoPosition other) -> bool
+*REMOVED*Respire.GeoPosition.GeoPosition() -> void
+Respire.RespireGeoPosition.RespireGeoPosition() -> void
+*REMOVED*Respire.GeoPosition.GeoPosition(double Longitude, double Latitude) -> void
+Respire.RespireGeoPosition.RespireGeoPosition(double Longitude, double Latitude) -> void
+*REMOVED*Respire.GeoPosition.Latitude.get -> double
+Respire.RespireGeoPosition.Latitude.get -> double
+*REMOVED*Respire.GeoPosition.Latitude.init -> void
+Respire.RespireGeoPosition.Latitude.init -> void
+*REMOVED*Respire.GeoPosition.Longitude.get -> double
+Respire.RespireGeoPosition.Longitude.get -> double
+*REMOVED*Respire.GeoPosition.Longitude.init -> void
+Respire.RespireGeoPosition.Longitude.init -> void
+*REMOVED*Respire.GeoSearchResult.Deconstruct(out string! Member, out double? Distance, out long? Hash, out Respire.GeoPosition? Position) -> void
+Respire.GeoSearchResult.Deconstruct(out string! Member, out double? Distance, out long? Hash, out Respire.RespireGeoPosition? Position) -> void
+*REMOVED*Respire.GeoSearchResult.GeoSearchResult(string! Member, double? Distance = null, long? Hash = null, Respire.GeoPosition? Position = null) -> void
+Respire.GeoSearchResult.GeoSearchResult(string! Member, double? Distance = null, long? Hash = null, Respire.RespireGeoPosition? Position = null) -> void
+*REMOVED*Respire.GeoSearchResult.Position.get -> Respire.GeoPosition?
+Respire.GeoSearchResult.Position.get -> Respire.RespireGeoPosition?
+*REMOVED*Respire.GeoSearchShape
+Respire.RespireGeoSearchShape
+*REMOVED*Respire.GeoSearchShape.GeoSearchShape() -> void
+Respire.RespireGeoSearchShape.RespireGeoSearchShape() -> void
+*REMOVED*Respire.GeoUnit
+Respire.RespireGeoUnit
+*REMOVED*Respire.GeoUnit.Feet = 3 -> Respire.GeoUnit
+Respire.RespireGeoUnit.Feet = 3 -> Respire.RespireGeoUnit
+*REMOVED*Respire.GeoUnit.Kilometers = 1 -> Respire.GeoUnit
+Respire.RespireGeoUnit.Kilometers = 1 -> Respire.RespireGeoUnit
+*REMOVED*Respire.GeoUnit.Meters = 0 -> Respire.GeoUnit
+Respire.RespireGeoUnit.Meters = 0 -> Respire.RespireGeoUnit
+*REMOVED*Respire.GeoUnit.Miles = 2 -> Respire.GeoUnit
+Respire.RespireGeoUnit.Miles = 2 -> Respire.RespireGeoUnit
+*REMOVED*Respire.IBatchBitmapCommands.Field(Respire.RespireKey key, params System.ReadOnlySpan<Respire.BitFieldOperation> operations) -> Respire.RespirePending<long?[]!>!
+Respire.IBatchBitmapCommands.Field(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireBitFieldOperation> operations) -> Respire.RespirePending<long?[]!>!
+*REMOVED*Respire.IBatchBitmapCommands.FieldReadOnly(Respire.RespireKey key, params System.ReadOnlySpan<Respire.BitFieldOperation> gets) -> Respire.RespirePending<long?[]!>!
+Respire.IBatchBitmapCommands.FieldReadOnly(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireBitFieldOperation> gets) -> Respire.RespirePending<long?[]!>!
+*REMOVED*Respire.IBatchGeoCommands.Add(Respire.RespireKey key, Respire.GeoAddOptions options, params System.ReadOnlySpan<Respire.GeoEntry> entries) -> Respire.RespirePending<long>!
+Respire.IBatchGeoCommands.Add(Respire.RespireKey key, Respire.GeoAddOptions options, params System.ReadOnlySpan<Respire.RespireGeoEntry> entries) -> Respire.RespirePending<long>!
+*REMOVED*Respire.IBatchGeoCommands.Add(Respire.RespireKey key, params System.ReadOnlySpan<Respire.GeoEntry> entries) -> Respire.RespirePending<long>!
+Respire.IBatchGeoCommands.Add(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireGeoEntry> entries) -> Respire.RespirePending<long>!
+*REMOVED*Respire.IBatchGeoCommands.Distance(Respire.RespireKey key, Respire.RespireValue firstMember, Respire.RespireValue secondMember, Respire.GeoUnit unit = Respire.GeoUnit.Meters) -> Respire.RespirePending<double?>!
+Respire.IBatchGeoCommands.Distance(Respire.RespireKey key, Respire.RespireValue firstMember, Respire.RespireValue secondMember, Respire.RespireGeoUnit unit = Respire.RespireGeoUnit.Meters) -> Respire.RespirePending<double?>!
+*REMOVED*Respire.IBatchGeoCommands.Position(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireValue> members) -> Respire.RespirePending<Respire.GeoPosition?[]!>!
+Respire.IBatchGeoCommands.Position(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireValue> members) -> Respire.RespirePending<Respire.RespireGeoPosition?[]!>!
+*REMOVED*Respire.IBatchGeoCommands.Search(Respire.RespireKey key, Respire.GeoSearchOrigin origin, Respire.GeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions)) -> Respire.RespirePending<Respire.GeoSearchResult[]!>!
+Respire.IBatchGeoCommands.Search(Respire.RespireKey key, Respire.GeoSearchOrigin origin, Respire.RespireGeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions)) -> Respire.RespirePending<Respire.GeoSearchResult[]!>!
+*REMOVED*Respire.IBatchGeoCommands.SearchStore(Respire.RespireKey destination, Respire.RespireKey source, Respire.GeoSearchOrigin origin, Respire.GeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions), bool storeDistance = false) -> Respire.RespirePending<long>!
+Respire.IBatchGeoCommands.SearchStore(Respire.RespireKey destination, Respire.RespireKey source, Respire.GeoSearchOrigin origin, Respire.RespireGeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions), bool storeDistance = false) -> Respire.RespirePending<long>!
+*REMOVED*Respire.IBatchHashCommands.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when, params System.ReadOnlySpan<string!> fields) -> Respire.RespirePending<Respire.HashFieldExpiryResult[]!>!
+Respire.IBatchHashCommands.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when, params System.ReadOnlySpan<string!> fields) -> Respire.RespirePending<Respire.HashFieldExpiryResult[]!>!
+*REMOVED*Respire.IBatchKeyCommands.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always) -> Respire.RespirePending<bool>!
+Respire.IBatchKeyCommands.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always) -> Respire.RespirePending<bool>!
+*REMOVED*Respire.IBatchListCommands.Move(Respire.RespireKey source, Respire.RespireKey destination, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right) -> Respire.RespirePending<string?>!
+Respire.IBatchListCommands.Move(Respire.RespireKey source, Respire.RespireKey destination, Respire.RespireListSide from = Respire.RespireListSide.Left, Respire.RespireListSide to = Respire.RespireListSide.Right) -> Respire.RespirePending<string?>!
+*REMOVED*Respire.IBatchListCommands.MoveMany(Respire.RespireKey source, Respire.RespireKey destination, long count = 1, Respire.ListSide from = Respire.ListSide.Left, Respire.ListSide to = Respire.ListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.ListMoveOrder order = Respire.ListMoveOrder.OneByOne) -> Respire.RespirePending<string![]?>!
+Respire.IBatchListCommands.MoveMany(Respire.RespireKey source, Respire.RespireKey destination, long count = 1, Respire.RespireListSide from = Respire.RespireListSide.Left, Respire.RespireListSide to = Respire.RespireListSide.Right, Respire.ListMoveCountMode countMode = Respire.ListMoveCountMode.UpTo, Respire.RespireListMoveOrder order = Respire.RespireListMoveOrder.OneByOne) -> Respire.RespirePending<string![]?>!
+*REMOVED*Respire.IBatchListCommands.PopMany(System.ReadOnlySpan<Respire.RespireKey> keys, long count = 1, Respire.ListSide side = Respire.ListSide.Left) -> Respire.RespirePending<Respire.RespireListPopManyResult?>!
+Respire.IBatchListCommands.PopMany(System.ReadOnlySpan<Respire.RespireKey> keys, long count = 1, Respire.RespireListSide side = Respire.RespireListSide.Left) -> Respire.RespirePending<Respire.RespireListPopManyResult?>!
+*REMOVED*Respire.IBatchSortedSetCommands.Pop(Respire.RespireKey key, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry?>!
+Respire.IBatchSortedSetCommands.Pop(Respire.RespireKey key, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry?>!
+*REMOVED*Respire.IBatchSortedSetCommands.Pop<T>(Respire.RespireKey key, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry<T>?>!
+Respire.IBatchSortedSetCommands.Pop<T>(Respire.RespireKey key, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry<T>?>!
+*REMOVED*Respire.IBatchSortedSetCommands.PopMany(Respire.RespireKey key, long count, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry[]!>!
+Respire.IBatchSortedSetCommands.PopMany(Respire.RespireKey key, long count, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.PopMany<T>(Respire.RespireKey key, long count, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry<T>[]!>!
+Respire.IBatchSortedSetCommands.PopMany<T>(Respire.RespireKey key, long count, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry<T>[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.RandomMembersWithScores(Respire.RespireKey key, long count) -> Respire.RespirePending<Respire.SortedSetEntry[]!>!
+Respire.IBatchSortedSetCommands.RandomMembersWithScores(Respire.RespireKey key, long count) -> Respire.RespirePending<Respire.RespireSortedSetEntry[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.RandomMembersWithScores<T>(Respire.RespireKey key, long count) -> Respire.RespirePending<Respire.SortedSetEntry<T>[]!>!
+Respire.IBatchSortedSetCommands.RandomMembersWithScores<T>(Respire.RespireKey key, long count) -> Respire.RespirePending<Respire.RespireSortedSetEntry<T>[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.RangeByScoreWithScores(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry[]!>!
+Respire.IBatchSortedSetCommands.RangeByScoreWithScores(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.RangeByScoreWithScores<T>(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry<T>[]!>!
+Respire.IBatchSortedSetCommands.RangeByScoreWithScores<T>(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry<T>[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.RangeWithScores(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry[]!>!
+Respire.IBatchSortedSetCommands.RangeWithScores(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry[]!>!
+*REMOVED*Respire.IBatchSortedSetCommands.RangeWithScores<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<Respire.SortedSetEntry<T>[]!>!
+Respire.IBatchSortedSetCommands.RangeWithScores<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry<T>[]!>!
+*REMOVED*Respire.IBatchStreamCommands.Add(Respire.RespireKey key, Respire.StreamAddOptions options, params System.ReadOnlySpan<(string! Field, Respire.RespireValue Value)> fields) -> Respire.RespirePending<Respire.RespireStreamId?>!
+Respire.IBatchStreamCommands.Add(Respire.RespireKey key, Respire.RespireStreamAddOptions options, params System.ReadOnlySpan<(string! Field, Respire.RespireValue Value)> fields) -> Respire.RespirePending<Respire.RespireStreamId?>!
+*REMOVED*Respire.IBatchStreamCommands.NegativeAcknowledge(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.StreamNackOptions options, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> Respire.RespirePending<long>!
+Respire.IBatchStreamCommands.NegativeAcknowledge(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, Respire.StreamNackOptions options, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> Respire.RespirePending<long>!
+*REMOVED*Respire.IBatchStreamCommands.NegativeAcknowledge(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> Respire.RespirePending<long>!
+Respire.IBatchStreamCommands.NegativeAcknowledge(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> Respire.RespirePending<long>!
+*REMOVED*Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.BitFieldOperation> operations, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireBitFieldOperation> operations, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+*REMOVED*Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.BitFieldOperation> operations) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireBitFieldOperation> operations) -> System.Threading.Tasks.ValueTask<long?[]!>
+*REMOVED*Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.BitFieldOperation> gets, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireBitFieldOperation> gets, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long?[]!>
+*REMOVED*Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.BitFieldOperation> gets) -> System.Threading.Tasks.ValueTask<long?[]!>
+Respire.IBitmapCommands.FieldReadOnlyAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireBitFieldOperation> gets) -> System.Threading.Tasks.ValueTask<long?[]!>
+*REMOVED*Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, System.ReadOnlySpan<Respire.GeoEntry> entries, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, System.ReadOnlySpan<Respire.RespireGeoEntry> entries, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, params System.ReadOnlySpan<Respire.GeoEntry> entries) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, Respire.GeoAddOptions options, params System.ReadOnlySpan<Respire.RespireGeoEntry> entries) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IGeoCommands.AddAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.GeoEntry> entries, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireGeoEntry> entries, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IGeoCommands.AddAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.GeoEntry> entries) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.AddAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireGeoEntry> entries) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IGeoCommands.DistanceAsync(Respire.RespireKey key, Respire.RespireValue firstMember, Respire.RespireValue secondMember, Respire.GeoUnit unit = Respire.GeoUnit.Meters, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<double?>
+Respire.IGeoCommands.DistanceAsync(Respire.RespireKey key, Respire.RespireValue firstMember, Respire.RespireValue secondMember, Respire.RespireGeoUnit unit = Respire.RespireGeoUnit.Meters, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<double?>
+*REMOVED*Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> members, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.GeoPosition?[]!>
+Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, System.ReadOnlySpan<Respire.RespireValue> members, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireGeoPosition?[]!>
+*REMOVED*Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireValue> members) -> System.Threading.Tasks.ValueTask<Respire.GeoPosition?[]!>
+Respire.IGeoCommands.PositionAsync(Respire.RespireKey key, params System.ReadOnlySpan<Respire.RespireValue> members) -> System.Threading.Tasks.ValueTask<Respire.RespireGeoPosition?[]!>
+*REMOVED*Respire.IGeoCommands.SearchAsync(Respire.RespireKey key, Respire.GeoSearchOrigin origin, Respire.GeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.GeoSearchResult[]!>
+Respire.IGeoCommands.SearchAsync(Respire.RespireKey key, Respire.GeoSearchOrigin origin, Respire.RespireGeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.GeoSearchResult[]!>
+*REMOVED*Respire.IGeoCommands.SearchStoreAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.GeoSearchOrigin origin, Respire.GeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions), bool storeDistance = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IGeoCommands.SearchStoreAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.GeoSearchOrigin origin, Respire.RespireGeoSearchShape shape, Respire.GeoSearchOptions options = default(Respire.GeoSearchOptions), bool storeDistance = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when, System.ReadOnlySpan<string!> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when, System.ReadOnlySpan<string!> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+*REMOVED*Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when, params System.ReadOnlySpan<string!> fields) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+Respire.IHashCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when, params System.ReadOnlySpan<string!> fields) -> System.Threading.Tasks.ValueTask<Respire.HashFieldExpiryResult[]!>
+*REMOVED*Respire.IKeyCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IKeyCommands.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+*REMOVED*Respire.IRespireClient.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespireClient.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+*REMOVED*Respire.IRespireCommandQueue.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always) -> Respire.RespirePending<bool>!
+Respire.IRespireCommandQueue.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always) -> Respire.RespirePending<bool>!
+*REMOVED*Respire.ISortedSetCommands.PopAsync(Respire.RespireKey key, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry?>
+Respire.ISortedSetCommands.PopAsync(Respire.RespireKey key, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry?>
+*REMOVED*Respire.ISortedSetCommands.PopAsync<T>(Respire.RespireKey key, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry<T>?>
+Respire.ISortedSetCommands.PopAsync<T>(Respire.RespireKey key, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry<T>?>
+*REMOVED*Respire.ISortedSetCommands.PopManyAsync(Respire.RespireKey key, long count, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry[]!>
+Respire.ISortedSetCommands.PopManyAsync(Respire.RespireKey key, long count, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry[]!>
+*REMOVED*Respire.ISortedSetCommands.PopManyAsync<T>(Respire.RespireKey key, long count, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry<T>[]!>
+Respire.ISortedSetCommands.PopManyAsync<T>(Respire.RespireKey key, long count, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry<T>[]!>
+*REMOVED*Respire.ISortedSetCommands.RandomMembersWithScoresAsync(Respire.RespireKey key, long count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry[]!>
+Respire.ISortedSetCommands.RandomMembersWithScoresAsync(Respire.RespireKey key, long count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry[]!>
+*REMOVED*Respire.ISortedSetCommands.RandomMembersWithScoresAsync<T>(Respire.RespireKey key, long count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry<T>[]!>
+Respire.ISortedSetCommands.RandomMembersWithScoresAsync<T>(Respire.RespireKey key, long count, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry<T>[]!>
+*REMOVED*Respire.ISortedSetCommands.RangeByScoreWithScoresAsync(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry[]!>
+Respire.ISortedSetCommands.RangeByScoreWithScoresAsync(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry[]!>
+*REMOVED*Respire.ISortedSetCommands.RangeByScoreWithScoresAsync<T>(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry<T>[]!>
+Respire.ISortedSetCommands.RangeByScoreWithScoresAsync<T>(Respire.RespireKey key, Respire.RespireScoreRange range, long offset = 0, long? count = null, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry<T>[]!>
+*REMOVED*Respire.ISortedSetCommands.RangeWithScoresAsync(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry[]!>
+Respire.ISortedSetCommands.RangeWithScoresAsync(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry[]!>
+*REMOVED*Respire.ISortedSetCommands.RangeWithScoresAsync<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.SortedSetEntry<T>[]!>
+Respire.ISortedSetCommands.RangeWithScoresAsync<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry<T>[]!>
+*REMOVED*Respire.ISortedSetCommands.ScanAsync(Respire.RespireKey key, string? match = null, int countHint = 250, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.SortedSetEntry>!
+Respire.ISortedSetCommands.ScanAsync(Respire.RespireKey key, string? match = null, int countHint = 250, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.RespireSortedSetEntry>!
+*REMOVED*Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.StreamAddOptions options, System.ReadOnlySpan<(string! Field, Respire.RespireValue Value)> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
+Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.RespireStreamAddOptions options, System.ReadOnlySpan<(string! Field, Respire.RespireValue Value)> fields, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
+*REMOVED*Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.StreamAddOptions options, params System.ReadOnlySpan<(string! Field, Respire.RespireValue Value)> fields) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
+Respire.IStreamCommands.AddAsync(Respire.RespireKey key, Respire.RespireStreamAddOptions options, params System.ReadOnlySpan<(string! Field, Respire.RespireValue Value)> fields) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId?>
+*REMOVED*Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.StreamNackOptions options, System.ReadOnlySpan<Respire.RespireStreamId> ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, Respire.StreamNackOptions options, System.ReadOnlySpan<Respire.RespireStreamId> ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, Respire.StreamNackOptions options, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, Respire.StreamNackOptions options, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, System.ReadOnlySpan<Respire.RespireStreamId> ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, System.ReadOnlySpan<Respire.RespireStreamId> ids, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.StreamNackMode mode, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> System.Threading.Tasks.ValueTask<long>
+Respire.IStreamCommands.NegativeAcknowledgeAsync(Respire.RespireKey key, Respire.RespireValue group, Respire.RespireStreamNackMode mode, params System.ReadOnlySpan<Respire.RespireStreamId> ids) -> System.Threading.Tasks.ValueTask<long>
+*REMOVED*Respire.ListMoveOrder
+Respire.RespireListMoveOrder
+*REMOVED*Respire.ListMoveOrder.Bulk = 1 -> Respire.ListMoveOrder
+Respire.RespireListMoveOrder.Bulk = 1 -> Respire.RespireListMoveOrder
+*REMOVED*Respire.ListMoveOrder.OneByOne = 0 -> Respire.ListMoveOrder
+Respire.RespireListMoveOrder.OneByOne = 0 -> Respire.RespireListMoveOrder
+*REMOVED*Respire.ListSide
+Respire.RespireListSide
+*REMOVED*Respire.ListSide.Left = 0 -> Respire.ListSide
+Respire.RespireListSide.Left = 0 -> Respire.RespireListSide
+*REMOVED*Respire.ListSide.Right = 1 -> Respire.ListSide
+Respire.RespireListSide.Right = 1 -> Respire.RespireListSide
+*REMOVED*Respire.RespireBatch.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always) -> Respire.RespirePending<bool>!
+Respire.RespireBatch.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always) -> Respire.RespirePending<bool>!
+*REMOVED*Respire.RespireClient.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.RespireClient.ExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+*REMOVED*Respire.RespireSortedSetPopManyResult.Deconstruct(out Respire.RespireKey Key, out Respire.SortedSetEntry[]! Entries) -> void
+Respire.RespireSortedSetPopManyResult.Deconstruct(out Respire.RespireKey Key, out Respire.RespireSortedSetEntry[]! Entries) -> void
+*REMOVED*Respire.RespireSortedSetPopManyResult.Entries.get -> Respire.SortedSetEntry[]!
+Respire.RespireSortedSetPopManyResult.Entries.get -> Respire.RespireSortedSetEntry[]!
+*REMOVED*Respire.RespireSortedSetPopManyResult.RespireSortedSetPopManyResult(Respire.RespireKey Key, Respire.SortedSetEntry[]! Entries) -> void
+Respire.RespireSortedSetPopManyResult.RespireSortedSetPopManyResult(Respire.RespireKey Key, Respire.RespireSortedSetEntry[]! Entries) -> void
+*REMOVED*Respire.RespireSortedSetPopManyResult<T>.Deconstruct(out Respire.RespireKey Key, out Respire.SortedSetEntry<T>[]! Entries) -> void
+Respire.RespireSortedSetPopManyResult<T>.Deconstruct(out Respire.RespireKey Key, out Respire.RespireSortedSetEntry<T>[]! Entries) -> void
+*REMOVED*Respire.RespireSortedSetPopManyResult<T>.Entries.get -> Respire.SortedSetEntry<T>[]!
+Respire.RespireSortedSetPopManyResult<T>.Entries.get -> Respire.RespireSortedSetEntry<T>[]!
+*REMOVED*Respire.RespireSortedSetPopManyResult<T>.RespireSortedSetPopManyResult(Respire.RespireKey Key, Respire.SortedSetEntry<T>[]! Entries) -> void
+Respire.RespireSortedSetPopManyResult<T>.RespireSortedSetPopManyResult(Respire.RespireKey Key, Respire.RespireSortedSetEntry<T>[]! Entries) -> void
+*REMOVED*Respire.RespireSortedSetPopResult.Deconstruct(out Respire.RespireKey Key, out Respire.SortedSetEntry Entry) -> void
+Respire.RespireSortedSetPopResult.Deconstruct(out Respire.RespireKey Key, out Respire.RespireSortedSetEntry Entry) -> void
+*REMOVED*Respire.RespireSortedSetPopResult.Entry.get -> Respire.SortedSetEntry
+Respire.RespireSortedSetPopResult.Entry.get -> Respire.RespireSortedSetEntry
+*REMOVED*Respire.RespireSortedSetPopResult.RespireSortedSetPopResult(Respire.RespireKey Key, Respire.SortedSetEntry Entry) -> void
+Respire.RespireSortedSetPopResult.RespireSortedSetPopResult(Respire.RespireKey Key, Respire.RespireSortedSetEntry Entry) -> void
+*REMOVED*Respire.RespireSortedSetPopResult<T>.Deconstruct(out Respire.RespireKey Key, out Respire.SortedSetEntry<T> Entry) -> void
+Respire.RespireSortedSetPopResult<T>.Deconstruct(out Respire.RespireKey Key, out Respire.RespireSortedSetEntry<T> Entry) -> void
+*REMOVED*Respire.RespireSortedSetPopResult<T>.Entry.get -> Respire.SortedSetEntry<T>
+Respire.RespireSortedSetPopResult<T>.Entry.get -> Respire.RespireSortedSetEntry<T>
+*REMOVED*Respire.RespireSortedSetPopResult<T>.RespireSortedSetPopResult(Respire.RespireKey Key, Respire.SortedSetEntry<T> Entry) -> void
+Respire.RespireSortedSetPopResult<T>.RespireSortedSetPopResult(Respire.RespireKey Key, Respire.RespireSortedSetEntry<T> Entry) -> void
+*REMOVED*Respire.RespireTransactionBase.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.ExpireWhen when = Respire.ExpireWhen.Always) -> Respire.RespirePending<bool>!
+Respire.RespireTransactionBase.Expire(Respire.RespireKey key, Respire.RespireExpiry expiry, Respire.RespireExpireWhen when = Respire.RespireExpireWhen.Always) -> Respire.RespirePending<bool>!
+*REMOVED*Respire.SortedSetEntry
+Respire.RespireSortedSetEntry
+*REMOVED*Respire.SortedSetEntry.Deconstruct(out string! Member, out double Score) -> void
+Respire.RespireSortedSetEntry.Deconstruct(out string! Member, out double Score) -> void
+*REMOVED*Respire.SortedSetEntry.Equals(Respire.SortedSetEntry other) -> bool
+Respire.RespireSortedSetEntry.Equals(Respire.RespireSortedSetEntry other) -> bool
+*REMOVED*Respire.SortedSetEntry.Member.get -> string!
+Respire.RespireSortedSetEntry.Member.get -> string!
+*REMOVED*Respire.SortedSetEntry.Member.init -> void
+Respire.RespireSortedSetEntry.Member.init -> void
+*REMOVED*Respire.SortedSetEntry.Score.get -> double
+Respire.RespireSortedSetEntry.Score.get -> double
+*REMOVED*Respire.SortedSetEntry.Score.init -> void
+Respire.RespireSortedSetEntry.Score.init -> void
+*REMOVED*Respire.SortedSetEntry.SortedSetEntry() -> void
+Respire.RespireSortedSetEntry.RespireSortedSetEntry() -> void
+*REMOVED*Respire.SortedSetEntry.SortedSetEntry(string! Member, double Score) -> void
+Respire.RespireSortedSetEntry.RespireSortedSetEntry(string! Member, double Score) -> void
+*REMOVED*Respire.SortedSetEntry<T>
+Respire.RespireSortedSetEntry<T>
+*REMOVED*Respire.SortedSetEntry<T>.Deconstruct(out T Member, out double Score) -> void
+Respire.RespireSortedSetEntry<T>.Deconstruct(out T Member, out double Score) -> void
+*REMOVED*Respire.SortedSetEntry<T>.Equals(Respire.SortedSetEntry<T> other) -> bool
+Respire.RespireSortedSetEntry<T>.Equals(Respire.RespireSortedSetEntry<T> other) -> bool
+*REMOVED*Respire.SortedSetEntry<T>.Member.get -> T
+Respire.RespireSortedSetEntry<T>.Member.get -> T
+*REMOVED*Respire.SortedSetEntry<T>.Member.init -> void
+Respire.RespireSortedSetEntry<T>.Member.init -> void
+*REMOVED*Respire.SortedSetEntry<T>.Score.get -> double
+Respire.RespireSortedSetEntry<T>.Score.get -> double
+*REMOVED*Respire.SortedSetEntry<T>.Score.init -> void
+Respire.RespireSortedSetEntry<T>.Score.init -> void
+*REMOVED*Respire.SortedSetEntry<T>.SortedSetEntry() -> void
+Respire.RespireSortedSetEntry<T>.RespireSortedSetEntry() -> void
+*REMOVED*Respire.SortedSetEntry<T>.SortedSetEntry(T Member, double Score) -> void
+Respire.RespireSortedSetEntry<T>.RespireSortedSetEntry(T Member, double Score) -> void
+*REMOVED*Respire.StreamAddOptions
+Respire.RespireStreamAddOptions
+*REMOVED*Respire.StreamAddOptions.ApproximateTrim.get -> bool
+Respire.RespireStreamAddOptions.ApproximateTrim.get -> bool
+*REMOVED*Respire.StreamAddOptions.ApproximateTrim.init -> void
+Respire.RespireStreamAddOptions.ApproximateTrim.init -> void
+*REMOVED*Respire.StreamAddOptions.CreateStream.get -> bool
+Respire.RespireStreamAddOptions.CreateStream.get -> bool
+*REMOVED*Respire.StreamAddOptions.CreateStream.init -> void
+Respire.RespireStreamAddOptions.CreateStream.init -> void
+*REMOVED*Respire.StreamAddOptions.Equals(Respire.StreamAddOptions other) -> bool
+Respire.RespireStreamAddOptions.Equals(Respire.RespireStreamAddOptions other) -> bool
+*REMOVED*Respire.StreamAddOptions.Id.get -> Respire.RespireStreamId?
+Respire.RespireStreamAddOptions.Id.get -> Respire.RespireStreamId?
+*REMOVED*Respire.StreamAddOptions.Id.init -> void
+Respire.RespireStreamAddOptions.Id.init -> void
+*REMOVED*Respire.StreamAddOptions.Idempotency.get -> Respire.StreamIdempotency?
+Respire.RespireStreamAddOptions.Idempotency.get -> Respire.StreamIdempotency?
+*REMOVED*Respire.StreamAddOptions.Idempotency.init -> void
+Respire.RespireStreamAddOptions.Idempotency.init -> void
+*REMOVED*Respire.StreamAddOptions.Limit.get -> long?
+Respire.RespireStreamAddOptions.Limit.get -> long?
+*REMOVED*Respire.StreamAddOptions.Limit.init -> void
+Respire.RespireStreamAddOptions.Limit.init -> void
+*REMOVED*Respire.StreamAddOptions.MaxLength.get -> long?
+Respire.RespireStreamAddOptions.MaxLength.get -> long?
+*REMOVED*Respire.StreamAddOptions.MaxLength.init -> void
+Respire.RespireStreamAddOptions.MaxLength.init -> void
+*REMOVED*Respire.StreamAddOptions.MinId.get -> Respire.RespireStreamId?
+Respire.RespireStreamAddOptions.MinId.get -> Respire.RespireStreamId?
+*REMOVED*Respire.StreamAddOptions.MinId.init -> void
+Respire.RespireStreamAddOptions.MinId.init -> void
+*REMOVED*Respire.StreamAddOptions.ReferencePolicy.get -> Respire.StreamReferencePolicy?
+Respire.RespireStreamAddOptions.ReferencePolicy.get -> Respire.StreamReferencePolicy?
+*REMOVED*Respire.StreamAddOptions.ReferencePolicy.init -> void
+Respire.RespireStreamAddOptions.ReferencePolicy.init -> void
+*REMOVED*Respire.StreamAddOptions.StreamAddOptions() -> void
+Respire.RespireStreamAddOptions.RespireStreamAddOptions() -> void
+*REMOVED*Respire.StreamNackMode
+Respire.RespireStreamNackMode
+*REMOVED*Respire.StreamNackMode.Fail = 1 -> Respire.StreamNackMode
+Respire.RespireStreamNackMode.Fail = 1 -> Respire.RespireStreamNackMode
+*REMOVED*Respire.StreamNackMode.Fatal = 2 -> Respire.StreamNackMode
+Respire.RespireStreamNackMode.Fatal = 2 -> Respire.RespireStreamNackMode
+*REMOVED*Respire.StreamNackMode.Silent = 0 -> Respire.StreamNackMode
+Respire.RespireStreamNackMode.Silent = 0 -> Respire.RespireStreamNackMode
+*REMOVED*override Respire.BitFieldEncoding.GetHashCode() -> int
+override Respire.RespireBitFieldEncoding.GetHashCode() -> int
+*REMOVED*override Respire.BitFieldOffset.GetHashCode() -> int
+override Respire.RespireBitFieldOffset.GetHashCode() -> int
+*REMOVED*override Respire.GeoEntry.GetHashCode() -> int
+override Respire.RespireGeoEntry.GetHashCode() -> int
+*REMOVED*override Respire.GeoPosition.GetHashCode() -> int
+override Respire.RespireGeoPosition.GetHashCode() -> int
+*REMOVED*override Respire.SortedSetEntry.GetHashCode() -> int
+override Respire.RespireSortedSetEntry.GetHashCode() -> int
+*REMOVED*override Respire.SortedSetEntry<T>.GetHashCode() -> int
+override Respire.RespireSortedSetEntry<T>.GetHashCode() -> int
+*REMOVED*override Respire.StreamAddOptions.GetHashCode() -> int
+override Respire.RespireStreamAddOptions.GetHashCode() -> int
+*REMOVED*static Respire.BitFieldEncoding.Signed(int width) -> Respire.BitFieldEncoding
+static Respire.RespireBitFieldEncoding.Signed(int width) -> Respire.RespireBitFieldEncoding
+*REMOVED*static Respire.BitFieldEncoding.Unsigned(int width) -> Respire.BitFieldEncoding
+static Respire.RespireBitFieldEncoding.Unsigned(int width) -> Respire.RespireBitFieldEncoding
+*REMOVED*static Respire.BitFieldEncoding.operator !=(Respire.BitFieldEncoding left, Respire.BitFieldEncoding right) -> bool
+static Respire.RespireBitFieldEncoding.operator !=(Respire.RespireBitFieldEncoding left, Respire.RespireBitFieldEncoding right) -> bool
+*REMOVED*static Respire.BitFieldEncoding.operator ==(Respire.BitFieldEncoding left, Respire.BitFieldEncoding right) -> bool
+static Respire.RespireBitFieldEncoding.operator ==(Respire.RespireBitFieldEncoding left, Respire.RespireBitFieldEncoding right) -> bool
+*REMOVED*static Respire.BitFieldOffset.Bits(long offset) -> Respire.BitFieldOffset
+static Respire.RespireBitFieldOffset.Bits(long offset) -> Respire.RespireBitFieldOffset
+*REMOVED*static Respire.BitFieldOffset.Fields(long index) -> Respire.BitFieldOffset
+static Respire.RespireBitFieldOffset.Fields(long index) -> Respire.RespireBitFieldOffset
+*REMOVED*static Respire.BitFieldOffset.operator !=(Respire.BitFieldOffset left, Respire.BitFieldOffset right) -> bool
+static Respire.RespireBitFieldOffset.operator !=(Respire.RespireBitFieldOffset left, Respire.RespireBitFieldOffset right) -> bool
+*REMOVED*static Respire.BitFieldOffset.operator ==(Respire.BitFieldOffset left, Respire.BitFieldOffset right) -> bool
+static Respire.RespireBitFieldOffset.operator ==(Respire.RespireBitFieldOffset left, Respire.RespireBitFieldOffset right) -> bool
+*REMOVED*static Respire.BitFieldOperation.Get(Respire.BitFieldEncoding encoding, Respire.BitFieldOffset offset) -> Respire.BitFieldOperation
+static Respire.RespireBitFieldOperation.Get(Respire.RespireBitFieldEncoding encoding, Respire.RespireBitFieldOffset offset) -> Respire.RespireBitFieldOperation
+*REMOVED*static Respire.BitFieldOperation.Increment(Respire.BitFieldEncoding encoding, Respire.BitFieldOffset offset, long by) -> Respire.BitFieldOperation
+static Respire.RespireBitFieldOperation.Increment(Respire.RespireBitFieldEncoding encoding, Respire.RespireBitFieldOffset offset, long by) -> Respire.RespireBitFieldOperation
+*REMOVED*static Respire.BitFieldOperation.Set(Respire.BitFieldEncoding encoding, Respire.BitFieldOffset offset, long value) -> Respire.BitFieldOperation
+static Respire.RespireBitFieldOperation.Set(Respire.RespireBitFieldEncoding encoding, Respire.RespireBitFieldOffset offset, long value) -> Respire.RespireBitFieldOperation
+*REMOVED*static Respire.BitFieldOperation.SetOverflow(Respire.BitFieldOverflow overflow) -> Respire.BitFieldOperation
+static Respire.RespireBitFieldOperation.SetOverflow(Respire.RespireBitFieldOverflow overflow) -> Respire.RespireBitFieldOperation
+*REMOVED*static Respire.GeoEntry.operator !=(Respire.GeoEntry left, Respire.GeoEntry right) -> bool
+static Respire.RespireGeoEntry.operator !=(Respire.RespireGeoEntry left, Respire.RespireGeoEntry right) -> bool
+*REMOVED*static Respire.GeoEntry.operator ==(Respire.GeoEntry left, Respire.GeoEntry right) -> bool
+static Respire.RespireGeoEntry.operator ==(Respire.RespireGeoEntry left, Respire.RespireGeoEntry right) -> bool
+*REMOVED*static Respire.GeoPosition.operator !=(Respire.GeoPosition left, Respire.GeoPosition right) -> bool
+static Respire.RespireGeoPosition.operator !=(Respire.RespireGeoPosition left, Respire.RespireGeoPosition right) -> bool
+*REMOVED*static Respire.GeoPosition.operator ==(Respire.GeoPosition left, Respire.GeoPosition right) -> bool
+static Respire.RespireGeoPosition.operator ==(Respire.RespireGeoPosition left, Respire.RespireGeoPosition right) -> bool
+*REMOVED*static Respire.GeoSearchShape.Box(double width, double height, Respire.GeoUnit unit = Respire.GeoUnit.Meters) -> Respire.GeoSearchShape
+static Respire.RespireGeoSearchShape.Box(double width, double height, Respire.RespireGeoUnit unit = Respire.RespireGeoUnit.Meters) -> Respire.RespireGeoSearchShape
+*REMOVED*static Respire.GeoSearchShape.Circle(double radius, Respire.GeoUnit unit = Respire.GeoUnit.Meters) -> Respire.GeoSearchShape
+static Respire.RespireGeoSearchShape.Circle(double radius, Respire.RespireGeoUnit unit = Respire.RespireGeoUnit.Meters) -> Respire.RespireGeoSearchShape
+*REMOVED*static Respire.SortedSetEntry.operator !=(Respire.SortedSetEntry left, Respire.SortedSetEntry right) -> bool
+static Respire.RespireSortedSetEntry.operator !=(Respire.RespireSortedSetEntry left, Respire.RespireSortedSetEntry right) -> bool
+*REMOVED*static Respire.SortedSetEntry.operator ==(Respire.SortedSetEntry left, Respire.SortedSetEntry right) -> bool
+static Respire.RespireSortedSetEntry.operator ==(Respire.RespireSortedSetEntry left, Respire.RespireSortedSetEntry right) -> bool
+*REMOVED*static Respire.SortedSetEntry<T>.operator !=(Respire.SortedSetEntry<T> left, Respire.SortedSetEntry<T> right) -> bool
+static Respire.RespireSortedSetEntry<T>.operator !=(Respire.RespireSortedSetEntry<T> left, Respire.RespireSortedSetEntry<T> right) -> bool
+*REMOVED*static Respire.SortedSetEntry<T>.operator ==(Respire.SortedSetEntry<T> left, Respire.SortedSetEntry<T> right) -> bool
+static Respire.RespireSortedSetEntry<T>.operator ==(Respire.RespireSortedSetEntry<T> left, Respire.RespireSortedSetEntry<T> right) -> bool
+*REMOVED*static Respire.StreamAddOptions.operator !=(Respire.StreamAddOptions left, Respire.StreamAddOptions right) -> bool
+static Respire.RespireStreamAddOptions.operator !=(Respire.RespireStreamAddOptions left, Respire.RespireStreamAddOptions right) -> bool
+*REMOVED*static Respire.StreamAddOptions.operator ==(Respire.StreamAddOptions left, Respire.StreamAddOptions right) -> bool
+static Respire.RespireStreamAddOptions.operator ==(Respire.RespireStreamAddOptions left, Respire.RespireStreamAddOptions right) -> bool
+*REMOVED*~override Respire.BitFieldEncoding.Equals(object obj) -> bool
+~override Respire.RespireBitFieldEncoding.Equals(object obj) -> bool
+*REMOVED*~override Respire.BitFieldEncoding.ToString() -> string
+~override Respire.RespireBitFieldEncoding.ToString() -> string
+*REMOVED*~override Respire.BitFieldOffset.Equals(object obj) -> bool
+~override Respire.RespireBitFieldOffset.Equals(object obj) -> bool
+*REMOVED*~override Respire.BitFieldOffset.ToString() -> string
+~override Respire.RespireBitFieldOffset.ToString() -> string
+*REMOVED*~override Respire.GeoEntry.Equals(object obj) -> bool
+~override Respire.RespireGeoEntry.Equals(object obj) -> bool
+*REMOVED*~override Respire.GeoEntry.ToString() -> string
+~override Respire.RespireGeoEntry.ToString() -> string
+*REMOVED*~override Respire.GeoPosition.Equals(object obj) -> bool
+~override Respire.RespireGeoPosition.Equals(object obj) -> bool
+*REMOVED*~override Respire.GeoPosition.ToString() -> string
+~override Respire.RespireGeoPosition.ToString() -> string
+*REMOVED*~override Respire.SortedSetEntry.Equals(object obj) -> bool
+~override Respire.RespireSortedSetEntry.Equals(object obj) -> bool
+*REMOVED*~override Respire.SortedSetEntry.ToString() -> string
+~override Respire.RespireSortedSetEntry.ToString() -> string
+*REMOVED*~override Respire.SortedSetEntry<T>.Equals(object obj) -> bool
+~override Respire.RespireSortedSetEntry<T>.Equals(object obj) -> bool
+*REMOVED*~override Respire.SortedSetEntry<T>.ToString() -> string
+~override Respire.RespireSortedSetEntry<T>.ToString() -> string
+*REMOVED*~override Respire.StreamAddOptions.Equals(object obj) -> bool
+~override Respire.RespireStreamAddOptions.Equals(object obj) -> bool
+*REMOVED*~override Respire.StreamAddOptions.ToString() -> string
+~override Respire.RespireStreamAddOptions.ToString() -> string

@@ -90,7 +90,7 @@ public class SortedSetAlgebraCommandTests
 
         await Assert.That(byRank).IsEquivalentTo(new[] { 7, 9 });
         await Assert.That(byScore).IsEquivalentTo(new[] { 7, 9 });
-        var expected = new[] { new SortedSetEntry<int>(7, 1.5), new SortedSetEntry<int>(9, 2) };
+        var expected = new[] { new RespireSortedSetEntry<int>(7, 1.5), new RespireSortedSetEntry<int>(9, 2) };
         await Assert.That(rankScores).IsEquivalentTo(expected);
         await Assert.That(scoreEntries).IsEquivalentTo(expected);
         await Assert.That(popped).IsEquivalentTo(expected);
@@ -125,7 +125,7 @@ public class SortedSetAlgebraCommandTests
 
         await Assert.That(byRank.Result).IsEquivalentTo(new[] { 7, 9 });
         await Assert.That(byScore.Result).IsEquivalentTo(new[] { 7, 9 });
-        var expected = new[] { new SortedSetEntry<int>(7, 1.5), new SortedSetEntry<int>(9, 2) };
+        var expected = new[] { new RespireSortedSetEntry<int>(7, 1.5), new RespireSortedSetEntry<int>(9, 2) };
         await Assert.That(rankScores.Result).IsEquivalentTo(expected);
         await Assert.That(scoreEntries.Result).IsEquivalentTo(expected);
         await Assert.That(popped.Result).IsEquivalentTo(expected);

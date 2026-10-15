@@ -44,13 +44,13 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
             using (var seed = view.CreateBatch())
             {
                 for (var id = 1; id <= 300; id++)
-                    _ = seed.Streams.Add(key, new StreamAddOptions { Id = $"{id}-0" }, ("value", id));
+                    _ = seed.Streams.Add(key, new RespireStreamAddOptions { Id = $"{id}-0" }, ("value", id));
                 await seed.ExecuteAsync();
             }
             var trim = new StreamTrimOptions { MaxLength = minId ? null : 150,
                 MinId = minId ? new RespireStreamId("151-0") : (RespireStreamId?)null, Approximate = approximate,
                 Limit = approximate ? 0 : null };
-            var add = new StreamAddOptions { Id = "301-0", MaxLength = minId ? null : 200,
+            var add = new RespireStreamAddOptions { Id = "301-0", MaxLength = minId ? null : 200,
                 MinId = minId ? new RespireStreamId("101-0") : (RespireStreamId?)null, ApproximateTrim = approximate,
                 Limit = approximate ? 1000 : null };
             long removed, countBeforeTrim;

@@ -11,13 +11,13 @@ Basic geo commands require Redis 3.2+; `SearchAsync` and `SearchStoreAsync` requ
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379");
 long added = await redis.Geo.AddAsync("{places}:cafes",
-    new GeoEntry(-0.1276, 51.5072, "london"),
-    new GeoEntry(-0.1419, 51.5014, "westminster"));
+    new RespireGeoEntry(-0.1276, 51.5072, "london"),
+    new RespireGeoEntry(-0.1419, 51.5014, "westminster"));
 
 GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     "{places}:cafes",
     GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
-    GeoSearchShape.Circle(10, GeoUnit.Kilometers),
+    RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers),
     new GeoSearchOptions
     {
         Sort = GeoSortOrder.Ascending,
@@ -27,7 +27,7 @@ GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     });
 ```
 
-`GeoSearchOrigin.FromMember` searches around an existing member. Use `GeoSearchShape.Box`
+`GeoSearchOrigin.FromMember` searches around an existing member. Use `RespireGeoSearchShape.Box`
 for a rectangular area. `Count` limits results and must be positive. `Any = true`
 requires `Count` and `Sort = GeoSortOrder.Unsorted`; it cannot be combined with the
 ascending sort in the example above. It lets the server stop early, so it does not
@@ -40,7 +40,7 @@ guarantee the nearest matches. Distance uses the search shape's unit.
 | `AddAsync` | GEOADD | Number of newly added members; `GeoAddOptions.Changed` includes updated members |
 | `DistanceAsync` | GEODIST | Distance, or `null` when either member is absent |
 | `HashAsync` | GEOHASH | One geohash string per member, with `null` for missing members |
-| `PositionAsync` | GEOPOS | One nullable `GeoPosition` per member |
+| `PositionAsync` | GEOPOS | One nullable `RespireGeoPosition` per member |
 | `SearchAsync` | GEOSEARCH | Members and requested distance, hash, and coordinate details |
 | `SearchStoreAsync` | GEOSEARCHSTORE | Number of members stored at the destination |
 
@@ -55,7 +55,7 @@ await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379
 long stored = await redis.Geo.SearchStoreAsync(
     "{places}:nearby", "{places}:cafes",
     GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
-    GeoSearchShape.Circle(10, GeoUnit.Kilometers));
+    RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers));
 await redis.SortedSets.RemoveAsync("{places}:cafes", "london");
 ```
 

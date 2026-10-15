@@ -3384,7 +3384,7 @@ public class ClusterTests
             transaction => transaction.HyperLogLog.Count("foo", "bar"),
             transaction => transaction.HyperLogLog.Merge("foo", "bar"),
             transaction => transaction.Geo.SearchStore(
-                "foo", "bar", GeoSearchOrigin.FromMember("member"), GeoSearchShape.Circle(1)),
+                "foo", "bar", GeoSearchOrigin.FromMember("member"), RespireGeoSearchShape.Circle(1)),
         ];
 
         foreach (var queueCommand in queueCommands)

@@ -77,17 +77,17 @@ public class StandaloneCommandRetryTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
         if (name == "GEOSEARCH")
             await Assert.That((await client.Geo.SearchAsync("places", GeoSearchOrigin.FromMember("origin"),
-                GeoSearchShape.Circle(1)))[0].Member).IsEqualTo("one");
+                RespireGeoSearchShape.Circle(1)))[0].Member).IsEqualTo("one");
         else
             await Assert.That((await client.Bitmaps.FieldReadOnlyAsync("bits",
-                BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))))[0]).IsEqualTo(7L);
+                RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))))[0]).IsEqualTo(7L);
         await Assert.That(reads).IsEqualTo(2);
     }
 
     [Test]
     public async Task SpecializedTypedCommandsForwardAuditedRetryCategories()
     {
-        var get = BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0));
+        var get = RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0));
         await Assert.That(new BitFieldCommand(RespireCommands.Bitmap.BITFIELD_RO.Verb, "bits", [get]).RetryCategory)
             .IsEqualTo(RespireCommandRetryCategory.ReadOnly);
         await Assert.That(new BitFieldCommand(RespireCommands.Bitmap.BITFIELD.Verb, "bits", [get]).RetryCategory)

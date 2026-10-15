@@ -87,7 +87,7 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
             await SeedAsync(view, 3);
             await view.Streams.AcknowledgeAsync("events", "a", "1-0", "2-0");
             await view.Streams.AcknowledgeAsync("events", "b", "1-0");
-            var add = new StreamAddOptions { Id = "4-0", MinId = "4-0", ApproximateTrim = false, ReferencePolicy = policy };
+            var add = new RespireStreamAddOptions { Id = "4-0", MinId = "4-0", ApproximateTrim = false, ReferencePolicy = policy };
             var trim = new StreamTrimOptions { MaxLength = 0, ReferencePolicy = policy };
             long removed = 0;
             if (surface == 0)
@@ -152,10 +152,10 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
         var key = $"reference-no-groups:{Guid.NewGuid():N}";
         try
         {
-            await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             (await client.Streams.RemoveAsync(key, StreamReferencePolicy.Acknowledged, "1-0"))
                 .Should().Equal(RespireStreamDeletionResult.Deleted);
-            await client.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("f", "v"));
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "v"));
             (await client.Streams.TrimAsync(key, new() { MaxLength = 0, ReferencePolicy = StreamReferencePolicy.Acknowledged }))
                 .Should().Be(1);
         }
@@ -165,7 +165,7 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     private static async Task SeedAsync(IRespireClient view, int count)
     {
         for (var id = 1; id <= count; id++)
-            await view.Streams.AddAsync("events", new StreamAddOptions { Id = $"{id}-0" }, ("f", "v"));
+            await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{id}-0" }, ("f", "v"));
         foreach (var group in new[] { "a", "b" })
         {
             await view.Streams.CreateGroupAsync("events", group, RespireStreamId.Beginning);
@@ -190,12 +190,12 @@ public class LegacyStreamReferenceIntegrationTests(RedisTestContainer fixture)
         var key = $"legacy-references:{Guid.NewGuid():N}";
         try
         {
-            await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             Func<Task>[] unsupported =
             [
                 async () => await client.Streams.RemoveAsync(key, StreamReferencePolicy.KeepReferences, "1-0"),
                 async () => await client.Streams.AcknowledgeAndRemoveAsync(key, "g", StreamReferencePolicy.DeleteReferences, "1-0"),
-                async () => await client.Streams.AddAsync(key, new StreamAddOptions { ReferencePolicy = StreamReferencePolicy.KeepReferences }, ("f", "v")),
+                async () => await client.Streams.AddAsync(key, new RespireStreamAddOptions { ReferencePolicy = StreamReferencePolicy.KeepReferences }, ("f", "v")),
                 async () => await client.Streams.TrimAsync(key, new() { MaxLength = 0, ReferencePolicy = StreamReferencePolicy.KeepReferences }),
             ];
             foreach (var action in unsupported) await action.Should().ThrowAsync<RespireServerException>();

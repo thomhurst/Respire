@@ -31,7 +31,7 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
         {
             await client.Streams.AddAsync(key, ("f", "seed"));
             await client.Streams.ConfigureAsync(key, new() { IdempotencyDurationSeconds = 1 });
-            var options = new StreamAddOptions { Idempotency = StreamIdempotency.Manual("producer", "message") };
+            var options = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("producer", "message") };
             var first = await client.Streams.AddAsync(key, options, ("f", "v"));
             (await client.Streams.AddAsync(key, options, ("f", "duplicate"))).Should().Be(first);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -56,7 +56,7 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
             (fake ? server.CreateOptions() : RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol });
         var prefix = $"configuration:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
-        var identity = new StreamAddOptions { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 }) };
+        var identity = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 }) };
         try
         {
             var first = await view.Streams.AddAsync("s", identity, ("f", "first"));

@@ -27,7 +27,7 @@ public class MultiKeyListPopTests
         await using var transaction = transactional ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         RespireKey[] keys = ["missing", "key"];
-        var pending = queue.Lists.PopMany(keys, 2, ListSide.Right);
+        var pending = queue.Lists.PopMany(keys, 2, RespireListSide.Right);
         keys[1] = "changed";
         if (transaction is not null)
             await transaction.CommitAsync();
@@ -65,10 +65,10 @@ public class MultiKeyListPopTests
             async () => { await client.Lists.PopManyAsync([]); },
             async () => { await client.Lists.PopManyAsync(["key"], 0); },
             async () => { await client.Lists.PopManyAsync(["key"], -1); },
-            async () => { await client.Lists.PopManyAsync(["key"], side: (ListSide)99); },
+            async () => { await client.Lists.PopManyAsync(["key"], side: (RespireListSide)99); },
             async () => { await client.Lists.PopManyAsync(["key"], waitFor: TimeSpan.FromSeconds(-2)); },
             async () => { await client.Lists.PopAsync([], TimeSpan.Zero); },
-            async () => { await client.Lists.PopAsync(["key"], TimeSpan.Zero, (ListSide)99); },
+            async () => { await client.Lists.PopAsync(["key"], TimeSpan.Zero, (RespireListSide)99); },
             async () => { await client.Lists.PopAsync(["key"], TimeSpan.FromSeconds(-2)); },
         ];
         foreach (var command in invalid)
@@ -80,7 +80,7 @@ public class MultiKeyListPopTests
             await Assert.That(() => lists.PopMany([])).Throws<ArgumentException>();
             await Assert.That(() => lists.PopMany(["key"], 0)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => lists.PopMany(["key"], -1)).Throws<ArgumentOutOfRangeException>();
-            await Assert.That(() => lists.PopMany(["key"], side: (ListSide)99)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => lists.PopMany(["key"], side: (RespireListSide)99)).Throws<ArgumentOutOfRangeException>();
         }
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
@@ -148,7 +148,7 @@ public class MultiKeyListPopTests
         RespireKey[] keys = ["{lists}:first", "{lists}:second"];
         RespireKey returned;
         if (scalar)
-            returned = (await view.Lists.PopAsync(keys, TimeSpan.FromSeconds(1), path == "one-left" ? ListSide.Left : ListSide.Right))!.Value.Key;
+            returned = (await view.Lists.PopAsync(keys, TimeSpan.FromSeconds(1), path == "one-left" ? RespireListSide.Left : RespireListSide.Right))!.Value.Key;
         else if (path is "immediate" or "many-blocking")
             returned = (await (path == "many-blocking" ? view.Lists.PopManyAsync(keys, waitFor: TimeSpan.FromSeconds(1)) : view.Lists.PopManyAsync(keys)))!.Value.Key;
         else if (path == "batch")
@@ -206,7 +206,7 @@ public class MultiKeyListPopTests
         await using var server = new FakeRespServer(2, "*-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(await client.Lists.PopManyAsync(["key"], waitFor: TimeSpan.Zero)).IsNull();
-        await Assert.That(await client.Lists.PopAsync(["key"], TimeSpan.Zero, ListSide.Right)).IsNull();
+        await Assert.That(await client.Lists.PopAsync(["key"], TimeSpan.Zero, RespireListSide.Right)).IsNull();
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             ["BLMPOP 0.001 1 key LEFT COUNT 1", "BRPOP key 0.001"], CollectionOrdering.Matching);

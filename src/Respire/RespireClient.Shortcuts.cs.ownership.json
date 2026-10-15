@@ -9,7 +9,7 @@
         "DeleteAsync(RespireKey,CancellationToken):ValueTask<long>",
         "DeleteAsync(params ReadOnlySpan<RespireKey>):ValueTask<long>",
         "ExistsAsync(RespireKey,CancellationToken):ValueTask<bool>",
-        "ExpireAsync(RespireKey,RespireExpiry,ExpireWhen,CancellationToken):ValueTask<bool>",
+        "ExpireAsync(RespireKey,RespireExpiry,RespireExpireWhen,CancellationToken):ValueTask<bool>",
         "GetAsync`1(RespireKey,CancellationToken):ValueTask<T?>",
         "GetBytesAsync(RespireKey,CancellationToken):ValueTask<byte[]?>",
         "GetStringAsync(RespireKey,CancellationToken):ValueTask<string?>",

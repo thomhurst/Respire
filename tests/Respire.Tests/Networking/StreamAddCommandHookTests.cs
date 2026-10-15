@@ -94,7 +94,7 @@ public class StreamAddCommandHookTests
         await using var server = Server();
         var hook = new RecordingHook();
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, automatic: false));
-        var options = new StreamAddOptions
+        var options = new RespireStreamAddOptions
         {
             Idempotency = explicitIdentity ? StreamIdempotency.Manual("producer", "message") : null,
         };
@@ -198,7 +198,7 @@ public class StreamAddCommandHookTests
 
     private static async Task<RespireStreamId?> Add(RespireClient client, bool optional, CancellationToken token = default)
         => optional
-            ? await client.Streams.AddAsync("s", new StreamAddOptions { CreateStream = false }, ("f", "v"), token)
+            ? await client.Streams.AddAsync("s", new RespireStreamAddOptions { CreateStream = false }, ("f", "v"), token)
             : await client.Streams.AddAsync("s", ("f", "v"), token);
 
     private static FakeRespServer Server() => new(64, FakeRespServer.OkReply)

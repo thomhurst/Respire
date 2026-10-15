@@ -30,10 +30,10 @@ public interface IBatchBitmapCommands
         BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
 
     /// <summary>Runs bit-field operations in order. Redis: BITFIELD.</summary>
-    RespirePending<long?[]> Field(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations);
+    RespirePending<long?[]> Field(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> operations);
 
     /// <summary>Runs read-only bit-field GETs. Redis: BITFIELD_RO.</summary>
-    RespirePending<long?[]> FieldReadOnly(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets);
+    RespirePending<long?[]> FieldReadOnly(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> gets);
 }
 
 internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapCommands
@@ -102,15 +102,15 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
             static (c, v) => ResponseReader.Integer(in v));
     }
 
-    public RespirePending<long?[]> Field(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations)
+    public RespirePending<long?[]> Field(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> operations)
         => FieldCore(RespireCommands.Bitmap.BITFIELD, "BITFIELD", key, operations, readOnly: false);
 
-    public RespirePending<long?[]> FieldReadOnly(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets)
+    public RespirePending<long?[]> FieldReadOnly(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> gets)
         => FieldCore(RespireCommands.Bitmap.BITFIELD_RO, "BITFIELD_RO", key, gets, readOnly: true);
 
     private RespirePending<long?[]> FieldCore(
         RespireCommand command, string operation, RespireKey key,
-        ReadOnlySpan<BitFieldOperation> operations, bool readOnly)
+        ReadOnlySpan<RespireBitFieldOperation> operations, bool readOnly)
     {
         BitmapCommands.ValidateFieldOperations(operations, readOnly);
         return sink.Add<BitFieldCommand, long?[]>(

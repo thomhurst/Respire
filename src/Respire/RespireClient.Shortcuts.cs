@@ -81,7 +81,7 @@ public sealed partial class RespireClient
     public ValueTask<bool> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when = ExpireWhen.Always,
+        RespireExpireWhen when = RespireExpireWhen.Always,
         CancellationToken cancellationToken = default)
         => Keys.ExpireAsync(key, expiry, when, cancellationToken);
 }

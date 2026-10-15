@@ -120,10 +120,10 @@ public class SetSortedSetCoverageTests
 
         await Assert.That(minimum).IsEquivalentTo(new[]
         {
-            new SortedSetEntry("one", 1.5),
-            new SortedSetEntry("two", 2),
+            new RespireSortedSetEntry("one", 1.5),
+            new RespireSortedSetEntry("two", 2),
         });
-        await Assert.That(maximum).IsEquivalentTo(new[] { new SortedSetEntry("three", 3.5) });
+        await Assert.That(maximum).IsEquivalentTo(new[] { new RespireSortedSetEntry("three", 3.5) });
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             "ZPOPMIN scores 2",
@@ -191,7 +191,7 @@ public class SetSortedSetCoverageTests
 
         await Assert.That(popped.Result).IsEquivalentTo(new[] { "one", "two" });
         await Assert.That(random.Result).IsEquivalentTo(new[] { "one", "one" });
-        await Assert.That(sorted.Result).IsEquivalentTo(new[] { new SortedSetEntry("one", 1.5) });
+        await Assert.That(sorted.Result).IsEquivalentTo(new[] { new RespireSortedSetEntry("one", 1.5) });
         await Assert.That(byScore.Result).IsEqualTo(2);
         await Assert.That(byRank.Result).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]

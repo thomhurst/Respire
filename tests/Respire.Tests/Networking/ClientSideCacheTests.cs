@@ -656,7 +656,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "*1\r\n:7\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
-        var operation = BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0));
+        var operation = RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0));
 
         await Assert.That(await client.Bitmaps.FieldReadOnlyAsync("key", operation))
             .IsEquivalentTo((long?[])[7]);
@@ -678,13 +678,13 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply, "*1\r\n:42\r\n"u8.ToArray(),
             FakeRespServer.OkReply, "*1\r\n:63\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
-        BitFieldOperation[] operations =
+        RespireBitFieldOperation[] operations =
         [
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(1)),
-            BitFieldOperation.Get(BitFieldEncoding.Signed(8), BitFieldOffset.Bits(1)),
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(7), BitFieldOffset.Bits(1)),
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(1)),
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(2)),
+            RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(1)),
+            RespireBitFieldOperation.Get(RespireBitFieldEncoding.Signed(8), RespireBitFieldOffset.Bits(1)),
+            RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(7), RespireBitFieldOffset.Bits(1)),
+            RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Fields(1)),
+            RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(2)),
         ];
         long[] expected = [255, -1, 127, 42, 63];
 
@@ -715,12 +715,12 @@ public class ClientSideCacheTests
         await Assert.That((await client.Geo.SearchAsync(
             "places",
             GeoSearchOrigin.FromMember("origin"),
-            GeoSearchShape.Circle(1),
+            RespireGeoSearchShape.Circle(1),
             options))[0].Member).IsEqualTo("one");
         await Assert.That((await client.Geo.SearchAsync(
             "places",
             GeoSearchOrigin.FromMember("origin"),
-            GeoSearchShape.Circle(1),
+            RespireGeoSearchShape.Circle(1),
             options))[0].Member).IsEqualTo("two");
 
         await Assert.That(server.ReceivedCommands.Count(static command =>

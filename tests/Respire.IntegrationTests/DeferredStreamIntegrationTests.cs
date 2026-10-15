@@ -17,7 +17,7 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var prefix = $"deferred-stream:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
-        await view.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("value", "first"));
+        await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
         await view.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await foreach (var entry in view.Streams.ReadGroupAsync("events", "workers", "alice", cancellationToken: timeout.Token))
@@ -30,9 +30,9 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var state = queue.Set("state", "appended");
         byte[] payload = [0xff, 0, 0x80];
-        var explicitId = queue.Streams.Add("events", new StreamAddOptions { Id = "2-0" }, ("value", (RespireValue)payload));
+        var explicitId = queue.Streams.Add("events", new RespireStreamAddOptions { Id = "2-0" }, ("value", (RespireValue)payload));
         var automatic = queue.Streams.Add("events", ("value", "latest"));
-        var absent = queue.Streams.Add("missing", new StreamAddOptions { CreateStream = false }, ("value", "unused"));
+        var absent = queue.Streams.Add("missing", new RespireStreamAddOptions { CreateStream = false }, ("value", "unused"));
         var count = queue.Streams.Count("events");
         var entries = queue.Streams.Range("events", count: 2);
         var descending = queue.Streams.Range("events", count: 2, descending: true);

@@ -162,7 +162,7 @@ Multi-key pops return the selected key with its values, or `null` when no list h
 
 ```csharp
 RespireListPopManyResult? jobs = await redis.Lists.PopManyAsync(
-    ["{jobs}:urgent", "{jobs}:normal"], count: 10, side: ListSide.Left);
+    ["{jobs}:urgent", "{jobs}:normal"], count: 10, side: RespireListSide.Left);
 RespireListPopResult? job = await redis.Lists.PopAsync(
     ["{jobs}:urgent", "{jobs}:normal"], waitFor: TimeSpan.FromSeconds(5));
 if (job is { } popped)
@@ -187,8 +187,8 @@ Queued `Lists.PopMany(keys, count, side)` sends nonblocking LMPOP. Blocking pops
 ```csharp
 string[]? moved = await redis.Lists.MoveManyAsync(
     "{jobs}:ready", "{jobs}:processing", count: 10,
-    from: ListSide.Left, to: ListSide.Right,
-    countMode: ListMoveCountMode.Exactly, order: ListMoveOrder.Bulk,
+    from: RespireListSide.Left, to: RespireListSide.Right,
+    countMode: ListMoveCountMode.Exactly, order: RespireListMoveOrder.Bulk,
     waitFor: TimeSpan.FromSeconds(5));
 ```
 
@@ -280,7 +280,7 @@ SortedSetRank? position = await redis.SortedSets.RankWithScoreAsync("scores", "a
 - `IntersectCountAsync` (Redis 7+) returns only the cardinality. A nonnegative `limit` caps the count; zero means unlimited. It needs at least one key.
 
 ```csharp
-SortedSetEntry[] sample = await redis.SortedSets.RandomMembersWithScoresAsync("scores", 3);
+RespireSortedSetEntry[] sample = await redis.SortedSets.RandomMembersWithScoresAsync("scores", 3);
 long common = await redis.SortedSets.IntersectCountAsync(100, "{scores}:today", "{scores}:yesterday");
 var range = new RespireLexRange(RespireLexBound.Inclusive("a"), RespireLexBound.Exclusive("m"));
 long matches = await redis.SortedSets.CountByLexAsync("names", range);
@@ -294,12 +294,12 @@ await redis.SortedSets.AddAsync("scores", "ada", 98.5);
 await redis.SortedSets.AddAsync("scores", ("grace", 97.5), ("linus", 96.0));
 await redis.SortedSets.IncrementAsync("scores", "ada", 1.5);
 double?[] scores = await redis.SortedSets.ScoresManyAsync("scores", "ada", "missing");
-SortedSetEntry? next = await redis.SortedSets.PopAsync("ready:scores");
-SortedSetEntry[] nextBatch = await redis.SortedSets.PopManyAsync("ready:scores", count: 2);
-SortedSetEntry<int>[] nextPlayers = await redis.SortedSets.PopManyAsync<int>("player:scores", count: 2);
-SortedSetEntry<int>? highest = await redis.SortedSets.PopAsync<int>("player:scores", descending: true);
+RespireSortedSetEntry? next = await redis.SortedSets.PopAsync("ready:scores");
+RespireSortedSetEntry[] nextBatch = await redis.SortedSets.PopManyAsync("ready:scores", count: 2);
+RespireSortedSetEntry<int>[] nextPlayers = await redis.SortedSets.PopManyAsync<int>("player:scores", count: 2);
+RespireSortedSetEntry<int>? highest = await redis.SortedSets.PopAsync<int>("player:scores", descending: true);
 
-SortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(
+RespireSortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(
     "scores",
     start: 0,
     stop: 9,
@@ -308,7 +308,7 @@ SortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(
 var finalists = new RespireScoreRange(
     RespireScoreBound.Exclusive(90),
     RespireScoreBound.Max);
-SortedSetEntry[] page = await redis.SortedSets.RangeByScoreWithScoresAsync(
+RespireSortedSetEntry[] page = await redis.SortedSets.RangeByScoreWithScoresAsync(
     "scores",
     finalists,
     offset: 0,
@@ -328,18 +328,18 @@ string[] combined = await redis.SortedSets.UnionAsync("regional:uk", "regional:e
 long combinedCount = await redis.SortedSets.UnionStoreAsync(
     "regional:all", "regional:uk", "regional:eu");
 
-SortedSetEntry<int>[] players =
+RespireSortedSetEntry<int>[] players =
     await redis.SortedSets.RangeWithScoresAsync<int>("player:scores", descending: true);
 ```
 
 - Score and lex bounds are inclusive by default. Use `Exclusive(...)` for an open bound, and `Min` / `Max` for infinity.
 - `offset` requires `count`, because Redis sends them together as `LIMIT offset count`.
 - Intersection, union, and difference each have read and `Store` forms.
-- Typed rank ranges, score ranges, and pops return `SortedSetEntry<T>`, keeping scores.
+- Typed rank ranges, score ranges, and pops return `RespireSortedSetEntry<T>`, keeping scores.
 
 ### Binary members
 
-Bulk adds take `(RespireValue Member, double Score)` tuples. Members can be text, numbers, or bytes. `SortedSetEntry` is a read result, not an input.
+Bulk adds take `(RespireValue Member, double Score)` tuples. Members can be text, numbers, or bytes. `RespireSortedSetEntry` is a read result, not an input.
 
 Byte members borrow your memory. In batches and transactions, keep them unchanged until `ExecuteAsync` or `CommitAsync` completes, or copy first, for example `(buffer.ToArray(), score)`.
 
@@ -356,7 +356,7 @@ await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
 
 ### Idempotent production (Redis 8.6+)
 
-Set `StreamAddOptions.Idempotency` to deduplicate appends:
+Set `RespireStreamAddOptions.Idempotency` to deduplicate appends:
 
 - `StreamIdempotency.Manual(producerId, messageId)` sends IDMP.
 - `StreamIdempotency.Automatic(producerId)` sends IDMPAUTO and derives the identity from the field/value payload.
@@ -364,7 +364,7 @@ Set `StreamAddOptions.Idempotency` to deduplicate appends:
 Null keeps ordinary XADD. Both modes need an automatic entry ID (`Id = null` or `"*"`) and nonempty identifiers. Factories copy binary identifiers, which are never key-prefixed. Equality compares the mode and identifier bytes.
 
 ```csharp
-var options = new StreamAddOptions
+var options = new RespireStreamAddOptions
 {
     Idempotency = StreamIdempotency.Manual("orders-producer", "event-42"),
 };
@@ -412,7 +412,7 @@ bool configured = await redis.Streams.ConfigureAsync("orders", new StreamConfigu
 
 `NegativeAcknowledgeAsync` runs [XNACK](https://redis.io/docs/latest/commands/xnack/). It releases pending entries from their consumers without acknowledging or deleting them, so they are claimable at once.
 
-| `StreamNackMode` | Delivery count |
+| `RespireStreamNackMode` | Delivery count |
 |---|---|
 | `Silent` | Decremented, stopping at zero. |
 | `Fail` | Unchanged. |
@@ -420,7 +420,7 @@ bool configured = await redis.Streams.ConfigureAsync("orders", new StreamConfigu
 
 ```csharp
 long released = await redis.Streams.NegativeAcknowledgeAsync(
-    "orders", "workers", StreamNackMode.Fail, "1710000000000-0");
+    "orders", "workers", RespireStreamNackMode.Fail, "1710000000000-0");
 ```
 
 - The result is Redis's total count, not per-ID outcomes. Duplicate IDs count repeatedly.
@@ -433,13 +433,13 @@ long released = await redis.Streams.NegativeAcknowledgeAsync(
 
 ### Trimming
 
-`StreamAddOptions.MinId` or `MaxLength` trims while appending. `Streams.TrimAsync` with `StreamTrimOptions` trims an existing stream and returns the number of entries removed.
+`RespireStreamAddOptions.MinId` or `MaxLength` trims while appending. `Streams.TrimAsync` with `StreamTrimOptions` trims an existing stream and returns the number of entries removed.
 
 - `MinId` removes entries with lower IDs. `MaxLength` keeps the newest entries up to that length.
 - The two thresholds are mutually exclusive. `TrimAsync` requires one; `AddAsync` does not trim without one.
 
 ```csharp
-await redis.Streams.AddAsync("events", new StreamAddOptions
+await redis.Streams.AddAsync("events", new RespireStreamAddOptions
 {
     MinId = "1700000000000-0", Limit = 1000,
 }, ("type", "updated"));
@@ -452,7 +452,7 @@ long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
 
 | Option | Default | Meaning |
 |---|---|---|
-| `StreamAddOptions.ApproximateTrim` | `true` | Approximate trimming removes whole internal nodes and can keep entries past the threshold. |
+| `RespireStreamAddOptions.ApproximateTrim` | `true` | Approximate trimming removes whole internal nodes and can keep entries past the threshold. |
 | `StreamTrimOptions.Approximate` | `false` | Same, for `TrimAsync`. `TrimByMaxLengthAsync` also defaults to exact. |
 | `Limit` | null (server default) | Caps trimming work, not the removed count. Only valid with approximate trimming and a threshold. `0` disables the cap. |
 
@@ -464,7 +464,7 @@ long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
 
 ### Reference-aware removal (Redis 8.2+)
 
-`StreamReferencePolicy` controls pending-entry references for XDELEX, XACKDEL, and trimming (`StreamAddOptions.ReferencePolicy`, `StreamTrimOptions.ReferencePolicy`). Null omits the token, which works on older servers. Any explicit policy, including `KeepReferences`, requires Redis 8.2+.
+`StreamReferencePolicy` controls pending-entry references for XDELEX, XACKDEL, and trimming (`RespireStreamAddOptions.ReferencePolicy`, `StreamTrimOptions.ReferencePolicy`). Null omits the token, which works on older servers. Any explicit policy, including `KeepReferences`, requires Redis 8.2+.
 
 | Policy | Wire token | Effect |
 |---|---|---|
@@ -691,26 +691,26 @@ long active = await redis.Bitmaps.SetBitCountAsync("active:2026-08-09");
 long? firstActive = await redis.Bitmaps.PositionAsync("active:2026-08-09", true);
 long?[] bytes = await redis.Bitmaps.FieldReadOnlyAsync(
     "packed:counters",
-    BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(2)));
+    RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Fields(2)));
 long?[] updated = await redis.Bitmaps.FieldAsync(
     "packed:counters",
-    BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(16), 10),
-    BitFieldOperation.Increment(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(2), 1));
+    RespireBitFieldOperation.Set(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(16), 10),
+    RespireBitFieldOperation.Increment(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Fields(2), 1));
 
 await redis.HyperLogLog.AddAsync("visitors", sessionId);
 long estimate = await redis.HyperLogLog.CountAsync("visitors");
 
-await redis.Geo.AddAsync("cafes", new GeoEntry(-0.1276, 51.5072, "london"));
+await redis.Geo.AddAsync("cafes", new RespireGeoEntry(-0.1276, 51.5072, "london"));
 GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     "cafes",
     GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
-    GeoSearchShape.Circle(10, GeoUnit.Kilometers));
+    RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers));
 ```
 
 BITFIELD types:
 
-- `BitFieldEncoding.Signed(width)` takes 1–64 bits; `Unsigned(width)` takes 1–63.
-- `BitFieldOffset.Bits(n)` is an absolute bit offset. `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both reject negative values. The default offset is bit zero.
+- `RespireBitFieldEncoding.Signed(width)` takes 1–64 bits; `Unsigned(width)` takes 1–63.
+- `RespireBitFieldOffset.Bits(n)` is an absolute bit offset. `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both reject negative values. The default offset is bit zero.
 - `Get`, `Set`, and `Increment` accept these types. `FieldReadOnlyAsync` accepts only `Get`.
 
 For vector similarity, use the [VectorSets facet](../guides/vector-sets.md). For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands.md).

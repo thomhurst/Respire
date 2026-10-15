@@ -40,12 +40,12 @@ slot after prefixing. Member bit offsets are unaffected by key prefixes.
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379");
-var encoding = BitFieldEncoding.Unsigned(8);
-var offset = BitFieldOffset.Fields(0);
+var encoding = RespireBitFieldEncoding.Unsigned(8);
+var offset = RespireBitFieldOffset.Fields(0);
 long?[] results = await redis.Bitmaps.FieldAsync("counters",
-    BitFieldOperation.SetOverflow(BitFieldOverflow.Fail),
-    BitFieldOperation.Increment(encoding, offset, 1),
-    BitFieldOperation.Get(encoding, offset));
+    RespireBitFieldOperation.SetOverflow(RespireBitFieldOverflow.Fail),
+    RespireBitFieldOperation.Increment(encoding, offset, 1),
+    RespireBitFieldOperation.Get(encoding, offset));
 ```
 
 Use `Signed(1..64)` or `Unsigned(1..63)` for the encoding. `Bits(n)` is an absolute bit

@@ -133,7 +133,7 @@ public partial interface IBatchHashCommands
 
     /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     RespirePending<HashFieldExpiryResult[]> Expire(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
     RespirePending<string?[]> GetAndRemove(RespireKey key, params ReadOnlySpan<string> fields);
@@ -337,14 +337,14 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
 
     public RespirePending<HashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => Expire(key, expiry, ExpireWhen.Always, fields);
+        => Expire(key, expiry, RespireExpireWhen.Always, fields);
 
     public RespirePending<HashFieldExpiryResult[]> Expire(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields)
     {
         if (expiry.IsPersist)
         {
-            if (when != ExpireWhen.Always)
+            if (when != RespireExpireWhen.Always)
             {
                 throw new ArgumentException("HPERSIST does not support NX, XX, GT, or LT.", nameof(when));
             }
@@ -429,7 +429,7 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
         Verb verb,
         RespireKey key,
         long value,
-        ExpireWhen when,
+        RespireExpireWhen when,
         ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, HashFieldExpiryResult[]>(
             operation,

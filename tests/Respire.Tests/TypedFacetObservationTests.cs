@@ -48,7 +48,7 @@ public class TypedFacetObservationTests
                 case "hash-condition": await client.Hashes.SetAsync("key", "field", "value", (SetWhen)999); break;
                 case "hash-fields": await client.Hashes.ExpiryTimeAsync("key", Array.Empty<string>()); break;
                 case "hash-precision": await client.Hashes.ExpiryTimeAsync("key", (ExpiryTimePrecision)999, "field"); break;
-                case "key-condition": await client.Keys.ExpireAsync("key", RespireExpiry.Persist, ExpireWhen.NotExists); break;
+                case "key-condition": await client.Keys.ExpireAsync("key", RespireExpiry.Persist, RespireExpireWhen.NotExists); break;
                 case "key-database": await client.Keys.CopyAsync("key", "other", -1); break;
                 case "key-precision": await client.Keys.ExpiryTimeAsync("key", (ExpiryTimePrecision)999); break;
                 case "list-rank": await client.Lists.PositionAsync("key", "value", rank: 0); break;

@@ -37,11 +37,11 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         var popped = await PopMany(view, mode, ["missing", selected, "later"], 2, descending);
         popped.Should().NotBeNull();
         popped!.Value.Key.Should().Be(selected);
-        popped.Value.Entries.Should().Equal(!descending ? [new SortedSetEntry("a", 1), new SortedSetEntry("b", 2)] : [new SortedSetEntry("d", 4), new SortedSetEntry("c", 3)]);
+        popped.Value.Entries.Should().Equal(!descending ? [new RespireSortedSetEntry("a", 1), new RespireSortedSetEntry("b", 2)] : [new RespireSortedSetEntry("d", 4), new RespireSortedSetEntry("c", 3)]);
         (await view.SortedSets.CountAsync(popped.Value.Key)).Should().Be(2);
         (await view.SortedSets.CountAsync("later")).Should().Be(1);
         var remaining = await PopMany(view, mode, [selected], 20, descending);
-        remaining!.Value.Entries.Should().Equal(!descending ? [new SortedSetEntry("c", 3), new SortedSetEntry("d", 4)] : [new SortedSetEntry("b", 2), new SortedSetEntry("a", 1)]);
+        remaining!.Value.Entries.Should().Equal(!descending ? [new RespireSortedSetEntry("c", 3), new RespireSortedSetEntry("d", 4)] : [new RespireSortedSetEntry("b", 2), new RespireSortedSetEntry("a", 1)]);
         (await PopMany(view, mode, [selected], 1, descending)).Should().BeNull();
         (await client.Keys.ExistsAsync(selected)).Should().BeFalse();
     }
@@ -63,7 +63,7 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         var result = await view.SortedSets.PopAsync(["missing", selected, "later"], TimeSpan.FromSeconds(1), descending);
         result.Should().NotBeNull();
         result!.Value.Key.Should().Be(selected);
-        result.Value.Entry.Should().Be(!descending ? new SortedSetEntry("a", 1) : new SortedSetEntry("b", 2));
+        result.Value.Entry.Should().Be(!descending ? new RespireSortedSetEntry("a", 1) : new RespireSortedSetEntry("b", 2));
         (await view.SortedSets.CountAsync(result.Value.Key)).Should().Be(1);
         (await view.SortedSets.CountAsync("later")).Should().Be(1);
         (await view.SortedSets.PopAsync(["missing"], TimeSpan.FromMilliseconds(10), descending)).Should().BeNull();
@@ -129,13 +129,13 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         var result = await PopManyTyped(view, mode, ["missing", "scores"], descending);
         result!.Value.Key.Should().Be((RespireKey)"scores");
         result.Value.Entries.Should().Equal(descending
-            ? [new SortedSetEntry<int>(9, double.PositiveInfinity), new SortedSetEntry<int>(7, double.NegativeInfinity)]
-            : [new SortedSetEntry<int>(7, double.NegativeInfinity), new SortedSetEntry<int>(9, double.PositiveInfinity)]);
+            ? [new RespireSortedSetEntry<int>(9, double.PositiveInfinity), new RespireSortedSetEntry<int>(7, double.NegativeInfinity)]
+            : [new RespireSortedSetEntry<int>(7, double.NegativeInfinity), new RespireSortedSetEntry<int>(9, double.PositiveInfinity)]);
         (await PopManyTyped(view, mode, ["scores"], descending)).Should().BeNull();
         await view.SortedSets.AddAsync<int>("scores", 42, 1.5);
         var one = await view.SortedSets.PopAsync<int>(["missing", "scores"], TimeSpan.FromSeconds(1), descending);
         one!.Value.Key.Should().Be((RespireKey)"scores");
-        one.Value.Entry.Should().Be(new SortedSetEntry<int>(42, 1.5));
+        one.Value.Entry.Should().Be(new RespireSortedSetEntry<int>(42, 1.5));
         (await view.SortedSets.PopAsync<int>(["scores"], TimeSpan.Zero, descending)).Should().BeNull();
     }
 
@@ -164,7 +164,7 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
         await wait.Should().ThrowAsync<OperationCanceledException>();
         await client.SortedSets.AddAsync("ready", "member", 3);
         var next = await client.SortedSets.PopAsync(["ready"], TimeSpan.FromSeconds(1));
-        next!.Value.Entry.Should().Be(new SortedSetEntry("member", 3));
+        next!.Value.Entry.Should().Be(new RespireSortedSetEntry("member", 3));
     }
 
     private static async Task<RespireSortedSetPopManyResult<int>?> PopManyTyped(

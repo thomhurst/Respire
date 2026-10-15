@@ -48,6 +48,47 @@ General rules:
 
 ## Execute native commands with StackExchange.Redis values
 
+### Public type names during migration
+
+New native public types use the `Respire` prefix (`IRespire` for interfaces). Native types
+must not share a simple name with a public StackExchange.Redis type, so importing both
+namespaces leaves each library's types unambiguous. Existing noncolliding names are being
+normalized separately; the following pre-1.0 renames remove all current collisions:
+
+| Previous native name | New native name |
+| --- | --- |
+| `BitFieldEncoding` | `RespireBitFieldEncoding` |
+| `BitFieldOffset` | `RespireBitFieldOffset` |
+| `BitFieldOperation` | `RespireBitFieldOperation` |
+| `BitFieldOverflow` | `RespireBitFieldOverflow` |
+| `ExpireWhen` | `RespireExpireWhen` |
+| `GeoEntry` | `RespireGeoEntry` |
+| `GeoPosition` | `RespireGeoPosition` |
+| `GeoSearchShape` | `RespireGeoSearchShape` |
+| `GeoUnit` | `RespireGeoUnit` |
+| `ListMoveOrder` | `RespireListMoveOrder` |
+| `ListSide` | `RespireListSide` |
+| `SortedSetEntry` / `SortedSetEntry<T>` | `RespireSortedSetEntry` / `RespireSortedSetEntry<T>` |
+| `StreamAddOptions` | `RespireStreamAddOptions` |
+| `StreamNackMode` | `RespireStreamNackMode` |
+
+Update native type references when upgrading. StackExchange.Redis types and the adapter's
+StackExchange.Redis signatures retain their names. The old native names have no compatibility
+aliases because those would preserve the ambiguity.
+
+```csharp
+using Respire;
+using StackExchange.Redis;
+
+static async Task RefreshExpiryAsync(IRespireClient client, IDatabase database)
+{
+    await database.KeyExpireAsync("legacy:key", TimeSpan.FromMinutes(5), ExpireWhen.Always);
+    await client.Keys.ExpireAsync("native:key", TimeSpan.FromMinutes(5), RespireExpireWhen.Always);
+}
+```
+
+### Execute a command
+
 ```csharp
 using Respire;
 using Respire.StackExchangeCompat;
