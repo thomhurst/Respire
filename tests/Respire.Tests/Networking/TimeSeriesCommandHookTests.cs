@@ -12,6 +12,81 @@ namespace Respire.Tests.Networking;
 public class TimeSeriesCommandHookTests
 {
     [Test]
+    [Arguments("null-label")]
+    [Arguments("empty-label")]
+    [Arguments("blank-label")]
+    [Arguments("zero-duration")]
+    [Arguments("negative-duration")]
+    [Arguments("fractional-duration")]
+    public async Task OverloadValidationIsInsideTheOwner(string input)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        var hook = new RecordingHook();
+        await using var client = await Connect(Options(server, hook));
+        var series = new RespireTimeSeriesClient(client);
+        foreach (var mode in new[] { "validate", "reject", "cancel" })
+        {
+            var admissions = 0;
+            var rejection = new InvalidOperationException("denied");
+            hook.Before = _ => { admissions++; if (mode == "reject") throw rejection; };
+            hook.Completed.Clear();
+            using var caller = new CancellationTokenSource();
+            if (mode == "cancel") caller.Cancel();
+            var error = await Failure(async () =>
+            {
+                if (input.EndsWith("label", StringComparison.Ordinal))
+                    await series.QueryLabelValuesAsync(input switch
+                    {
+                        "null-label" => null!, "empty-label" => "", _ => " ",
+                    }, cancellationToken: caller.Token);
+                else
+                    await series.CreateRuleAsync("source", "destination", RespireTimeSeriesAggregation.Avg,
+                        input switch
+                        {
+                            "zero-duration" => TimeSpan.Zero,
+                            "negative-duration" => TimeSpan.FromMilliseconds(-1),
+                            _ => TimeSpan.FromTicks(1),
+                        }, cancellationToken: caller.Token);
+            });
+            var completion = hook.Completed.Single();
+            await Assert.That(completion.Command).IsEqualTo(input.EndsWith("label", StringComparison.Ordinal) ? "TS.QUERYLABELS" : "TS.CREATERULE");
+            await Assert.That(completion.Outcome).IsEqualTo(mode switch
+            {
+                "reject" => RespireCommandOutcome.Rejected,
+                "cancel" => RespireCommandOutcome.Canceled,
+                _ => RespireCommandOutcome.Failed,
+            });
+            await Assert.That(ReferenceEquals(error, completion.Error)).IsTrue();
+            await Assert.That(admissions).IsEqualTo(1);
+            if (mode == "validate") await Assert.That(error is ArgumentException).IsTrue();
+            if (mode == "reject") await Assert.That(ReferenceEquals(error, rejection)).IsTrue();
+            if (mode == "cancel") await Assert.That(error is OperationCanceledException).IsTrue();
+        }
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task ValidOverloadsHaveOneOwnerAndPreserveArguments()
+    {
+        await using var server = new FakeRespServer("*1\r\n+west\r\n"u8.ToArray(), FakeRespServer.OkReply);
+        var hook = new RecordingHook();
+        await using var client = await Connect(Options(server, hook));
+        var series = new RespireTimeSeriesClient(client);
+        var admissions = 0;
+        hook.Before = _ => admissions++;
+        var labels = await series.QueryLabelValuesAsync("region");
+        await series.CreateRuleAsync("source", "destination", RespireTimeSeriesAggregation.Avg, TimeSpan.FromSeconds(1));
+        await Assert.That(labels.Single()).IsEqualTo("west");
+        await Assert.That(admissions).IsEqualTo(2);
+        await Assert.That(hook.Completed.Select(c => c.Command).ToArray()).IsEquivalentTo(new[] { "TS.QUERYLABELS", "TS.CREATERULE" });
+        await Assert.That(hook.Completed.All(c => c.Outcome == RespireCommandOutcome.Succeeded)).IsTrue();
+        await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(new[]
+        {
+            "TS.QUERYLABELS VALUES region", "TS.CREATERULE source destination AGGREGATION AVG 1000",
+        });
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task EveryOwnerRejectsOrCancelsWithoutWireWork(bool cancel)

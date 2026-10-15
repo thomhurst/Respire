@@ -401,10 +401,17 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="alignTimestamp">Aligns buckets so one starts at this millisecond timestamp; defaults to the epoch.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     public ValueTask CreateRuleAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, TimeSpan bucketDuration, long? alignTimestamp = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.CREATERULE", cancellationToken,
+                (Owner: this, source, destination, aggregation, bucketDuration, alignTimestamp, cancellationToken),
+                static s => s.Owner.CreateRuleUnhookedAsync(s.source, s.destination, s.aggregation, s.bucketDuration, s.alignTimestamp, s.cancellationToken))
+            : CreateRuleUnhookedAsync(source, destination, aggregation, bucketDuration, alignTimestamp, cancellationToken);
+
+    private ValueTask CreateRuleUnhookedAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, TimeSpan bucketDuration, long? alignTimestamp, CancellationToken cancellationToken)
     {
         if (bucketDuration <= TimeSpan.Zero || bucketDuration.Ticks % TimeSpan.TicksPerMillisecond != 0)
             throw new ArgumentOutOfRangeException(nameof(bucketDuration), bucketDuration, "The bucket duration must be a positive whole number of milliseconds.");
-        return CreateRuleAsync(source, destination, aggregation, bucketDuration.Ticks / TimeSpan.TicksPerMillisecond, alignTimestamp, cancellationToken);
+        return CreateRuleUnhookedAsync(source, destination, aggregation, bucketDuration.Ticks / TimeSpan.TicksPerMillisecond, alignTimestamp, cancellationToken);
     }
 
     /// <summary>Deletes the compaction rule from a source series to a destination series.</summary>
@@ -499,6 +506,7 @@ public sealed partial class RespireTimeSeriesClient
 
     // Only a concrete client's explicit typed owner borrows dispatch. Decorators retain
     // their public ExecuteAsync boundary, including their own hooks and interception.
+    // When a hook is configured, every caller must already be inside its operation's owner.
     private ValueTask<RespireResult> DispatchAsync(RespireCommand command, RespireValue[] arguments, CancellationToken token)
     {
         if (token.IsCancellationRequested) return ValueTask.FromCanceled<RespireResult>(token);

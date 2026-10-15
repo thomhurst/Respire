@@ -68,9 +68,16 @@ public sealed partial class RespireTimeSeriesClient
     /// <summary>Lists distinct values of one label. Requires Redis 8.10.</summary>
     /// <remarks>Order is unspecified. Key-prefixed clients reject this keyless query.</remarks>
     public ValueTask<string[]> QueryLabelValuesAsync(string label, IReadOnlyList<string>? filters = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.QUERYLABELS", cancellationToken,
+                (Owner: this, label, filters, cancellationToken),
+                static s => s.Owner.QueryLabelValuesUnhookedAsync(s.label, s.filters, s.cancellationToken))
+            : QueryLabelValuesUnhookedAsync(label, filters, cancellationToken);
+
+    private ValueTask<string[]> QueryLabelValuesUnhookedAsync(string label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(label);
-        return QueryLabelTokensAsync(label, filters, cancellationToken);
+        return QueryLabelTokensUnhookedAsync(label, filters, cancellationToken);
     }
 
     private ValueTask<string[]> QueryLabelTokensAsync(string? label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
