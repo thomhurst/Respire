@@ -210,8 +210,10 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) runs the Orleans Redis
   clustering, grain storage, and reminder providers on the adapter. Real silo/client scenarios cover
   activation, persistent state, reminder delivery, graceful restart, shared and provider-owned shutdown,
-  stable three-primary Cluster routing, socket reconnect, and Sentinel primary promotion on .NET 8/10
-  with RESP2/RESP3. Cluster resharding/failover, abrupt silo death and multi-host partitions remain unvalidated.
+  stable three-primary Cluster routing, completed Cluster slot moves, coordinated replica promotion,
+  abrupt silo death, socket reconnect, and Sentinel primary promotion on .NET 8/10 with RESP2/RESP3.
+  Membership writes during ASK migration remain unsupported; unplanned Cluster failover and
+  multi-host partitions remain unvalidated.
 
 ### Retries and write outcomes
 
