@@ -62,6 +62,14 @@ internal static class DashboardPage
             .Append("</dd></div><div><dt>Deliveries / second</dt><dd>").Append(stream.DeliveriesPerSecond?.ToString("0.00", CultureInfo.InvariantCulture) ?? "—")
             .Append("</dd></div></dl><p class=\"note\">Delivery rate for ").Append(E(config.Group))
             .Append(" over samples at least five seconds apart. It counts new group deliveries, not successful completions. Refresh after five seconds to obtain a rate.</p></div>");
+        if (config.IsJobQueue)
+        {
+            html.Append("<section class=\"section\"><h3>Queue controls</h3><dl class=\"stats\"><div><dt>State</dt><dd>")
+                .Append(stream.IsPaused is { } paused ? paused ? "Paused" : "Running" : "—")
+                .Append("</dd></div><div><dt>Limiter hits</dt><dd>")
+                .Append(stream.RateLimitHits is { } hits ? N(hits) : "—")
+                .Append("</dd></div></dl><p class=\"note\">Cumulative denied reader admissions. Jobs remain queued and retain their retry budget.</p></section>");
+        }
         html.Append("<section class=\"section\"><h3>Consumer groups</h3>");
         if (stream.SourceUnavailable) html.Append("<p class=\"notice\">Source inspection unavailable.</p>");
         else if (stream.Groups.Length == 0) html.Append("<p class=\"empty\">No consumer groups exist yet. Start a worker to create its group.</p>");

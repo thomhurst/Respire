@@ -36,9 +36,12 @@ public sealed record RespireJobEnqueueOptions
 /// <summary>Queue scheduling and retry policy, shared by all workers for the queue.</summary>
 public sealed record RespireJobQueueOptions
 {
+    /// <summary>Initial shared rate policy. Null uses the existing Redis policy (unlimited on a new queue).</summary>
+    /// <remarks>Non-null policies must match existing configuration. Use SetRateLimitAsync to change it.</remarks>
+    public RespireJobRateLimit? RateLimit { get; init; }
     /// <summary>Maximum due jobs ordered by priority in one promotion. Between 1 and 256.</summary>
     public int SchedulingBatchSize { get; init; } = 64;
-    /// <summary>Minimum interval between each reader's scheduling passes and maximum blocking read. Defaults to one second.</summary>
+    /// <summary>Minimum interval between scheduling passes and maximum idle/pause poll interval. Defaults to one second.</summary>
     public TimeSpan SchedulingPollInterval { get; init; } = TimeSpan.FromSeconds(1);
     /// <summary>Initial delay after Nack or a handler exception. Null retains visibility-timeout recovery.</summary>
     public TimeSpan? RetryBackoff { get; init; }
@@ -47,6 +50,7 @@ public sealed record RespireJobQueueOptions
 
     internal void Validate()
     {
+        RateLimit?.Validate();
         if (SchedulingBatchSize is < 1 or > 256) throw new ArgumentOutOfRangeException(nameof(SchedulingBatchSize));
         JobQueueScheduling.ValidateDuration(SchedulingPollInterval, nameof(SchedulingPollInterval));
         JobQueueScheduling.ValidateDuration(MaximumRetryBackoff, nameof(MaximumRetryBackoff));

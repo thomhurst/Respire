@@ -26,6 +26,8 @@ internal sealed class StreamWorkerTelemetry : IDisposable
     private readonly KeyValuePair<string, object?> _workerTag;
     private readonly Histogram<double>? _duration;
     private readonly Counter<long>? _deadLetters;
+    private readonly Counter<long>? _rateLimits;
+    private long? _paused;
     private readonly ObservableGauge<long>? _lagGauge;
     private readonly ObservableGauge<long>? _pendingGauge;
     private long? _lag;
@@ -45,6 +47,10 @@ internal sealed class StreamWorkerTelemetry : IDisposable
                 "Delivery attempt duration, including deserialization and fenced completion.");
             _deadLetters = _meter.CreateCounter<long>("respire.stream.worker.dead_letters", "{message}",
                 "Confirmed dead-letter appends; uncertain replies and deleted bodies are excluded.");
+            _rateLimits = _meter.CreateCounter<long>("respire.job.queue.rate_limit_hits", "{admission}",
+                "Denied reader admissions; jobs remain queued without consuming an attempt.");
+            _meter.CreateObservableGauge("respire.job.queue.paused", ObservePaused,
+                "{state}", "Latest observed queue pause state: 1 paused, 0 running.");
             _lagGauge = _meter.CreateObservableGauge("respire.stream.worker.group.lag", () => Observe(lag: true),
                 "{message}", "Latest known group lag; absent when Redis cannot determine it.");
             _pendingGauge = _meter.CreateObservableGauge("respire.stream.worker.group.pending", () => Observe(lag: false),
@@ -81,7 +87,28 @@ internal sealed class StreamWorkerTelemetry : IDisposable
         {
             _pollingStopped = true;
             _lag = _pending = null;
+            _paused = null;
         }
+    }
+
+    private Measurement<long>[] ObservePaused()
+    {
+        lock (_gate) return !_disposed && _paused.HasValue ? [new(_paused.Value, _workerTag)] : [];
+    }
+
+    internal void SetPaused(bool paused)
+    {
+        lock (_gate)
+        {
+            if (!_disposed && !_pollingStopped) _paused = paused ? 1 : 0;
+        }
+    }
+
+    internal void RateLimited()
+    {
+        if (_disposed) return;
+        try { _rateLimits?.Add(1, _workerTag); }
+        catch { /* Listener failures cannot change admission outcomes. */ }
     }
 
     internal void DeadLetter(string reason)
@@ -159,6 +186,7 @@ internal sealed class StreamWorkerTelemetry : IDisposable
         {
             _disposed = true;
             _lag = _pending = null;
+            _paused = null;
         }
     }
 

@@ -3,6 +3,40 @@ Respire.Streaming.RespireJob<T>.Group.get -> string?
 Respire.Streaming.RespireJob<T>.Group.init -> void
 Respire.Streaming.RespireJobEnqueueOptions.Group.get -> string?
 Respire.Streaming.RespireJobEnqueueOptions.Group.init -> void
+Respire.Streaming.RespireJobQueue<T>.ControlKey.get -> string!
+Respire.Streaming.RespireJobQueue<T>.PauseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.ResumeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.SetRateLimitAsync(Respire.Streaming.RespireJobRateLimit? rateLimit, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireJobQueue<T>.GetStateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobQueueState!>
+Respire.Streaming.RespireJobQueueOptions.RateLimit.get -> Respire.Streaming.RespireJobRateLimit?
+Respire.Streaming.RespireJobQueueOptions.RateLimit.init -> void
+Respire.Streaming.RespireJobRateLimit
+Respire.Streaming.RespireJobRateLimit.RespireJobRateLimit() -> void
+Respire.Streaming.RespireJobRateLimit.PermitLimit.get -> int
+Respire.Streaming.RespireJobRateLimit.PermitLimit.init -> void
+Respire.Streaming.RespireJobRateLimit.Window.get -> System.TimeSpan
+Respire.Streaming.RespireJobRateLimit.Window.init -> void
+Respire.Streaming.RespireJobRateLimit.<Clone>$() -> Respire.Streaming.RespireJobRateLimit!
+Respire.Streaming.RespireJobRateLimit.Equals(Respire.Streaming.RespireJobRateLimit? other) -> bool
+override Respire.Streaming.RespireJobRateLimit.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJobRateLimit.GetHashCode() -> int
+override Respire.Streaming.RespireJobRateLimit.ToString() -> string!
+static Respire.Streaming.RespireJobRateLimit.operator ==(Respire.Streaming.RespireJobRateLimit? left, Respire.Streaming.RespireJobRateLimit? right) -> bool
+static Respire.Streaming.RespireJobRateLimit.operator !=(Respire.Streaming.RespireJobRateLimit? left, Respire.Streaming.RespireJobRateLimit? right) -> bool
+Respire.Streaming.RespireJobQueueState
+Respire.Streaming.RespireJobQueueState.RespireJobQueueState(bool IsPaused, long RateLimitHits) -> void
+Respire.Streaming.RespireJobQueueState.IsPaused.get -> bool
+Respire.Streaming.RespireJobQueueState.IsPaused.init -> void
+Respire.Streaming.RespireJobQueueState.RateLimitHits.get -> long
+Respire.Streaming.RespireJobQueueState.RateLimitHits.init -> void
+Respire.Streaming.RespireJobQueueState.Deconstruct(out bool IsPaused, out long RateLimitHits) -> void
+Respire.Streaming.RespireJobQueueState.<Clone>$() -> Respire.Streaming.RespireJobQueueState!
+Respire.Streaming.RespireJobQueueState.Equals(Respire.Streaming.RespireJobQueueState? other) -> bool
+override Respire.Streaming.RespireJobQueueState.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJobQueueState.GetHashCode() -> int
+override Respire.Streaming.RespireJobQueueState.ToString() -> string!
+static Respire.Streaming.RespireJobQueueState.operator ==(Respire.Streaming.RespireJobQueueState? left, Respire.Streaming.RespireJobQueueState? right) -> bool
+static Respire.Streaming.RespireJobQueueState.operator !=(Respire.Streaming.RespireJobQueueState? left, Respire.Streaming.RespireJobQueueState? right) -> bool
 Respire.Streaming.RespireJobEvent.FlowKey.get -> string?
 Respire.Streaming.RespireJob<T>.Complete(byte[]! result) -> Respire.Streaming.RespireStreamWorkerResult
 Respire.Streaming.RespireJob<T>.GetChildResultsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobFlowResult!>!>

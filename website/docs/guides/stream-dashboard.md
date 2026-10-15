@@ -97,6 +97,10 @@ dead-letter destinations, source/dead-letter overlap, and group names exceeding 
   not been trimmed. It is not the count of unfinished jobs.
 - **Consumer groups** lists each group's consumers, pending count, lag, and last delivered ID.
   Redis may omit lag and entries-read information; unavailable values appear as a dash.
+- **Queue controls** shows Running/Paused and cumulative limiter hits for `IsJobQueue` entries.
+  Hits count denied reader admissions, not unique jobs. Missing control state means Running
+  with zero hits; unreadable state appears as a dash. Change policies through the
+  [job queue API](job-queues.md#queue-wide-pause-and-rate-limits).
 - **Pending deliveries** shows entry IDs, consumers, idle time, and delivery counts for the
   configured group. Viewing the dashboard does not claim or acknowledge entries.
 - **Dead letters** shows retained failed entries with expandable field previews. Previews
@@ -140,6 +144,8 @@ unchanged. Both actions reject entries with an invalid envelope or a different g
 No action trims unrelated entries or acknowledges a pending delivery.
 
 The Redis identity needs `XLEN`, `XINFO GROUPS`, `XPENDING`, and `XRANGE` for inspection.
+Job queue control inspection additionally needs script execution and `HMGET` on the configured
+stream key plus `:control` (with the same client key prefix).
 Actions additionally need script execution (`EVAL`/`EVALSHA` and script loading), `XDEL` on
 the dead-letter stream, and, for retry, `XADD` and `XDEL` on the source stream. Source `XDEL`
 allows rollback if removal fails. A denied write leaves the dead letter available for a

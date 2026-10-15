@@ -111,6 +111,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   on dedicated connections.
 - [Typed job queues](guides/job-queues.md) with delayed scheduling, batch priority, TTL, durable
   retry backoff, bounded enqueue deduplication, application group metadata, scoped handlers, visibility recovery, dead letters,
+  queue-wide pause/resume and shared fixed-window admission limits,
   fenced progress, retained completion events, enqueue-to-processing trace links, nested
   parent/child flows with retained results and failure policies, and durable
   UTC cron/fixed-interval schedules with cross-instance tick deduplication and missed-tick policies.
@@ -118,7 +119,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   handlers, idle recovery, delivery limits, dead-lettering, graceful draining, metrics, and
   W3C trace propagation.
 - [Queue and stream dashboard](guides/stream-dashboard.md) for configured streams and job queues,
-  with group statistics, pending deliveries, dead letters, and authorized retry/delete actions.
+  with group statistics, pending deliveries, dead letters, queue pause state and limiter hits,
+  and authorized retry/delete actions.
 - [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): on Redis 8.6+,
   a retried `XADD` cannot duplicate the entry.
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus

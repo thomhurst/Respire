@@ -11,7 +11,8 @@ public static class RespireJobQueueServiceCollectionExtensions
     /// GetRequiredKeyedService&lt;RespireJobQueue&lt;T&gt;&gt;(queueName). Each registration needs a distinct queue name
     /// and stream-worker TelemetryName. Serializers can run concurrently. Concurrency is per registration, not global.
     /// New consumer groups must start at the beginning so jobs enqueued before startup are not skipped.
-    /// This overload processes immediate jobs only. Use non-null queue options to enable scheduling and durable retries.</remarks>
+    /// This overload processes immediate jobs with queue-wide controls. Use non-null queue options to enable scheduling and durable retries.
+    /// Job readers admit one delivery at a time, regardless of BatchSize, with a maximum idle/pause poll interval of one second.</remarks>
     public static IServiceCollection AddRespireJobQueue<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler, T>(
         this IServiceCollection services, string queueName, Func<T, byte[]> serialize, Func<byte[], T> deserialize,
