@@ -25,7 +25,13 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
     def test_current_production_control_preserves_other_routes_and_records_evidence(self):
         self.assert_current_production_control()
 
-    def assert_current_production_control(self):
+    def test_predecessor_control_preserves_standalone_backlog_helpers(self):
+        self.assert_current_production_control(standalone=True)
+
+    def test_unknown_strategy_drift_fails_without_changing_production(self):
+        self.assert_current_production_control(drift=True)
+
+    def assert_current_production_control(self, standalone=False, drift=False):
         repository = Path(__file__).resolve().parents[2]
         paths = ('src/Respire/RespireClient.cs', 'src/Respire/RespireClient.ReadySend.cs')
         with tempfile.TemporaryDirectory() as directory:
@@ -35,6 +41,17 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 target = checkout / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(repository / path, target)
+            strategy = checkout / paths[1]
+            if standalone:
+                # The predecessor patch contains the complete prior strategy file.
+                # Reconstruct that exact source rather than guessing old helper names.
+                predecessor = (repository / 'scripts/benchmarks/ReadySendStrategy.Standalone.patch').read_text()
+                added_file = predecessor.split('diff --git ', 2)[1]
+                strategy.write_text('\n'.join(line[1:] for line in added_file.splitlines()
+                                              if line.startswith('+') and not line.startswith('+++')) + '\n')
+            if drift:
+                strategy.write_text(strategy.read_text().replace('UsesPrimaryBacklog', 'UsesUnknownBacklog'))
+            ready = strategy.read_text()
             environment = git_environment()
 
             def git(*arguments):
@@ -46,19 +63,26 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 'commit', '--quiet', '-m', 'Current production snapshot')
             before = {path: hashlib.sha256((checkout / path).read_bytes()).hexdigest() for path in paths}
             evidence = Path(directory) / 'control.json'
+            if drift:
+                with self.assertRaisesRegex(RuntimeError, 'no longer matches'):
+                    prepare(checkout, evidence)
+                self.assertEqual(git('status', '--porcelain'), '')
+                self.assertFalse(evidence.exists())
+                return
             prepare(checkout, evidence)
             recorded = json.loads(evidence.read_text())
             self.assertEqual(recorded['baseline_commit'], git('rev-parse', 'HEAD'))
             self.assertEqual(recorded['before_sha256'], before)
+            patch_name = 'ReadySendStrategy.Standalone.patch' if standalone else 'ReadySendStrategy.patch'
+            self.assertEqual(recorded['patch_file'], patch_name)
             self.assertEqual(recorded['patch_sha256'], hashlib.sha256(
-                (repository / 'scripts/benchmarks/ReadySendStrategy.patch').read_bytes()).hexdigest())
+                (repository / 'scripts/benchmarks' / patch_name).read_bytes()).hexdigest())
             self.assertEqual(recorded['after_sha256'][paths[0]], hashlib.sha256(
                 (checkout / paths[0]).read_bytes()).hexdigest())
             self.assertIsNone(recorded['after_sha256'][paths[1]])
             self.assertEqual(set(git('diff', '--name-only').splitlines()), set(paths))
             self.assertEqual(evidence.with_suffix('.patch').read_text(), git('diff', '--binary') + '\n')
             control = (checkout / paths[0]).read_text()
-            ready = (repository / paths[1]).read_text()
             # Compare complete relocated blocks, so ownership behavior cannot drift
             # while the names and interfaces still happen to compile.
             mutation_helpers = ready[ready.index('    // A typed source reports'):
@@ -75,10 +99,14 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
             self.assertIn(raw_sender, control)
             raw_start = control.index('    private ValueTask<RespValue> SendOnReadyPrimaryAsync')
             raw_body = control[raw_start:control.index('    private async ValueTask<TResult> SendBackloggedReadyAsync', raw_start)]
-            self.assertIn('''            connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+            expected_selection = '''            connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
                 && !CursorCommandMetadata.IsServerCursorContinuation(in command)
-                ? SelectStandaloneConnection(cancellationToken)
-                : GetCircuitAwareConnection(multiplexer, cancellationToken);''', raw_body)
+                ? SelectPrimaryBacklogConnection(cancellationToken)
+                : GetCircuitAwareConnection(multiplexer, cancellationToken);'''
+            if standalone:
+                expected_selection = expected_selection.replace('UsesPrimaryBacklog', 'UsesStandaloneBacklog').replace(
+                    'SelectPrimaryBacklogConnection', 'SelectStandaloneConnection')
+            self.assertIn(expected_selection, raw_body)
             self.assertIn('''        if (connection is null)
             return SendBackloggedReadyAsync<TCommand, RespValue, RawReadySend>(operation, command, cancellationToken,
                 new RawReadySend(this, observation), default, null, default, false, observation);''', raw_body)
@@ -107,9 +135,9 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 RespireConnection? connection;
                 try
                 {{
-                    connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                    connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
                         && !CursorCommandMetadata.IsServerCursorContinuation(in command)
-                        ? SelectStandaloneConnection(ct)
+                        ? SelectPrimaryBacklogConnection(ct)
                         : GetCircuitAwareConnection(readyMultiplexer, ct);
                 }}
                 catch (Exception error)
@@ -139,6 +167,9 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                     return CaptureReadySendFailure<{result}>(error);
                 }}
 '''
+                    if standalone:
+                        expected = expected.replace('UsesPrimaryBacklog', 'UsesStandaloneBacklog').replace(
+                            'SelectPrimaryBacklogConnection', 'SelectStandaloneConnection')
                     primary_start = body.index('                var durationStarted =')
                     primary_end = body.index('            }\n            else if', primary_start)
                     self.assertEqual(body[primary_start:primary_end], expected)

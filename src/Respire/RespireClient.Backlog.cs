@@ -16,7 +16,7 @@ public sealed partial class RespireClient
         if (connection is not null)
             return SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);
         var deadline = CreateCircuitDeadline();
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new BacklogCommand<TCommand>(command, operation);
         return RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (ready, originalDeadline) =>
             SendBulkStreamOnConnectionAsync(operation, ready, snapshot, cancellationToken,
                 observation: observation, commandDeadline: originalDeadline), observation);
@@ -41,7 +41,7 @@ public sealed partial class RespireClient
         bool awaitReply) where TCommand : struct, IRespCommand
     {
         var deadline = CreateCircuitDeadline();
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new BacklogCommand<TCommand>(command, operation);
         await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, async (ready, originalDeadline) =>
         {
             if (!awaitReply)
@@ -152,7 +152,7 @@ public sealed partial class RespireClient
             RejectOpenBacklogCircuit(callerToken);
             acquisition.CheckDeadline(operation, _core);
             var backlog = _core.Sentinel is { } sentinel
-                ? sentinel.GetReconnectBacklog(_core.Options.BacklogCapacity)
+                ? sentinel.GetReconnectBacklog()
                 : _core.Multiplexer.GetReconnectBacklog(_core.Options.BacklogCapacity);
             if (_core.Sentinel is { } router)
             {
@@ -188,13 +188,29 @@ public sealed partial class RespireClient
         }
     }
 
-    // Snapshot the wire bytes before suspending, but retain admission, acceptance and fence
+    // Snapshot wire bytes and borrowed keys before suspending, but retain admission, acceptance and fence
     // ownership on the original command (plain SnapshotCommand deliberately drops callbacks).
-    private readonly struct BacklogCommand<TCommand>(TCommand command) : IRespCommandWrapper
+    internal readonly struct BacklogCommand<TCommand> : IRespCommandWrapper
         where TCommand : struct, IRespCommand
     {
-        private readonly SnapshotCommand _snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: false);
-        private readonly RespireValue[] _arguments = SnapshotArguments(in command);
+        private readonly TCommand _command;
+        private readonly SnapshotCommand _snapshot;
+        private readonly RespireValue[] _arguments;
+        private readonly RespireValue _primaryKey;
+        private readonly ClientCacheCommandKey _cacheKey;
+        private readonly bool _hasPrimaryKey;
+        private readonly bool _hasCacheKey;
+
+        internal BacklogCommand(TCommand command, string operation)
+        {
+            _command = command;
+            _snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: false);
+            _arguments = SnapshotArguments(in command);
+            _hasPrimaryKey = command.TryGetPrimaryKey(out var primaryKey);
+            _primaryKey = _hasPrimaryKey ? primaryKey.Snapshot() : default;
+            _hasCacheKey = command.TryGetClientCacheKey(operation, out var cacheKey);
+            _cacheKey = _hasCacheKey ? cacheKey.Snapshot() : default;
+        }
         public void Write(ref RespWriter writer) => _snapshot.Write(ref writer);
         public int GetWriteSizeHint() => _snapshot.GetWriteSizeHint();
         public bool TryGetClusterSlot(out int slot) => _snapshot.TryGetClusterSlot(out slot);
@@ -219,18 +235,26 @@ public sealed partial class RespireClient
             return arguments?.ToArray() ?? [];
         }
 
-        public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+        public bool TryGetPrimaryKey(out RespireValue key)
+        {
+            key = _primaryKey;
+            return _hasPrimaryKey;
+        }
         public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
-            => command.TryGetClientCacheKey(operation, out key);
-        public ReadCommandKind ReadKind => command.ReadKind;
-        public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
-        public int CursorArgumentIndex => command.CursorArgumentIndex;
-        public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command);
-        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in command);
-        public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
-        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
-        public void ValidateAdmission() => command.ValidateAdmission();
-        public CancellationToken GetResponseCancellationToken(CancellationToken token) => command.GetResponseCancellationToken(token);
-        public void OnAccepted() => command.OnAccepted();
+        {
+            key = _cacheKey;
+            return _hasCacheKey;
+        }
+        public ReadCommandKind ReadKind => _command.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => _command.RetryCategory;
+        public int CursorArgumentIndex => _command.CursorArgumentIndex;
+        public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
+        // Classification is immutable verb/declaration metadata, independent of borrowed argument bytes.
+        public RespireCacheMutation GetCacheMutation(string operation) => _command.GetCacheMutation(operation);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => _command.GetClientCacheMetadata(operation);
+        public void ValidateAdmission() => _command.ValidateAdmission();
+        public CancellationToken GetResponseCancellationToken(CancellationToken token) => _command.GetResponseCancellationToken(token);
+        public void OnAccepted() => _command.OnAccepted();
     }
 }

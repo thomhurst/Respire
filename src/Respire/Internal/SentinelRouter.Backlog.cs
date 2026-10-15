@@ -9,17 +9,14 @@ internal sealed partial class SentinelRouter
 
     internal bool IsBacklogDraining => Volatile.Read(ref _backlog)?.IsRunning == true;
 
-    internal RespireConnectionMultiplexer.ReconnectBacklog GetReconnectBacklog(int capacity)
+    internal RespireConnectionMultiplexer.ReconnectBacklog GetReconnectBacklog()
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         lock (_gate)
         {
             ThrowIfBacklogUnavailable();
             if (_backlog is null)
-                _backlog = new(capacity, _lifetime.Token, ThrowIfBacklogUnavailable,
+                _backlog = new(core.Options.BacklogCapacity, _lifetime.Token, ThrowIfBacklogUnavailable,
                     () => Current?.Multiplexer.ActiveConnectionEndpoint, token => WaitForBacklogConnectionAsync(token));
-            else if (_backlog.Capacity != capacity)
-                throw new InvalidOperationException("A Sentinel router has one fixed reconnect backlog capacity.");
             return _backlog;
         }
     }
@@ -67,7 +64,7 @@ internal sealed partial class SentinelRouter
                     { Endpoint = error.Endpoint };
                 ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint ?? error.Endpoint);
                 var delay = budget.GetDelay();
-                if (delay < TimeSpan.FromMilliseconds(25)) delay = TimeSpan.FromMilliseconds(25);
+                if (delay < SentinelRetryBudget.MinimumBacklogDelay) delay = SentinelRetryBudget.MinimumBacklogDelay;
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }

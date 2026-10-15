@@ -11,6 +11,9 @@ namespace Respire.Internal;
 /// </remarks>
 internal sealed class SentinelRetryBudget(RespireReconnectPolicy? policy)
 {
+    // Bound repeated discovery when a zero-delay policy meets an unavailable primary.
+    internal static readonly TimeSpan MinimumBacklogDelay = TimeSpan.FromMilliseconds(25);
+
     private int _attempts;
 
     internal int Attempts => Volatile.Read(ref _attempts);

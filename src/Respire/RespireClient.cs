@@ -2393,7 +2393,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 if (connection is null)
                 {
                     var deadline = CreateCircuitDeadline();
-                    var snapshot = new BacklogCommand<TCommand>(command);
+                    var snapshot = new BacklogCommand<TCommand>(command, operation);
                     response = await RunPrimaryBacklogAsync(operation, cancellationToken, deadline,
                         (ready, originalDeadline) => SendTrackedOnConnectionAsync(operation, ready, snapshot,
                             cancellationToken, sendAsking: false, track, observation, originalDeadline), observation).ConfigureAwait(false);
@@ -3008,7 +3008,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 if (connection is null)
                 {
                     var deadline = CreateCircuitDeadline();
-                    var snapshot = new BacklogCommand<TCommand>(command);
+                    var snapshot = new BacklogCommand<TCommand>(command, operation);
                     return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline,
                         (ready, originalDeadline) => SendOnConnectionAsync(operation, ready,
                             new MutationCommand<BacklogCommand<TCommand>>(snapshot, mutationFence), cancellationToken,

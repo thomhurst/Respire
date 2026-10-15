@@ -2,6 +2,8 @@
 
 ReadySendStrategy.patch restores direct primary dispatch from before
 445869b2f3284ee82c7fcf40537eb4f498b104e2, rebased onto current production code.
+ReadySendStrategy.Standalone.patch retains the prior standalone-only backlog
+control while the merge's first parent still predates primary backlog routing.
 Later replica, cluster, circuit, telemetry and mutation ownership helpers move
 into RespireClient.cs unchanged. Apply the patch in reverse to keep the
 baseline's runtime, dependencies, transport and other code identical to the
@@ -24,7 +26,8 @@ def git_environment() -> dict[str, str]:
 
 def prepare(checkout: Path, evidence: Path) -> None:
     checkout = checkout.resolve()
-    patch = Path(__file__).with_name('ReadySendStrategy.patch').resolve()
+    patches = [Path(__file__).with_name(name).resolve() for name in
+               ('ReadySendStrategy.patch', 'ReadySendStrategy.Standalone.patch')]
     environment = git_environment()
 
     def git(*arguments: str) -> str:
@@ -43,9 +46,14 @@ def prepare(checkout: Path, evidence: Path) -> None:
                 if (checkout / path).exists() else None for path in sorted(paths)}
 
     before = hashes()
-    try:
-        git('apply', '--reverse', '--check', str(patch))
-    except subprocess.CalledProcessError as error:
+    patch = None
+    for candidate in patches:
+        check = subprocess.run(['git', '-C', str(checkout), 'apply', '--reverse', '--check', str(candidate)],
+                               capture_output=True, text=True, env=environment)
+        if check.returncode == 0:
+            patch = candidate
+            break
+    if patch is None:
         raise RuntimeError(
             'ReadySendStrategy.patch no longer matches the baseline. In a separate clean checkout '
             'of the new baseline, manually restore only the pre-strategy dispatch from '
@@ -55,7 +63,7 @@ def prepare(checkout: Path, evidence: Path) -> None:
             'Save git diff --binary -R for the two production paths as the '
             'replacement patch. Build and validate both frameworks and inspect the recorded '
             'source hashes before accepting that regenerated control; do not copy an entire historical client file.'
-        ) from error
+        )
     git('apply', '--reverse', str(patch))
     if set(git('diff', '--name-only').splitlines()) != paths:
         raise RuntimeError('The control changed an unexpected set of production files.')
@@ -65,6 +73,7 @@ def prepare(checkout: Path, evidence: Path) -> None:
     evidence.write_text(json.dumps({
         'baseline_commit': git('rev-parse', 'HEAD'),
         'control': 'pre-strategy dispatch; reversed production-only patch',
+        'patch_file': patch.name,
         'patch_sha256': hashlib.sha256(patch.read_bytes()).hexdigest(),
         'before_sha256': before,
         'after_sha256': hashes(),

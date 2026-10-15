@@ -1,5 +1,8 @@
 using System.Net.Sockets;
 using System.Text;
+using Respire.Commands;
+using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -10,6 +13,58 @@ namespace Respire.Tests.Networking;
 public partial class SentinelRoutingTests
 {
     private static readonly byte[] BacklogValueReply = "$5\r\nvalue\r\n"u8.ToArray();
+
+    [Test]
+    public async Task BacklogSnapshotOwnsKeysAndPreservesCommandCallbacks()
+    {
+        var bytes = "key"u8.ToArray();
+        var callbacks = new BacklogCallbacks();
+        using var responseCancellation = new CancellationTokenSource();
+        var command = new BorrowedBacklogCommand(bytes, callbacks, responseCancellation.Token);
+        var snapshot = new RespireClient.BacklogCommand<BorrowedBacklogCommand>(command, "GET");
+        Array.Fill(bytes, (byte)'x');
+
+        await Assert.That(snapshot.TryGetPrimaryKey(out var primaryKey)).IsTrue();
+        await Assert.That(primaryKey.ToString()).IsEqualTo("key");
+        await Assert.That(snapshot.TryGetClientCacheKey("GET", out var query)).IsTrue();
+        await Assert.That(query.GetArgument(0).ToString()).IsEqualTo("key");
+        await Assert.That(snapshot.TryGetArgument(0, out var argument)).IsTrue();
+        await Assert.That(argument.ToString()).IsEqualTo("key");
+        await Assert.That(snapshot.GetCacheMutation("GET")).IsEqualTo(RespireCacheMutation.ReadOnly);
+        await Assert.That(snapshot.GetClientCacheMetadata("GET").CacheableRead).IsTrue();
+        await Assert.That(snapshot.GetResponseCancellationToken(default)).IsEqualTo(responseCancellation.Token);
+        await Assert.That(callbacks.Accepted).IsEqualTo(0);
+        snapshot.ValidateAdmission();
+        snapshot.OnAccepted();
+        await Assert.That(callbacks.Validated).IsEqualTo(1);
+        await Assert.That(callbacks.Accepted).IsEqualTo(1);
+    }
+
+    private sealed class BacklogCallbacks
+    {
+        internal int Validated;
+        internal int Accepted;
+    }
+
+    private readonly struct BorrowedBacklogCommand(byte[] key, BacklogCallbacks callbacks,
+        CancellationToken responseToken) : IRespCommand
+    {
+        public ReadCommandKind ReadKind => ReadCommandKind.None;
+        public void Write(ref RespWriter writer)
+        {
+            writer.WriteArrayHeader(2);
+            writer.WriteBulkString("GET"u8);
+            writer.WriteBulkString(key);
+        }
+        public bool TryGetPrimaryKey(out RespireValue value) { value = key; return true; }
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey value)
+        { value = new(operation, (RespireValue)key); return true; }
+        public bool TryGetArgument(int index, out RespireValue value)
+        { value = index == 0 ? key : default; return index == 0; }
+        public void ValidateAdmission() => callbacks.Validated++;
+        public void OnAccepted() => callbacks.Accepted++;
+        public CancellationToken GetResponseCancellationToken(CancellationToken token) => responseToken;
+    }
 
     [Test]
     [Arguments("string")]
@@ -26,7 +81,7 @@ public partial class SentinelRoutingTests
         var pending = SendSentinelBacklogCommandAsync(fixture.Client, surface, "queued");
         await fixture.Selecting.Task.WaitAsync(Limit);
         await Assert.That(pending.IsCompleted).IsFalse();
-        await Assert.That(fixture.Client.Core.Sentinel!.GetReconnectBacklog(4).Count).IsEqualTo(1);
+        await Assert.That(fixture.Client.Core.Sentinel!.GetReconnectBacklog().Count).IsEqualTo(1);
         fixture.Resume.TrySetResult();
         await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo(surface is "write" or "fire-and-forget" ? "OK" : "value");
         await Assert.That(await fixture.Client.GetStringAsync("barrier")).IsEqualTo("value");
@@ -75,7 +130,7 @@ public partial class SentinelRoutingTests
         await caller.CancelAsync();
         var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
-        await Assert.That(fixture.Client.Core.Sentinel!.GetReconnectBacklog(1).Count).IsEqualTo(0);
+        await Assert.That(fixture.Client.Core.Sentinel!.GetReconnectBacklog().Count).IsEqualTo(0);
         var next = fixture.Client.GetStringAsync("next").AsTask();
         fixture.Resume.TrySetResult();
         await Assert.That(await next.WaitAsync(Limit)).IsEqualTo("value");
@@ -95,7 +150,7 @@ public partial class SentinelRoutingTests
         var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         await Assert.That(error.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", fixture.Replacement.Port));
-        await Assert.That(fixture.Client.Core.Sentinel.GetReconnectBacklog(4).Count).IsEqualTo(0);
+        await Assert.That(fixture.Client.Core.Sentinel.GetReconnectBacklog().Count).IsEqualTo(0);
         await Assert.That(fixture.Replacement.ReceivedCommands.Any(IsSentinelBacklogApplicationCommand)).IsFalse();
     }
 
@@ -138,7 +193,7 @@ public partial class SentinelRoutingTests
         fixture.Resume.TrySetResult();
         await Assert.That(async () => await first.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
         await Assert.That(async () => await second.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
-        await Assert.That(fixture.Client.Core.Sentinel!.GetReconnectBacklog(4).Count).IsEqualTo(0);
+        await Assert.That(fixture.Client.Core.Sentinel!.GetReconnectBacklog().Count).IsEqualTo(0);
         await Assert.That(fixture.ReplacementAttempts).IsEqualTo(2);
         await Assert.That(fixture.Replacement.ReceivedCommands.Any(IsSentinelBacklogApplicationCommand)).IsFalse();
     }
@@ -411,7 +466,7 @@ public partial class SentinelRoutingTests
                 Volatile.Write(ref port, fixture.Replacement.Port);
                 var generation = fixture.Client.Core.Sentinel!.Current!;
                 var connection = generation.Multiplexer.GetConnection();
-                using var rejection = Protocol.RespValue.Error("READONLY demoted");
+                using var rejection = Respire.Protocol.RespValue.Error("READONLY demoted");
                 generation.ObserveResponse(connection, "SET", in rejection);
                 return fixture;
             }

@@ -90,7 +90,7 @@ public sealed partial class RespireClient
         try
         {
             var deadline = CreateCircuitDeadline();
-            var snapshot = new BacklogCommand<TCommand>(command);
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
             return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
             {
                 dispatched = true;
