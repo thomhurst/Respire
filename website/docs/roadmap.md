@@ -158,7 +158,8 @@ Public interface compatibility and the post-2.0 extension policy are described i
   function execution and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
   streaming upload/download results, explicit subscription setup/teardown,
   specialized server/pinned/fan-out operations, resumable cluster scan pages,
-  and stream appends including automatic IDMP retries and capability fallback.
+  stream appends including automatic IDMP retries and capability fallback,
+  explicit batch/transaction members (including WAIT/WAITAOF), and WATCH setup.
   Remaining specialized coverage and the complete client-wide policy audit are tracked in
   [#1708](https://github.com/thomhurst/Respire/issues/1708).
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),

@@ -89,8 +89,8 @@ public sealed partial class RespireBatch
     private ValueTask<T> ExecuteWithAcknowledgementAsync<TCommand, T>(
         string operation, TCommand acknowledgement, Func<RespValue, T> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
-        => _client.Core.Options.PipelineHook is { } hook
-            ? ExecuteAcknowledgementHookedAsync(hook, operation, acknowledgement, convert, cancellationToken)
+        => _client.Core.Options.PipelineHook is not null || _client.Core.Options.CommandHook is not null
+            ? ExecuteAcknowledgementHookedAsync(_client.Core.Options.PipelineHook, operation, acknowledgement, convert, cancellationToken)
             : ExecuteAcknowledgementCoreAsync(operation, acknowledgement, convert, cancellationToken);
 
     private async ValueTask<T> ExecuteAcknowledgementCoreAsync<TCommand, T>(

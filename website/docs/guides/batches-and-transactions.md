@@ -13,6 +13,12 @@ Set `RespireOptions.PipelineHook` to audit, time, or reject explicit batches and
 commits. Client views share the hook. The default is `null`: execution allocates no hook state
 and uses the existing async path without a hook wrapper.
 
+`RespireOptions.CommandHook` also applies to each explicit member. If both hooks are set,
+aggregate admission runs first, then member admissions in queue order, all before any send.
+Member completions run after cleanup and before aggregate completion. See
+[aggregate command hooks](command-hooks.md#explicit-aggregate-members-and-watch) for rejection,
+durability and watched-abort outcomes. Both hooks default to `null`.
+
 <!-- doc-test-tail-declaration: split-before=sealed class AuditPipelineHook -->
 ```csharp
 using System.Diagnostics;

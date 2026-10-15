@@ -266,16 +266,16 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
     /// <summary>Executes the shared transaction path and reports a watched abort.</summary>
     private protected ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken, bool validateEmptyWatch = false)
-        => _client.Core.Options.PipelineHook is { } hook
-            ? CommitHookedAsync(hook, cancellationToken, validateEmptyWatch)
+        => _client.Core.Options.PipelineHook is not null || _client.Core.Options.CommandHook is not null
+            ? CommitHookedAsync(_client.Core.Options.PipelineHook, cancellationToken, validateEmptyWatch)
             : CommitWithoutHookAsync(cancellationToken, validateEmptyWatch);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> CommitWithoutHookAsync(CancellationToken cancellationToken, bool validateEmptyWatch,
-        PipelineHookScope? hook = null)
+        PipelineHookScope? hook = null, bool admitted = false)
     {
         var observation = _ops.Count == 0 ? default : _ops[0].Observation;
-        using var importUsage = hook is null ? PrepareCommit() : null;
+        using var importUsage = admitted ? null : PrepareCommit();
         var core = _client.Core;
         var telemetryOperation = "MULTI";
         var sentinelStarted = core.Sentinel is null ? default : RespireTelemetry.CaptureBatchStart("MULTI", _ops, static op => op.Operation);
@@ -1072,6 +1072,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         string operation, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp(operation)
     {
         public override bool IsCompleted => pending.IsCompleted;
+        public override Exception? Error => pending.Error;
+        public override bool IsAborted => pending.Status == RespirePendingStatus.Aborted;
         public override Exception? Complete(RespireClient client, in RespValue element)
         {
             if (element.IsError)

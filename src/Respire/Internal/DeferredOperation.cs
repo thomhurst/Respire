@@ -6,6 +6,8 @@ internal abstract class DeferredOperation(string operation)
 {
     public string Operation { get; } = operation;
     public abstract bool IsCompleted { get; }
+    public abstract Exception? Error { get; }
+    public virtual bool IsAborted => false;
     public abstract void Fail(Exception error);
     public abstract bool ReportError();
     public abstract void AllowErrorInspection();

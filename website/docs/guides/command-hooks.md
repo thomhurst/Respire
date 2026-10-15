@@ -13,9 +13,10 @@ Client views created with a key prefix, read preference, or cache bypass share t
 Supported routes include ordinary converted-response commands, interpolated and non-interpolated Execute
 APIs, function calls and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
-multi-key and partial hash cache reads, cache-aside factories and distributed-cache operations.
-This is **not a client-wide command-blocking policy**. Remaining specialized dispatch and
-aggregate coverage are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
+multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
+explicit pipeline/transaction members and WATCH setup.
+This is **not a client-wide command-blocking policy**. Remaining composite coverage and
+the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 :::
 
 <!-- doc-test-tail-declaration: split-before=sealed class CommandAudit -->
@@ -125,7 +126,7 @@ remain inside that scope. Completion waits for every started leg, including when
 `ListAsync`, `DumpAsync` and `StatsAsync` use the ordinary converted-response boundary.
 Internal library recovery does not create extra function-mutation hooks. Application calls
 started by callbacks retain their own independent scopes. Batch and transaction function
-members remain governed by the separate pipeline hook.
+members use the aggregate member boundary described below.
 
 ### Streaming and subscription resources
 
@@ -212,16 +213,56 @@ Cancellation between yielded items is outside the already completed page.
 The following paths do not yet have a complete hook contract:
 remaining custom facet conversions, imports, and composite helpers
 such as managed locks. Some invoke covered helpers internally;
-that does not make their entire public operation covered. Explicit batch and transaction
-members also remain outside this command hook. Use the separate
-[pipeline hook](batches-and-transactions.md#observe-or-reject-explicit-executions) for
-aggregate admission and completion.
+that does not make their entire public operation covered. The remaining owners are tracked
+in [#1755](https://github.com/thomhurst/Respire/issues/1755) (locks/coordination) and
+[#1756](https://github.com/thomhurst/Respire/issues/1756) (imports/diagnostics), followed
+by the final cross-route audit in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 
 Tracked scripts and correction sends belong to the surrounding lock, cache or coordination
 operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
 transport leg would miss earlier setup and finish before correction cleanup. Imports and
 diagnostic aggregates such as `ProbeHealthAsync` also require the remaining composite audit.
 This coverage does not establish a client-wide blocking policy.
+
+### Explicit aggregate members and WATCH
+
+`CommandHook` admits batch and transaction members when the aggregate executes, not when
+commands are queued. When both hooks are configured, `PipelineHook.OnExecuting` runs first,
+then each `CommandHook.OnExecuting` in queue order, with `WAIT` or `WAITAOF` last for a
+durability batch. All admissions finish before connection acquisition or the first member
+send. With a command hook, caller cancellation is checked after admission. Structural and
+lifecycle validation still precede callbacks.
+
+An aggregate-hook rejection invokes no member hooks. A member rejection stops further
+admission and faults **every** queued pending with that same exception. The rejecting member
+completes as `Rejected` with null state; previously admitted members complete as `Failed`
+(or `Canceled` for a cancellation exception). Members whose admission was never entered
+receive no callback. `TryExecuteAsync` returns the pending failures; throwing execution APIs
+retain their existing error behavior. The aggregate hook sees a member rejection as a failed
+or canceled execution, rather than rejection of its own admission.
+
+Entered members complete in queue order after final reply conversion, retries, mutation
+fences and owned cleanup, outside an import session's usage gate. The pipeline hook completes
+last. Each member reports its own pending outcome, so a failed `WAIT`/`WAITAOF` does not turn
+successful writes into failures. An admitted acknowledgement skipped after a member failure
+reports the execution failure. An aborted watched transaction reports `Failed` with
+`RespireTransactionAbortedException` for each entered member, matching inspection of an
+aborted pending; the pipeline hook retains its `Aborted` outcome. `MULTI`, `EXEC`, internal
+retry attempts and protocol housekeeping do not create command events. Empty aggregates
+have no command events, while their pipeline hook still runs.
+
+Creating a watched transaction with nonempty keys admits one independent `WATCH` scope
+after key snapshot/routing validation and before dedicated connection acquisition. It
+completes on transfer of the watched transaction, or after failed-setup cleanup. Rejection
+sends no WATCH. Creating with no watch keys has no WATCH scope. Commit and disposal retain
+their existing connection ownership; rejecting a commit retires its WATCH connection
+without sending MULTI/EXEC. Each fresh watched transaction created by the application-level
+retry helper is a new WATCH and member execution, unlike internal retries of one commit.
+
+`AggregateCommandHookTests` covers both hook combinations, no-wire rejection, final
+conversion failures, cancellation, empty aggregates, retries, watched aborts, durability
+and import member cleanup. This extends the ordinary (#1685) and specialized (#1707)
+boundaries; it does not establish client-wide coverage for the remaining composite owners.
 
 ## Order and outcomes
 
