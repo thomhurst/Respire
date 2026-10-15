@@ -1,4 +1,11 @@
 #nullable enable
+Respire.RespireBacklogPolicy
+Respire.RespireBacklogPolicy.Queue = 0 -> Respire.RespireBacklogPolicy
+Respire.RespireBacklogPolicy.FailFast = 1 -> Respire.RespireBacklogPolicy
+Respire.RespireOptions.BacklogPolicy.get -> Respire.RespireBacklogPolicy
+Respire.RespireOptions.BacklogPolicy.init -> void
+Respire.RespireOptions.BacklogCapacity.get -> int
+Respire.RespireOptions.BacklogCapacity.init -> void
 Respire.RespireCommandContext
 Respire.RespireCommandContext.CancellationToken.get -> System.Threading.CancellationToken
 Respire.RespireCommandContext.Command.get -> string!

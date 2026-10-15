@@ -82,6 +82,7 @@ public class DependencyInjectionOptionsTests
             ["MaintenanceNotifications"] = "Auto", ["MaintenanceRelaxedTimeout"] = "00:00:45",
             ["MaintenanceWindowTimeout"] = "00:01:30", ["ConnectTimeout"] = "00:00:04",
             ["ReconnectPolicy:MaxAttempts"] = "4", ["ClusterTopologyRefreshInterval"] = "00:00:50",
+            ["BacklogPolicy"] = "FailFast", ["BacklogCapacity"] = "123",
             ["UseTls"] = "true", ["TlsOptions:TargetHost"] = "redis",
             ["ConnectionIdleReadTimeout"] = "00:00:12", ["GatheredWriteStallTimeout"] = "00:00:13",
             ["CommandTimeout"] = "00:00:05", ["ThreadPoolMonitoring"] = "false",

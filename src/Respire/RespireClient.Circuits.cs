@@ -203,11 +203,12 @@ public sealed partial class RespireClient
     private async ValueTask<TResult> SendCircuitReadyAsync<TCommand, TResult, TSend>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         TSend sender, RespireTelemetry.OperationStart durationStarted, ClientSideCacheCoordinator? cache,
-        ClientSideCacheCoordinator.MutationFence mutationFence, RespireTelemetry.ErrorObservation observation)
+        ClientSideCacheCoordinator.MutationFence mutationFence, RespireTelemetry.ErrorObservation observation,
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
-        var commandDeadline = CreateCircuitDeadline();
+        commandDeadline = CreateCircuitDeadline(commandDeadline);
         var attemptStarted = durationStarted with { SuppressRetirement = true };
         var durationOwnedByTransport = false;
         var succeeded = false;
@@ -343,9 +344,10 @@ public sealed partial class RespireClient
 #endif
     private async ValueTask SendCircuitFireAndForgetAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
-        string? storedProcedureName, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+        string? storedProcedureName, RespireTelemetry.ErrorObservation observation,
+        CommandDeadline commandDeadline = default) where TCommand : struct, IRespCommand
     {
-        var commandDeadline = CreateCircuitDeadline();
+        commandDeadline = CreateCircuitDeadline(commandDeadline);
         // One logical send owns one scope; a handled retirement must not complete it early.
         var telemetry = RespireTelemetry.IsOperationEnabled(operation)
             ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database,

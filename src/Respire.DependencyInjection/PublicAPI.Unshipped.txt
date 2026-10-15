@@ -1,4 +1,8 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.BacklogCapacity.get -> int
+Respire.DependencyInjection.RespireOptionsBuilder.BacklogCapacity.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.BacklogPolicy.get -> Respire.RespireBacklogPolicy
+Respire.DependencyInjection.RespireOptionsBuilder.BacklogPolicy.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.CommandHook.get -> Respire.RespireCommandHook?
 Respire.DependencyInjection.RespireOptionsBuilder.CommandHook.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.PipelineHook.get -> Respire.RespirePipelineHook?

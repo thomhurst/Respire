@@ -192,6 +192,12 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ### Retries and write outcomes
 
+- A bounded [standalone reconnect backlog](./guides/reconnect-policy.md#standalone-command-backlog)
+  waits for replacement command connections by default, including typed/raw commands,
+  fire-and-forget, batches and unwatched transactions. It preserves FIFO admission, original
+  deadlines and cancellation, with `BacklogCapacity` and a `FailFast` opt-out. Accepted commands
+  are not replayed by the backlog. Cluster, Sentinel and replica-routing integration remains
+  tracked in [#1717](https://github.com/thomhurst/Respire/issues/1717).
 - Opt-in [command retry policies](./guides/command-retries) through `RespireOptions.RetryPolicy`.
   Each command has a retry category that decides whether it may be resent after it might have run.
   Retries cover immediate commands, raw/script/function requests with a declared category,

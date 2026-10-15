@@ -40,6 +40,8 @@ internal static class RespireConfiguration
         MaintenanceWindowTimeout = section.GetValue("MaintenanceWindowTimeout", options.MaintenanceWindowTimeout),
         ConnectTimeout = section.GetValue("ConnectTimeout", options.ConnectTimeout),
         ReconnectPolicy = ReconnectPolicy(section.GetSection("ReconnectPolicy"), options.ReconnectPolicy),
+        BacklogPolicy = section.GetValue("BacklogPolicy", options.BacklogPolicy),
+        BacklogCapacity = section.GetValue("BacklogCapacity", options.BacklogCapacity),
         RetryPolicy = RetryPolicy(section.GetSection("RetryPolicy"), options.RetryPolicy),
         CircuitBreaker = CircuitBreaker(section.GetSection("CircuitBreaker"), options.CircuitBreaker),
         StreamProducerId = section.GetValue("StreamProducerId", options.StreamProducerId),

@@ -141,7 +141,9 @@ public class FakeServerTests
         // The GET below can be enqueued before the client reads the disposed server's EOF. Its
         // command deadline must outlast the five-second promptness guard: a stalled runner
         // could otherwise let the deadline sweep report a timeout before the close fails it.
-        var options = server.CreateOptions() with { Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(30) };
+        // This test exercises prompt failure after server disposal, not queued reconnect demand.
+        var options = server.CreateOptions() with { Connections = 1, BacklogPolicy = RespireBacklogPolicy.FailFast,
+            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(30) };
         await using var client = await RespireClient.ConnectAsync(options);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();

@@ -31,15 +31,36 @@ public sealed partial class RespireClient
     {
         var deadline = CreateCircuitDeadline();
         cancellationToken.ThrowIfCancellationRequested();
+        var backlogConnection = UsesStandaloneBacklog ? SelectStandaloneConnection(cancellationToken) : null;
         var state = ImmediateRetryState.Rent(in command);
+        if (UsesStandaloneBacklog && backlogConnection is null)
+            return SendBackloggedImmediateRetryAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
+                state, cancellationToken, deadline, observation, track);
         return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
-            state, cancellationToken, deadline, observation, track);
+            state, cancellationToken, deadline, observation, track, backlogConnection);
+    }
+
+    private async ValueTask<RespValue> SendBackloggedImmediateRetryAsync<TCommand>(string operation, TCommand command,
+        ImmediateRetryState state, CancellationToken token, CommandDeadline deadline,
+        RespireTelemetry.ErrorObservation observation, bool track) where TCommand : struct, IRespCommand
+    {
+        var dispatched = false;
+        try
+        {
+            return await RunStandaloneBacklogAsync(operation, token, deadline, (connection, originalDeadline) =>
+            {
+                dispatched = true;
+                return SendImmediateRetryCoreAsync(operation, command, state, token, originalDeadline,
+                    observation, track, connection);
+            }).ConfigureAwait(false);
+        }
+        finally { if (!dispatched) state.Return(); }
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, TCommand command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
-        RespireTelemetry.ErrorObservation observation, bool track) where TCommand : struct, IRespCommand
+        RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null) where TCommand : struct, IRespCommand
     {
         CancellationTokenSource? timeout = null;
         var token = callerToken;
@@ -81,7 +102,7 @@ public sealed partial class RespireClient
                     if (attempt > 1 && _core.Circuits is not null) RejectOpenCircuit(token);
                     connection = attempt > 1
                         ? await multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
-                        : GetCircuitAwareConnection(multiplexer, token);
+                        : backlogConnection ?? GetCircuitAwareConnection(multiplexer, token);
                     observation.UseEndpoint(new(connection.Host, connection.Port), token);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     connection.ThrowIfRetired();

@@ -312,6 +312,15 @@ public sealed record RespireOptions
     /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Sentinel fallback shares one budget per resolution.
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
+
+    /// <summary>Admission policy during standalone primary reconnect. Defaults to bounded FIFO waiting.</summary>
+    /// <remarks>Does not replay accepted commands or watched transactions. Cluster, Sentinel and replica routes
+    /// retain their existing recovery behavior.</remarks>
+    public RespireBacklogPolicy BacklogPolicy { get; init; } = RespireBacklogPolicy.Queue;
+
+    /// <summary>Maximum waiting standalone operations during reconnect. A batch or transaction counts as one.
+    /// Defaults to 1024; overflow fails with <see cref="RespireConnectionException"/>.</summary>
+    public int BacklogCapacity { get; init; } = 1024;
     internal string? ReconnectTelemetryScope { get; init; }
     // Invoked synchronously under SubscriptionHub's recovery state lock. The callback must
     // be non-blocking and non-reentrant; capture state only, without acquiring other locks.
@@ -581,6 +590,8 @@ public sealed record RespireOptions
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
+        Require(Enum.IsDefined(BacklogPolicy), nameof(BacklogPolicy), "must be a defined backlog policy");
+        Require(BacklogCapacity > 0, nameof(BacklogCapacity), "must be positive");
         Require(ClusterTopologyRefreshInterval is null || ClusterTopologyRefreshInterval >= TimeSpan.Zero
                 || ClusterTopologyRefreshInterval == Timeout.InfiniteTimeSpan,
             nameof(ClusterTopologyRefreshInterval), "must be non-negative, Timeout.InfiniteTimeSpan, or null");
