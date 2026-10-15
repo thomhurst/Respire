@@ -113,7 +113,19 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
         {
             if (expression is null) return false;
             var operation = model.GetOperation(expression, cancellationToken);
-            while (operation is IConversionOperation conversion) operation = conversion.Operand;
+            while (true)
+            {
+                if (operation is IConversionOperation conversion) operation = conversion.Operand;
+                else if (operation is IParenthesizedOperation parentheses) operation = parentheses.Operand;
+                // ConfigureAwait changes disposal scheduling, not the owned resource.
+                // Match the BCL wrapper so similarly named user methods are not followed.
+                else if (operation is IInvocationOperation configured
+                    && configured.TargetMethod.Name == "ConfigureAwait"
+                    && configured.TargetMethod.ContainingType.ToDisplayString() == "System.Threading.Tasks.TaskAsyncEnumerableExtensions"
+                    && configured.TargetMethod.ReturnType.ToDisplayString() == "System.Runtime.CompilerServices.ConfiguredAsyncDisposable")
+                    operation = configured.Arguments.FirstOrDefault(argument => argument.Parameter?.Ordinal == 0)?.Value;
+                else break;
+            }
             return operation is ILocalReferenceOperation reference
                 && SymbolEqualityComparer.Default.Equals(reference.Local, declarator.Symbol);
         }

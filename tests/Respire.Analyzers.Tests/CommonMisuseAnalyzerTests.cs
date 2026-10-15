@@ -81,6 +81,50 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
+    public Task ConfiguredSubsequentLocalOwnership(string framework) => Verify(framework, new ShortLivedClientAnalyzer(), """
+        class Consumer
+        {
+            async Task Request()
+            {
+                var client = {|RESP010:RespireClient.Create("localhost")|};
+                await using (client.ConfigureAwait(false)) { }
+                var connected = await {|RESP010:RespireClient.ConnectAsync("localhost")|}.ConfigureAwait(false);
+                await using var owned = connected.ConfigureAwait(continueOnCapturedContext: true);
+                IAsyncDisposable any = await {|RESP010:RespireClient.ConnectAnyAsync(new[] { RespireOptions.Parse("localhost") })|};
+                await using (var alias = TaskAsyncEnumerableExtensions.ConfigureAwait(any, false)) { }
+                var cast = {|RESP010:RespireClient.Create("localhost")|};
+                await using (((IAsyncDisposable)cast).ConfigureAwait(false)) { }
+            }
+            async Task Reassigned(RespireClient shared)
+            {
+                var client = RespireClient.Create("localhost");
+                client = shared;
+                await using (client.ConfigureAwait(false)) { }
+                var other = RespireClient.Create("localhost");
+                Replace(ref other, shared);
+                await using var owned = other.ConfigureAwait(false);
+            }
+            static void Replace(ref RespireClient client, RespireClient replacement) => client = replacement;
+            void Deferred()
+            {
+                var client = RespireClient.Create("localhost");
+                Func<Task> cleanup = async () => { await using (client.ConfigureAwait(false)) { } };
+            }
+            async Task UnrelatedWrapper()
+            {
+                var client = RespireClient.Create("localhost");
+                await using (Lookalike.ConfigureAwait(client, false)) { }
+            }
+        }
+        static class Lookalike
+        {
+            public static IAsyncDisposable ConfigureAwait(RespireClient client, bool capture) => null!;
+        }
+        """);
+
+    [Test]
     public Task EntryPointOwnsApplicationLifetime() => Verify("net10.0", new ShortLivedClientAnalyzer(), """
         class Program
         {
@@ -89,6 +133,8 @@ public class CommonMisuseAnalyzerTests
                 await using var client = await RespireClient.ConnectAsync("localhost");
                 var separate = RespireClient.Create("localhost");
                 await using (separate) { }
+                var configured = RespireClient.Create("localhost");
+                await using (configured.ConfigureAwait(false)) { }
                 for (var i = 0; i < 2; i++)
                 {
                     await using var repeated = {|RESP010:RespireClient.Create("localhost")|};
