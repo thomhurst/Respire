@@ -55,9 +55,9 @@ When every connection at an endpoint is exhausted, commands throw
 connection's server client ID throw when any connection is exhausted. Cleanup connections that
 Respire opens after an ambiguous outcome use their own `ConnectTimeout` and ignore this policy.
 
-### Standalone command backlog
+### Standalone and Sentinel command backlog {#standalone-command-backlog}
 
-After a standalone client has connected, `RespireOptions.BacklogPolicy` defaults to
+After a standalone or Sentinel client has connected, `RespireOptions.BacklogPolicy` defaults to
 `RespireBacklogPolicy.Queue`. When its primary command connections are unavailable during
 replacement, definitely-unsent operations wait in a bounded FIFO backlog. This works with
 `RetryPolicy = null`: waiting to send a command for the first time does not require permission
@@ -99,9 +99,19 @@ failure when no usable command connection is available. Connection recovery itse
 `ReconnectPolicy` controls replacement backoff and attempt limits; `BacklogPolicy` controls
 whether eligible unsent work waits for that replacement.
 
-This backlog currently covers initialized standalone primary command connections. Cluster,
-Sentinel and replica-routing integration is tracked in
-[#1717](https://github.com/thomhurst/Respire/issues/1717). Initial connection setup, dedicated
+For Sentinel primaries, the FIFO belongs to the router and survives generation retirement.
+Its head rediscovers and ROLE-validates the elected primary before dispatch; queued commands
+never reconnect a retired primary independently. Commands arriving during discovery or drain
+join that same bounded queue, including batches and unwatched transactions. Every next entry
+selects the current generation again. A finite reconnect policy bounds repeated discovery rounds
+for the head, in addition to the resolver's per-round candidate budget; exhaustion fails all
+pending entries. Without an explicit policy, failed discovery rounds use Sentinel's default
+backoff. Discovery timeouts propagate to the waiting head. The command's original deadline
+still bounds its entire wait and execution.
+
+This backlog covers initialized standalone and Sentinel primary command connections. Cluster
+integration is tracked in [#1735](https://github.com/thomhurst/Respire/issues/1735), and replica-read
+routing in [#1736](https://github.com/thomhurst/Respire/issues/1736). Initial connection setup, dedicated
 connections, watched transactions, import sessions and server-local cursor continuations do not
 join this backlog. The specialized `Locks` expiry-update and release paths also retain their
 existing acquisition and recovery rules and have no ordering guarantee relative to queued
@@ -111,7 +121,7 @@ selected. Lock acquisition (`SET NX PX`) and owner-token reads use ordinary queu
 Other behavior, with or without a reconnect policy:
 
 - A command already accepted by a failed connection can still fail while replacement proceeds.
-- Operations outside the standalone backlog, or with `FailFast`, can fail during replacement.
+- Operations outside the primary backlog, or with `FailFast`, can fail during replacement.
 - Each connection attempt keeps its `ConnectTimeout`. The policy does not retry the client's initial connection.
 - Command deadlines and caller cancellation bound their own waits. Cancelling one caller does not cancel shared recovery.
 - Disposing the client cancels scheduled delays and waits for recovery to finish.

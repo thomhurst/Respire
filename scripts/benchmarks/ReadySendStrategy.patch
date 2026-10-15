@@ -1,6 +1,6 @@
 diff --git b/src/Respire/RespireClient.ReadySend.cs a/src/Respire/RespireClient.ReadySend.cs
 new file mode 100644
-index 00000000..4c88cde8
+index 00000000..2e99f84f
 --- /dev/null
 +++ a/src/Respire/RespireClient.ReadySend.cs
 @@ -0,0 +1,267 @@
@@ -49,9 +49,9 @@ index 00000000..4c88cde8
 +        RespireConnection? connection;
 +        try
 +        {
-+            connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
++            connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
 +                && !CursorCommandMetadata.IsServerCursorContinuation(in command)
-+                ? SelectStandaloneConnection(cancellationToken)
++                ? SelectPrimaryBacklogConnection(cancellationToken)
 +                : GetCircuitAwareConnection(multiplexer, cancellationToken);
 +        }
 +        catch (Exception error)
@@ -96,8 +96,8 @@ index 00000000..4c88cde8
 +        try
 +        {
 +            var deadline = CreateCircuitDeadline();
-+            var snapshot = new BacklogCommand<TCommand>(command);
-+            return await RunStandaloneBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
++            var snapshot = new BacklogCommand<TCommand>(command, operation);
++            return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
 +            {
 +                dispatched = true;
 +                if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
@@ -108,7 +108,7 @@ index 00000000..4c88cde8
 +                        cancellationToken, sender, cache!, mutationFence, durationStarted, observation, originalDeadline);
 +                return sender.Send(connection, operation, snapshot, cancellationToken, durationStarted, originalDeadline,
 +                    errorObservation: observation);
-+            }).ConfigureAwait(false);
++            }, observation).ConfigureAwait(false);
 +        }
 +        catch (Exception error)
 +        {
@@ -272,10 +272,10 @@ index 00000000..4c88cde8
 +        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
 +}
 diff --git b/src/Respire/RespireClient.cs a/src/Respire/RespireClient.cs
-index c2be2a31..8c64e8da 100644
+index a2d0db1a..8032cb2a 100644
 --- b/src/Respire/RespireClient.cs
 +++ a/src/Respire/RespireClient.cs
-@@ -5808,42 +5808,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -5812,42 +5812,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                  // Redis response, not user converter work (conversion runs at the caller).
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -283,9 +283,9 @@ index c2be2a31..8c64e8da 100644
 -                RespireConnection? connection;
 -                try
 -                {
--                    connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+-                    connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
 -                        && !CursorCommandMetadata.IsServerCursorContinuation(in command)
--                        ? SelectStandaloneConnection(ct)
+-                        ? SelectPrimaryBacklogConnection(ct)
 -                        : GetCircuitAwareConnection(readyMultiplexer, ct);
 -                }
 -                catch (Exception error)
@@ -322,7 +322,7 @@ index c2be2a31..8c64e8da 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -5938,41 +5906,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -5942,41 +5910,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                  // CommandTimeout is enforced by the connection's deadline sweep.
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -330,9 +330,9 @@ index c2be2a31..8c64e8da 100644
 -                RespireConnection? connection;
 -                try
 -                {
--                    connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+-                    connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
 -                        && !CursorCommandMetadata.IsServerCursorContinuation(in command)
--                        ? SelectStandaloneConnection(ct)
+-                        ? SelectPrimaryBacklogConnection(ct)
 -                        : GetCircuitAwareConnection(readyMultiplexer, ct);
 -                }
 -                catch (Exception error)
@@ -367,7 +367,7 @@ index c2be2a31..8c64e8da 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -6002,41 +5938,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6006,41 +5942,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
              {
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -375,9 +375,9 @@ index c2be2a31..8c64e8da 100644
 -                RespireConnection? connection;
 -                try
 -                {
--                    connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+-                    connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
 -                        && !CursorCommandMetadata.IsServerCursorContinuation(in command)
--                        ? SelectStandaloneConnection(ct)
+-                        ? SelectPrimaryBacklogConnection(ct)
 -                        : GetCircuitAwareConnection(readyMultiplexer, ct);
 -                }
 -                catch (Exception error)
@@ -412,7 +412,7 @@ index c2be2a31..8c64e8da 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -6228,234 +6132,5 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6232,234 +6136,5 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
  
          return result;
      }
@@ -437,9 +437,9 @@ index c2be2a31..8c64e8da 100644
 -        RespireConnection? connection;
 -        try
 -        {
--            connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+-            connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
 -                && !CursorCommandMetadata.IsServerCursorContinuation(in command)
--                ? SelectStandaloneConnection(cancellationToken)
+-                ? SelectPrimaryBacklogConnection(cancellationToken)
 -                : GetCircuitAwareConnection(multiplexer, cancellationToken);
 -        }
 -        catch (Exception error)
@@ -472,8 +472,8 @@ index c2be2a31..8c64e8da 100644
 -        try
 -        {
 -            var deadline = CreateCircuitDeadline();
--            var snapshot = new BacklogCommand<TCommand>(command);
--            return await RunStandaloneBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
+-            var snapshot = new BacklogCommand<TCommand>(command, operation);
+-            return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
 -            {
 -                dispatched = true;
 -                if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
@@ -484,7 +484,7 @@ index c2be2a31..8c64e8da 100644
 -                        cancellationToken, sender, cache!, mutationFence, durationStarted, observation, originalDeadline);
 -                return sender.Send(connection, operation, snapshot, cancellationToken, durationStarted, originalDeadline,
 -                    errorObservation: observation);
--            }).ConfigureAwait(false);
+-            }, observation).ConfigureAwait(false);
 -        }
 -        catch (Exception error)
 -        {

@@ -323,16 +323,16 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 // The connection sweep owns EXEC's timeout. Acquisition alone needs a timer
                 // when it cannot use a ready connection; both stages share one absolute budget.
-                if (connection is null && !_hasCursorContinuation && _client.UsesStandaloneBacklog)
-                    connection = _client.SelectStandaloneConnection(cancellationToken);
-                result = connection is null && !_hasCursorContinuation && _client.UsesStandaloneBacklog
-                    ? await _client.RunStandaloneBacklogAsync("MULTI/EXEC", cancellationToken, deadline,
+                if (connection is null && !_hasCursorContinuation && _client.UsesPrimaryBacklog)
+                    connection = _client.SelectPrimaryBacklogConnection(cancellationToken);
+                result = connection is null && !_hasCursorContinuation && _client.UsesPrimaryBacklog
+                    ? await _client.RunPrimaryBacklogAsync("MULTI/EXEC", cancellationToken, deadline,
                         (ready, originalDeadline) =>
                         {
                             connection = ready;
                             deadline = originalDeadline;
                             return SendAsync();
-                        }).ConfigureAwait(false)
+                        }, observation).ConfigureAwait(false)
                     : await SendAsync().ConfigureAwait(false);
 
                 // SendTransactionAsync drains through EXEC before completing, including when it

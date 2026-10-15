@@ -11,23 +11,23 @@ public sealed partial class RespireClient
     private ValueTask<Stream?> SendPrimaryBulkStreamAsync<TCommand>(string operation, TCommand command,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
-        var connection = UsesStandaloneBacklog ? SelectStandaloneConnection(cancellationToken)
+        var connection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken)
             : GetCircuitAwareConnection(_core.Multiplexer, cancellationToken);
         if (connection is not null)
             return SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);
         var deadline = CreateCircuitDeadline();
-        var snapshot = new BacklogCommand<TCommand>(command);
-        return RunStandaloneBacklogAsync(operation, cancellationToken, deadline, (ready, originalDeadline) =>
+        var snapshot = new BacklogCommand<TCommand>(command, operation);
+        return RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (ready, originalDeadline) =>
             SendBulkStreamOnConnectionAsync(operation, ready, snapshot, cancellationToken,
-                observation: observation, commandDeadline: originalDeadline));
+                observation: observation, commandDeadline: originalDeadline), observation);
     }
 
     private ValueTask SendPrimaryFireAndForgetAsync<TCommand>(string operation, TCommand command,
         CancellationToken cancellationToken, string? storedProcedureName, RespireTelemetry.ErrorObservation observation,
         bool awaitReply = false) where TCommand : struct, IRespCommand
     {
-        var connection = UsesStandaloneBacklog && !CursorCommandMetadata.IsServerCursorContinuation(in command)
-            ? SelectStandaloneConnection(cancellationToken)
+        var connection = UsesPrimaryBacklog && !CursorCommandMetadata.IsServerCursorContinuation(in command)
+            ? SelectPrimaryBacklogConnection(cancellationToken)
             : GetCircuitAwareConnection(_core.Multiplexer, cancellationToken);
         if (connection is null)
             return SendBackloggedFireAndForgetAsync(operation, command, cancellationToken, storedProcedureName, observation, awaitReply);
@@ -41,8 +41,8 @@ public sealed partial class RespireClient
         bool awaitReply) where TCommand : struct, IRespCommand
     {
         var deadline = CreateCircuitDeadline();
-        var snapshot = new BacklogCommand<TCommand>(command);
-        await RunStandaloneBacklogAsync(operation, cancellationToken, deadline, async (ready, originalDeadline) =>
+        var snapshot = new BacklogCommand<TCommand>(command, operation);
+        await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, async (ready, originalDeadline) =>
         {
             if (!awaitReply)
                 await SendFireAndForgetOnConnectionAsync(operation, ready, snapshot, cancellationToken,
@@ -51,7 +51,7 @@ public sealed partial class RespireClient
                 await SendDiscardedReplyAsync(operation, ready, snapshot, cancellationToken, storedProcedureName,
                     observation, originalDeadline).ConfigureAwait(false);
             return true;
-        }).ConfigureAwait(false);
+        }, observation).ConfigureAwait(false);
     }
 
     private async ValueTask SendDiscardedReplyAsync<TCommand>(string operation, RespireConnection connection, TCommand command,
@@ -69,28 +69,61 @@ public sealed partial class RespireClient
         }
     }
 
-    internal bool UsesStandaloneBacklog => _core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
-        && _core.Cluster is null && _core.Sentinel is null && _core.Multiplexer.IsInitialized;
+    internal bool UsesPrimaryBacklog => _core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
+        && _core.Cluster is null && (_core.Sentinel is { } sentinel
+            ? sentinel.Current is not null : _core.Multiplexer.IsInitialized);
+
+    // Initial discovery retains Connect/Create semantics. Once a Sentinel generation has
+    // been published, the queue owns rediscovery, so callers cannot accumulate unbounded
+    // waiters at the discovery gate before backlog admission.
+    private ValueTask EnsurePrimaryDispatchConnectedAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation, bool allowBacklog = true)
+        => allowBacklog && UsesPrimaryBacklog && _core.Sentinel is not null
+            ? default : _core.EnsureConnectedAsync(cancellationToken, observation);
+
+    private void RejectOpenBacklogCircuit(CancellationToken cancellationToken)
+    {
+        // A retired Sentinel endpoint cannot veto discovery of the new elected primary.
+        // The actual dispatch still acquires that selected endpoint's circuit permit.
+        if (_core.Circuits is not null && (_core.Sentinel is null
+            || _core.TryGetReadyPrimaryMultiplexer(out _))) RejectOpenCircuit(cancellationToken);
+    }
 
     // Only connection selection failures enter the backlog. Errors from dispatch (including
     // accepted commands) belong to the existing command/retry owner and never come back here.
-    internal RespireConnection? SelectStandaloneConnection(CancellationToken cancellationToken)
+    internal RespireConnection? SelectPrimaryBacklogConnection(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (_core.Multiplexer.IsBacklogDraining)
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        var multiplexer = _core.Multiplexer;
+        if (_core.Sentinel is { } sentinel
+            && (sentinel.IsBacklogDraining || !_core.TryGetReadyPrimaryMultiplexer(out multiplexer)))
         {
-            if (_core.Circuits is not null) RejectOpenCircuit(cancellationToken);
+            RejectOpenBacklogCircuit(cancellationToken);
+            return null;
+        }
+        if (multiplexer.IsBacklogDraining)
+        {
+            RejectOpenBacklogCircuit(cancellationToken);
             return null;
         }
         try
         {
             // Unit callers use a deferred client view, but selection still owns availability
             // evidence. Their individual sends acquire their circuit permits after admission.
-            var connection = _core.Circuits is null ? _core.Multiplexer.GetConnection()
-                : GetCircuitConnectionSlow(_core.Multiplexer, cancellationToken);
-            return _core.Multiplexer.IsBacklogDraining ? null : connection;
+            var connection = _core.Circuits is null ? multiplexer.GetConnection()
+                : GetCircuitConnectionSlow(multiplexer, cancellationToken);
+            return multiplexer.IsBacklogDraining || _core.Sentinel?.IsBacklogDraining == true ? null : connection;
         }
-        catch (RespireConnectionException error) when (UsesStandaloneBacklog
+        catch (ObjectDisposedException) when (_core.Sentinel is not null && multiplexer.IsRetired && !_core.Disposed)
+        {
+            return null;
+        }
+        catch (RespireConnectionRetiredException) when (_core.Sentinel is not null && UsesPrimaryBacklog)
+        {
+            return null;
+        }
+        catch (RespireConnectionException error) when (UsesPrimaryBacklog
             && error is not RespireReconnectLimitException)
         {
             if (_core.Circuits is not null)
@@ -106,27 +139,48 @@ public sealed partial class RespireClient
         }
     }
 
-    internal async ValueTask<T> RunStandaloneBacklogAsync<T>(string operation, CancellationToken callerToken,
-        CommandDeadline deadline, Func<RespireConnection, CommandDeadline, ValueTask<T>> dispatch)
+    internal async ValueTask<T> RunPrimaryBacklogAsync<T>(string operation, CancellationToken callerToken,
+        CommandDeadline deadline, Func<RespireConnection, CommandDeadline, ValueTask<T>> dispatch,
+        RespireTelemetry.ErrorObservation observation = default)
     {
         deadline = CreateCircuitDeadline(deadline);
         var acquisition = new CommandAcquisitionScope(callerToken, deadline, _core.Options.CommandTimeout);
+        var dispatched = false;
+        BacklogDiscoveryObservation? discoveryObservation = null;
         try
         {
-            if (_core.Circuits is not null) RejectOpenCircuit(callerToken);
+            RejectOpenBacklogCircuit(callerToken);
             acquisition.CheckDeadline(operation, _core);
-            return await _core.Multiplexer.GetReconnectBacklog(_core.Options.BacklogCapacity).EnqueueAsync(
-                (connection, _) => Dispatch(connection), acquisition.Token).ConfigureAwait(false);
+            var backlog = _core.Sentinel is { } sentinel
+                ? sentinel.GetReconnectBacklog()
+                : _core.Multiplexer.GetReconnectBacklog(_core.Options.BacklogCapacity);
+            if (_core.Sentinel is { } router)
+            {
+                discoveryObservation = observation.IsEmpty ? null : new(observation);
+                return await backlog.EnqueueAsync((connection, _) => Dispatch(connection), acquisition.Token,
+                    token => router.WaitForBacklogConnectionAsync(token, discoveryObservation?.Observation ?? default)).ConfigureAwait(false);
+            }
+            return await backlog.EnqueueAsync((connection, _) => Dispatch(connection), acquisition.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (acquisition.IsCallerCancellation(error))
         { throw new OperationCanceledException(error.Message, error, callerToken); }
         catch (OperationCanceledException error) when (acquisition.IsDeadlineCancellation(error))
         { throw acquisition.CreateTimeout(operation, _core, cause: error); }
-        finally { acquisition.Dispose(); }
+        catch (RespireTimeoutException error) when (!dispatched && _core.Sentinel is not null)
+        {
+            throw RespireTimeoutException.BeforeConnectionSelection(operation,
+                _core.Options.CommandTimeout ?? error.Timeout, error);
+        }
+        finally
+        {
+            discoveryObservation?.Detach();
+            acquisition.Dispose();
+        }
 
         ValueTask<T> Dispatch(RespireConnection connection)
         {
             acquisition.CheckDeadline(operation, _core);
+            dispatched = true;
             // Transport admission and response sweeping now own this same absolute deadline.
             // Keep the caller's original token for transport cancellation and diagnostics.
             acquisition.Dispose();
@@ -134,13 +188,29 @@ public sealed partial class RespireClient
         }
     }
 
-    // Snapshot the wire bytes before suspending, but retain admission, acceptance and fence
+    // Snapshot wire bytes and borrowed keys before suspending, but retain admission, acceptance and fence
     // ownership on the original command (plain SnapshotCommand deliberately drops callbacks).
-    private readonly struct BacklogCommand<TCommand>(TCommand command) : IRespCommandWrapper
+    internal readonly struct BacklogCommand<TCommand> : IRespCommandWrapper
         where TCommand : struct, IRespCommand
     {
-        private readonly SnapshotCommand _snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: false);
-        private readonly RespireValue[] _arguments = SnapshotArguments(in command);
+        private readonly TCommand _command;
+        private readonly SnapshotCommand _snapshot;
+        private readonly RespireValue[] _arguments;
+        private readonly RespireValue _primaryKey;
+        private readonly ClientCacheCommandKey _cacheKey;
+        private readonly bool _hasPrimaryKey;
+        private readonly bool _hasCacheKey;
+
+        internal BacklogCommand(TCommand command, string operation)
+        {
+            _command = command;
+            _snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: false);
+            _arguments = SnapshotArguments(in command);
+            _hasPrimaryKey = command.TryGetPrimaryKey(out var primaryKey);
+            _primaryKey = _hasPrimaryKey ? primaryKey.Snapshot() : default;
+            _hasCacheKey = command.TryGetClientCacheKey(operation, out var cacheKey);
+            _cacheKey = _hasCacheKey ? cacheKey.Snapshot() : default;
+        }
         public void Write(ref RespWriter writer) => _snapshot.Write(ref writer);
         public int GetWriteSizeHint() => _snapshot.GetWriteSizeHint();
         public bool TryGetClusterSlot(out int slot) => _snapshot.TryGetClusterSlot(out slot);
@@ -165,18 +235,26 @@ public sealed partial class RespireClient
             return arguments?.ToArray() ?? [];
         }
 
-        public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+        public bool TryGetPrimaryKey(out RespireValue key)
+        {
+            key = _primaryKey;
+            return _hasPrimaryKey;
+        }
         public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
-            => command.TryGetClientCacheKey(operation, out key);
-        public ReadCommandKind ReadKind => command.ReadKind;
-        public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
-        public int CursorArgumentIndex => command.CursorArgumentIndex;
-        public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command);
-        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in command);
-        public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
-        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
-        public void ValidateAdmission() => command.ValidateAdmission();
-        public CancellationToken GetResponseCancellationToken(CancellationToken token) => command.GetResponseCancellationToken(token);
-        public void OnAccepted() => command.OnAccepted();
+        {
+            key = _cacheKey;
+            return _hasCacheKey;
+        }
+        public ReadCommandKind ReadKind => _command.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => _command.RetryCategory;
+        public int CursorArgumentIndex => _command.CursorArgumentIndex;
+        public bool IsConnectionProtocol => CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in _command);
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
+        // Classification is immutable verb/declaration metadata, independent of borrowed argument bytes.
+        public RespireCacheMutation GetCacheMutation(string operation) => _command.GetCacheMutation(operation);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => _command.GetClientCacheMetadata(operation);
+        public void ValidateAdmission() => _command.ValidateAdmission();
+        public CancellationToken GetResponseCancellationToken(CancellationToken token) => _command.GetResponseCancellationToken(token);
+        public void OnAccepted() => _command.OnAccepted();
     }
 }

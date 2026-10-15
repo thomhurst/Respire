@@ -31,9 +31,9 @@ public sealed partial class RespireClient
     {
         var deadline = CreateCircuitDeadline();
         cancellationToken.ThrowIfCancellationRequested();
-        var backlogConnection = UsesStandaloneBacklog ? SelectStandaloneConnection(cancellationToken) : null;
+        var backlogConnection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken) : null;
         var state = ImmediateRetryState.Rent(in command);
-        if (UsesStandaloneBacklog && backlogConnection is null)
+        if (UsesPrimaryBacklog && backlogConnection is null)
             return SendBackloggedImmediateRetryAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
                 state, cancellationToken, deadline, observation, track);
         return SendImmediateRetryCoreAsync(operation, new ImmediateRetryCommand<TCommand>(command, state, track),
@@ -47,12 +47,12 @@ public sealed partial class RespireClient
         var dispatched = false;
         try
         {
-            return await RunStandaloneBacklogAsync(operation, token, deadline, (connection, originalDeadline) =>
+            return await RunPrimaryBacklogAsync(operation, token, deadline, (connection, originalDeadline) =>
             {
                 dispatched = true;
                 return SendImmediateRetryCoreAsync(operation, command, state, token, originalDeadline,
                     observation, track, connection);
-            }).ConfigureAwait(false);
+            }, observation).ConfigureAwait(false);
         }
         finally { if (!dispatched) state.Return(); }
     }

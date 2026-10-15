@@ -313,12 +313,12 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
-    /// <summary>Admission policy during standalone primary reconnect. Defaults to bounded FIFO waiting.</summary>
-    /// <remarks>Does not replay accepted commands or watched transactions. Cluster, Sentinel and replica routes
+    /// <summary>Admission policy during standalone or Sentinel primary recovery. Defaults to bounded FIFO waiting.</summary>
+    /// <remarks>Does not replay accepted commands or watched transactions. Cluster and replica-read routes
     /// retain their existing recovery behavior.</remarks>
     public RespireBacklogPolicy BacklogPolicy { get; init; } = RespireBacklogPolicy.Queue;
 
-    /// <summary>Maximum waiting standalone operations during reconnect. A batch or transaction counts as one.
+    /// <summary>Maximum waiting operations per primary recovery backlog. A batch or transaction counts as one.
     /// Defaults to 1024; overflow fails with <see cref="RespireConnectionException"/>.</summary>
     public int BacklogCapacity { get; init; } = 1024;
     internal string? ReconnectTelemetryScope { get; init; }
