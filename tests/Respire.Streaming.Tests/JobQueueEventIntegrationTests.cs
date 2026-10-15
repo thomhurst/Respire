@@ -321,7 +321,7 @@ public partial class JobQueueIntegrationTests
         await Assert.That(Activity.Current).IsSameReferenceAs(parent);
     }
 
-    private static RespireScript JobScript(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly
+    internal static RespireScript JobScript(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly
         .GetType("Respire.Streaming.JobQueueScripts")!.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
 
     private static async Task<RespireStreamId> PendingJobAsync(IRespireClient client, RespireJobQueue<string> queue, string id = "job")

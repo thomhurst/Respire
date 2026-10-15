@@ -314,7 +314,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 if (options.JobEventsStream is { } events && message is IJobDelivery job)
                     job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt,
                         delivery.Entry.GetString("_respire.job.flow"),
-                        int.Parse(delivery.Entry.GetString("_respire.job.node") ?? "0", System.Globalization.CultureInfo.InvariantCulture)));
+                        int.Parse(delivery.Entry.GetString("_respire.job.node") ?? "0", System.Globalization.CultureInfo.InvariantCulture),
+                        job.Id, options.JobQueue));
                 result = await handler.HandleAsync(message, _handlers.Token).ConfigureAwait(false);
                 if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
                     throw new InvalidOperationException("The stream handler returned an unknown completion result.");

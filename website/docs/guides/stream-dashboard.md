@@ -8,7 +8,7 @@ description: Inspect stream workers and reliable job queues with an authorized A
 `Respire.Streaming.Dashboard` provides an ASP.NET Core operator page for
 [stream workers](stream-workers.md) and [typed job queues](job-queues.md). It shows configured
 streams, consumer groups, pending deliveries, dead letters, and a sampled delivery rate.
-Operators can retry or permanently delete individual dead letters.
+Operators can retry or permanently delete individual dead letters and inspect retained job logs.
 
 Install `Respire.Streaming.Dashboard` and `Respire.DependencyInjection` in an ASP.NET Core app.
 The dashboard supports .NET 8 and .NET 10 and requires Redis 7 or later for retry permission
@@ -121,6 +121,25 @@ snapshot. Counts are separate reads, not a transactional snapshot. If a source s
 unavailable, its retained dead letters can still be inspected and deleted; retry requires the
 source consumer group. Large field values still have to be retrieved from Redis before preview truncation.
 Delayed jobs in scheduling storage and retained completion events are outside this view.
+
+## Inspect job logs
+
+For registrations with `IsJobQueue = true`, enter an application job ID under **Job logs**
+and select **View logs**. The page displays the newest retained lines in append order,
+up to `EntryLimit`, including logs from completed or failed jobs. It reads the queue's
+hashed log key without scanning Redis or requiring the original stream entry to remain.
+IDs entered through the dashboard are limited to 4096 characters.
+
+Handlers write lines with [LogAsync](job-queues.md#per-job-logs). Worker options cap line
+count, UTF-8 bytes per line, and retention; an explicit job TTL shortens retention. A blank
+history means no lines are retained, not necessarily that the job never existed. Multiple
+attempts with the same application job ID share the history. Refresh the log page to read
+new lines; log reads are not snapshot-cached.
+
+The log page uses the same authorization policy as the dashboard, escapes all content,
+and sends `Cache-Control: no-store`. Only configured job queues can be inspected. Grant
+the dashboard Redis identity `LRANGE` on their `:logs:*` keys. Redis errors produce a
+generic HTTP 503 message without exposing server details.
 
 ## Retry and delete
 

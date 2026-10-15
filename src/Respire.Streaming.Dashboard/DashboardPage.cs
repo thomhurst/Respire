@@ -6,7 +6,8 @@ namespace Respire.Streaming.Dashboard;
 
 internal static class DashboardPage
 {
-    internal static string Render(DashboardSnapshot snapshot, string path, string tokenFieldName, string requestToken)
+    internal static string Render(DashboardSnapshot snapshot, string path, string tokenFieldName, string requestToken,
+        DashboardJobLogs? logs = null)
     {
         var html = new StringBuilder(8192);
         html.Append("""
@@ -35,15 +36,36 @@ internal static class DashboardPage
             @media(max-width:760px){.layout{grid-template-columns:1fr;padding:18px 12px;gap:18px}nav{position:static}nav a{display:inline-block;margin:0 12px 4px 0}.stream-head,.section{padding:18px 16px}.stats{gap:12px 22px}.fields{grid-template-columns:1fr;gap:4px}.fields dd{margin-bottom:8px}header{padding:20px}.dead{padding:12px}}
             </style></head><body><header><div class="brand">Respire</div><div class="heading"><h1>Queues and streams</h1><a class="refresh" href="
             """);
-        html.Append(E(path)).Append("\">Refresh snapshot</a></div><p>Inspect deliveries and return failed work to its stream.</p></header><div class=\"layout\"><nav aria-label=\"Configured streams\"><p>Configured streams</p>");
+        html.Append(E(path)).Append("\">").Append(logs is null ? "Refresh snapshot" : "Return to dashboard")
+            .Append("</a></div><p>Inspect deliveries and return failed work to its stream.</p></header><div class=\"layout\"><nav aria-label=\"Configured streams\"><p>Configured streams</p>");
         foreach (var stream in snapshot.Streams)
             html.Append("<a href=\"#stream-").Append(N(stream.Index)).Append("\">").Append(E(stream.Configuration.Name)).Append("</a>");
+        if (logs is not null)
+            html.Append("<a href=\"#job-logs\">").Append(E(logs.QueueName)).Append("</a>");
         html.Append("</nav><main id=\"content\">");
-        if (snapshot.Streams.Count == 0)
+        if (logs is not null)
+        {
+            html.Append("<article class=\"stream\" id=\"job-logs\"><div class=\"stream-head\"><span class=\"kind\">Job logs</span><h2>")
+                .Append(E(logs.QueueName)).Append("</h2><div class=\"key\">").Append(E(logs.JobId))
+                .Append("</div></div><section class=\"section\"><h3>Retained log lines</h3>");
+            if (logs.Lines.Length == 0)
+                html.Append("<p class=\"empty\">No retained logs for this job ID. It may not have logged yet, or its logs may have expired.</p>");
+            else
+            {
+                html.Append("<ol>");
+                foreach (var line in logs.Lines)
+                    html.Append("<li><pre style=\"white-space:pre-wrap;overflow-wrap:anywhere\">").Append(E(line)).Append("</pre></li>");
+                html.Append("</ol>");
+            }
+            html.Append("<p class=\"note\">Newest retained lines in append order, up to the dashboard entry limit. Logs share the job ID across attempts and expire according to the worker policy.</p></section></article>");
+        }
+        else if (snapshot.Streams.Count == 0)
             html.Append("<p class=\"notice\">No streams are configured. Add a stream to the dashboard registration to inspect its workers.</p>");
         foreach (var stream in snapshot.Streams)
             RenderStream(html, stream, path, tokenFieldName, requestToken);
-        html.Append("<footer>Snapshots are shared for two seconds. Refresh to update counts and delivery rate. Retained entries include acknowledged work.</footer></main></div></body></html>");
+        if (logs is null)
+            html.Append("<footer>Snapshots are shared for two seconds. Refresh to update counts and delivery rate. Retained entries include acknowledged work.</footer>");
+        html.Append("</main></div></body></html>");
         return html.ToString();
     }
 
@@ -122,7 +144,16 @@ internal static class DashboardPage
                 html.Append("</details></div></div>");
             }
         }
-        html.Append("</section></article>");
+        html.Append("</section>");
+        if (config.IsJobQueue)
+        {
+            html.Append("<section class=\"section\"><h3>Job logs</h3><form method=\"get\" action=\"")
+                .Append(E(path.TrimEnd('/') + "/" + N(stream.Index) + "/logs"))
+                .Append("\"><label for=\"job-id-").Append(N(stream.Index)).Append("\">Application job ID</label> <input id=\"job-id-")
+                .Append(N(stream.Index)).Append("\" name=\"jobId\" maxlength=\"4096\" required> <button type=\"submit\">View logs</button></form>")
+                .Append("<p class=\"note\">Look up retained log lines from any attempt, including completed and failed jobs.</p></section>");
+        }
+        html.Append("</article>");
     }
 
     private static void Form(StringBuilder html, int index, RespireStreamId id, string action, string label, string path, string tokenFieldName, string requestToken)

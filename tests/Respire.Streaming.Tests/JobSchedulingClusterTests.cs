@@ -1,4 +1,5 @@
 using System.Text;
+using Respire.Internal;
 using Respire.Testing.Containers;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,9 +27,18 @@ public class JobSchedulingClusterTests
             const string group = RespireJobQueue<string>.ConsumerGroup;
             await client.Streams.CreateGroupAsync(queue.StreamKey, group, RespireStreamId.Beginning);
             var first = (await JobGroupIntegrationTests.Read(client, queue, "owner")).Single();
+            var logs = JobLogKeys.ForJob(queue.StreamKey, "id{untrusted}");
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobQueueIntegrationTests.JobScript("Log"),
+                [queue.StreamKey, logs], [group, "owner", first.Id.Value, 1, "before retry", 10, 60000])).IsEqualTo(1);
             await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobSchedulingIntegrationTests.Script("Retry"),
                 [.. keys], [group, "owner", first.Id.Value, 1, 0])).IsEqualTo(1);
             var second = (await JobGroupIntegrationTests.Read(client, queue, "owner")).Single();
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobQueueIntegrationTests.JobScript("Log"),
+                [queue.StreamKey, logs], [group, "owner", first.Id.Value, 1, "stale", 10, 60000])).IsEqualTo(0);
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobQueueIntegrationTests.JobScript("Log"),
+                [queue.StreamKey, logs], [group, "owner", second.Id.Value, 1, "after retry", 10, 60000])).IsEqualTo(1);
+            await Assert.That(string.Join("|", await queue.GetLogsAsync("id{untrusted}")))
+                .IsEqualTo("before retry|after retry");
             await Assert.That(second.GetString("_respire.job.attempts")).IsEqualTo("1");
             await Assert.That(second.GetString("_respire.job.id")).IsEqualTo("id{untrusted}");
             await Assert.That(second.GetString("_respire.job.group")).IsEqualTo("tenant:{other}:東京");

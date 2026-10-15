@@ -74,6 +74,8 @@ public class DashboardSecurityTests(RedisTestContainer redis)
 
     [Test]
     [Arguments("GET", "/workers/", null, 401)]
+    [Arguments("GET", "/workers/0/logs?jobId=job", null, 401)]
+    [Arguments("GET", "/workers/0/logs?jobId=job", "reader", 403)]
     [Arguments("POST", "/workers/0/retry", null, 401)]
     [Arguments("POST", "/workers/0/delete", null, 401)]
     [Arguments("GET", "/workers/", "reader", 403)]
@@ -159,14 +161,19 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         return options;
     }
 
-    internal static async Task<WebApplication> CreateApplication(IRespireClient client, string mappedPolicy = "operators", bool nested = false)
+    internal static async Task<WebApplication> CreateApplication(IRespireClient client, string mappedPolicy = "operators", bool nested = false,
+        bool jobs = false, int entryLimit = 50)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(client);
         builder.Services.AddAuthentication("test").AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("test", _ => { });
         builder.Services.AddAuthorization(options => options.AddPolicy("operators", policy => policy.RequireRole("operator")));
-        builder.Services.AddRespireStreamingDashboard(options => options.Streams.Add(Options().Streams[0]));
+        builder.Services.AddRespireStreamingDashboard(options =>
+        {
+            options.EntryLimit = entryLimit;
+            options.Streams.Add(Options(jobs).Streams[0]);
+        });
         var app = builder.Build();
         if (nested) app.UsePathBase("/tenant");
         app.UseAuthentication();

@@ -33,12 +33,20 @@ public sealed record RespireJobEnqueueOptions
     }
 }
 
-/// <summary>Queue scheduling and retry policy, shared by all workers for the queue.</summary>
+/// <summary>Queue scheduling, retry and log retention policy, shared by all workers for the queue.</summary>
 public sealed record RespireJobQueueOptions
 {
     /// <summary>Initial shared rate policy. Null uses the existing Redis policy (unlimited on a new queue).</summary>
     /// <remarks>Non-null policies must match existing configuration. Use SetRateLimitAsync to change it.</remarks>
     public RespireJobRateLimit? RateLimit { get; init; }
+    /// <summary>Maximum retained log lines per application job ID, from 1 to 1000. Defaults to 100.</summary>
+    public int MaximumLogLines { get; init; } = 100;
+    /// <summary>Maximum UTF-8 bytes in one log line, from 1 to 16384. Defaults to 4096. Oversized lines are rejected.</summary>
+    public int MaximumLogLineBytes { get; init; } = 4096;
+    /// <summary>Log list lifetime from its first append. Defaults to one day; at most Int32.MaxValue milliseconds.</summary>
+    /// <remarks>Later writes never extend this lifetime. An explicit job expiry shortens it. After expiry, a live job may create a new list.</remarks>
+    public TimeSpan LogRetention { get; init; } = TimeSpan.FromDays(1);
+
     /// <summary>Maximum due candidates considered per group visit or ungrouped promotion. Between 1 and 256.</summary>
     public int SchedulingBatchSize { get; init; } = 64;
     /// <summary>Minimum interval between scheduling passes and maximum idle/pause poll interval. Defaults to one second.</summary>
@@ -51,6 +59,9 @@ public sealed record RespireJobQueueOptions
     internal void Validate()
     {
         RateLimit?.Validate();
+        if (MaximumLogLines is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(MaximumLogLines));
+        if (MaximumLogLineBytes is < 1 or > 16384) throw new ArgumentOutOfRangeException(nameof(MaximumLogLineBytes));
+        JobQueueScheduling.ValidateDuration(LogRetention, nameof(LogRetention));
         if (SchedulingBatchSize is < 1 or > 256) throw new ArgumentOutOfRangeException(nameof(SchedulingBatchSize));
         JobQueueScheduling.ValidateDuration(SchedulingPollInterval, nameof(SchedulingPollInterval));
         JobQueueScheduling.ValidateDuration(MaximumRetryBackoff, nameof(MaximumRetryBackoff));
