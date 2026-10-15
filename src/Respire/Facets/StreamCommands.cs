@@ -926,6 +926,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             (Owner: this, Command: command, Token: token),
             static (s, observation) => s.Owner.CreateGroupUnhookedAsync(s.Command, s.Token, observation));
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> CreateGroupUnhookedAsync<TCommand>(TCommand command, CancellationToken token,
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
