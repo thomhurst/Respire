@@ -96,10 +96,14 @@ public partial class SiloScenarios
             .Members.Count(row => row.Item1.Status == SiloStatus.Active));
         await client.DisposeAsync();
         await silo.DisposeAsync();
+        // A persisted reminder must activate the grain on the remaining silo before any client call.
+        var recoveredDelivery = await Delivery(joined);
+        Assert.NotEqual(activation, recoveredDelivery.Activation);
+        Assert.Equal(43, recoveredDelivery.Value);
         await using var nextClient = BuildClient(connections, serviceId, clusterId);
         await nextClient.Start();
         var restored = nextClient.Host.Services.GetRequiredService<IClusterClient>().GetGrain<ILifecycleGrain>("promotion");
-        Assert.NotEqual(activation, await restored.GetActivation());
+        Assert.Equal(recoveredDelivery.Activation, await restored.GetActivation());
         Assert.Equal(43, await restored.GetValue());
         await restored.RemoveReminder();
     }

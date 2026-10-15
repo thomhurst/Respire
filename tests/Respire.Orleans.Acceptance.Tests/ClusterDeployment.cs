@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
+using Respire.Testing.Containers;
 using StackExchange.Redis;
 using Assert = Xunit.Assert;
 
@@ -16,7 +17,9 @@ internal sealed class ClusterDeployment(IContainer container, int[] ports) : IAs
     public IServer Control(int node) => _controls[node].GetServer("127.0.0.1", ports[node]);
     public Task<RedisResult> Command(int node, params object[] args) => Control(node).ExecuteAsync("CLUSTER", args);
 
-    public static async Task<ClusterDeployment> Start()
+    public static Task<ClusterDeployment> Start() => StartAttempt(1);
+
+    private static async Task<ClusterDeployment> StartAttempt(int attempt)
     {
         // Reserve command ports together; use explicit bus ports inside the container.
         var reservations = Enumerable.Range(0, 6).Select(_ => new TcpListener(IPAddress.Loopback, 0)).ToArray();
@@ -43,10 +46,12 @@ internal sealed class ClusterDeployment(IContainer container, int[] ports) : IAs
             .WithEntrypoint("sh", "-c").WithCommand(string.Join(' ', commands) + " wait")
             .WithWaitStrategy(wait).Build();
         var deployment = new ClusterDeployment(container, ports);
+        var startingContainer = true;
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
             await container.StartAsync(deadline.Token);
+            startingContainer = false;
             for (var node = 0; node < 6; node++)
             {
                 deployment._controls.Add(await ConnectionMultiplexer.ConnectAsync(
@@ -80,7 +85,15 @@ internal sealed class ClusterDeployment(IContainer container, int[] ports) : IAs
             }
             return deployment;
         }
-        catch { await deployment.DisposeAsync(); throw; }
+        catch (Exception error)
+        {
+            await deployment.DisposeAsync();
+            // Releasing reservations before Docker binds leaves a race with other host sockets.
+            // Retry only recognized bind collisions, with fresh ports and a fresh container.
+            if (startingContainer && attempt < 3 && ContainerPortCollision.IsMatch(error, ports))
+                return await StartAttempt(attempt + 1);
+            throw;
+        }
     }
 
     public async Task BeginMigration(int source, int target, int slot, string key)
