@@ -1,6 +1,6 @@
 ---
 title: Public API naming
-description: Native type prefixes, command result names, and the pre-1.0 migration.
+description: Native type prefixes, command result names, and the pre-2.0 migration.
 ---
 
 # Public API naming
@@ -40,7 +40,7 @@ The suffix distinguishes a returned outcome from command inputs such as `Respire
 The shipping-assembly naming tests enforce the prefix rule and its explicit exception
 list. Public API baselines record the complete signature changes.
 
-## Pre-1.0 migration
+## Pre-2.0 migration
 
 This is an intentional source and binary API change. Rebuild consumers and update type
 references; no compatibility aliases are provided. Command names, option property names,

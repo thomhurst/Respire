@@ -6,7 +6,7 @@ description: Store typed vector records in Redis hashes or JSON through explicit
 # Microsoft.Extensions.VectorData
 
 :::warning Experimental API: RSP0001
-This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+This feature requires an explicit compiler opt-in and is outside the 2.0 compatibility promise.
 See [RSP0001](../diagnostics/RSP0001.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
 :::
 

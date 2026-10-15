@@ -6,7 +6,7 @@ description: Use Respire with libraries that expect StackExchange.Redis types, a
 # Incremental StackExchange.Redis migration
 
 :::warning Experimental API: RSP0006
-This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+This feature requires an explicit compiler opt-in and is outside the 2.0 compatibility promise.
 See [RSP0006](../diagnostics/RSP0006.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
 :::
 
@@ -54,7 +54,7 @@ Native public types use the `Respire` prefix (`IRespire` for interfaces). Native
 must not share a simple name with a public StackExchange.Redis type, so importing both
 namespaces leaves each library's types unambiguous. The [public API naming guide](../fundamentals/api-naming.md)
 covers the complete prefix and result-suffix rules, exceptions, and noncolliding renames.
-The following pre-1.0 renames remove all current collisions:
+The following pre-2.0 renames remove all current collisions:
 
 | Previous native name | New native name |
 | --- | --- |

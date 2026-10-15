@@ -1,7 +1,7 @@
 # Deferred raw commands
 
 :::warning Experimental API: RSP0005
-This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+This feature requires an explicit compiler opt-in and is outside the 2.0 compatibility promise.
 See [RSP0005](../diagnostics/RSP0005.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
 :::
 

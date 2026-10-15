@@ -244,11 +244,10 @@ consistency contract. See the [field-level caching decision](guides/keyspace-not
 
 ## Planned work
 
-These epics retain their original 1.0 planning titles; the release target is 2.0.0 as
-described above. They are not release commitments.
+These epics track the 2.0 release scope described above. They are not release commitments.
 
-- [1.0 release gate](https://github.com/thomhurst/Respire/issues/1567)
-- [API breaks before 1.0](https://github.com/thomhurst/Respire/issues/1576)
+- [2.0 release gate](https://github.com/thomhurst/Respire/issues/1567)
+- [API breaks before 2.0](https://github.com/thomhurst/Respire/issues/1576)
 - [Onboarding, docs, and developer experience](https://github.com/thomhurst/Respire/issues/1585)
 - [Features from other Redis clients](https://github.com/thomhurst/Respire/issues/1594),
   including a [reliable job queue on `Respire.Streaming`](https://github.com/thomhurst/Respire/issues/1595)
