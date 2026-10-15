@@ -1,0 +1,146 @@
+name: Job queue benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-job-queue-benchmarks'
+    name: Compare ungrouped enqueue and completion (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      CANDIDATE_SHA: ${{ github.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout Docker mirror action
+        id: docker-mirror-checkout
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: docker-mirror
+          sparse-checkout: .github/actions/docker-hub-mirror
+          persist-credentials: false
+      - name: Use Docker Hub mirror
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted' && steps.docker-mirror-checkout.outcome == 'success'
+        uses: ./docker-mirror/.github/actions/docker-hub-mirror
+      - name: Warn if Docker mirror action could not be loaded
+        if: steps.docker-mirror-checkout.outcome == 'failure'
+        shell: bash
+        run: echo '::warning::Could not load Docker mirror action; pulls go straight to Docker Hub'
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Derive pinned baseline from the candidate merge
+        id: revisions
+        shell: python
+        run: |
+          import os, subprocess
+          from pathlib import Path
+          actual = subprocess.check_output(['git', '-C', 'candidate', 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == os.environ['CANDIDATE_SHA']
+          parents = subprocess.check_output(['git', '-C', 'candidate', 'show', '-s', '--format=%P', 'HEAD'], text=True).split()
+          assert len(parents) == 2 and parents[1] == os.environ['HEAD_SHA']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('baseline=' + parents[0], file=output)
+          Path('revisions.log').write_text(f'baseline={parents[0]}\ncandidate={actual}\nhead={parents[1]}\n')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.revisions.outputs.baseline }}
+          path: baseline
+          persist-credentials: false
+      - name: Use identical fixture and benchmark dependencies
+        shell: python
+        run: |
+          import shutil
+          from pathlib import Path
+          root = Path('benchmarks', 'Respire.Benchmarks')
+          for filename in ('JobQueueBenchmarks.cs', 'Respire.Benchmarks.csproj'):
+              shutil.copyfile(Path('candidate', root, filename), Path('baseline', root, filename))
+      - name: Validate both builds and measure bracketing controls
+        shell: python
+        run: |
+          import os, subprocess
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+              source = 'candidate' if phase.startswith('candidate') else 'baseline'
+              job = 'Dry' if phase.endswith('validation') else 'Medium'
+              with Path(f'{phase}.log').open('w') as log:
+                  subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=source, stdout=log, check=True)
+                  subprocess.run(['dotnet', 'run', '--project', 'benchmarks/Respire.Benchmarks',
+                                  '-c', 'Release', '-f', 'net10.0', '--',
+                                  '--filter', '*JobQueueBenchmarks*', '--job', job,
+                                  '--exporters', 'json', 'markdown',
+                                  '--artifacts', str(workspace / 'results' / phase)],
+                                 cwd=source, stdout=log, stderr=subprocess.STDOUT, check=True)
+      - name: Verify and summarize results
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          phases = {}
+          for phase in ('baseline-validation', 'candidate-validation', 'baseline-a', 'candidate', 'baseline-b'):
+              reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+              assert len(reports) == 1, f'Missing report: {phase}'
+              cases = json.loads(reports[0].read_text())['Benchmarks']
+              assert len(cases) == 2 and all(case['Method'] == 'EnqueueAndConsume' for case in cases)
+              phases[phase] = {case['Parameters']: case for case in cases}
+              assert set(phases[phase]) == {'SchedulingEnabled=False', 'SchedulingEnabled=True'}
+              assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases)
+          lines = ['## Ungrouped enqueue and durable completion', '',
+                   'Pinned baseline/candidate/baseline comparison, with immediate-only workers and scheduling-enabled workers.', '',
+                   'Each operation includes enqueue, typed no-op handler, durable completion observation, and one cleanup script.',
+                   'Cleanup removes the deduplication key and both stream entries, keeping retained data bounded.', '',
+                   '| Phase | Scheduling | Mean ns | Operations/s | Allocated B |', '| --- | --- | ---: | ---: | ---: |']
+          metrics = []
+          for phase in ('baseline-a', 'candidate', 'baseline-b'):
+              for mode, case in phases[phase].items():
+                  mean = case['Statistics']['Mean']
+                  allocation = case['Memory']['BytesAllocatedPerOperation']
+                  lines.append(f'| {phase} | {mode} | {mean:.3f} | {1e9/mean:.3f} | {allocation} |')
+              records = [json.loads(line.split(' ', 1)[1]) for line in Path(f'{phase}.log').read_text().splitlines()
+                         if line.startswith('JOB_QUEUE_PROCESS_METRICS ')]
+              assert {record['SchedulingEnabled'] for record in records} == {False, True}
+              assert all(record['operations'] > 0 and record['cpuMilliseconds'] >= 0 for record in records)
+              metrics.extend(dict(record, phase=phase) for record in records)
+          for mode in phases['candidate']:
+              a, candidate, b = [phases[phase][mode]['Statistics']['Mean'] for phase in ('baseline-a', 'candidate', 'baseline-b')]
+              lines += ['', f'{mode}: candidate/A {(candidate/a-1)*100:+.2f}%; candidate/B {(candidate/b-1)*100:+.2f}%; control drift {(b/a-1)*100:+.2f}%.']
+          lines += ['', 'Informational: end-to-end timing includes Redis and observer overhead. Allocation is BenchmarkDotNet managed allocation; process CPU includes warmup, calibration and background workers.']
+          report = '\n'.join(lines) + '\n'
+          Path('results/comparison.md').write_text(report)
+          Path('results/process-metrics.json').write_text(json.dumps(metrics, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(report)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: job-queue-comparison
+          path: |
+            results/
+            *.log

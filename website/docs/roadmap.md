@@ -110,7 +110,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   on dedicated connections.
 - [Typed job queues](guides/job-queues.md) with delayed scheduling, batch priority, TTL, durable
-  retry backoff, bounded enqueue deduplication, application group metadata, scoped handlers, visibility recovery, dead letters,
+  retry backoff, bounded enqueue deduplication, distributed round-robin job groups, scoped handlers, visibility recovery, dead letters,
   queue-wide pause/resume and shared fixed-window admission limits,
   fenced progress, retained completion events, enqueue-to-processing trace links, nested
   parent/child flows with retained results and failure policies, and durable

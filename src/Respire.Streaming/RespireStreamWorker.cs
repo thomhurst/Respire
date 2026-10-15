@@ -18,6 +18,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _consumerDrain;
     private readonly StreamWorkerTelemetry _telemetry = new(options.TelemetryName);
+    private readonly RespireKey[]? _groupReadKeys = options.JobQueue is null ? null
+        : [.. JobGroupScheduling.Keys(stream), JobQueueControls.Key(stream)];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -32,7 +34,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             }
         }
         if (options.JobQueue is not null)
-            JobQueueScheduling.ValidateKeys(client, JobQueueScheduling.Keys(stream));
+            JobQueueScheduling.ValidateKeys(client, JobGroupScheduling.Keys(stream));
         if (options.JobEventsStream is not null)
         {
             JobQueueScheduling.ValidateKeys(client, [stream, JobQueueControls.Key(stream), options.JobEventsStream, options.DeadLetterStream!]);
@@ -137,11 +139,13 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 {
                     var replay = cursor.HasValue;
                     var recover = !replay && recoveryClock.Elapsed >= options.RecoveryPollInterval;
-                    var script = replay ? JobQueueControls.Replay : recover ? JobQueueControls.Claim : JobQueueControls.Read;
+                    var groupedRead = !replay && !recover && options.JobQueue is not null;
+                    var script = replay ? JobQueueControls.Replay : recover ? JobQueueControls.Claim
+                        : groupedRead ? JobQueueControls.ReadGrouped : JobQueueControls.Read;
                     RespireValue[] arguments = replay ? [group, consumer, 1, cursor!.Value.Value]
                         : recover ? [group, consumer, (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds), recoveryCursor.Value, 1]
-                        : [group, consumer];
-                    var page = await ReadPageAsync(script, arguments, readers.Token, controls: true).ConfigureAwait(false);
+                        : groupedRead ? [group, consumer, 1, options.JobQueue!.SchedulingBatchSize] : [group, consumer];
+                    var page = await ReadPageAsync(script, arguments, readers.Token, controls: true, grouped: groupedRead).ConfigureAwait(false);
                     _telemetry.SetPaused(page.Paused);
                     var poll = options.JobQueue?.SchedulingPollInterval ?? TimeSpan.FromSeconds(1);
                     if (page.Paused || page.RetryAfter > 0)
@@ -235,10 +239,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     private readonly record struct Delivery(RespireStreamEntry Entry, long Attempt);
 
     private async Task<(RespireStreamId Cursor, Delivery[] Deliveries, bool Paused, long RetryAfter)> ReadPageAsync(
-        RespireScript script, RespireValue[] arguments, CancellationToken token, bool controls = false)
+        RespireScript script, RespireValue[] arguments, CancellationToken token, bool controls = false, bool grouped = false)
     {
         using var reply = await client.Scripts.ExecuteLeaseAsync(script,
-            controls ? [stream, JobQueueControls.Key(stream)] : [stream], arguments, token).ConfigureAwait(false);
+            grouped ? _groupReadKeys
+                : controls ? [stream, JobQueueControls.Key(stream)] : [stream], arguments, token).ConfigureAwait(false);
         var rows = reply[1];
         var deliveries = new Delivery[rows.Count];
         for (var i = 0; i < deliveries.Length; i++)
@@ -353,7 +358,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             else if (options.JobQueue is { } queue
                 && (retryDelay ?? queue.GetRetryDelay(totalAttempts)) is { } delay)
             {
-                var retried = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Retry, [.. JobQueueScheduling.Keys(stream)],
+                var retried = await client.Scripts.ExecuteIntegerAsync(JobQueueScheduling.Retry, [.. JobGroupScheduling.Keys(stream)],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, (long)Math.Ceiling(delay.TotalMilliseconds),
                         options.DeleteAcknowledgedEntries ? 1 : 0],
                     _handlers.Token).ConfigureAwait(false);
