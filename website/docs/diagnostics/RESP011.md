@@ -21,17 +21,20 @@ omitted defaults, named arguments and compile-time constants. Nonconstant bounds
 raw commands, scripts and custom wrappers are not analyzed.
 
 ```csharp
-// RESP011
-var members = await client.Sets.MembersAsync("large-set");
-
-// Process incrementally instead.
-await foreach (var member in client.Sets.ScanAsync("large-set"))
+async Task ReadAsync(IRespireClient client, Func<string, Task> processAsync)
 {
-    await ProcessAsync(member);
-}
+    // RESP011
+    var members = await client.Sets.MembersAsync("large-set");
 
-// Lists have no scan command: choose a bounded range.
-var page = await client.Lists.RangeAsync("list", start: 0, stop: 99);
+    // Process incrementally instead.
+    await foreach (var member in client.Sets.ScanAsync("large-set"))
+    {
+        await processAsync(member);
+    }
+
+    // Lists have no scan command: choose a bounded range.
+    var page = await client.Lists.RangeAsync("list", start: 0, stop: 99);
+}
 ```
 
 See [collections](../commands/collections.md) for the typed APIs. Scanning is not

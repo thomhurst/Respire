@@ -31,7 +31,9 @@ The bundled warning recognizes `Create`, `ConnectAsync`, and `ConnectAnyAsync`
 inside loops, and in `using` / `await using` declarations or statements inside
 methods. It leaves field initializers, factories returning a client, and the
 application entry point's outer lifetime alone. Loop checks stop at nested
-function boundaries. It does not infer DI service scopes, trace custom factories,
+function boundaries. Top-level `using` declarations are outside the ownership
+check, but client creation in top-level loops is still checked.
+It does not infer DI service scopes, trace custom factories,
 or prove how frequently a method runs.
 
 For a deliberate isolated client (for example, a connectivity probe), suppress

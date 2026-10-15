@@ -13,13 +13,17 @@ source file and registered with
 `RespireSubscription.DeliveryGap`.
 
 ```csharp
-await foreach (var message in subscription)
+async Task ConsumeAsync(
+    RespireSubscription subscription, Func<RespireMessage, Task> processAsync)
 {
-    Thread.Sleep(100); // RESP012
-    ProcessAsync(message).Wait(); // RESP012
-}
+    subscription.DeliveryGap += gap => Thread.Sleep(100); // RESP012
 
-subscription.DeliveryGap += gap => Thread.Sleep(100); // RESP012
+    await foreach (var message in subscription)
+    {
+        Thread.Sleep(100); // RESP012
+        processAsync(message).Wait(); // RESP012
+    }
+}
 ```
 
 Recognized operations include `Thread.Sleep` / `Join`, task `.Result`, `.Wait()`
@@ -36,9 +40,14 @@ are excluded from message-loop traversal; work inside them may run elsewhere.
 Await asynchronous work inside the message loop:
 
 ```csharp
-await foreach (var message in subscription.WithCancellation(stoppingToken))
+async Task ConsumeAsync(
+    RespireSubscription subscription, Func<RespireMessage, Task> processAsync,
+    CancellationToken stoppingToken)
 {
-    await ProcessAsync(message);
+    await foreach (var message in subscription.WithCancellation(stoppingToken))
+    {
+        await processAsync(message);
+    }
 }
 ```
 
