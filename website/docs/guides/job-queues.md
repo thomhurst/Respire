@@ -133,8 +133,8 @@ Grouped jobs stay staged until a reader can take them, so one group's backlog ca
 ready stream ahead of a newly enqueued group. A lost read reply leaves a pending delivery for
 ordinary visibility recovery rather than losing or selecting the staged job twice.
 
-Each hosted-worker read visits one group after checking the shared pause and rate-limit policy
-in the same Redis script. Denied admission leaves staged jobs and the rotation cursor unchanged.
+Each hosted-worker read visits one group after checking the queue-wide pause and rate-limit policy
+in the same Redis script. Denied queue admission leaves staged jobs and the rotation cursor unchanged.
 Groups rotate in encoded UTF-8 byte
 order, starting after the persisted cursor and wrapping at the end. Empty groups leave the
 rotation; a new group joins at its lexical position. Delayed groups consume a visit without
@@ -151,8 +151,8 @@ small-group jobs are selected within **20 visits**, regardless of the large back
 exercise this bound with independent clients and reconnect both midway through the rotation.
 This is a selection bound, not a wall-clock completion deadline: handler duration, concurrent
 readers (one admission per reader), pause/rate limits, polling, retries and recovery affect starts
-and finishes. Fair selection does not limit concurrency: several jobs from one group can run
-simultaneously. Adding groups or expired/missing candidates changes the bound.
+and finishes. Fair selection alone does not limit concurrency: configure `MaxConcurrency` below
+to bound simultaneous group deliveries. Adding groups or expired/missing candidates changes the bound.
 
 Ungrouped jobs keep their existing stream path. Immediate jobs, activated flow nodes, recurring
 ticks and promoted ungrouped scheduled jobs have FIFO precedence over grouped selection.
@@ -179,9 +179,70 @@ or start a new queue. Existing entries in the old global due index keep their ol
 order; upgrading does not reindex them or retroactively provide group fairness. Retain the
 new indexes when restarting workers; there is no client-local cursor to restore.
 
-Group scheduling does not provide per-group concurrency or rate limits, or pause/resume.
-Those controls and group dashboard support are tracked separately in
-[group controls](https://github.com/thomhurst/Respire/issues/1825), and
+### Group concurrency, rate limits and pause
+
+Configure limits on an application group through the typed producer. These controls apply to
+the `Group` in the job envelope, not the Redis consumer group shared by workers:
+
+```csharp
+await queue.SetGroupOptionsAsync("tenant-42", new RespireJobGroupOptions
+{
+    MaxConcurrency = 3,
+    RateLimit = new RespireJobRateLimit { PermitLimit = 10, Window = TimeSpan.FromSeconds(1) },
+    LeaseDuration = TimeSpan.FromSeconds(60),
+});
+await queue.PauseGroupAsync("tenant-42");
+await queue.ResumeGroupAsync("tenant-42");
+```
+
+Policy is stored in Redis and shared by independent clients, workers and restarts. Configure it
+from one control plane; worker registration does not overwrite group policy. Null
+`MaxConcurrency` and `RateLimit` mean unlimited. Passing null options removes these limits;
+pause state is independent. `PauseGroupAsync` and `ResumeGroupAsync` return true only when the
+state changes. Pausing blocks new deliveries and recovery admissions for that group; already
+admitted handlers can finish. Other groups remain eligible. Queue-wide pause and rate admission
+still apply to every group, and resuming a group does not resume its queue.
+
+The group rate limiter uses GCRA with a burst of `PermitLimit` and replenishment at
+`PermitLimit / Window`. It limits admitted delivery attempts, including recovery, across all
+workers; an empty selection consumes no permit. It is separate from the queue-wide fixed-window
+limiter. Each replenishment interval rounds up to a whole millisecond, so extremely high rates
+are conservatively capped at one replenished permit per millisecond. Redis `TIME` controls
+rate eligibility and lease deadlines, so worker clock skew does
+not change the limits. Redis clock changes or failover can advance or postpone eligibility.
+
+Concurrency permits are finite leases, renewed by a running hosted handler. `LeaseDuration`
+defaults to 60 seconds and must be at least 100 milliseconds and no greater than
+`Int32.MaxValue` milliseconds.
+Completion, dead-lettering, retry and unsuccessful processing release their delivery's lease.
+A worker crash or lost release leaves the permit available after expiry; a later worker can
+recover the pending delivery. Lease ownership includes the consumer and delivery attempt, so
+stale completion or repeated release cannot release a replacement attempt's permit.
+If ownership or renewal is lost, the handler cancellation token is cancelled and its stale
+Redis transitions are rejected. Cancellation is advisory: an application that ignores it, a
+long process pause, or an external request already in progress can continue side effects after
+the lease expires. Keep handlers idempotent and use application-level fencing where external
+effects require stronger guarantees. The lease bounds Redis admissions, not arbitrary external
+execution after ownership is lost.
+
+Paused, rate-limited and concurrency-limited groups are parked outside the active rotation.
+Workers do not repeatedly scan those groups' staged backlogs. Resume, policy changes, releases
+and due rate/lease deadlines make groups eligible again through bounded scheduler passes.
+Polling and other eligible work still affect admission latency. Admission limits and active
+leases survive worker restarts while Redis retains the queue state.
+Startup replay yields on a blocked group instead of walking its remaining pending entries;
+the normal bounded recovery pass revisits pending deliveries at its configured cadence.
+
+Group controls add `:group-policy` and `:group-owners` hashes, plus `:group-leases` and
+`:group-parked` sorted sets to the ready-stream key. They use the queue's Cluster hash tag and
+work through key-prefixed clients; group text is encoded in fields/members rather than Redis
+keys. In addition to the grouped-scheduling permissions above, grant `HGET`, `HSET`, `HDEL`,
+`TIME`, `ZRANGEBYLEX`, `ZLEXCOUNT`, `ZRANGEBYSCORE`, `ZSCORE`, `ZADD` and `ZREM` on the relevant control keys,
+and the normal pending/recovery permissions on the ready stream. Protect these keys from
+eviction, expiry and independent modification. Upgrade all workers before relying on group
+limits; older workers do not enforce admission or lease fences.
+
+Group dashboard support is tracked separately in
 [group dashboard](https://github.com/thomhurst/Respire/issues/1826).
 
 ## Processing, retry and dead letters
@@ -201,8 +262,9 @@ registration uses a delivery limit of five; if you supply `RespireStreamWorkerOp
 configured automatically unless you supply your own same-slot `DeadLetterStream`.
 
 `MinimumIdleTime` is the visibility timeout from delivery, not a delay measured from the handler's
-return. `RecoveryPollInterval` controls the recovery scan cadence. There is no lease extension:
-choose a timeout longer than normal processing and keep handlers idempotent. Without a retry
+return. `RecoveryPollInterval` controls the recovery scan cadence. Ordinary stream deliveries
+do not extend this timeout; choose it longer than normal processing and keep handlers idempotent.
+Grouped job deliveries additionally renew the group lease described above. Without a retry
 backoff or explicit `RetryAfter`, `Nack` retains the visibility-timeout recovery behavior.
 
 Configure bounded exponential backoff with the registration overload accepting `queueOptions`:

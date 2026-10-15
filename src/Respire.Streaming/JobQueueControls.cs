@@ -67,7 +67,9 @@ internal static class JobQueueControls
             table.insert(entries, {entry[1], entry[2], '1'})
         end
         return {'0-0', entries}
-        """, "'0-0'", 7);
+        """, "'0-0'", 11);
+    internal static readonly RespireScript ReplayGrouped = Wrap("local replay = true\n" + JobGroupControls.RecoverSource, "ARGV[4]", 11);
+    internal static readonly RespireScript ClaimGrouped = Wrap("local replay = false\n" + JobGroupControls.RecoverSource, "ARGV[4]", 11);
     internal static readonly RespireScript Replay = Wrap(StreamWorkerScripts.ReplaySource, "ARGV[4]");
     internal static readonly RespireScript Claim = Wrap(StreamWorkerScripts.CapabilityClaimSource, "ARGV[4]");
 
