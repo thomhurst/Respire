@@ -1,6 +1,6 @@
 ---
 title: Logical command hooks
-description: Admit and observe ordinary logical commands, including native sends and single-key cache hits.
+description: Admit and observe logical commands, including native sends, streaming results, subscription resources and single-key cache hits.
 ---
 
 # Logical command hooks
@@ -10,10 +10,12 @@ default is `null`: it creates no hook context or delegate and enters no extra as
 Client views created with a key prefix, read preference, or cache bypass share the hook.
 
 :::important Scope
-This first increment supports ordinary converted-response commands and non-interpolated
-`ExecuteAsync`, `ExecuteLeaseAsync` and `ExecuteFireAndForgetAsync`. It is **not a
+Supported paths include ordinary converted-response commands, streaming results,
+subscription setup/teardown, and non-interpolated `ExecuteAsync`, `ExecuteLeaseAsync`
+and `ExecuteFireAndForgetAsync`. It is **not a
 client-wide command-blocking policy**. Specialized and aggregate coverage is still being
-implemented in [#1707](https://github.com/thomhurst/Respire/issues/1707) and
+implemented in [#1707](https://github.com/thomhurst/Respire/issues/1707),
+[#1720](https://github.com/thomhurst/Respire/issues/1720) and
 [#1708](https://github.com/thomhurst/Respire/issues/1708).
 :::
 
@@ -63,9 +65,37 @@ are covered for both catalog descriptors and caller-supplied command names. Raw 
 names are normalized and inline arguments are omitted from the context. Do not interpret
 this name-only API as a key/value authorization mechanism.
 
+### Streaming and subscription resources
+
+- `Strings.SetAsync` with a `Stream` or `ReadOnlySequence<byte>` admits one `SET`
+  before reading the source or dispatching. Completion follows the final reply conversion,
+  mutation fence and dedicated-connection cleanup, including source failures and cancellation.
+  The caller still owns the source; Respire does not dispose it.
+- Large array-backed value `SET` calls also complete only after all accepted socket writes
+  release their borrowed memory. A cancellation or early reply cannot invoke completion
+  while a gathered write still uses the buffer. The callback may therefore reuse the buffer.
+- `Strings.GetStreamAsync` admits one `GET` before dispatch and completes when it returns
+  the stream or null, or fails to acquire the result. This is a **stream-transfer boundary**,
+  not a measurement of payload consumption. Later read failures, read cancellation, EOF and
+  stream disposal do not invoke the hook again. The caller must consume or dispose the
+  stream to release its dedicated connection, just as without a hook.
+- `SubscribeAsync` with ordinary, `RespireChannel.Pattern`, or `RespireChannel.Sharded`
+  targets admits one logical
+  `SUBSCRIBE`, `PSUBSCRIBE` or `SSUBSCRIBE` for the requested targets. Completion follows
+  activation and acknowledgement, or failure cleanup. Explicit `RespireSubscription.DisposeAsync`
+  admits the corresponding unsubscribe operation before ending enumeration or removing routes,
+  and completes after teardown. Rejection leaves the subscription live and disposal can be
+  retried. Duplicate, concurrent or callback-reentrant disposal does not create another scope
+  while disposal admission is active; a duplicate call need not await the first disposal.
+
+Subscription hooks describe resource operations even when a shared route needs no wire
+unsubscribe. Client disposal, reconnect/resubscribe, topology recovery and message delivery
+are housekeeping, not new application operations. The setup hook does not remain open for
+the subscription's lifetime. Teardown has no cancellation token; setup uses its caller token.
+
 The following paths do not yet have a complete hook contract: interpolated commands,
-script objects and NOSCRIPT fallback, streaming uploads/downloads, cursor pages,
-dedicated blocking facets, pinned/node/fan-out APIs, subscription lifecycle, multi-key
+script objects and NOSCRIPT fallback, cursor pages,
+dedicated blocking facets, pinned/node/fan-out APIs, multi-key
 cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction

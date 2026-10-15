@@ -83,6 +83,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     private readonly SubscriptionOverflow _overflow;
     private long _droppedMessages;
     private int _disposed;
+    private int _disposeHookActive;
     private int _enumerating;
 
     internal RespireSubscription(
@@ -174,7 +175,30 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     }
 
     /// <summary>Unsubscribes (when this was the channel's last subscription) and ends enumeration.</summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => _hub.CommandHook is { } hook ? DisposeWithHookAsync(hook) : DisposeUnhookedAsync();
+
+    private async ValueTask DisposeWithHookAsync(RespireCommandHook hook)
+    {
+        // Reserve admission separately from disposal. Rejection must leave the subscription
+        // live, while concurrent or callback-reentrant disposal must not enter another scope.
+        if (IsDisposed || Interlocked.CompareExchange(ref _disposeHookActive, 1, 0) != 0)
+            return;
+        try
+        {
+            // Another disposer may finish between the initial check and admission reservation.
+            if (IsDisposed) return;
+            await CommandHookScope.RunAsync(hook, SubscriptionHub.UnsubscribeOperation(Kind),
+                CancellationToken.None, this, static subscription => subscription.DisposeUnhookedAsync())
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _disposeHookActive, 0);
+        }
+    }
+
+    private async ValueTask DisposeUnhookedAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {

@@ -50,12 +50,20 @@ internal readonly struct GatheredSetCommand(SetCommand command, ArraySegment<byt
 
     private static ValueTask<bool> SendBorrowedAsync(RespireClient client, SetCommand command,
         ArraySegment<byte> payload, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "SET", cancellationToken,
+                (Client: client, Command: command, Payload: payload, Token: cancellationToken, Observation: observation),
+                static s => SendBorrowedUnhookedAsync(s.Client, s.Command, s.Payload, s.Token, s.Observation))
+            : SendBorrowedUnhookedAsync(client, command, payload, cancellationToken, observation);
+
+    private static ValueTask<bool> SendBorrowedUnhookedAsync(RespireClient client, SetCommand command,
+        ArraySegment<byte> payload, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var lease = GatheredSetWriteLease.Rent();
         ValueTask<bool> response;
         try
         {
-            response = client.OkOrNullAsync("SET", new GatheredSetCommand(command, payload, lease), cancellationToken, observation);
+            response = client.OkOrNullUnhookedAsync("SET", new GatheredSetCommand(command, payload, lease), cancellationToken, observation);
         }
         catch (Exception error)
         {

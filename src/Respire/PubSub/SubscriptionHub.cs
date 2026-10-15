@@ -42,6 +42,15 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private RespireSubscription CreateSubscription(
         SubscriptionKind kind, RespireChannel[] names, RespireSubscriptionOptions options)
     {
+        var (bufferSize, overflow) = ValidateSubscription(names, options);
+        // Defensive copy: unsubscription must use the registered, deduplicated targets.
+        return new RespireSubscription(
+            this, kind, [.. names.Distinct()], bufferSize, overflow, options.MaxPayloadBytes);
+    }
+
+    private (int BufferSize, SubscriptionOverflow Overflow) ValidateSubscription(
+        RespireChannel[] names, RespireSubscriptionOptions options)
+    {
         if (core.Options.CredentialProvider is not null && core.Options.Protocol != RespProtocol.Resp3)
             throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
         ArgumentNullException.ThrowIfNull(names);
@@ -53,17 +62,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             throw new ArgumentException("At least one channel is required.", nameof(names));
         }
 
-        // Defensive copy (unsubscription must look up the names that were registered, not
-        // whatever the caller later wrote into their array), deduplicated so one published
-        // message is never delivered twice through duplicate route entries.
-        var (bufferSize, overflow) = options.Resolve(core.Options);
-        return new RespireSubscription(
-            this,
-            kind,
-            [.. names.Distinct()],
-            bufferSize,
-            overflow,
-            options.MaxPayloadBytes);
+        return options.Resolve(core.Options);
     }
 
     /// <summary>
@@ -82,7 +81,26 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                 state.Kind, state.Names, state.Options, state.Token, observation));
     }
 
-    public async ValueTask<RespireSubscription> SubscribeAsync(
+    public ValueTask<RespireSubscription> SubscribeAsync(
+        SubscriptionKind kind,
+        RespireChannel[] names,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
+        => core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, SubscribeOperation(kind), cancellationToken,
+                (Hub: this, Kind: kind, Names: names, Options: options, Token: cancellationToken, Observation: observation),
+                static s => s.Hub.SubscribeUnhookedAsync(s.Kind, s.Names, s.Options, s.Token, s.Observation),
+                static s =>
+                {
+                    s.Hub.ValidateSubscription(s.Names, s.Options);
+                    return SubscribeOperation(s.Kind);
+                })
+            : SubscribeUnhookedAsync(kind, names, options, cancellationToken, observation);
+
+    internal RespireCommandHook? CommandHook => core.Options.CommandHook;
+
+    private async ValueTask<RespireSubscription> SubscribeUnhookedAsync(
         SubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
@@ -383,7 +401,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         _ => "SUBSCRIBE",
     };
 
-    private static string UnsubscribeOperation(SubscriptionKind kind) => kind switch
+    internal static string UnsubscribeOperation(SubscriptionKind kind) => kind switch
     {
         SubscriptionKind.Pattern => "PUNSUBSCRIBE",
         SubscriptionKind.Sharded => "SUNSUBSCRIBE",

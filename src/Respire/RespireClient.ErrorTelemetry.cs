@@ -139,7 +139,7 @@ public sealed partial class RespireClient
             allowReadFrom: true, cursorAffinity: null, observation: observation, observeErrors: false);
 
     /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
-    internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
+    private ValueTask<Stream?> SendBulkStreamUnhookedAsync<TCommand>(
         string operation,
         TCommand command,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -149,7 +149,7 @@ public sealed partial class RespireClient
         if (observation.IsEmpty)
             return DispatchResponseSource<Stream?>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken),
-                static (state, owner) => state.Client.SendBulkStreamAsync(state.Operation, state.Command, state.Token, owner));
+                static (state, owner) => state.Client.SendBulkStreamUnhookedAsync(state.Operation, state.Command, state.Token, owner));
         try
         {
             return RespireTelemetry.ObserveStreamError(
