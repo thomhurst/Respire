@@ -1,0 +1,27 @@
+name: Redlock command hook benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-redlock-benchmarks'
+    uses: ./.github/workflows/benchmark-compare.yml
+    with:
+      event-base-sha: ${{ github.event.pull_request.base.sha }}
+      candidate-sha: ${{ github.sha }}
+      expected-head-sha: ${{ github.event.pull_request.head.sha }}
+      fixture: benchmarks/Respire.Benchmarks/RedlockCommandHookBenchmarks.cs
+      filter: '*RedlockCommandHookBenchmarks*'
+      expected-case-count: 4
+      expected-methods: AcquireRelease,AcquireRenewDispose
+      artifact-prefix: redlock-comparison
+      redis-server: true

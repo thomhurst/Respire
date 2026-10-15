@@ -77,36 +77,52 @@ public sealed class RespireRedlockGroup
     /// any node that cannot be reached relies on its bounded expiry. A node that timed out can
     /// still apply the acquisition after that cleanup, and then holds the token until expiry.
     /// </remarks>
-    public async ValueTask<RespireRedlockAttempt> TryAcquireAsync(
+    public ValueTask<RespireRedlockAttempt> TryAcquireAsync(
         RespireKey key,
         TimeSpan duration,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        RespireRedlockNodes.ValidateDuration(duration, nameof(duration));
+        try
+        {
+            RespireRedlockNodes.ValidateDuration(duration, nameof(duration));
+            // One owned copy: every node, the handle, and cleanup must target the same key bytes.
+            key = key.Snapshot();
+            return _nodes.RunHookedAsync("REDLOCK ACQUIRE", cancellationToken,
+                (Group: this, Key: key, Duration: duration, Token: cancellationToken),
+                static s => s.Group.TryAcquireCoreAsync(s.Key, s.Duration, s.Token));
+        }
+        catch (Exception error)
+        {
+            // Preserve asynchronous validation failures without another successful-path state machine.
+            return ValueTask.FromException<RespireRedlockAttempt>(error);
+        }
+    }
 
-        // One owned copy: every node, the handle, and cleanup must target the same key bytes.
-        key = key.Snapshot();
+    private async ValueTask<RespireRedlockAttempt> TryAcquireCoreAsync(
+        RespireKey key, TimeSpan duration, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         var tokenBytes = RandomNumberGenerator.GetBytes(TokenLength);
         var token = new RespireLockToken(tokenBytes);
         CryptographicOperations.ZeroMemory(tokenBytes);
         var started = _nodes.Clock.GetTimestamp();
         _nodes.ValidateDeadline(started, duration, nameof(duration));
-        bool[] acquired;
         try
         {
-            acquired = await _nodes.RunAsync(
-                (client, cancellation) => client.Locks.TryTakeAsync(key, token, duration, cancellation),
+            var acquired = await _nodes.RunAsync(
+                (commands, cancellation) => commands is LockCommands locks
+                    ? locks.TryTakeUnhookedAsync(key, token, duration, cancellation)
+                    : commands.TryTakeAsync(key, token, duration, cancellation),
                 cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_nodes.TryCreateLease(acquired, duration, started) is { } lease)
+                return new RespireRedlockAttempt(new RespireRedlock(_nodes, key, token, lease));
         }
         catch
         {
             await _nodes.ReleaseAsync(key, token).ConfigureAwait(false);
             throw;
         }
-
-        if (_nodes.TryCreateLease(acquired, duration, started) is { } lease)
-            return new RespireRedlockAttempt(new RespireRedlock(_nodes, key, token, lease));
 
         await _nodes.ReleaseAsync(key, token).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -120,13 +136,19 @@ internal sealed class RespireRedlockNodes
     /// <summary>Largest per-node timeout supported by <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>.</summary>
     internal static readonly TimeSpan MaxNodeTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
 
-    private readonly IRespireClient[] _clients;
+    private readonly IRespireLockCommands[] _locks;
+    private readonly RespireCommandHook[] _hooks;
     private readonly TimeSpan _nodeTimeout;
     private readonly double _driftFactor;
 
     internal RespireRedlockNodes(IRespireClient[] clients, RespireRedlockOptions options, TimeProvider clock)
     {
-        _clients = clients;
+        // Retain the same facet for policy admission and dispatch, including custom clients
+        // whose property could otherwise return a different implementation on each access.
+        _locks = clients.Select(static client => client.Locks).ToArray();
+        // One policy entry per native facet, in constructor order, even when hooks are shared.
+        _hooks = _locks.Select(static commands => (commands as LockCommands)?.Hook)
+            .OfType<RespireCommandHook>().ToArray();
         _nodeTimeout = options.NodeTimeout;
         _driftFactor = options.DriftFactor;
         Clock = clock;
@@ -136,6 +158,48 @@ internal sealed class RespireRedlockNodes
     internal TimeProvider Clock { get; }
 
     internal int Quorum { get; }
+
+    internal ValueTask<TResult> RunHookedAsync<TState, TResult>(string operation,
+        CancellationToken token, TState state, Func<TState, ValueTask<TResult>> execute)
+        => _hooks.Length == 0 ? execute(state) : RunAdmittedAsync(operation, token, state, execute);
+
+    private async ValueTask<TResult> RunAdmittedAsync<TState, TResult>(string operation,
+        CancellationToken token, TState state, Func<TState, ValueTask<TResult>> execute)
+    {
+        var contexts = new RespireCommandContext[_hooks.Length];
+        var states = new object?[_hooks.Length];
+        var entered = 0;
+        var rejected = -1;
+        Exception? failure = null;
+        try
+        {
+            for (var i = 0; i < _hooks.Length; i++)
+            {
+                contexts[i] = new RespireCommandContext(operation, token);
+                entered++;
+                try { states[i] = _hooks[i].OnExecuting(contexts[i]); }
+                catch { rejected = i; throw; }
+            }
+            token.ThrowIfCancellationRequested();
+            return await execute(state).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
+        finally
+        {
+            for (var i = 0; i < entered; i++)
+            {
+                var outcome = i == rejected ? RespireCommandOutcome.Rejected
+                    : failure is OperationCanceledException ? RespireCommandOutcome.Canceled
+                    : failure is not null ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded;
+                try { _hooks[i].OnCompleted(contexts[i], states[i], outcome, failure); }
+                catch (Exception) { /* One observer cannot replace the result or skip later observers. */ }
+            }
+        }
+    }
 
     internal static void ValidateDuration(TimeSpan duration, string parameterName)
     {
@@ -184,26 +248,25 @@ internal sealed class RespireRedlockNodes
     }
 
     internal async ValueTask<bool[]> RunAsync(
-        Func<IRespireClient, CancellationToken, ValueTask<bool>> operation,
+        Func<IRespireLockCommands, CancellationToken, ValueTask<bool>> operation,
         CancellationToken cancellationToken)
     {
-        var pending = new Task<bool>[_clients.Length];
-        for (var i = 0; i < _clients.Length; i++)
-            pending[i] = RunOnNodeAsync(_clients[i], operation, cancellationToken);
+        var pending = new Task<bool>[_locks.Length];
+        for (var i = 0; i < _locks.Length; i++)
+            pending[i] = RunOnNodeAsync(_locks[i], operation, cancellationToken);
         return await Task.WhenAll(pending).ConfigureAwait(false);
     }
 
     /// <summary>Releases a token everywhere; each node wait is bounded by the node timeout, not the caller.</summary>
-    internal async ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token, bool observeHooks = false)
+    internal async ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token)
     {
         var released = await RunAsync(
-            async (client, cancellation) =>
+            async (commands, cancellation) =>
             {
-                // An owed correction cannot be rejected by the application policy. Explicit
-                // Redlock release retains the per-node public lock boundaries.
-                _ = await (!observeHooks && client.Locks is LockCommands locks
+                // Explicit release was admitted by the group; owed corrections never re-admit.
+                _ = await (commands is LockCommands locks
                     ? locks.ReleaseUnhookedAsync(key, token, cancellation)
-                    : client.Locks.ReleaseAsync(key, token, cancellation)).ConfigureAwait(false);
+                    : commands.ReleaseAsync(key, token, cancellation)).ConfigureAwait(false);
                 return true;
             },
             CancellationToken.None).ConfigureAwait(false);
@@ -227,8 +290,8 @@ internal sealed class RespireRedlockNodes
     // A failing, timed-out, or disposed node counts as unavailable, as the Redlock algorithm
     // prescribes; only caller cancellation escapes so uncertain attempts can be cleaned up.
     private async Task<bool> RunOnNodeAsync(
-        IRespireClient client,
-        Func<IRespireClient, CancellationToken, ValueTask<bool>> operation,
+        IRespireLockCommands commands,
+        Func<IRespireLockCommands, CancellationToken, ValueTask<bool>> operation,
         CancellationToken callerToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
@@ -236,7 +299,7 @@ internal sealed class RespireRedlockNodes
         Task<bool>? command = null;
         try
         {
-            command = operation(client, timeout.Token).AsTask();
+            command = operation(commands, timeout.Token).AsTask();
             return await command.WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
@@ -329,11 +392,25 @@ public sealed class RespireRedlock : IAsyncDisposable
     /// token is removed best-effort from every node. A partial renewal leaves nodes with different
     /// expiries, so the previous validity estimate no longer holds and the lease cannot be kept.
     /// </remarks>
-    public async ValueTask<bool> ResetExpiryAsync(
+    public ValueTask<bool> ResetExpiryAsync(
         TimeSpan duration,
         CancellationToken cancellationToken = default)
     {
-        RespireRedlockNodes.ValidateDuration(duration, nameof(duration));
+        try
+        {
+            RespireRedlockNodes.ValidateDuration(duration, nameof(duration));
+            return _nodes.RunHookedAsync("REDLOCK RENEW", cancellationToken,
+                (Lock: this, Duration: duration, Token: cancellationToken),
+                static s => s.Lock.ResetExpiryCoreAsync(s.Duration, s.Token));
+        }
+        catch (Exception error)
+        {
+            return ValueTask.FromException<bool>(error);
+        }
+    }
+
+    private async ValueTask<bool> ResetExpiryCoreAsync(TimeSpan duration, CancellationToken cancellationToken)
+    {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -344,23 +421,24 @@ public sealed class RespireRedlock : IAsyncDisposable
             var requestedDeadline = _nodes.GetConservativeDeadline(started, duration);
             if (requestedDeadline < previousLease.ValidUntil)
                 Volatile.Write(ref _leaseState, new(previousLease, requestedDeadline));
-            bool[] renewed;
             try
             {
-                renewed = await _nodes.RunAsync(
-                    (client, token) => client.Locks.ResetExpiryAsync(Key, Token, duration, token),
+                var renewed = await _nodes.RunAsync(
+                    (commands, token) => commands is LockCommands locks
+                        ? locks.ResetExpiryUnhookedAsync(Key, Token, duration, token)
+                        : commands.ResetExpiryAsync(Key, Token, duration, token),
                     cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_nodes.TryCreateLease(renewed, duration, started, previousLease.ValidUntil) is { } lease)
+                {
+                    Volatile.Write(ref _leaseState, new(lease, null));
+                    return true;
+                }
             }
             catch
             {
                 await LoseOwnershipAsync().ConfigureAwait(false);
                 throw;
-            }
-
-            if (_nodes.TryCreateLease(renewed, duration, started, previousLease.ValidUntil) is { } lease)
-            {
-                Volatile.Write(ref _leaseState, new(lease, null));
-                return true;
             }
 
             await LoseOwnershipAsync().ConfigureAwait(false);
@@ -378,14 +456,18 @@ public sealed class RespireRedlock : IAsyncDisposable
     /// completion on every node, bounded by <see cref="RespireRedlockOptions.NodeTimeout"/>.
     /// </param>
     /// <remarks>The handle stops reporting ownership before any node is contacted.</remarks>
-    public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+        => _nodes.RunHookedAsync("REDLOCK RELEASE", cancellationToken,
+            (Lock: this, Token: cancellationToken), static s => s.Lock.ReleaseCoreAsync(s.Token));
+
+    private async ValueTask<bool> ReleaseCoreAsync(CancellationToken cancellationToken)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (Volatile.Read(ref _releaseConfirmed) != 0) return false;
             Volatile.Write(ref _released, 1);
-            var confirmed = await _nodes.ReleaseAsync(Key, Token, observeHooks: true).ConfigureAwait(false);
+            var confirmed = await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
             if (confirmed) Volatile.Write(ref _releaseConfirmed, 1);
             return confirmed;
         }
@@ -395,11 +477,16 @@ public sealed class RespireRedlock : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases the lease on a best-effort basis.</summary>
+    /// <summary>Releases the lease on a best-effort basis after group policy admission.</summary>
+    /// <remarks>Admission rejection propagates and preserves the lease for a later release.</remarks>
     public async ValueTask DisposeAsync()
+        => _ = await _nodes.RunHookedAsync("REDLOCK DISPOSE", CancellationToken.None,
+            this, static lease => lease.DisposeCoreAsync()).ConfigureAwait(false);
+
+    private async ValueTask<bool> DisposeCoreAsync()
     {
-        try { _ = await ReleaseAsync().ConfigureAwait(false); }
-        catch (Exception) { }
+        try { return await ReleaseCoreAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch (Exception) { return false; }
     }
 
     private async ValueTask LoseOwnershipAsync()

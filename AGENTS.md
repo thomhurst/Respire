@@ -66,6 +66,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-primitive-codec.yml` | `run-primitive-codec-benchmarks` |
 | `benchmark-pubsub.yml` | `run-pubsub-benchmarks` |
 | `benchmark-rate-limiters.yml` | `run-rate-limiters-benchmarks` |
+| `benchmark-redlock.yml` | `run-redlock-benchmarks` |
 | `benchmark-receive-compaction.yml` | `run-receive-compaction-benchmarks` |
 | `benchmark-resp-framing.yml` | `run-resp-framing-benchmarks` |
 | `benchmark-response-routing.yml` | `run-response-routing-benchmarks` |
