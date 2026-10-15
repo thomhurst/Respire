@@ -57,6 +57,7 @@
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Respire.PublicApi.Tests/Respire.PublicApi.Tests.csproj" />
     <Project Path="tests/Respire.AI.Tests/Respire.AI.Tests.csproj" />
     <Project Path="tests/Respire.Hangfire.Acceptance.Tests/Respire.Hangfire.Acceptance.Tests.csproj" />
     <Project Path="tests/Respire.Orleans.Acceptance.Tests/Respire.Orleans.Acceptance.Tests.csproj" />
