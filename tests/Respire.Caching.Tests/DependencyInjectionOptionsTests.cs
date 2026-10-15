@@ -74,6 +74,7 @@ public class DependencyInjectionOptionsTests
             ["HedgedReads:Delay"] = "00:00:00.025", ["ClientAvailabilityZone"] = "zone-1",
             ["ReplicaRefreshInterval"] = "00:00:02", ["UseCluster"] = "false",
             ["IncludeCrossSlotKeyContext"] = "true",
+            ["SplitCrossSlotCommands"] = "true",
             ["SentinelPrimaryName"] = "primary", ["Username"] = "user", ["Password"] = "password",
             ["CredentialRefreshBeforeExpiry"] = "00:02:00", ["CredentialRefreshRetryDelay"] = "00:00:03",
             ["SentinelUsername"] = "sentinel-user", ["SentinelPassword"] = "sentinel-password",
@@ -144,6 +145,28 @@ public class DependencyInjectionOptionsTests
             new RespireOptions { IncludeCrossSlotKeyContext = initialValue });
 
         await Assert.That(options.IncludeCrossSlotKeyContext).IsEqualTo(expectedValue);
+    }
+
+    [Test]
+    [Arguments(null, false, false)]
+    [Arguments(null, true, true)]
+    [Arguments("false", false, false)]
+    [Arguments("false", true, false)]
+    [Arguments("true", false, true)]
+    [Arguments("true", true, true)]
+    public async Task Configuration_SplitCrossSlotCommands_RequiresExplicitOptIn(
+        string? configuredValue, bool initialValue, bool expectedValue)
+    {
+        var values = new Dictionary<string, string?>();
+        if (configuredValue is not null)
+        {
+            values["SplitCrossSlotCommands"] = configuredValue;
+        }
+
+        var options = RespireConfiguration.Apply(Section(values),
+            new RespireOptions { SplitCrossSlotCommands = initialValue });
+
+        await Assert.That(options.SplitCrossSlotCommands).IsEqualTo(expectedValue);
     }
 
     [Test]

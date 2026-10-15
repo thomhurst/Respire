@@ -33,6 +33,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 
 - [Local cross-slot diagnostics](fundamentals/connections.md#client-side-cross-slot-validation)
   distinguish client validation from Redis replies, with slot details and opt-in key context.
+- Opt-in [cross-slot multi-key splitting](fundamentals/connections.md#splitting-cross-slot-commands)
+  for MGET, MSET, DEL, UNLINK, EXISTS, and TOUCH, with per-slot recovery and ordered results.
 
 - [Polly v8 and Microsoft.Extensions.Resilience](guides/external-resilience.md) integration
   through the optional `Respire.Resilience` package, with a sample proving one retry layer.
@@ -267,7 +269,7 @@ They track remaining work, not release commitments.
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
   job groups and queue controls, batch callbacks, transactional enqueue, dashboard history,
-  cross-slot command splitting, additional tracking modes, adaptive dedicated pools,
+  additional tracking modes, adaptive dedicated pools,
   serializer packages, client-side encryption, coordination APIs, and testing support.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),
   [typed queries](guides/generated-search-schemas.md#typed-queries), and

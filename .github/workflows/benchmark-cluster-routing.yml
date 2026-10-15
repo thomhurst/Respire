@@ -157,6 +157,7 @@ jobs:
           from pathlib import Path
           expected = {f'Cluster{shape}{mode}' for shape in ('String', 'Integer', 'Bytes') for mode in ('Single', 'Concurrent50')}
           expected |= {'StandaloneStringSingle', 'StandaloneIntegerSingle'}
+          expected |= {f'{prefix}Cluster{command}SameSlot' for prefix in ('', 'Split') for command in ('MGet', 'MSet')}
           revisions = dict(line.split('=', 1) for line in Path('comparison-revisions.txt').read_text().splitlines())
           counters = {}
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
@@ -166,7 +167,7 @@ jobs:
                   reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
                   assert len(reports) == 1, f'Missing report: {phase}'
                   cases = json.loads(reports[0].read_text())['Benchmarks']
-                  assert len(cases) == 8 and {case['Method'] for case in cases} == expected, f'Missing paired cases: {phase}'
+                  assert len(cases) == len(expected) and {case['Method'] for case in cases} == expected, f'Missing paired cases: {phase}'
                   assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), phase
                   assert all(case.get('Memory') is not None for case in cases), phase
                   lines = Path(f'{phase}.log').read_text().splitlines()
