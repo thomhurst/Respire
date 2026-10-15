@@ -264,7 +264,7 @@ public class StableVersionTagTests
         try
         {
             foreach (var name in branchVariables.Keys) Environment.SetEnvironmentVariable(name, null);
-            await Assert.That(() => GitVersionDetails.GetBranchNameAsync(repository.Path, CancellationToken.None))
+            await Assert.That(async () => await GitVersionDetails.GetBranchNameAsync(repository.Path, CancellationToken.None))
                 .ThrowsExactly<InvalidOperationException>();
             await repository.InitializeAsync();
             if (detached) await repository.Git("checkout", "--detach");
