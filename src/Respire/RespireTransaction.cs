@@ -757,7 +757,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             {
                 if (retryTelemetry is { AcceptedResends: > 0 }) RespireTelemetry.RecordCommandRetry(_retryCategories.Label, "exhausted");
                 Exception failure = error;
-                if (error is OperationCanceledException canceled && acquisition.HasCancellation)
+                if (error is RespireTimeoutException discoveryTimeout && core.Sentinel is not null && connection is null)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    failure = RespireTimeoutException.BeforeConnectionSelection(
+                        "MULTI/EXEC", timeout ?? discoveryTimeout.Timeout, discoveryTimeout);
+                }
+                else if (error is OperationCanceledException canceled && acquisition.HasCancellation)
                 {
                     if (acquisition.IsDeadlineCancellation(canceled))
                         failure = acquisition.CreateTimeout("MULTI/EXEC", core,

@@ -301,6 +301,14 @@ public sealed class RespireTimeoutException : RespireException
         RespireTimeoutDiagnostics diagnostics)
         : this(commandName, timeout, innerException, diagnostics, CreateMessage(commandName, timeout, diagnostics)) { }
 
+    // A discovery peer belongs to the inner failure, not to an operation with no selected data connection.
+    internal static RespireTimeoutException BeforeConnectionSelection(string commandName, TimeSpan timeout, Exception cause)
+        => new(commandName, timeout, cause, RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
+        {
+            Endpoint = null,
+            HasAmbiguousEndpoint = true,
+        };
+
     private RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
         RespireTimeoutDiagnostics diagnostics, string message)
         : base(message + " See https://thomhurst.github.io/Respire/docs/guides/timeouts for timeout troubleshooting.", innerException!)

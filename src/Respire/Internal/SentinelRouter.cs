@@ -55,6 +55,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
     }
     internal TimeProvider Clock { get => Monitoring.Clock; set => Monitoring.Clock = value; }
     internal TimeProvider ShutdownClock { get; set; } = TimeProvider.System;
+    // Tests can hold the discovery deadline while the owning operation expires, or fire it first.
+    internal Func<CancellationToken, TimeSpan, CancellationTokenSource>? CreateDiscoveryTimeout { get; set; }
     internal Task CurrentMonitorRearm() => Monitoring.CurrentMonitorRearm();
 
     // Queries the configured and learned Sentinels directly, so replica reads do not depend on a
@@ -168,7 +170,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 notificationHint?.Target, notificationHint, HostResolver,
                 getValidatedPeer: static generation => generation.ValidatedPeer,
                 rejectPrimaryAsync: RejectGenerationAsync,
-                acceptedReporter: endpoint => acceptedReporter = endpoint).ConfigureAwait(false);
+                acceptedReporter: endpoint => acceptedReporter = endpoint,
+                createDiscoveryTimeout: CreateDiscoveryTimeout).ConfigureAwait(false);
             if (ReferenceEquals(replacement, previous))
             {
                 lock (_gate)
