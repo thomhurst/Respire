@@ -19,6 +19,104 @@ public class ReplicaReconnectBacklogTests
     private static extern ref SemaphoreSlim SharedCursorGate(ReadCursorAffinity cursors);
 
     [Test]
+    [Arguments("healthy", false)]
+    [Arguments("healthy", true)]
+    [Arguments("retired", false)]
+    [Arguments("retired", true)]
+    [Arguments("disconnected", false)]
+    [Arguments("disconnected", true)]
+    public async Task QueuedFreshCursorReselectsUnavailablePrimaryPin(string state, bool publishUnderGate)
+    {
+        await using var primary = new FakeRespServer(16, Value)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray() : null,
+        };
+        await using var replica = Server();
+        int[] ports = [];
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Encoding.ASCII.GetBytes($"*2\r\n+127.0.0.1\r\n+{primary.Port}\r\n"),
+                "SENTINEL MASTER mymaster" => Encoding.ASCII.GetBytes($"*8\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{primary.Port}\r\n+config-epoch\r\n+1\r\n+flags\r\n+master\r\n"),
+                "SENTINEL REPLICAS mymaster" => ReplicasReply(Volatile.Read(ref ports)),
+                _ => null,
+            },
+        };
+        var blockPrimary = false;
+        var resumePrimary = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == primary.Port && Volatile.Read(ref blockPrimary))
+                    await resumePrimary.Task.WaitAsync(token);
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        });
+        var router = client.Core.ReadRouter;
+        await using var view = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
+        await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.ReplicaPreferred, out var original)).IsTrue();
+        await Assert.That(original!.Primary is not null).IsTrue();
+        Volatile.Write(ref ports, [replica.Port]);
+        await router.RefreshNowAsync(default);
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+
+        var gate = SharedCursorGate(router.Cursors);
+        using var cancellation = new CancellationTokenSource(Limit);
+        var gateHeld = false;
+        try
+        {
+            if (publishUnderGate)
+            {
+                router.Cursors.Clear();
+                await gate.WaitAsync();
+                gateHeld = true;
+            }
+            if (state != "healthy")
+            {
+                Volatile.Write(ref blockPrimary, true);
+                sentinel.SuppressReply = command => command.StartsWith("SENTINEL GET-MASTER", StringComparison.Ordinal);
+                if (state == "retired") await Assert.That(client.Core.Sentinel!.Current!.TryRetire()).IsTrue();
+                else await original.Primary!.GetConnection().DisposeAsync();
+                await Assert.That(client.Core.TryGetReadyPrimaryMultiplexer(out _)).IsFalse();
+            }
+            var pending = router.EnqueueAsync(RespireReadFrom.ReplicaPreferred,
+                static (connection, _) => new ValueTask<int>(connection.Port), cancellation.Token, default,
+                cursorRead: true).AsTask();
+            if (publishUnderGate)
+            {
+                await Assert.That(pending.IsCompleted).IsFalse();
+                router.Cursors.PinShared(RespireReadFrom.ReplicaPreferred, original);
+                gate.Release();
+                gateHeld = false;
+            }
+            await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo(state == "healthy" ? primary.Port : replica.Port);
+            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
+            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"])) { }
+            await Assert.That((state == "healthy" ? primary : replica).ReceivedCommands.Contains("SCAN 7")).IsTrue();
+            await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.ReplicaPreferred, out var current)).IsTrue();
+            await Assert.That(ReferenceEquals(current, original)).IsEqualTo(state == "healthy");
+        }
+        finally
+        {
+            if (gateHeld) gate.Release();
+            await cancellation.CancelAsync();
+            resumePrimary.TrySetResult();
+        }
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.Replica)]
     [Arguments(RespireReadFrom.ReplicaPreferred)]
     public async Task QueuedFreshRawCursorPreservesHealthySharedPin(RespireReadFrom policy)

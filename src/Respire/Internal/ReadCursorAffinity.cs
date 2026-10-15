@@ -49,14 +49,13 @@ internal sealed class ReadCursorAffinity
         }
 
         // Queue admission alone does not invalidate a raw scan's issuing server.
-        // Only a fresh queued cursor may bypass a cooling pin to recover elsewhere.
-        var bypassCoolingPin = reselectSharedCursor && !isContinuation;
-        if (_shared.TryGetValue(readFrom, out var shared)
-            && (!bypassCoolingPin || shared.Replica is not { IsCoolingDown: true }))
+        // Only a fresh queued cursor may bypass an unavailable pin to recover elsewhere.
+        var reselectUnavailablePin = reselectSharedCursor && !isContinuation;
+        if (_shared.TryGetValue(readFrom, out var shared))
         {
-            if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
-                return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
-            _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+            var pinned = await TryReuseSharedPinAsync(router, readFrom, shared, cancellationToken, observation,
+                readyOnly, reselectUnavailablePin).ConfigureAwait(false);
+            if (pinned is not null) return pinned;
         }
 
         // The server that issued this cursor is gone, so no other server can continue it.
@@ -73,12 +72,11 @@ internal sealed class ReadCursorAffinity
         {
             // Another publisher may have replaced the rejected pin while we waited.
             // Recheck the current pin under the gate before selecting and publishing.
-            if (_shared.TryGetValue(readFrom, out shared)
-                && (!bypassCoolingPin || shared.Replica is not { IsCoolingDown: true }))
+            if (_shared.TryGetValue(readFrom, out shared))
             {
-                if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
-                    return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
-                _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+                var pinned = await TryReuseSharedPinAsync(router, readFrom, shared, cancellationToken, observation,
+                    readyOnly, reselectUnavailablePin).ConfigureAwait(false);
+                if (pinned is not null) return pinned;
                 observation.UseEndpoint(null);
             }
 
@@ -162,6 +160,33 @@ internal sealed class ReadCursorAffinity
 
     private static RespireConnectionException CursorLost()
         => new("The server that issued this cursor left the read topology or failed. Restart the scan with cursor 0.");
+
+    private async ValueTask<RespireConnection?> TryReuseSharedPinAsync(
+        ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity shared, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation, bool readyOnly, bool reselectUnavailablePin)
+    {
+        if (reselectUnavailablePin)
+        {
+            if (shared.Replica is { IsCoolingDown: true }) return null;
+            if (shared.Primary is { } primary)
+            {
+                // A fresh queued scan must not wait for primary discovery while a replica
+                // is usable. Select from this ready snapshot without entering EnsureConnectedAsync;
+                // a concurrent retirement/socket loss is handled by normal backlog admission.
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!router.Core.TryGetReadyPrimaryMultiplexer(out var current)
+                    || !ReferenceEquals(current, primary) || !primary.IsConnected) return null;
+                observation.UseEndpoint(primary.ActiveConnectionEndpoint, cancellationToken);
+                var zone = ReadFallbackPolicy.UsesAvailabilityZone(shared.ReadFrom)
+                    ? router.Core.Options.ClientAvailabilityZone : null;
+                return zone is null ? primary.GetConnection() : primary.GetConnectionForZone(zone);
+            }
+        }
+        if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
+            return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+        _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+        return null;
+    }
 
     private async ValueTask<RespireConnection> GetSharedPinnedConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity shared, CancellationToken cancellationToken,
