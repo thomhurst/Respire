@@ -36,10 +36,10 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
 
     public static async Task<(IContainer Container, int Port)> StartClusterAsync()
     {
-        if (Name != "garnet") return (await StartAsync(cluster: true), 6379);
+        if (Name == "dragonfly") return (await StartAsync(cluster: true), 6379);
 
-        // Garnet 2.1.8 requires advertised and listening ports to match. Reserve an
-        // ephemeral host port and retry only a Docker bind collision, with a fresh port.
+        // Garnet requires advertised and listening ports to match; KeyDB needs its
+        // advertised port at startup. Reserve a host port and retry only bind collisions.
         for (var attempt = 0; ; attempt++)
         {
             int port;
@@ -48,21 +48,28 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
                 reservation.Start();
                 port = ((IPEndPoint)reservation.LocalEndpoint).Port;
             }
-            var container = new ContainerBuilder(GarnetImage)
-                .WithCommand("--cluster", "--port", port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            var portText = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var containerPort = Name == "garnet" ? port : 6379;
+            var builder = Name == "garnet"
+                ? new ContainerBuilder(GarnetImage)
+                .WithCommand("--cluster", "--port", portText,
                     "--cluster-announce-ip", "127.0.0.1", "--memory", "128m", "--page", "4m", "--segment", "16m", "--index", "8m")
-                .WithPortBinding(port, port)
+                : new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
+                .WithCommand("keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no",
+                    "--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1", "--cluster-announce-port", portText);
+            var container = builder
+                .WithPortBinding(port, containerPort)
                 .WithCreateParameterModifier(parameters =>
                 {
                     foreach (var bindings in parameters.HostConfig!.PortBindings.Values)
                         foreach (var binding in bindings) binding.HostIP = "127.0.0.1";
                 })
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(port))
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(containerPort))
                 .Build();
             try
             {
                 await container.StartAsync();
-                return (container, port);
+                return (container, containerPort);
             }
             catch (Exception error)
             {
@@ -237,10 +244,6 @@ public class ServerCompatibilityTests(CompatibleServer server)
                 using var announceIp = await admin.ExecuteAsync("CONFIG", "SET", "cluster_announce_ip", container.Hostname);
                 using var announcePort = await admin.ExecuteAsync("CONFIG", "SET", "announce_port", container.GetMappedPublicPort(started.Port));
             }
-            else if (CompatibleServer.Name == "keydb")
-            {
-                using var announcePort = await admin.ExecuteAsync("CONFIG", "SET", "cluster-announce-port", container.GetMappedPublicPort(started.Port));
-            }
             if (CompatibleServer.Name != "dragonfly")
             {
                 for (var first = 0; first < 16384; first += 1024)
@@ -258,6 +261,16 @@ public class ServerCompatibilityTests(CompatibleServer server)
             }
         }
         await using var client = await RespireClient.ConnectAsync(options with { UseCluster = true });
+        // Seed fallback can serve commands even when discovery leaves the slot table empty.
+        // Check every slot before commands can populate ownership through redirects.
+        var cluster = client.Core.Cluster;
+        cluster.Should().NotBeNull();
+        for (var slot = 0; slot < 16384; slot++)
+        {
+            var owner = cluster!.GetSlotOwnerEndpoint(slot);
+            owner.Should().NotBeNull("slot {0} must have a discovered primary", slot);
+            owner!.Value.Port.Should().Be(container.GetMappedPublicPort(started.Port));
+        }
         // Different hash slots exercise the discovered slot table, even on a single primary.
         foreach (var key in new[] { "compat:{first}", "compat:{second}" })
         {
