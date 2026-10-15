@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -337,11 +338,15 @@ public class CommandHookTests
     [Test]
     public async Task HedgeWinnerCompletesOneLogicalRead()
     {
+        var primaryReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replicaReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var primary = Server();
+        primary.SuppressReply = command => HoldRead(command, primaryReceived);
         await using var replica = new FakeRespServer(
             "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray())
         {
-            SuppressReply = command => command.StartsWith("GET ", StringComparison.Ordinal),
+            SuppressReply = command => HoldRead(command, replicaReceived),
+            ReplyOverride = (_, command) => command == "PING" ? FakeRespServer.PongReply : null,
         };
         var hook = new RecordingHook();
         await using var client = RespireClient.Create(Options(primary, hook) with
@@ -350,13 +355,52 @@ public class CommandHookTests
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(10), MaximumExtraLoadPercent = 100 },
         });
+        // Cold connection/ROLE setup consumed the old read deadline under concurrent load.
+        // Establish both routes without admitting an application command before timing the race.
+        using var setupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var replicaConnection = await client.Core.ReadRouter.GetConnectionAsync(
+            RespireReadFrom.Replica, setupDeadline.Token, observation: default);
+        var primaryConnection = await client.Core.ReadRouter.GetHedgeConnectionAsync(
+            RespireReadFrom.ReplicaPreferred, replicaConnection, setupDeadline.Token);
+        await Assert.That(replicaConnection.Port).IsEqualTo(replica.Port);
+        await Assert.That(primaryConnection?.Port).IsEqualTo(primary.Port);
+        await Assert.That(hook.Entered).IsEmpty();
+        await Assert.That(hook.Completed).IsEmpty();
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("42");
-        await Assert.That(primary.ReceivedCommands).Contains("GET key");
-        await Assert.That(replica.ReceivedCommands).Contains("GET key");
+        var read = client.GetStringAsync("key", deadline.Token).AsTask();
+        await Task.WhenAll(primaryReceived.Task, replicaReceived.Task).WaitAsync(deadline.Token);
+        await Assert.That(read.IsCompleted).IsFalse();
         await Assert.That(hook.Entered.Count).IsEqualTo(1);
-        await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
-        await replica.SendRawAsync("$5\r\nloser\r\n"u8.ToArray());
+        await Assert.That(hook.Completed).IsEmpty();
+
+        // Publish the winner while the original reply is still withheld. Completion must not
+        // wait for the loser, and both physical sends must belong to this one logical context.
+        await primary.SendRawAsync("$2\r\n42\r\n"u8.ToArray()).WaitAsync(deadline.Token);
+        await Assert.That(await read.WaitAsync(deadline.Token)).IsEqualTo("42");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        var completion = hook.Completed.Single();
+        await Assert.That(completion.Context).IsSameReferenceAs(hook.Entered.Single());
+        await Assert.That(completion.State).IsSameReferenceAs(completion.Context);
+        await Assert.That(completion.Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+        await Assert.That(completion.Error).IsNull();
+
+        // A direct PING after the loser proves its FIFO slot was drained and the same socket
+        // remains usable, without introducing another application hook scope.
+        using var cleanupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await replica.SendRawAsync("$5\r\nloser\r\n"u8.ToArray()).WaitAsync(cleanupDeadline.Token);
+        using var pong = await replicaConnection.SendAsync(new Cmd(new Verb("PING")), cleanupDeadline.Token);
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(hook.Entered.Count).IsEqualTo(1);
+        await Assert.That(hook.Completed.Count).IsEqualTo(1);
+
+        static bool HoldRead(string command, TaskCompletionSource received)
+        {
+            if (command != "GET key") return false;
+            received.TrySetResult();
+            return true;
+        }
     }
 
     [Test]
