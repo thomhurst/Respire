@@ -144,12 +144,16 @@ public class CoordinationCommandHookTests
     [Test]
     [Arguments("semaphore")]
     [Arguments("read")]
-    public async Task CancellationAfterAcquireReplyCompletesAfterOwnerCleanup(string kind)
+    [Arguments("read", true)]
+    public async Task CancellationAfterAcquireReplyCompletesAfterOwnerCleanup(string kind, bool stallCleanup = false)
     {
         await using var server = Server();
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook();
         await using var client = await ConnectAsync(server, hook);
+        var cleanupGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (stallCleanup)
+            server.GateCommand($"EVALSHA {RespireCoordination.ReleaseReadWriteLock.Sha1} ", cleanupGate.Task);
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == "Respire",
@@ -165,10 +169,26 @@ public class CoordinationCommandHookTests
         var cleanupWasComplete = false;
         hook.After = (_, _) => cleanupWasComplete = SemaphoreWireTests.EvalCommands(server).Length == 2;
         var coordination = new RespireCoordination(client);
-        var error = await Failure(async () => kind == "semaphore"
+        var started = Stopwatch.GetTimestamp();
+        Exception? error;
+        try
+        {
+            error = await Failure(async () => kind == "semaphore"
             ? (await coordination.CreateSemaphore("{cancel}:semaphore", 1)
                 .TryAcquireAsync(TimeSpan.FromMinutes(1), cancellation.Token)).Permit
-            : (await coordination.TryAcquireReadLockAsync("{cancel}:read", TimeSpan.FromMinutes(1), cancellation.Token)).Lock);
+            : (await coordination.TryAcquireReadLockAsync("{cancel}:read", TimeSpan.FromMinutes(1), cancellation.Token)).Lock)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            if (stallCleanup)
+            {
+                // The reply remains gated: the foreground cleanup bound, not Redis, ends the wait.
+                await Assert.That(cleanupGate.Task.IsCompleted).IsFalse();
+                await Assert.That(Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(900)).IsTrue();
+            }
+        }
+        finally
+        {
+            cleanupGate.TrySetResult();
+        }
 
         await Assert.That(error).IsAssignableTo<OperationCanceledException>();
         await Assert.That(cleanupWasComplete).IsTrue();

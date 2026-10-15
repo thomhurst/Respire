@@ -245,6 +245,8 @@ Background renewal, detached cleanup retries, tracked script legs, `CLIENT ID`/`
 fences and notification tracking reads are housekeeping inside or following the owning operation;
 they do not ask policy permission again. Bounded foreground cleanup can hand remaining recovery
 to the existing background queue. Completion does not promise that detached recovery has ended.
+Rejecting `LOCK RENEW` does not stop background keep-alive renewals; use acquisition or
+`LOCK KEEPALIVE START` admission to control their start.
 The acquisition scope ends when it returns the handle, not at the end of the lease's lifetime.
 Application calls from callbacks still receive independent scopes. Coordination coverage applies
 to a concrete `RespireClient`; custom `IRespireClient` decorators retain their own dispatch behavior.
