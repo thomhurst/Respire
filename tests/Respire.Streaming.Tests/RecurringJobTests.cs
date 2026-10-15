@@ -72,12 +72,14 @@ public class RecurringJobTests
     }
 
     [Test]
-    public async Task RegistrationResolvesNamedSchedulersAndHostedServices()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RegistrationResolvesNamedSchedulersAndHostedServices(bool logging)
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         var services = new ServiceCollection().AddSingleton<IRespireClient>(client);
-        services.AddLogging();
+        if (logging) services.AddLogging();
         services.AddRespireJobQueue<Handler, string>("first", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
             new() { TelemetryName = "first" });
         services.AddRespireJobQueue<Handler, string>("second", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,

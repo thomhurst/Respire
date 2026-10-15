@@ -311,6 +311,12 @@ Older servers retain acknowledged entries for trimming. Expiry does not remove t
 Create a scheduler from a typed producer to manage durable recurring schedules:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "email", Encoding.UTF8.GetBytes);
 var scheduler = queue.CreateScheduler();
 await scheduler.UpsertAsync("hourly-reminder", "customer@example.com", new RespireJobSchedule
 {
@@ -345,7 +351,11 @@ occurrence, its definition remains removable but no further ticks are due.
 
 `Skip` (the default) coalesces missed occurrences into the latest tick at or before the pass's
 clock snapshot. `CatchUp` enqueues each overdue tick in order, carrying remaining backlog to
-later bounded passes. Neither mode shifts an interval's cadence when a pass runs late. Scheduling
+later bounded passes. Passes visit schedule IDs in round-robin order using a shared Redis cursor,
+so a sustained catch-up backlog cannot starve other schedules, even with a one-candidate pass.
+The candidate budget includes schedules that are not yet due or have no future occurrences;
+large schedule sets can require several passes to visit every schedule. The cursor survives
+restarts and removal of its last visited schedule. Neither mode shifts an interval's cadence when a pass runs late. Scheduling
 pauses when no scheduler is running and resumes from Redis state on restart. Polling, queue backlog,
 and worker availability affect execution time; a tick is an enqueue opportunity, not an execution deadline.
 
@@ -361,6 +371,8 @@ and tick, including when a successful reply is lost or a process restarts. There
 deduplication window for these transitions. Jobs use IDs of the form `recurring:<revision>:<unix-ms>`;
 reserve that prefix for the scheduler. Stream entries also carry `_respire.job.schedule` and
 `_respire.job.tick`. Existing typed handlers, acknowledgement, retries, and job events apply.
+Each tick uses the existing `job enqueue` producer span and propagates its W3C context (or the
+ambient context when no producer span is sampled) to the worker's processing span.
 Recurring jobs are immediate ready jobs; they do not carry delayed-enqueue priority or TTL options.
 One enqueue per tick does **not** make handler side effects exactly once: handlers must still tolerate redelivery.
 
@@ -370,9 +382,10 @@ and a forward jump applies the missed-tick policy. Backward jumps do not repeat 
 The guarantee depends on Redis retaining both the stream and schedule state through persistence
 and failover; protect these keys from eviction, expiry, trimming, and independent modification.
 
-Recurring scheduling adds `:recurring` (definition hash) and `:recurring-due` (sorted set) to the
+Recurring scheduling adds `:recurring` (definition hash), `:recurring-due` (sorted set),
+`:recurring-order` (schedule ID sorted set) and `:recurring-cursor` (string) to the
 ready-stream key. They share its Cluster slot, including through prefixed clients. In addition to
-script execution, allow `TYPE`, `HGET`, `HSET`, `HDEL`, `ZRANGEBYSCORE`, `ZSCORE`, `ZADD`, `ZREM`,
+script execution, allow `TYPE`, `HGET`, `HSET`, `HDEL`, `ZRANGEBYLEX`, `ZSCORE`, `ZADD`, `ZREM`, `GET`, `SET`,
 and `XADD`/`XDEL` on the appropriate keys. Scripts check key types and write/cleanup permissions
 before mutations and roll back an appended job if advancing the due index fails. Redis 7.0 or
 later is required. No recurring-scheduler permissions are needed by immediate-only producers.

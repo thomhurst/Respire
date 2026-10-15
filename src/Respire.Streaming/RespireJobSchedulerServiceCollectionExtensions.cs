@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Respire.Streaming;
 
@@ -30,7 +31,8 @@ public static class RespireJobSchedulerServiceCollectionExtensions
         services.AddSingleton<IHostedService>(provider => new RecurringJobWorker<T>(
             provider.GetRequiredKeyedService<RespireJobScheduler<T>>(queueName),
             provider.GetService<TimeProvider>() ?? TimeProvider.System,
-            provider.GetRequiredService<ILogger<RecurringJobWorker<T>>>(), interval, maximumTicksPerPass));
+            provider.GetService<ILogger<RecurringJobWorker<T>>>() ?? NullLogger<RecurringJobWorker<T>>.Instance,
+            interval, maximumTicksPerPass));
         return services;
     }
 }
@@ -59,6 +61,6 @@ internal sealed partial class RecurringJobWorker<T>(RespireJobScheduler<T> sched
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
     }
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Recurring job scheduling pass failed; retrying after the polling interval.")]
+    [LoggerMessage(EventId = 2, Level = LogLevel.Error, Message = "Recurring job scheduling pass failed; retrying after the polling interval.")]
     private static partial void LogPassFailure(ILogger logger, Exception exception);
 }

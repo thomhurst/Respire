@@ -20,7 +20,8 @@ public sealed class RespireJobScheduler<T>
     internal RespireJobScheduler(IRespireClient client, string stream, Func<T, byte[]> serialize, TimeProvider timeProvider)
     {
         _client = client;
-        _keys = [stream, stream + ":recurring", stream + ":recurring-due"];
+        _keys = [stream, stream + ":recurring", stream + ":recurring-due",
+            stream + ":recurring-order", stream + ":recurring-cursor"];
         JobQueueScheduling.ValidateKeys(client, _keys);
         _serialize = serialize;
         _timeProvider = timeProvider;
@@ -55,7 +56,8 @@ public sealed class RespireJobScheduler<T>
     }
 
     /// <summary>Runs a bounded scheduling pass and returns the number of jobs this instance enqueued.</summary>
-    /// <remarks>Examines at most maximumTicks tick candidates (1 to 256), using one UTC time snapshot.
+    /// <remarks>Examines at most maximumTicks schedule candidates (1 to 256), including schedules not yet due,
+    /// in a shared round-robin order using one UTC time snapshot.
     /// Catch-up backlog persists for later passes. Repeating a pass after a lost reply cannot duplicate a committed tick.</remarks>
     public async ValueTask<int> RunDueAsync(int maximumTicks = 64, CancellationToken cancellationToken = default)
     {
@@ -67,10 +69,12 @@ public sealed class RespireJobScheduler<T>
             using var due = await _client.Scripts.ExecuteAsync(RecurringJobScripts.ReadDue, [.. _keys],
                 [now, maximumTicks - examined], cancellationToken).ConfigureAwait(false);
             if (due.Count == 0) break;
+            var beforeBatch = enqueued;
             for (var i = 0; i < due.Count; i++)
             {
                 examined++;
                 var row = due[i];
+                if (row.Count == 1) continue; // This schedule is not due at the pass's time snapshot.
                 var scheduleId = row[0].AsString();
                 var json = row[1].AsString();
                 var original = long.Parse(row[2].AsString(), CultureInfo.InvariantCulture);
@@ -87,10 +91,13 @@ public sealed class RespireJobScheduler<T>
                 }
                 var next = Next(tick, definition.Interval, cron);
                 var jobId = "recurring:" + definition.Revision + ":" + tick.ToString(CultureInfo.InvariantCulture);
+                using var trace = new JobEnqueueTrace();
                 enqueued += (int)await _client.Scripts.ExecuteIntegerAsync(RecurringJobScripts.CommitTick, [.. _keys],
                     [scheduleId, json, original, next?.ToString(CultureInfo.InvariantCulture) ?? "", jobId,
-                        definition.Payload, tick], cancellationToken).ConfigureAwait(false);
+                        definition.Payload, tick, trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
+                trace.Succeeded = true;
             }
+            if (enqueued == beforeBatch) break;
         }
         return enqueued;
     }
