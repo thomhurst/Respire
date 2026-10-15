@@ -34,10 +34,14 @@ are available on NuGet at 2.0.0, add this property to the package-validation pro
 ```
 
 Restore and pack every shipping project after changing the baseline. The SDK restores each
-project's baseline package using its package ID. Keep this version fixed through the major's
-minor and patch releases; updating it on each PR could hide a break. A package introduced later
-needs its own first published stable version as a project-level baseline override. Do not use a
-pre-2.0 package as the stable contract, or configure a baseline that has not been published.
+project's baseline package using its package ID. Keep the baseline fixed between releases.
+After each stable release, advance it to the latest published stable version so APIs added in
+minor and patch releases are protected too. For example, after publishing 2.1.0, use 2.1.0 as
+the baseline for subsequent changes; retaining 2.0.0 would miss removal of an API added in 2.1.0.
+Do not advance the baseline to an unpublished version or change it merely to make a PR pass.
+A package introduced later needs its own first published stable version as a project-level
+baseline override; advance that override after each of its stable releases as well. Do not use
+a pre-2.0 package as the stable contract.
 
 ## Intentional breaks
 
@@ -63,8 +67,8 @@ Then pack again **without** the generation flag to prove the reviewed exceptions
 Do not disable validation, add broad `CPxxxx`/`PKVxxx` entries to `NoWarn`, or check in automatic
 suppression generation. Restore an accidentally dropped framework instead of suppressing its
 diagnostic. When a supported framework is intentionally retired in a major release, document
-the migration and review that framework exception separately. After the new major is published,
-advance the baseline and remove obsolete suppressions; unused suppressions fail validation by
+the migration and review that framework exception separately. After each stable release, advance
+the baseline and remove obsolete suppressions; unused suppressions fail validation by
 default. See the SDK's
 [suppression format](https://learn.microsoft.com/en-us/dotnet/fundamentals/apicompat/diagnostic-ids#how-to-suppress).
 
