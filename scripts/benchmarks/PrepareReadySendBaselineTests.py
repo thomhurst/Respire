@@ -28,10 +28,13 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
     def test_predecessor_control_preserves_standalone_backlog_helpers(self):
         self.assert_current_production_control(standalone=True)
 
+    def test_pre_optout_control_preserves_primary_backlog_helpers(self):
+        self.assert_current_production_control(before_optout=True)
+
     def test_unknown_strategy_drift_fails_without_changing_production(self):
         self.assert_current_production_control(drift=True)
 
-    def assert_current_production_control(self, standalone=False, drift=False):
+    def assert_current_production_control(self, standalone=False, drift=False, before_optout=False):
         repository = Path(__file__).resolve().parents[2]
         paths = ('src/Respire/RespireClient.cs', 'src/Respire/RespireClient.ReadySend.cs')
         with tempfile.TemporaryDirectory() as directory:
@@ -51,6 +54,8 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                                               if line.startswith('+') and not line.startswith('+++')) + '\n')
             if drift:
                 strategy.write_text(strategy.read_text().replace('UsesPrimaryBacklog', 'UsesUnknownBacklog'))
+            if before_optout:
+                strategy.write_text(strategy.read_text().replace('            && !ShouldSkipTracking(operation, in command)\n', ''))
             ready = strategy.read_text()
             environment = git_environment()
 
@@ -73,7 +78,8 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
             recorded = json.loads(evidence.read_text())
             self.assertEqual(recorded['baseline_commit'], git('rev-parse', 'HEAD'))
             self.assertEqual(recorded['before_sha256'], before)
-            patch_name = 'ReadySendStrategy.Standalone.patch' if standalone else 'ReadySendStrategy.patch'
+            patch_name = ('ReadySendStrategy.Standalone.patch' if standalone else
+                          'ReadySendStrategy.BeforeOptOut.patch' if before_optout else 'ReadySendStrategy.patch')
             self.assertEqual(recorded['patch_file'], patch_name)
             self.assertEqual(recorded['patch_sha256'], hashlib.sha256(
                 (repository / 'scripts/benchmarks' / patch_name).read_bytes()).hexdigest())
@@ -83,6 +89,8 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
             self.assertEqual(set(git('diff', '--name-only').splitlines()), set(paths))
             self.assertEqual(evidence.with_suffix('.patch').read_text(), git('diff', '--binary') + '\n')
             control = (checkout / paths[0]).read_text()
+            if not standalone and not before_optout:
+                self.assertIn('&& !ShouldSkipTracking(operation, in command)', control)
             # Compare complete relocated blocks, so ownership behavior cannot drift
             # while the names and interfaces still happen to compile.
             mutation_helpers = ready[ready.index('    // A typed source reports'):

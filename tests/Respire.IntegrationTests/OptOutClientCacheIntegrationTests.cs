@@ -70,9 +70,12 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task BypassDoesNotPopulateOrRegisterFreshKeysButKeepsPriorTracking(bool raw)
+    [Arguments("typed")]
+    [Arguments("raw")]
+    [Arguments("stream")]
+    [Arguments("batch")]
+    [Arguments("fire-and-forget")]
+    public async Task BypassDoesNotPopulateOrRegisterFreshKeysButKeepsPriorTracking(string surface)
     {
         var prefix = $"optout-bypass:{Guid.NewGuid():N}:";
         var freshKey = prefix + "fresh";
@@ -88,20 +91,47 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
         await Assert.That(await reader.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         var hits = reader.ClientSideCache!.GetStatistics().Hits;
         var bypass = reader.WithoutClientCache();
-        if (raw)
+        if (surface == "raw")
         {
             using var fresh = await bypass.ExecuteAsync(RespireCommands.String.GET, freshKey);
             using var tracked = await bypass.ExecuteAsync(RespireCommands.String.GET, trackedKey);
             await Assert.That(fresh.AsString()).IsEqualTo("fresh");
             await Assert.That(tracked.AsString()).IsEqualTo("tracked");
         }
+        else if (surface == "stream")
+        {
+            foreach (var key in new[] { freshKey, trackedKey })
+            {
+                await using var stream = await bypass.Strings.GetStreamAsync(key);
+                using var text = new StreamReader(stream!);
+                await Assert.That(await text.ReadToEndAsync()).IsEqualTo(key == freshKey ? "fresh" : "tracked");
+            }
+        }
+        else if (surface == "batch")
+        {
+            using var batch = bypass.CreateBatch();
+            var fresh = batch.GetString(freshKey);
+            var tracked = batch.GetString(trackedKey);
+            await batch.ExecuteAsync();
+            await Assert.That(fresh.Result).IsEqualTo("fresh");
+            await Assert.That(tracked.Result).IsEqualTo("tracked");
+        }
+        else if (surface == "fire-and-forget")
+        {
+            await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, freshKey);
+            await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, trackedKey);
+            await reader.PingAsync();
+        }
         else
         {
             await Assert.That(await bypass.GetStringAsync(freshKey)).IsEqualTo("fresh");
             await Assert.That(await bypass.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         }
-        await Assert.That(reader.ClientSideCache.Count).IsEqualTo(1);
+        // Batches conservatively fence the whole local cache, including read-only batches.
+        await Assert.That(reader.ClientSideCache.Count).IsEqualTo(surface == "batch" ? 0 : 1);
         await Assert.That(reader.ClientSideCache.GetStatistics().Hits).IsEqualTo(hits);
+        if (surface == "batch")
+            await Assert.That(await reader.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         var invalidations = reader.ClientSideCache.GetStatistics().Invalidations;
         await writer.SetAsync(freshKey, "changed fresh");
         await writer.SetAsync(trackedKey, "changed tracked");

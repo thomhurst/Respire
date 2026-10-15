@@ -12,7 +12,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 {
     private ManualResetValueTaskSourceCore<Stream?> _core = new() { RunContinuationsAsynchronously = true };
     private readonly string? _commandName;
-    private readonly bool _hasPrefixReply;
+    private readonly int _prefixReplyCount;
     private readonly Action<Exception?>? _onFrameCompleted;
     private readonly Action? _onLifetimeCancelled;
     private readonly CancellationToken _streamCancellationToken;
@@ -32,13 +32,20 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     internal BulkStreamPendingResponseSource(
         string? commandName, bool hasPrefixReply, Action<Exception?>? onFrameCompleted,
         CancellationToken streamCancellationToken = default, Action? onLifetimeCancelled = null)
+        : this(commandName, hasPrefixReply ? 1 : 0, onFrameCompleted, streamCancellationToken, onLifetimeCancelled)
+    {
+    }
+
+    internal BulkStreamPendingResponseSource(
+        string? commandName, int prefixReplyCount, Action<Exception?>? onFrameCompleted,
+        CancellationToken streamCancellationToken = default, Action? onLifetimeCancelled = null)
     {
         _commandName = commandName;
-        _hasPrefixReply = hasPrefixReply;
+        _prefixReplyCount = prefixReplyCount;
         _onFrameCompleted = onFrameCompleted;
         _onLifetimeCancelled = onLifetimeCancelled;
         _streamCancellationToken = streamCancellationToken;
-        PrepareForUse(hasPrefixReply ? 2 : 1);
+        PrepareForUse(prefixReplyCount + 1);
         if (streamCancellationToken.CanBeCanceled)
             _streamCancellationRegistration = streamCancellationToken.UnsafeRegister(
                 static (state, token) =>
@@ -51,13 +58,13 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override string? CommandName => _commandName;
-    internal bool HasPrefixReply => _hasPrefixReply;
+    internal int PrefixReplyCount => _prefixReplyCount;
     internal Action<Exception?>? OnFrameCompleted => _onFrameCompleted;
     internal CancellationToken StreamCancellationToken => _streamCancellationToken;
 
     internal ValueTask<Stream?> Task => new(this, _core.Version);
 
-    internal bool IsFinalReply => !_hasPrefixReply || Volatile.Read(ref _prefixReceived) != 0;
+    internal bool IsFinalReply => Volatile.Read(ref _prefixReceived) >= _prefixReplyCount;
 
     internal bool HasStalledReader(TimeSpan idle)
         => Volatile.Read(ref _payload)?.HasStalledReader(idle) == true;
@@ -66,10 +73,10 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void ObservePrefix(in RespValue result)
     {
-        if (!_hasPrefixReply || Volatile.Read(ref _prefixReceived) != 0) return;
+        if (Volatile.Read(ref _prefixReceived) >= _prefixReplyCount) return;
         if (result.IsError)
-            Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint));
-        Volatile.Write(ref _prefixReceived, 1);
+            Interlocked.CompareExchange(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint), null);
+        Interlocked.Increment(ref _prefixReceived);
     }
 
     internal RespBulkPayloadPipe? BeginPayload()
@@ -132,7 +139,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     }
 
     internal override bool TryReserveResult()
-        => _hasPrefixReply && _receivedReplyIndex++ == 0 || base.TryReserveResult();
+        => _receivedReplyIndex++ < _prefixReplyCount || base.TryReserveResult();
 
     internal override bool CompleteReservedResult(in RespValue result) => CompleteResult(in result, reserved: true);
 
@@ -140,7 +147,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     private bool CompleteResult(in RespValue result, bool reserved)
     {
-        if (_hasPrefixReply && _replyIndex++ == 0)
+        if (_replyIndex++ < _prefixReplyCount)
         {
             if (IsCompleted(State))
             {
@@ -148,9 +155,9 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
                 return true;
             }
 
-            if (result.IsError)
+            if (result.IsError && Volatile.Read(ref _prefixError) is null)
             {
-                Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint));
+                Interlocked.CompareExchange(ref _prefixError, ResponseReader.ServerError(in result, _commandName, ErrorEndpoint), null);
             }
 
             result.Dispose();

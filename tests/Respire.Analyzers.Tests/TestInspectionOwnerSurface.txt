@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 411 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 414 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 65
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -132,8 +132,9 @@ Respire.ClientSideCacheCoordinator.QueryReadLease | method Capture(QueryDependen
 Respire.ClientSideCacheCoordinator.QueryReadLease | method ClearDependencies() : void
 Respire.ClientSideCacheCoordinator.QueryReadLease | method GetDependency(int) : QueryDependencyStamp
 Respire.ClientSideCacheCoordinator.QueryReadLease | property Capacity [internal; get] : int
-# Count: Respire.Networking.BulkStreamPendingResponseSource | 26
+# Count: Respire.Networking.BulkStreamPendingResponseSource | 27
 Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, bool, Action<Exception?>?, CancellationToken, Action?)
+Respire.Networking.BulkStreamPendingResponseSource | constructor BulkStreamPendingResponseSource(string?, int, Action<Exception?>?, CancellationToken, Action?)
 Respire.Networking.BulkStreamPendingResponseSource | method AbortPayload(Exception) : void
 Respire.Networking.BulkStreamPendingResponseSource | method BeginPayload() : RespBulkPayloadPipe?
 Respire.Networking.BulkStreamPendingResponseSource | method CompleteDiscardedPayload() : void
@@ -153,7 +154,7 @@ Respire.Networking.BulkStreamPendingResponseSource | method TryReserveResult() :
 Respire.Networking.BulkStreamPendingResponseSource | method TrySetResult(in RespValue) : bool
 Respire.Networking.BulkStreamPendingResponseSource | property CanStartStream [internal; get] : bool
 Respire.Networking.BulkStreamPendingResponseSource | property CommandName [internal; get] : string?
-Respire.Networking.BulkStreamPendingResponseSource | property HasPrefixReply [internal; get] : bool
+Respire.Networking.BulkStreamPendingResponseSource | property PrefixReplyCount [internal; get] : int
 Respire.Networking.BulkStreamPendingResponseSource | property IsFinalReply [internal; get] : bool
 Respire.Networking.BulkStreamPendingResponseSource | property IsPayloadAborted [internal; get] : bool
 Respire.Networking.BulkStreamPendingResponseSource | property OnFrameCompleted [internal; get] : Action<Exception?>?
@@ -243,7 +244,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 100
+# Count: Respire.Networking.RespireConnection | 102
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
@@ -263,7 +264,7 @@ Respire.Networking.RespireConnection | method CreateCommandDeadline() : CommandD
 Respire.Networking.RespireConnection | method CreateTlsOptions(SslClientAuthenticationOptions?, string, bool) : SslClientAuthenticationOptions
 Respire.Networking.RespireConnection | method DisposeAsync() : ValueTask
 Respire.Networking.RespireConnection | method DrainPendingMaintenanceNotificationsAsync(CancellationToken) : Task
-Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, CancellationToken, string, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<ValueTask<RespValue>>
+Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, CancellationToken, string, RespireTelemetry.ErrorObservation, bool, CommandDeadline, bool) : ValueTask<ValueTask<RespValue>>
 Respire.Networking.RespireConnection | method EnsureServerClientIdAsync(CancellationToken) : ValueTask<long>
 # Legacy test-only hook retained as baseline, not precedent for new hooks.
 Respire.Networking.RespireConnection | method ExpireOldestCommandForTesting() : bool
@@ -289,13 +290,14 @@ Respire.Networking.RespireConnection | method SendBulkStreamAsync`1(in TCommand,
 Respire.Networking.RespireConnection | method SendBytesAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, int, RespireTelemetry.ErrorObservation, RespireTelemetry.OperationStart, bool) : ValueTask<byte[]?>
 Respire.Networking.RespireConnection | method SendCheckedAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, bool, DedicatedStreamRoute, string?, bool, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendConvertedAsync`3(in TCommand, TState, ResponseConverter<TState, TResult>, bool, CancellationToken, string?, CommandDeadline, int, RespireTelemetry.ErrorObservation, RespireTelemetry.OperationStart, bool) : ValueTask<TResult>
-Respire.Networking.RespireConnection | method SendFireAndForgetAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, string?, RespireTelemetry.ErrorObservation, int, bool) : ValueTask
+Respire.Networking.RespireConnection | method SendFireAndForgetAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, string?, RespireTelemetry.ErrorObservation, int, bool, bool) : ValueTask
 Respire.Networking.RespireConnection | method SendNativeBytesAsync`1(in TCommand, CancellationToken, string) : ValueTask<byte[]?>
 Respire.Networking.RespireConnection | method SendNativeCheckedAsync`1(in TCommand, CancellationToken, string) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendNativeConvertedAsync`3(in TCommand, CancellationToken, string, TState, ResponseConverter<TState, TResult>, bool) : ValueTask<TResult>
 Respire.Networking.RespireConnection | method SendNativeStringAsync`1(in TCommand, CancellationToken, string) : ValueTask<string?>
 Respire.Networking.RespireConnection | method SendPrefixedAsync`2(in TPrefix, in TCommand, bool, CancellationToken, string?, bool, bool, CommandDeadline, bool, string?, RespireTelemetry.ErrorObservation, int) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`2(in TPrefix, in TCommand, CancellationToken, string?, Action<Exception?>?, string?, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<Stream?>
+Respire.Networking.RespireConnection | method SendPrefixedBulkStreamAsync`3(in TFirst, in TSecond, in TCommand, CancellationToken, string?, Action<Exception?>?, string?, RespireTelemetry.ErrorObservation, bool, CommandDeadline) : ValueTask<Stream?>
 Respire.Networking.RespireConnection | method SendPrefixedCheckedAsync`2(in TPrefix, in TCommand, CancellationToken, string?, CommandDeadline, bool, string?, RespireTelemetry.ErrorObservation) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendPrefixedWithoutResponseTimeoutAsync`2(TPrefix, TCommand, bool, CancellationToken, int, bool) : ValueTask<RespValue>
 Respire.Networking.RespireConnection | method SendStringAsync`1(in TCommand, CancellationToken, string?, CommandDeadline, int, RespireTelemetry.ErrorObservation, RespireTelemetry.OperationStart, bool) : ValueTask<string?>
@@ -341,6 +343,7 @@ Respire.Networking.RespireConnection | property OperationMetricDatabase [interna
 Respire.Networking.RespireConnection | property OperationMetricNamespace [internal; get] : string
 Respire.Networking.RespireConnection | property OperationMetricTags [internal; get] : TagList
 Respire.Networking.RespireConnection | property PeerKey [internal; get] : (string Host, int Port)
+Respire.Networking.RespireConnection | property ClientTrackingEnabled [internal; get] : bool
 Respire.Networking.RespireConnection | property PendingResponseCount [internal; get] : int
 Respire.Networking.RespireConnection | property Port [public; get] : int
 Respire.Networking.RespireConnection | property ServerClientId [internal; get] : long

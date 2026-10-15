@@ -539,7 +539,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         }
                         acceptedRetry = true;
                     }
-                    else if (core.Circuits is null && connection.TryEnqueueMany(operations, sends, observations, token, deadline))
+                    else if (core.Circuits is null && !_client.HasOptOutBypass && connection.TryEnqueueMany(operations, sends, observations, token, deadline))
                         acceptedRetry = true;
                     else
                     {
@@ -661,7 +661,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
             var circuits = _client.Core.Circuits;
             // Circuit-enabled queues acquire and observe each permit independently.
-            if (circuits is not null || !connection.TryEnqueueMany(_ops, sends, observations, cancellationToken, deadline))
+            if (circuits is not null || _client.HasOptOutBypass || !connection.TryEnqueueMany(_ops, sends, observations, cancellationToken, deadline))
             {
                 // Await admission, not replies, so a full ring or credential fence cannot
                 // reverse this batch's queue order. The response thread frees ring slots
@@ -1264,7 +1264,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         return await QueuedCircuitDispatch.EnqueueWithConnectionAsync(circuits, connection, replay, Operation,
                             cancellationToken, observation, deadline, client).ConfigureAwait(false);
                     return (await connection.EnqueuePinnedAsync(replay, cancellationToken, Operation, observation,
-                        pinToConnection: false, deadline: deadline).ConfigureAwait(false), connection);
+                        pinToConnection: false, deadline: deadline,
+                        skipTracking: client.ShouldSkipTracking(Operation, in replay)).ConfigureAwait(false), connection);
                 }
                 if (circuits is not null)
                 {
@@ -1272,7 +1273,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         cancellationToken, observation, deadline, client).ConfigureAwait(false);
                 }
                 return (await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation, observation,
-                    pinToConnection: false, deadline: deadline).ConfigureAwait(false), connection);
+                    pinToConnection: false, deadline: deadline,
+                    skipTracking: client.ShouldSkipTracking(Operation, in bound)).ConfigureAwait(false), connection);
             }
             catch (Exception ex)
             {

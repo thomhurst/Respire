@@ -73,6 +73,115 @@ public class OptOutClientCacheTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamedBypassPairsNoWithReadAndDrainsPayload(bool circuit)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = circuit ? new() : null,
+        });
+        await using (var stream = await client.WithKeyPrefix("hot:").WithoutClientCache().Strings.GetStreamAsync("key"))
+        {
+            using var received = new MemoryStream();
+            await stream!.CopyToAsync(received);
+            await Assert.That(Encoding.UTF8.GetString(received.ToArray())).IsEqualTo("value");
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("hot:key")).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
+        {
+            "HELLO 3", "CLIENT TRACKING ON OPTOUT", "CLIENT CACHING NO", "GET hot:key", "GET hot:key",
+        })).IsTrue();
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(16, false)]
+    [Arguments(16, true)]
+    public async Task StandaloneBypassBatchPairsNoWithEveryReadOnly(int capacity, bool circuit)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            MaxInflightCommands = capacity, CircuitBreaker = circuit ? new() : null,
+        });
+        using var batch = client.WithKeyPrefix("hot:").WithoutClientCache().CreateBatch();
+        var first = batch.GetString("first");
+        _ = batch.Strings.Set("written", "new");
+        var second = batch.GetString("second");
+        await batch.ExecuteAsync();
+        await Assert.That(first.Result).IsEqualTo("value");
+        await Assert.That(second.Result).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("hot:kept")).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
+        {
+            "HELLO 3", "CLIENT TRACKING ON OPTOUT", "CLIENT CACHING NO", "GET hot:first",
+            "SET hot:written new", "CLIENT CACHING NO", "GET hot:second", "GET hot:kept",
+        })).IsTrue();
+    }
+
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(0, true)]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    public async Task FireAndForgetBypassPairsNoWithRead(int surface, bool circuit)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            CircuitBreaker = circuit ? new() : null,
+        });
+        var bypass = client.WithoutClientCache();
+        RespireKey key = "hot:key";
+        if (surface == 0) await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, key);
+        else if (surface == 1) await bypass.ExecuteFireAndForgetAsync("GET", key);
+        else await bypass.ExecuteFireAndForgetAsync($"GET {key}");
+        // The awaited read is also a FIFO barrier for the discarded reply and its prelude.
+        await Assert.That(await client.GetStringAsync("kept")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
+        {
+            "HELLO 3", "CLIENT TRACKING ON OPTOUT", "CLIENT CACHING NO", "GET hot:key", "GET kept",
+        })).IsTrue();
+    }
+
+    [Test]
+    public async Task NoLoopBypassWriteFencesReadStartedWhileWriteIsPending()
+    {
+        var writeArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut, NoLoop = true },
+        });
+        server.MinimumCommandsBeforeReply = 2;
+        server.SuppressReply = command =>
+        {
+            if (command == "SET key new") writeArrived.TrySetResult();
+            return false;
+        };
+        var write = client.WithoutClientCache().SetAsync("key", "new").AsTask();
+        await writeArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var read = client.GetStringAsync("key").AsTask();
+        await write.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("value");
+        // No invalidation pushes are sent: NOLOOP requires the local mutation fence to
+        // reject a read token acquired after eager eviction but before the write completed.
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        server.MinimumCommandsBeforeReply = 1;
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task BypassRetryRepeatsNoAndReadTogether()
     {
         var calls = 0;
@@ -192,6 +301,86 @@ public class OptOutClientCacheTests
         using var reply = await ClusterRouter.SendTrackedAskingAsync(connection, in get, default, optOut: true);
         await Assert.That(reply.AsString()).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(new[] { "ASKING", "CLIENT CACHING NO", "GET key" });
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task StreamingAskingAndOptOutValidateBothPreludesAndDrainReplies(int failingPrelude)
+    {
+        await using var server = new FakeRespServer(
+            failingPrelude == 1 ? "-ERR asking denied\r\n"u8.ToArray() : FakeRespServer.OkReply,
+            failingPrelude == 2 ? "-ERR caching denied\r\n"u8.ToArray() : FakeRespServer.OkReply,
+            Value, FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var asking = new ProtocolCommand<Cmd>(new Cmd(new Verb(-1, "ASKING")));
+        var caching = new ClientCachingCommand(optOut: true);
+        var get = new Cmd1(Verbs.Get, "key");
+        if (failingPrelude == 0)
+        {
+            await using var stream = await connection.SendPrefixedBulkStreamAsync(asking, caching, get);
+            using var text = new StreamReader(stream!);
+            await Assert.That(await text.ReadToEndAsync()).IsEqualTo("value");
+        }
+        else
+        {
+            await Assert.That(async () => await connection.SendPrefixedBulkStreamAsync(asking, caching, get))
+                .ThrowsExactly<RespireServerException>();
+        }
+        using var pong = await connection.SendAsync(new Cmd(new Verb(-1, "PING")));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
+        {
+            "ASKING", "CLIENT CACHING NO", "GET key", "PING",
+        })).IsTrue();
+    }
+
+    [Test]
+    [Arguments("ASK")]
+    [Arguments("MOVED")]
+    public async Task StreamingRedirectsKeepOptOutBypassOnTarget(string redirect)
+    {
+        await using var target = Server();
+        await using var initial = Server();
+        initial.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
+            ? Encoding.ASCII.GetBytes($"-{redirect} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n")
+            : command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello : FakeRespServer.OkReply;
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{initial.Port}\r\n");
+        await using var seed = new FakeRespServer(topology)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
+                : command.StartsWith("CLIENT ", StringComparison.Ordinal) ? FakeRespServer.OkReply : topology,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(seed) with
+        {
+            UseCluster = true, RetryPolicy = new() { MaxAttempts = 2 },
+        });
+        await using var stream = await client.WithoutClientCache().Strings.GetStreamAsync("key");
+        using var text = new StreamReader(stream!);
+        await Assert.That(await text.ReadToEndAsync()).IsEqualTo("value");
+        var commands = target.ReceivedCommands.ToArray();
+        var readIndex = Array.IndexOf(commands, "GET key");
+        await Assert.That(commands[readIndex - 1]).IsEqualTo("CLIENT CACHING NO");
+        if (redirect == "ASK") await Assert.That(commands[readIndex - 2]).IsEqualTo("ASKING");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task StreamingTwoPreludeSequenceRejectsInsufficientCapacityBeforeWriting()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { MaxInflightCommands = 2 });
+        var asking = new ProtocolCommand<Cmd>(new Cmd(new Verb(-1, "ASKING")));
+        var caching = new ClientCachingCommand(optOut: true);
+        var get = new Cmd1(Verbs.Get, "key");
+        await Assert.That(async () => await connection.SendPrefixedBulkStreamAsync(asking, caching, get)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<InvalidOperationException>();
+        using var pong = await connection.SendAsync(new Cmd(new Verb(-1, "PING")));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands.SequenceEqual(new[] { "PING" })).IsTrue();
     }
 
     [Test]
