@@ -7,7 +7,7 @@ namespace Respire.ComparisonBenchmarks;
 
 /// <summary>One publication through delivery to a single consuming subscriber.</summary>
 [MemoryDiagnoser]
-public class PubSubComparisonBenchmarks
+public partial class PubSubComparisonBenchmarks
 {
     private IContainer? _redisContainer;
     private RespireClient _respire = null!;
