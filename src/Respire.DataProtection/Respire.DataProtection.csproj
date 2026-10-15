@@ -2,7 +2,7 @@
   <PropertyGroup>
     <PackageId>Respire.DataProtection</PackageId>
     <Title>Respire.DataProtection</Title>
-    <Description>ASP.NET Core DataProtection key storage backed by Respire.</Description>
+    <Description>ASP.NET Core Data Protection key storage and opt-in client-side payload encryption for Respire.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Respire/Respire.csproj" />

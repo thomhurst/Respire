@@ -72,6 +72,7 @@ const sidebars = {
       label: 'Serialization and codecs',
       items: [
         'guides/value-codecs',
+        'guides/payload-encryption',
         'guides/value-codec-benchmarks',
         'guides/generated-hash-codecs',
       ],

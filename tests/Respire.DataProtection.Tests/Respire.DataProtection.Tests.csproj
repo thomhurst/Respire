@@ -4,6 +4,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Respire.DataProtection/Respire.DataProtection.csproj" />
+    <ProjectReference Include="../../src/Respire.Caching/Respire.Caching.csproj" />
+    <ProjectReference Include="../../src/Respire.Streaming/Respire.Streaming.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="StackExchange.Redis" />

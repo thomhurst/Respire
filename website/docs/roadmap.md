@@ -154,6 +154,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Cache-aside factories](fundamentals/client-side-caching.md#populate-missing-values-with-a-factory)
   with relative or absolute server expiry and optional concurrent-miss coalescing.
 - Typed serialization, custom serializers, and [value compression codecs](guides/value-codecs.md).
+- Opt-in [client-side payload encryption](guides/payload-encryption.md) for cache values,
+  near-cache maps, job arguments, and stream payloads, using ASP.NET Core Data Protection.
 - [Dependency injection](integrations/dependency-injection.md),
   [distributed caching and `HybridCache`](integrations/caching.md) with cross-instance tag
   invalidation, and [OpenTelemetry](integrations/observability.md), including

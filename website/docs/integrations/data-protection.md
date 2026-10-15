@@ -10,6 +10,9 @@ several instances must read each other's cookies, antiforgery tokens, and other 
 payloads. It reuses an existing Respire client and the list layout of Microsoft's
 `PersistKeysToStackExchangeRedis`.
 
+The package also provides opt-in [client-side payload encryption](../guides/payload-encryption.md)
+for cache values, near-cache maps, job arguments, and stream payloads.
+
 ## Install
 
 ```bash
