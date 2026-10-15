@@ -426,7 +426,7 @@ public sealed record RespireOptions
     public RespirePipelineHook? PipelineHook { get; init; }
 
     /// <summary>Optional admission/completion hook for ordinary command dispatch. Null disables it.</summary>
-    /// <remarks>See <see cref="RespireCommandHook"/> for the supported scope; specialized and aggregate paths are not yet covered.</remarks>
+    /// <remarks>See <see cref="RespireCommandHook"/> for supported command and resource boundaries; this is not a client-wide blocking policy.</remarks>
     public RespireCommandHook? CommandHook { get; init; }
 
     /// <summary>

@@ -6,6 +6,26 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
+    // Download completion transfers the stream to the caller. Payload reads/disposal are
+    // independent of this GET result; they retain the stream's existing error/lifetime rules.
+    internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(string operation, TCommand command,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+        where TCommand : struct, IRespCommand
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken, Observation: observation),
+                static s => s.Client.SendBulkStreamUnhookedAsync(s.Operation, s.Command, s.Token, s.Observation))
+            : SendBulkStreamUnhookedAsync(operation, command, cancellationToken, observation);
+
+    // Gathered SET owns the hook outside its write lease: response cancellation can arrive
+    // before the kernel releases caller memory. Do not admit/complete again during conversion.
+    internal ValueTask<bool> OkOrNullUnhookedAsync<TCommand>(string operation, in TCommand command,
+        CancellationToken ct, RespireTelemetry.ErrorObservation observation)
+        where TCommand : struct, IRespCommand
+        => ConvertResponseUnhookedAsync(operation, command, ct, this,
+            static (RespireClient _, in RespValue value) => ResponseReader.OkOrNull(in value),
+            observation: observation);
+
     internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
         string operation, in TCommand command, CancellationToken ct, TState state,
         ResponseConverter<TState, TResult> converter, bool transferOwnership = false,

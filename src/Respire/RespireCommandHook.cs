@@ -2,8 +2,10 @@ namespace Respire;
 
 /// <summary>Admits and observes supported logical command executions.</summary>
 /// <remarks>
-/// Covers ordinary converted commands, single-key cached GET and non-interpolated Execute APIs.
-/// Specialized operations and explicit aggregate members are not yet covered; this is not a
+/// Covers ordinary converted commands, single-key cached GET, non-interpolated Execute APIs,
+/// streaming results and explicit subscription setup/teardown. Downloads complete on stream
+/// transfer, not later payload consumption. Uploads retain borrowed buffers through completion.
+/// Other specialized operations and explicit aggregate members are not yet covered; this is not a
 /// client-wide blocking policy. Callbacks may run concurrently and reentrantly. A command started
 /// by a callback has its own callbacks; applications must prevent unbounded recursion.
 /// </remarks>
