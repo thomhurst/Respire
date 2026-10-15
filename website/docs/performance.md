@@ -250,7 +250,8 @@ artifact expiry.
 
 Extract both archives into one directory, then use the downloadable
 <a href={useBaseUrl('benchmarks/2026-10-server-latency/analyze.py')}>analysis script</a>
-with the original 3.4.5 archive linked in the provenance table:
+with the original 3.4.5 archive linked in the provenance table. Save the manifest beside
+the script; it verifies each expected raw trace's size and SHA-256 before producing output:
 
 ```bash
 python analyze.py extracted 38484247008.zip > analysis.json

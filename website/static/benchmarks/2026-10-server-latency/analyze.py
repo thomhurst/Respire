@@ -1,6 +1,7 @@
 """Reproduce #1744's descriptive analysis; never recompute BDN classifications.
 
-Extract measurements.zip and traces.zip into the same directory, then run:
+Keep manifest.json beside this script. Extract measurements.zip and traces.zip
+into the same directory, then run:
   python analyze.py EXTRACTED ../2026-10-comparison/38484247008.zip > analysis.json
 
 Uses only Python's standard library. Inclusive stack counts overlap and are not
@@ -9,6 +10,7 @@ CPU percentages or critical-path attribution. External samples are kept separate
 
 import collections
 import csv
+import hashlib
 import io
 import json
 import sys
@@ -40,6 +42,25 @@ def reports(read_text):
     return result
 
 
+def validate_traces(root, names):
+    manifest = json.loads(Path(__file__).with_name("manifest.json").read_text())
+    entries = [entry for archive in manifest["archives"] for entry in archive["files"]
+               if entry["path"].endswith("/cpu.nettrace")]
+    expected = {f"server-latency/bridge-profile/{name}/cpu.nettrace" for name in names}
+    if len(entries) != len(expected) or {entry["path"] for entry in entries} != expected:
+        raise ValueError("Raw trace manifest does not match the benchmark cases")
+    for entry in entries:
+        trace = root / entry["path"]
+        if not trace.is_file() or trace.stat().st_size != entry["size"]:
+            raise ValueError(f"Missing raw trace or incorrect size: {entry['path']}")
+        digest = hashlib.sha256()
+        with trace.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != entry["sha256"]:
+            raise ValueError(f"Raw trace SHA-256 mismatch: {entry['path']}")
+
+
 def analyze(root, baseline):
     current = reports(lambda name: (root / name).read_text(encoding="utf-8-sig"))
     with zipfile.ZipFile(baseline) as archive:
@@ -48,6 +69,7 @@ def analyze(root, baseline):
     cases = json.loads((root / "server-latency/cases.json").read_text())
     names = {c["name"] for c in cases}
     assert len(cases) == len(names) == 46 and names == set(current)
+    validate_traces(root, names)
     observations = json.loads((root / "server-latency/observations.json").read_text())
     phases = ("bridge-a", "host", "bridge-b", "bridge-profile")
     indexed = {(o["caseName"], o["phase"]): o for o in observations}
