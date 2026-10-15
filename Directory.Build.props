@@ -60,6 +60,12 @@
     <RespireNonPackageProjects>;Respire.Analyzers;</RespireNonPackageProjects>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- Set PackageValidationBaselineVersion to 2.0.0 only after that major is on NuGet.
+         Until then, validate compatible assets within each package. See website/docs/contributing.md. -->
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true' Or '$(MSBuildProjectName)' == 'Respire.Analyzers'">
     <!-- Includes the netstandard analyzer assembly, where SDK analyzers are not enabled by default. -->
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
