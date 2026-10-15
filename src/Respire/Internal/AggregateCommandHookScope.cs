@@ -41,7 +41,8 @@ internal sealed class AggregateCommandHookScope : IDisposable
             catch (Exception error) { entry.Rejection = error; throw; }
         }
         // Every member is admitted before checking cancellation or sending any member.
-        _token.ThrowIfCancellationRequested();
+        // With no members, let the aggregate retain its own empty-operation semantics.
+        if (_entries.Length != 0) _token.ThrowIfCancellationRequested();
     }
 
     internal void FailAcknowledgement(Exception error) => _acknowledgementError = error;

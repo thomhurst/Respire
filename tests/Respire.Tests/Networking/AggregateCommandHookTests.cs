@@ -165,6 +165,63 @@ public class AggregateCommandHookTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
+    public async Task CanceledEmptyBatchSucceedsWithAnyHookCombination(bool command, bool pipeline)
+    {
+        await using var server = Server();
+        var hook = new Hook();
+        var outer = pipeline ? new Pipeline(hook.Events) : null;
+        await using var client = await RespireClient.ConnectAsync(Options(server, command ? hook : null, outer));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var baseline = server.CommandsSeen;
+
+        using var attempted = client.CreateBatch();
+        var result = await attempted.TryExecuteAsync(cts.Token);
+        await Assert.That(result.Count).IsEqualTo(0);
+        await Assert.That(result.FailureCount).IsEqualTo(0);
+        await Assert.That(result.FirstError).IsNull();
+
+        using var executed = client.CreateBatch();
+        await executed.ExecuteAsync(cts.Token);
+
+        await Assert.That(hook.Completed.Count).IsEqualTo(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        var expected = pipeline
+            ? new[] { "pipeline enter", "pipeline complete", "pipeline enter", "pipeline complete" }
+            : Array.Empty<string>();
+        await Assert.That(hook.Events.SequenceEqual(expected)).IsTrue();
+        if (outer is not null) await Assert.That(outer.Outcome).IsEqualTo(RespirePipelineOutcome.Succeeded);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task CanceledEmptyTransactionStillCancelsWithAnyHookCombination(bool command, bool pipeline)
+    {
+        await using var server = Server();
+        var hook = new Hook();
+        var outer = pipeline ? new Pipeline(hook.Events) : null;
+        await using var client = await RespireClient.ConnectAsync(Options(server, command ? hook : null, outer));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var baseline = server.CommandsSeen;
+
+        await using var tx = client.CreateTransaction();
+        var error = await Failure(async () => await tx.CommitAsync(cts.Token));
+
+        await Assert.That(error is OperationCanceledException).IsTrue();
+        await Assert.That(hook.Completed.Count).IsEqualTo(0);
+        await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        if (outer is not null) await Assert.That(outer.Outcome).IsEqualTo(RespirePipelineOutcome.Canceled);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
     public async Task AcknowledgementAdmissionPrecedesWritesAndFailurePreservesSuccessfulMembers(bool aof, bool reject)
     {
         await using var server = Server(failAcknowledgement: true);
@@ -453,9 +510,9 @@ public class AggregateCommandHookTests
         return server;
     }
 
-    private static RespireOptions Options(FakeRespServer server, Hook hook, Pipeline? pipeline = null) => new()
+    private static RespireOptions Options(FakeRespServer server, Hook? hook, Pipeline? pipeline = null) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
         CommandHook = hook, PipelineHook = pipeline,
     };
