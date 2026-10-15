@@ -665,15 +665,35 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         return true;
     }
 
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireStreamId> AddRequiredIdempotentAsync(RespireValue key, RespireValue[] arguments,
+    // Only configured clients enter a hook wrapper. Internal retries/fallback explicitly borrow
+    // this scope; application calls from callbacks still enter their own public boundary.
+    private ValueTask<RespireStreamId> AddRequiredIdempotentAsync(RespireValue key, RespireValue[] arguments,
         int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => await AddIdempotentAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation).ConfigureAwait(false)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "XADD", cancellationToken,
+                (Commands: this, Key: key, Arguments: arguments, Offset: idempotencyOffset,
+                    Count: idempotencyArgumentCount, Token: cancellationToken, Observation: observation),
+                static s => s.Commands.AddRequiredIdempotentCoreAsync(s.Key, s.Arguments, s.Offset, s.Count, s.Token, s.Observation))
+            : AddRequiredIdempotentCoreAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation);
+
+    private ValueTask<RespireStreamId?> AddIdempotentAsync(RespireValue key, RespireValue[] arguments,
+        int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "XADD", cancellationToken,
+                (Commands: this, Key: key, Arguments: arguments, Offset: idempotencyOffset,
+                    Count: idempotencyArgumentCount, Token: cancellationToken, Observation: observation),
+                static s => s.Commands.AddIdempotentCoreAsync(s.Key, s.Arguments, s.Offset, s.Count, s.Token, s.Observation))
+            : AddIdempotentCoreAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespireStreamId> AddRequiredIdempotentCoreAsync(RespireValue key, RespireValue[] arguments,
+        int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => await AddIdempotentCoreAsync(key, arguments, idempotencyOffset, idempotencyArgumentCount, cancellationToken, observation).ConfigureAwait(false)
             ?? throw new RespireProtocolException("XADD returned null without NOMKSTREAM.");
 
     // The key and arguments are snapshots, so the fallback can rebuild ordinary XADD after an await.
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireStreamId?> AddIdempotentAsync(RespireValue key, RespireValue[] arguments,
+    private async ValueTask<RespireStreamId?> AddIdempotentCoreAsync(RespireValue key, RespireValue[] arguments,
         int idempotencyOffset, int idempotencyArgumentCount, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -682,7 +702,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         string? id;
         try
         {
-            id = await client.StringOrNullAsync("XADD", new Cmd1N(Verbs.XAddIdempotent, key, arguments),
+            id = await client.StringOrNullUnhookedAsync("XADD", new Cmd1N(Verbs.XAddIdempotent, key, arguments),
                 cancellationToken, observation).ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Message == "ERR Invalid stream ID specified as stream command argument")
@@ -707,14 +727,14 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (!deadline.IsSet)
-            return await client.StringOrNullAsync("XADD", command, cancellationToken, observation).ConfigureAwait(false);
+            return await client.StringOrNullUnhookedAsync("XADD", command, cancellationToken, observation).ConfigureAwait(false);
         var commandTimeout = client.Core.Options.CommandTimeout!.Value;
         var remaining = deadline.RemainingMilliseconds;
         if (remaining == 0) throw new RespireTimeoutException("XADD", commandTimeout);
         using var timeout = CommandTimeoutCancellation.Create(cancellationToken, TimeSpan.FromMilliseconds(remaining));
         try
         {
-            return await client.StringOrNullAsync("XADD", command, timeout.Token, observation).ConfigureAwait(false);
+            return await client.StringOrNullUnhookedAsync("XADD", command, timeout.Token, observation).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (RespireConnection.IsDeadlineCancellation(error, timeout.Token, cancellationToken))
         {
@@ -766,15 +786,28 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         return args;
     }
 
+    private ValueTask<RespireStreamId> AddRequiredAsync(Cmd1N command, CancellationToken cancellationToken)
+        => client.Core.Options.CommandHook is not null
+            ? client.ConvertResponseAsync("XADD", command, cancellationToken, 0,
+                static (int _, in RespValue reply) => new RespireStreamId(ResponseReader.String(in reply)))
+            : AddRequiredCoreAsync(command, cancellationToken);
+
+    private ValueTask<RespireStreamId?> AddOptionalAsync(Cmd1N command, CancellationToken cancellationToken)
+        => client.Core.Options.CommandHook is not null
+            ? client.ConvertResponseAsync("XADD", command, cancellationToken, 0,
+                static (int _, in RespValue reply) => ResponseReader.StringOrNull(in reply) is { } id
+                    ? new RespireStreamId(id) : default(RespireStreamId?))
+            : AddOptionalCoreAsync(command, cancellationToken);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireStreamId> AddRequiredAsync(Cmd1N command, CancellationToken cancellationToken)
+    private async ValueTask<RespireStreamId> AddRequiredCoreAsync(Cmd1N command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespireStreamId?> AddOptionalAsync(Cmd1N command, CancellationToken cancellationToken)
+    private async ValueTask<RespireStreamId?> AddOptionalCoreAsync(Cmd1N command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var id = await client.StringOrNullAsync("XADD", command, cancellationToken).ConfigureAwait(false);
