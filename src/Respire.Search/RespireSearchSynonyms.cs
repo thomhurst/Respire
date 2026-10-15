@@ -29,26 +29,28 @@ public sealed partial class RespireSearchClient
         }
         if (!skipInitialScan && arguments[0].Equals("SKIPINITIALSCAN", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Place the literal SKIPINITIALSCAN term after another term, or explicitly enable skipInitialScan.", nameof(terms));
-        using var result = await _commands.UpdateSynonymsAsync(index, groupId, arguments, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.UpdateSynonyms, [index, groupId, .. (arguments).Select(static value => (RespireValue)value)], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Returns an owned mapping of each synonym term to all its group IDs with FT.SYNDUMP.</summary>
     public async ValueTask<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetSynonymsAsync(string index, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
-        using var result = await _commands.GetSynonymsAsync(index, cancellationToken).ConfigureAwait(false);
-        const string command = "FT.SYNDUMP";
-        if (result.IsNull || result.Type is not (RespireDataType.Array or RespireDataType.Map) || (result.Count & 1) != 0)
-            throw RespireSearchReply.Unexpected(command, "term/group pairs were expected");
-        var terms = new Dictionary<string, IReadOnlyList<string>>(result.Count / 2, StringComparer.Ordinal);
-        for (var i = 0; i < result.Count; i += 2)
+        return await ExecuteAsync<IReadOnlyDictionary<string, IReadOnlyList<string>>>(RespireSearchCommands.GetSynonyms, [index], cancellationToken, result =>
         {
-            var term = RespireSearchReply.ReadString(result[i], command);
-            var groups = RespireSearchReply.ReadStringCollection(result[i + 1], command);
-            if (!terms.TryAdd(term, groups))
-                throw RespireSearchReply.Unexpected(command, "a duplicate synonym term");
-        }
-        return terms;
+            const string command = "FT.SYNDUMP";
+            if (result.IsNull || result.Type is not (RespireDataType.Array or RespireDataType.Map) || (result.Count & 1) != 0)
+                throw RespireSearchReply.Unexpected(command, "term/group pairs were expected");
+            var terms = new Dictionary<string, IReadOnlyList<string>>(result.Count / 2, StringComparer.Ordinal);
+            for (var i = 0; i < result.Count; i += 2)
+            {
+                var term = RespireSearchReply.ReadString(result[i], command);
+                var groups = RespireSearchReply.ReadStringCollection(result[i + 1], command);
+                if (!terms.TryAdd(term, groups))
+                    throw RespireSearchReply.Unexpected(command, "a duplicate synonym term");
+            }
+            return terms;
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned distinct values indexed in a TAG field with FT.TAGVALS, without paging or sorting.</summary>
@@ -57,7 +59,9 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
-        using var result = await _commands.GetTagValuesAsync(index, field, cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadStringCollection(result, "FT.TAGVALS");
+        return await ExecuteAsync<IReadOnlyList<string>>(RespireSearchCommands.GetTagValues, [index, field], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadStringCollection(result, "FT.TAGVALS");
+        }).ConfigureAwait(false);
     }
 }

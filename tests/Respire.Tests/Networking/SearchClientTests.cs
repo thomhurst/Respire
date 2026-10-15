@@ -534,11 +534,11 @@ public class SearchClientTests
     [Test]
     public async Task SearchQueryCommandsDeclareReadOnlyCacheMutation()
     {
-        var commands = typeof(RespireSearchClient).Assembly.GetType("Respire.Search.IRespireSearchCommands", throwOnError: true)!;
-        foreach (var methodName in new[] { "InfoAsync", "SearchAsync", "AggregateAsync", "HybridAsync", "ExplainAsync", "ExplainCliAsync" })
+        var commands = typeof(RespireSearchClient).Assembly.GetType("Respire.Search.RespireSearchCommands", throwOnError: true)!;
+        foreach (var name in new[] { "Info", "Search", "Aggregate", "Hybrid", "Explain", "ExplainCli" })
         {
-            var command = commands.GetMethod(methodName)!.GetCustomAttribute<RespireCommandAttribute>()!;
-            await Assert.That(command.Mutation).IsEqualTo(RespireCacheMutation.ReadOnly).Because(methodName);
+            var command = (RespireCommand)commands.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            await Assert.That(command.CacheMutation).IsEqualTo(RespireCacheMutation.ReadOnly).Because(name);
         }
     }
 
