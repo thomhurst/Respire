@@ -181,7 +181,7 @@ public class ReplicaReconnectBacklogTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [],
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
         });
         // The public view API already rejects an empty configured set. Exercise the
         // router boundary directly so its recovery gate cannot wait on a static empty set.
@@ -201,13 +201,104 @@ public class ReplicaReconnectBacklogTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", unavailable.Port)],
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
         });
         await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("fallback");
         await Assert.That(async () => await client.Core.ReadRouter.SelectForDispatchAsync(
             RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit))
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(client.Core.ReadRouter.IsBacklogDraining).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadyReplicaAfterColdCandidateAvoidsBacklog(bool requiredValidation)
+    {
+        await using var primary = Server();
+        await using var cold = Server();
+        await using var healthy = Server();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", cold.Port), new("127.0.0.1", healthy.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        var endpoints = ReadEndpointRouter.Order(client.Core.Options.ReplicaEndpoints);
+        var rotation = typeof(ReadEndpointRouter).GetField("_nextReplica",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        rotation.SetValue(router, Array.FindIndex(endpoints, endpoint => endpoint.Port == healthy.Port) - 1);
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        if (requiredValidation)
+        {
+            var selection = await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", cold.Port)], default, default);
+            var health = (ReplicaHealth<Respire.Networking.RespireConnection>)typeof(ReadEndpointRouter.Entry)
+                .GetField("_health", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(selection.Replica)!;
+            var position = 0;
+            Respire.Protocol.RespParser.TryParseValue(ReplicaRole, ref position, out var role);
+            using (role)
+                health.Record(selection.Connection, System.Diagnostics.Stopwatch.GetTimestamp()
+                    - 150 * System.Diagnostics.Stopwatch.Frequency, in role);
+        }
+        cold.SuppressReply = command => command == "ROLE";
+        rotation.SetValue(router, Array.FindIndex(endpoints, endpoint => endpoint.Port == cold.Port) - 1);
+        var selected = await router.SelectForDispatchAsync(RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit);
+        await Assert.That(selected?.Port).IsEqualTo(healthy.Port);
+        await Assert.That(router.IsBacklogDraining).IsFalse();
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    [Arguments(RespireReadFrom.AzAffinity)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task ColdReplicaUsesPermittedReadyPrimary(RespireReadFrom policy)
+    {
+        await using var primary = Server();
+        await using var cold = Server();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", cold.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+        });
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.Primary, default, default);
+        var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        cold.SuppressReply = command =>
+        {
+            if (command != "ROLE") return false;
+            validating.TrySetResult();
+            return true;
+        };
+        var selected = await router.SelectForDispatchAsync(policy, default, default).AsTask().WaitAsync(Limit);
+        await Assert.That(selected?.Port).IsEqualTo(primary.Port);
+        await validating.Task.WaitAsync(Limit);
+        await Assert.That(router.IsBacklogDraining).IsFalse();
+        await cold.SendRawAsync(ReplicaRole);
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit);
+        var recovered = await router.SelectForDispatchAsync(policy, default, default);
+        await Assert.That(recovered?.Port).IsEqualTo(cold.Port);
+        await Assert.That(cold.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ColdPrimaryUsesPermittedReadyReplica()
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+        });
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        var selected = await router.SelectForDispatchAsync(RespireReadFrom.PrimaryPreferred, default, default).AsTask().WaitAsync(Limit);
+        await Assert.That(selected?.Port).IsEqualTo(replica.Port);
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+        await Assert.That(router.IsBacklogDraining).IsFalse();
     }
 
     [Test]
@@ -218,7 +309,7 @@ public class ReplicaReconnectBacklogTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         var router = client.Core.ReadRouter;
@@ -245,7 +336,7 @@ public class ReplicaReconnectBacklogTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         var router = client.Core.ReadRouter;
@@ -303,7 +394,7 @@ public class ReplicaReconnectBacklogTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             CommandTimeout = null, ConnectTimeout = Limit, BacklogCapacity = 2,
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -360,7 +451,7 @@ public class ReplicaReconnectBacklogTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             CommandTimeout = null, ConnectTimeout = Limit,
         });
         var router = client.Core.ReadRouter;
@@ -483,7 +574,7 @@ public class ReplicaReconnectBacklogTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            Protocol = RespireProtocol.Resp2, Connections = 1, ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             CommandTimeout = Limit, ConnectTimeout = Limit,
             CircuitBreaker = circuitOpen ? new() { MinimumFailureCount = 1, MaximumSampleCount = 1, OpenDuration = Limit } : null,
         });
@@ -580,7 +671,7 @@ public class ReplicaReconnectBacklogTests
             var client = RespireClient.Create(new RespireOptions
             {
                 Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-                Protocol = RespProtocol.Resp2, Connections = 1, BacklogCapacity = capacity, BacklogPolicy = policy,
+                Protocol = RespireProtocol.Resp2, Connections = 1, BacklogCapacity = capacity, BacklogPolicy = policy,
                 ConnectTimeout = Limit, CommandTimeout = timeout, RetryPolicy = null,
                 ReconnectPolicy = exhaust ? new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero } : null,
                 ReplicaRefreshInterval = TimeSpan.FromMilliseconds(5),

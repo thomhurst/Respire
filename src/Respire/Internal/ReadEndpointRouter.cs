@@ -221,9 +221,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         try
         {
             var selection = await SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
-            if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
-            if (selection.Replica is not null && Volatile.Read(ref _hasSelectedReplica) == 0)
-                Volatile.Write(ref _hasSelectedReplica, 1);
+            RecordSelection(selection.Replica is not null);
             return selection.Connection;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -258,8 +256,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         cancellationToken.ThrowIfCancellationRequested();
         // Preserve the selector's shared cursor when a later publication adds replicas.
         Interlocked.Increment(ref _nextReplica);
-        if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
-        if (Volatile.Read(ref _hasSelectedReplica) == 0) Volatile.Write(ref _hasSelectedReplica, 1);
+        RecordSelection(replica: true);
         return connection;
     }
 
@@ -450,6 +447,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 return await GetNearestAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
             case RespireReadFrom.PrimaryPreferred:
                 try { return await GetPrimaryAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false); }
+                catch (BacklogSelectionRequiredException)
+                {
+                    return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     RecordCandidateFailure(observation, error, observation.Endpoint);
@@ -461,6 +462,11 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             case RespireReadFrom.AzAffinity:
             case RespireReadFrom.AzAffinityReplicasAndPrimary:
                 try { return await GetReplicaAsync(cancellationToken, observation, readFrom, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false); }
+                catch (BacklogSelectionRequiredException)
+                {
+                    return await GetPrimaryAsync(cancellationToken, observation,
+                        ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null, attempt, readyOnly).ConfigureAwait(false);
+                }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     return await GetPrimaryAsync(cancellationToken, observation,
@@ -551,6 +557,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
 
         var start = (uint)Interlocked.Increment(ref _nextReplica);
+        var deferredCandidate = false;
         Exception? lastError = null;
         var attempted = false;
         // A replica whose replication link is down still serves reads when nothing better exists
@@ -578,7 +585,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     var local = ReadFallbackPolicy.IsSameZone(selection.Connection, core.Options.ClientAvailabilityZone);
                     if (candidates.Offer(selection, local, !entry.IsReplicationLinkDown, readFrom)) return selection;
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not (ObjectDisposedException or BacklogSelectionRequiredException))
+                catch (BacklogSelectionRequiredException)
+                {
+                    // A cold candidate is not a failed candidate. Scan the remaining ready
+                    // routes before handing the operation to bounded recovery admission.
+                    deferredCandidate = true;
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not ObjectDisposedException)
                 {
                     RecordCandidateFailure(observation, error, endpoint);
                     lastError = ConnectionFailures.Combine(lastError, ConnectionFailures.AtEndpoint(error, endpoint));
@@ -594,6 +607,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                     if (ReadFallbackPolicy.IsSameZone(primary.Connection, core.Options.ClientAvailabilityZone)
                         && (excluded is null || HedgedReadPolicy.IsDifferentPeer(excluded, primary.Connection))) return primary;
                 }
+                catch (BacklogSelectionRequiredException) { deferredCandidate = true; }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     RecordCandidateFailure(observation, error, observation.Endpoint);
@@ -603,6 +617,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             while (candidates.TryTake(out var fallback))
                 if (fallback.Connection.IsAcceptingCommands
                     && fallback.Replica is { } fallbackEntry && IsCurrent(fallbackEntry)) return fallback;
+            if (deferredCandidate) throw new BacklogSelectionRequiredException();
             throw attempted
                 ? new RespireConnectionException("No healthy, role-validated read replicas are available.",
                     lastError ?? new InvalidOperationException("No replica connection attempt was completed.")) { HasAmbiguousEndpoint = true }
@@ -879,7 +894,14 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
             // Dispatch must own bounded FIFO admission before waiting for a new entry,
             // another validation, or ROLE I/O. The admitted head uses normal selection.
-            if (readyOnly) throw new BacklogSelectionRequiredException();
+            if (readyOnly)
+            {
+                // Keep cold replicas progressing while another ready route serves reads.
+                // Without this single flight, primary fallback can starve recovery forever.
+                if (Interlocked.CompareExchange(ref _backgroundValidation, 1, 0) == 0)
+                    _ = RevalidateInBackgroundAsync(sampler);
+                throw new BacklogSelectionRequiredException();
+            }
 
             // Single-flight revalidation: while another caller revalidates, keep serving a
             // connection whose previous check is still within a second interval.

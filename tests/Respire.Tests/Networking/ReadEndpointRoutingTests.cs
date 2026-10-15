@@ -572,6 +572,11 @@ public class ReadEndpointRoutingTests
         });
         var view = client.WithReadFrom(RespireReadFrom.Replica);
 
+        // Distribution is among ready replicas; a fresh scan must not wait for a cold
+        // candidate when another eligible replica can already serve it.
+        await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", first.Port)], default, default);
+        await client.Core.ReadRouter.GetReplicaFromEndpointsAsync([new("127.0.0.1", second.Port)], default, default);
+
         var firstScan = new List<string>();
         await foreach (var key in view.Keys.ScanAsync()) firstScan.Add(key);
         var secondScan = new List<string>();
@@ -937,7 +942,10 @@ public class ReadEndpointRoutingTests
 
         // End the cooldown without depending on wall-clock timing.
         Volatile.Write(ref healthy, 1);
-        client.Core.ReadRouter.RefreshInterval = TimeSpan.Zero;
+        client.Core.ReadRouter.FailedReplicaCooldown = TimeSpan.Zero;
+        // Dispatch may use the ready primary while recovery validates the replica.
+        // Await the same single-flight validation before requiring replica preference.
+        await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         await Assert.That(await view.GetStringAsync("c")).IsEqualTo("replica");
     }
 

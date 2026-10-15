@@ -5,17 +5,26 @@ namespace Respire.Internal;
 
 internal sealed partial class ReadEndpointRouter
 {
+    private const int BacklogRetryDelayMilliseconds = 25;
     private RespireConnectionMultiplexer.ReconnectBacklog? _backlog;
     // Eligibility survives membership replacement, but a primary fallback does not initialize the strict replica route.
-    private int _hasSelectedConnection;
-    private int _hasSelectedReplica;
+    private const int SelectedConnection = 1;
+    private const int SelectedReplica = 2;
+    private int _selectionHistory;
+
+    private void RecordSelection(bool replica)
+    {
+        var required = replica ? SelectedConnection | SelectedReplica : SelectedConnection;
+        // A primary selection racing the first replica selection must never clear its bit.
+        if ((Volatile.Read(ref _selectionHistory) & required) != required)
+            Interlocked.Or(ref _selectionHistory, required);
+    }
 
     internal sealed class BacklogSelectionRequiredException : Exception { }
 
     internal bool IsBacklogDraining => Volatile.Read(ref _backlog)?.IsRunning == true;
     private bool CanQueue(RespireReadFrom readFrom) => core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
-        && (readFrom == RespireReadFrom.Replica
-            ? Volatile.Read(ref _hasSelectedReplica) != 0 : Volatile.Read(ref _hasSelectedConnection) != 0);
+        && (Volatile.Read(ref _selectionHistory) & (readFrom == RespireReadFrom.Replica ? SelectedReplica : SelectedConnection)) != 0;
 
     internal async ValueTask<RespireConnection?> SelectForDispatchAsync(RespireReadFrom readFrom,
         CancellationToken token, RespireTelemetry.ErrorObservation observation,
@@ -72,7 +81,7 @@ internal sealed partial class ReadEndpointRouter
                     ThrowIfTerminal(readFrom, error);
                     // The selector owns discovery throttling, ROLE freshness, cooldown and
                     // fallback. Bound demand retries without pinning a retired generation.
-                    await Task.Delay(25, wait).ConfigureAwait(false);
+                    await Task.Delay(BacklogRetryDelayMilliseconds, wait).ConfigureAwait(false);
                 }
             }
         });
@@ -85,10 +94,17 @@ internal sealed partial class ReadEndpointRouter
         var connection = cursorRead
             ? await GetCursorConnectionAsync(readFrom, affinity, false, token, observation, readyOnly).ConfigureAwait(false)
             : await GetConnectionAsync(readFrom, token, observation, readyOnly).ConfigureAwait(false);
-        if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
-        if (cursorRead && Volatile.Read(ref _hasSelectedReplica) == 0
-            && _entries.Values.Any(entry => ReferenceEquals(entry.RecoveryOwner, connection.Multiplexer)))
-            Volatile.Write(ref _hasSelectedReplica, 1);
+        if (cursorRead && (Volatile.Read(ref _selectionHistory) & SelectedReplica) == 0)
+        {
+            var replica = false;
+            foreach (var entry in _entries.Values)
+                if (ReferenceEquals(entry.RecoveryOwner, connection.Multiplexer))
+                {
+                    replica = true;
+                    break;
+                }
+            RecordSelection(replica);
+        }
         return connection;
     }
 
