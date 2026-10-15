@@ -296,25 +296,31 @@ public partial class ReadDedicatedRoutingTests
 
     [Test]
     // Failures: remote close, independent connect deadline, and caller cancellation.
-    [Arguments(false, true, 0, false)]
-    [Arguments(true, true, 0, false)]
-    [Arguments(false, true, 1, false)]
-    [Arguments(true, true, 1, false)]
-    [Arguments(false, true, 2, false)]
-    [Arguments(true, true, 2, false)]
-    [Arguments(false, false, 0, false)]
-    [Arguments(true, false, 0, false)]
-    [Arguments(false, false, 1, false)]
-    [Arguments(true, false, 1, false)]
-    [Arguments(false, false, 2, false)]
-    [Arguments(true, false, 2, false)]
-    [Arguments(true, true, 0, true)]
-    public async Task NearestDedicatedFailureReselectsByLatencyAndRecovers(bool useSentinel, bool failPrimary, int failure, bool delayedMonitor)
+    [Arguments(false, true, 0, false, false)]
+    [Arguments(true, true, 0, false, false)]
+    [Arguments(false, true, 1, false, false)]
+    [Arguments(true, true, 1, false, false)]
+    [Arguments(false, true, 2, false, false)]
+    [Arguments(true, true, 2, false, false)]
+    [Arguments(false, false, 0, false, false)]
+    [Arguments(true, false, 0, false, false)]
+    [Arguments(false, false, 1, false, false)]
+    [Arguments(true, false, 1, false, false)]
+    [Arguments(false, false, 2, false, false)]
+    [Arguments(true, false, 2, false, false)]
+    [Arguments(true, true, 0, true, false)]
+    [Arguments(false, true, 1, false, true)]
+    [Arguments(true, true, 1, false, true)]
+    public async Task NearestDedicatedFailureReselectsByLatencyAndRecovers(
+        bool useSentinel, bool failPrimary, int failure, bool delayedMonitor, bool slowReplicaSetup)
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         await using var fast = Node("fast", true);
         await using var sentinel = Sentinel(primary, () => [replica, fast]);
+        // A cold ROLE round trip can consume the entire Nearest sampling budget.
+        // This must remain setup work, independent of the dedicated failure below.
+        if (slowReplicaSetup) fast.DelayCommand("ROLE", ReadLatencySampler.SamplingWaitMilliseconds + 250);
         if (delayedMonitor)
         {
             // Without the setup fence, a delayed first subscription can rediscover the
@@ -349,6 +355,26 @@ public partial class ReadDedicatedRoutingTests
             ValueTask.FromResult(connection.Port == failedNode.Port ? 1L : connection.Port == fast.Port ? 10L : 100L),
             () => Volatile.Read(ref now));
         if (useSentinel) await SentinelTestSetup.CompleteReadSetupAsync(client);
+        // Discovery publishes addresses, not ready/sampled connections. A Nearest selection
+        // can return the expected primary with an unsampled fallback when cold connection or
+        // ROLE work consumes its one-second budget. Prepare each candidate outside that budget
+        // before arming the dedicated failure; the frozen sampler clock retains this evidence.
+        using (var setup = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            var primaryCandidate = await router.SelectAsync(RespireReadFrom.Primary, setup.Token, observation: default);
+            await AssertSampleAsync(primaryCandidate.Connection, failPrimary ? 1L : 100L, "primary", setup.Token);
+            foreach (var (node, name) in new[] { (replica, "replica"), (fast, "fast") })
+            {
+                var candidate = await router.GetReplicaFromEndpointsAsync(
+                    [new RespireEndpoint("127.0.0.1", node.Port)], setup.Token, observation: default);
+                await Assert.That(candidate.Connection.Port).IsEqualTo(node.Port).Because(name);
+                await Assert.That(candidate.Replica!.IsRoleEligible(candidate.Connection)).IsTrue().Because(name);
+                await Assert.That(candidate.Replica.IsReplicationLinkDown).IsFalse().Because(name);
+                await AssertSampleAsync(candidate.Connection,
+                    node == failedNode ? 1L : node == fast ? 10L : 100L, name, setup.Token);
+            }
+            await Assert.That(router.NearestLatency.SamplesStarted).IsEqualTo(3L);
+        }
         var selected = await router.SelectAsync(RespireReadFrom.Nearest, default, observation: default);
         await Assert.That(selected.Connection.Port).IsEqualTo(failedNode.Port);
         var sentinelGeneration = client.Core.Sentinel?.Current;
@@ -399,6 +425,14 @@ public partial class ReadDedicatedRoutingTests
 
         Task<RespireResult> ReadAsync(CancellationToken token = default) => client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        async Task AssertSampleAsync(RespireConnection connection, long expected, string name, CancellationToken token)
+        {
+            await Assert.That(connection.IsAcceptingCommands).IsTrue().Because(name);
+            await Assert.That(await router.NearestLatency.GetLatencyAsync(connection, token))
+                .IsEqualTo(ReadLatencyResult.Measured(expected)).Because(name);
+            await Assert.That(router.NearestLatency.IsOccupied(connection)).IsFalse().Because(name);
+        }
 
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
