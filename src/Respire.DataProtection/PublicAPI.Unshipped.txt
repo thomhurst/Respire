@@ -1,1 +1,7 @@
 #nullable enable
+Respire.DataProtection.RespireDataProtectionValueCodec
+Respire.DataProtection.RespireDataProtectionValueCodec.Decode(System.ReadOnlySpan<byte> payload) -> byte[]!
+Respire.DataProtection.RespireDataProtectionValueCodec.Decode(System.ReadOnlySpan<byte> payload, System.Buffers.IBufferWriter<byte>! destination) -> void
+Respire.DataProtection.RespireDataProtectionValueCodec.Encode(System.ReadOnlySpan<byte> payload) -> byte[]!
+Respire.DataProtection.RespireDataProtectionValueCodec.Encode(System.ReadOnlySpan<byte> payload, System.Buffers.IBufferWriter<byte>! destination) -> void
+Respire.DataProtection.RespireDataProtectionValueCodec.RespireDataProtectionValueCodec(Microsoft.AspNetCore.DataProtection.IDataProtector! protector, Respire.Compression.IRespireValueCodec? compression = null) -> void
