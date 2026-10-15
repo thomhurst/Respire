@@ -62,9 +62,23 @@
     {
       "Member": "Respire.FunctionCommands.MutateAsync`2(string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",
       "Role": "borrower",
-      "Contract": "Borrow the public FUNCTION owner through discovery, every primary target, conversion, consistency checks and cleanup. Join all targets before publishing one caller failure.",
+      "Contract": "Admit one configured command hook and borrow the public FUNCTION error owner through discovery, every primary target, conversion, consistency checks and cleanup. Join all targets before hook completion and publishing one caller failure.",
       "Name": "function-mutation-fan-out",
       "Owner": "Respire.FunctionCommands.LoadAsync(string,bool,CancellationToken):ValueTask<string>"
+    },
+    {
+      "Member": "Respire.FunctionCommands.MutateUnhookedAsync`2(string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",
+      "Role": "borrower",
+      "Contract": "Execute admitted mutation fan-out or standalone conversion without another hook. Join every target and retain the public caller's observation through consistency checks and cleanup.",
+      "Name": "function-mutation-unhooked",
+      "Owner": "Respire.FunctionCommands.LoadAsync(string,bool,CancellationToken):ValueTask<string>"
+    },
+    {
+      "Member": "Respire.FunctionCommands.ExecuteConvertedUnhookedAsync`1(RespireFunction,BatchScriptCommand,CancellationToken,Func<RespireResult,TResult>,RespireTelemetry.ErrorObservation):ValueTask<TResult>",
+      "Role": "borrower",
+      "Contract": "Keep the admitted function hook open through retries, typed conversion and leased-result disposal; retain the typed public caller's error observation.",
+      "Name": "function-conversion-unhooked",
+      "Owner": "Respire.FunctionCommands.ExecuteAsync`1(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<T?>"
     },
     {
       "Member": "Respire.FunctionCommands.SendAndConvertAsync`2(RespireConnection,string,TCommand,ResponseConverter<FunctionCommands,T>,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<T>",

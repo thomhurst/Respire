@@ -7,7 +7,7 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
-    private ValueTask<TResult> ConvertResponseUnhookedAsync<TCommand, TState, TResult>(
+    internal ValueTask<TResult> ConvertResponseUnhookedAsync<TCommand, TState, TResult>(
         string operation, in TCommand command, CancellationToken ct, TState state,
         ResponseConverter<TState, TResult> converter, bool transferOwnership = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand

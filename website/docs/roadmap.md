@@ -151,7 +151,7 @@ Public interface compatibility and the post-2.0 extension policy are described i
 - [Explicit pipeline and transaction hooks](guides/batches-and-transactions.md#observe-or-reject-explicit-executions)
   for admission rejection, auditing, and completion timing. [Logical command hooks](guides/command-hooks.md)
   cover ordinary converted dispatch, single-key cached GET, non-interpolated Execute APIs,
-  script execution, dedicated blocking converted replies, ordinary cursor pages,
+  function execution and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
   streaming upload/download results, explicit subscription setup/teardown,
   specialized server/pinned/fan-out operations, resumable cluster scan pages,
   and stream appends including automatic IDMP retries and capability fallback.

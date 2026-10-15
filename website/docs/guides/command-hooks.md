@@ -11,7 +11,7 @@ Client views created with a key prefix, read preference, or cache bypass share t
 
 :::important Scope
 Supported routes include ordinary converted-response commands, non-interpolated Execute
-APIs, script execution, dedicated blocking converted replies, ordinary cursor pages,
+APIs, function calls and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
 streaming results, subscription setup/teardown, specialized server operations and cluster scan pages.
 This is **not a client-wide command-blocking policy**. Remaining specialized dispatch and
 aggregate coverage are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
@@ -62,6 +62,26 @@ Non-interpolated `ExecuteAsync`, `ExecuteLeaseAsync`, and `ExecuteFireAndForgetA
 are covered for both catalog descriptors and caller-supplied command names. Raw command
 names are normalized and inline arguments are omitted from the context. Do not interpret
 this name-only API as a key/value authorization mechanism.
+
+### Functions
+
+Immediate `Functions.ExecuteAsync`, `ExecuteSpanAsync`, `ExecuteLeaseAsync`,
+`ExecuteLeaseSpanAsync`, `ExecuteIntegerAsync`, `ExecuteStringAsync` and typed
+`ExecuteAsync<T>` admit one `FCALL` or `FCALL_RO` after key/argument preflight and
+before the first send. Completion includes declared retries, missing-library
+`FUNCTION LIST`/`LOAD` recovery, replica propagation, and result conversion and cleanup.
+Materialized results complete after copying into owned storage; leased results complete
+when ownership transfers to the caller, who must still dispose them. Later caller-selected
+conversions and disposal do not invoke the hook again.
+
+`Functions.LoadAsync`, `DeleteAsync`, `FlushAsync` and `RestoreAsync` admit one
+`FUNCTION LOAD`, `FUNCTION DELETE`, `FUNCTION FLUSH` or `FUNCTION RESTORE` respectively.
+Cluster fan-out, per-target retries, reply conversion, consistency checks and owned cleanup
+remain inside that scope. Completion waits for every started leg, including when one fails.
+`ListAsync`, `DumpAsync` and `StatsAsync` use the ordinary converted-response boundary.
+Internal library recovery does not create extra function-mutation hooks. Application calls
+started by callbacks retain their own independent scopes. Batch and transaction function
+members remain governed by the separate pipeline hook.
 
 ### Streaming and subscription resources
 
@@ -146,8 +166,7 @@ yielded. Rejecting a later page prevents its send while leaving earlier pages de
 Cancellation between yielded items is outside the already completed page.
 
 The following paths do not yet have a complete hook contract: interpolated commands,
-function execution/library recovery, multi-key
-cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
+multi-key cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction
 members also remain outside this command hook. Use the separate
