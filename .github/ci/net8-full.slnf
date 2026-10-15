@@ -2,6 +2,7 @@
   "solution": {
     "path": "../../Respire.slnx",
     "projects": [
+      "tests/Respire.PublicApi.Tests/Respire.PublicApi.Tests.csproj",
       "tests/Respire.Tests/Respire.Tests.csproj",
       "tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj",
       "tests/Respire.Resilience.Tests/Respire.Resilience.Tests.csproj",

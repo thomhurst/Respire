@@ -31,8 +31,13 @@ For contributors:
 
 Deprecations are allowed, including after 1.0. An `[Obsolete]` attribute must provide a nonempty
 `DiagnosticId` and an HTTPS `UrlFormat` containing `{0}` (the diagnostic ID), pointing to a published
-migration note. The note should explain the replacement and migration steps. The core lifecycle
-test checks this metadata without making network requests; reviewers verify that the note exists.
+migration note. The note should explain the replacement and migration steps. CI runs
+`Respire.PublicApi.Tests` on net8.0 and net10.0 to check exported public types and members in every
+shipping assembly. Its project references and expected assembly manifest come from
+`RespirePackageProjects` in `Directory.Build.props`; a missing assembly fails validation.
+The compiler's required-member compatibility marker is excluded; authored deprecations on
+constructors with required members still need migration metadata.
+These checks make no network requests; reviewers verify that the migration note exists.
 
 ## Choose a package
 

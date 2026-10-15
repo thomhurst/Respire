@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Use the shipping inventory for both build references and runtime coverage. -->
+    <ShippingProject Include="$(RespirePackageProjects)" />
+    <ProjectReference Include="@(ShippingProject->'../../src/%(Identity)/%(Identity).csproj')" />
+    <PackageReference Include="TUnit" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <Target Name="EmbedShippingAssemblies" BeforeTargets="PrepareForBuild" Condition="'$(TargetFramework)' != ''">
+    <Error Condition="'@(ShippingProject)' == ''" Text="The shipping package inventory must not be empty." />
+    <WriteLinesToFile File="$(IntermediateOutputPath)ShippingAssemblies.txt" Lines="@(ShippingProject)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(IntermediateOutputPath)ShippingAssemblies.txt" LogicalName="ShippingAssemblies" />
+    </ItemGroup>
+  </Target>
+</Project>

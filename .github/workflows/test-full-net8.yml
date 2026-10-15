@@ -38,6 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           for project in \
+            tests/Respire.PublicApi.Tests \
             tests/Respire.Tests \
             tests/Respire.HealthChecks.Tests \
             tests/Respire.Resilience.Tests \

@@ -57,6 +57,22 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  public-api-lifecycle:
+    name: Shipping API lifecycle (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Validate deprecation metadata in every shipping assembly
+        run: >-
+          dotnet run --project tests/Respire.PublicApi.Tests -c Release -f ${{ matrix.framework }} --
+          --minimum-expected-tests 15
+
   vector-data:
     name: VectorData contracts and NativeAOT (${{ matrix.framework }})
     runs-on: ubuntu-latest
@@ -643,7 +659,7 @@ jobs:
     name: Build and Test (net10.0)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [net10-unit, net10-integration, net10-components, net10-analyzers]
+    needs: [net10-unit, net10-integration, net10-components, net10-analyzers, public-api-lifecycle]
     if: always()
 
     steps:
@@ -880,7 +896,7 @@ jobs:
     name: Build and Test (net8.0)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [net8-smoke, net8-debug-invariants]
+    needs: [net8-smoke, net8-debug-invariants, public-api-lifecycle]
     if: always()
 
     steps:
