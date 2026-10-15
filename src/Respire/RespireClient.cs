@@ -425,7 +425,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken = default)
         => ExecuteOwnedCommandAsync(command, args, flags, cancellationToken);
 
-    private ValueTask<RespireResult> ExecuteOwnedCommandUnhookedAsync(
+    // Explicit typed module owners borrow this dispatch after their own admission.
+    // Keep materialization, routing, retries and mutation fences on the ordinary execution path.
+    internal ValueTask<RespireResult> ExecuteOwnedCommandUnhookedAsync(
         RespireCommand command, RespireValue[] args, RespireCommandFlags flags, CancellationToken cancellationToken)
         => DispatchResponseSource<RespireResult>.Run(
             (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken),
