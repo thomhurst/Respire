@@ -146,25 +146,44 @@ public partial class RedlockWireTests
     [Test]
     public async Task RenewalCompletingAfterPreviousValidityCannotRestoreOwnership()
     {
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
-        foreach (var server in nodes.Servers) server.DelayReply(1, 200);
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true);
         var clock = new ManualClock();
-        var group = new RespireRedlockGroup(nodes.Clients, timeProvider: clock);
+        var group = new RespireRedlockGroup(nodes.Clients,
+            new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout }, timeProvider: clock);
         await using var attempt = await group.TryAcquireAsync("redlock:late-renewal", TimeSpan.FromMilliseconds(100));
         await Assert.That(attempt.Acquired).IsTrue();
 
-        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10)).AsTask();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (nodes.Servers.Any(static server => server.CommandsSeen < 2))
-            await Task.Delay(5, timeout.Token);
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-
-        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
-        await Assert.That(attempt.Lock.IsReleased).IsTrue();
-        await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        // Advance the lease clock only after all renewal commands arrive, and before any
+        // can complete. A fixed reply delay can elapse while the test is descheduled.
+        var renewalReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = 0;
         foreach (var server in nodes.Servers)
-            await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
-                .IsEqualTo(1);
+            server.GateCommand("SET ", renewalReplies.Task, () =>
+            {
+                if (Interlocked.Increment(ref received) == nodes.Servers.Length)
+                    renewalReceived.TrySetResult();
+            });
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+            await renewalReceived.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            renewalReplies.SetResult();
+
+            await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(30))).IsFalse();
+            await Assert.That(attempt.Lock.IsReleased).IsTrue();
+            await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+            foreach (var server in nodes.Servers)
+                await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
+                    .IsEqualTo(1);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            renewalReplies.TrySetResult();
+        }
     }
 
     [Test]

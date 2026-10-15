@@ -282,7 +282,8 @@ Console.WriteLine($"Estimated lease time: {attempt.Lock.RemainingEstimate}");
 With command hooks, every native client's policy admits the group operation in constructor
 order before any node work. Acquisition, renewal, release and disposal use `REDLOCK ACQUIRE`,
 `REDLOCK RENEW`, `REDLOCK RELEASE` and `REDLOCK DISPOSE`. Rejected renewal or release preserves
-the lease; rejected disposal propagates and can be retried. Owed cleanup after an admitted
+the lease; rejected disposal propagates and can be retried. With `await using`, a disposal
+rejection can replace an exception already being propagated from the body. Owed cleanup after an admitted
 attempt does not re-admit. See [multi-client hook semantics](./command-hooks.md#multi-client-redlock)
 for outcomes, shared hooks and opaque decorator limitations.
 
