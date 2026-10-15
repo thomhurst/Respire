@@ -28,6 +28,7 @@ public sealed partial class RespireClient
         {
             var key = arguments.GetArgument(count);
             RespireValue.ThrowIfNull(key, "keys");
+            if (stride == 2) RespireValue.ThrowIfNull(arguments.GetArgument(count + 1), "values");
             key.TryGetClusterSlot(out var slot);
             firstSlot ??= slot;
             crossSlot |= slot != firstSlot;
@@ -122,44 +123,50 @@ public sealed partial class RespireClient
         bool allowReadFrom, RespireTelemetry.ErrorObservation observation, bool cachedMGet = false)
         where TCommand : struct, IRespCommand
     {
-        ObjectDisposedException.ThrowIf(_core.Disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
-        var verb = operation switch
-        {
-            "MGET" => Verbs.MGet, "MSET" => Verbs.MSet, "DEL" => Verbs.Del,
-            "UNLINK" => Verbs.Unlink, "EXISTS" => Verbs.Exists, "TOUCH" => Verbs.Touch,
-            _ => throw new InvalidOperationException("Unsupported split command."),
-        };
-        var legs = RespireTelemetry.FanOutLegObservation.Create(groups.Length, observation);
-        var tasks = new Task<RespValue>[groups.Length];
-        for (var index = 0; index < groups.Length; index++)
-            tasks[index] = SendClusterPartitionAsync(operation, command, verb, groups[index], cancellationToken,
-                flags, allowReadFrom, legs[index], cachedMGet);
-
         try
         {
-            var replies = await RespireTelemetry.FanOutLegObservation.JoinAsync(tasks, legs, observation).ConfigureAwait(false);
-            if (operation == "MGET")
+            ObjectDisposedException.ThrowIf(_core.Disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            var verb = operation switch
             {
-                var values = new RespValue[groups.Sum(static group => group.Indexes.Count)];
-                for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+                "MGET" => Verbs.MGet, "MSET" => Verbs.MSet, "DEL" => Verbs.Del,
+                "UNLINK" => Verbs.Unlink, "EXISTS" => Verbs.Exists, "TOUCH" => Verbs.Touch,
+                _ => throw new InvalidOperationException("Unsupported split command."),
+            };
+            var legs = RespireTelemetry.FanOutLegObservation.Create(groups.Length, observation);
+            var tasks = new Task<RespValue>[groups.Length];
+            for (var index = 0; index < groups.Length; index++)
+                tasks[index] = SendClusterPartitionAsync(operation, command, verb, groups[index], cancellationToken,
+                    flags, allowReadFrom, legs[index], cachedMGet);
+
+            try
+            {
+                var replies = await RespireTelemetry.FanOutLegObservation.JoinAsync(tasks, legs, observation).ConfigureAwait(false);
+                if (operation == "MGET")
                 {
-                    var reply = replies[groupIndex].AsArray();
-                    for (var index = 0; index < reply.Length; index++)
-                        values[groups[groupIndex].Indexes[index]] = reply[index].ToOwned();
+                    var values = new RespValue[groups.Sum(static group => group.Indexes.Count)];
+                    for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+                    {
+                        var reply = replies[groupIndex].AsArray();
+                        for (var index = 0; index < reply.Length; index++)
+                            values[groups[groupIndex].Indexes[index]] = cachedMGet ? reply[index] : reply[index].ToOwned();
+                    }
+                    return RespValue.Array(values);
                 }
-                return RespValue.Array(values);
+                if (operation == "MSET") return RespValue.SimpleString("OK"u8.ToArray());
+                long total = 0;
+                foreach (var reply in replies) total = checked(total + ResponseReader.Integer(in reply));
+                return RespValue.Integer(total);
             }
-            if (operation == "MSET") return RespValue.SimpleString("OK"u8.ToArray());
-            long total = 0;
-            foreach (var reply in replies) total = checked(total + ResponseReader.Integer(in reply));
-            return RespValue.Integer(total);
+            finally
+            {
+                // WhenAll joins failures too: no successful pooled reply or late fault is abandoned.
+                foreach (var task in tasks)
+                    if (task.IsCompletedSuccessfully) (await task.ConfigureAwait(false)).Dispose();
+            }
         }
         finally
         {
-            // WhenAll joins failures too: no successful pooled reply or late fault is abandoned.
-            foreach (var task in tasks)
-                if (task.IsCompletedSuccessfully) (await task.ConfigureAwait(false)).Dispose();
             command.OnAccepted();
         }
     }

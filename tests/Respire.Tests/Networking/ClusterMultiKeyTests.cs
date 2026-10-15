@@ -141,12 +141,15 @@ public class ClusterMultiKeyTests
 
     private sealed class RecordingHook : RespireCommandHook
     {
-        internal int Entered;
-        internal int Completed;
-        internal RespireCommandOutcome Outcome;
-        public override object? OnExecuting(RespireCommandContext context) { Entered++; return null; }
+        private int _entered;
+        private int _completed;
+        private int _outcome;
+        internal int Entered => Volatile.Read(ref _entered);
+        internal int Completed => Volatile.Read(ref _completed);
+        internal RespireCommandOutcome Outcome => (RespireCommandOutcome)Volatile.Read(ref _outcome);
+        public override object? OnExecuting(RespireCommandContext context) { Interlocked.Increment(ref _entered); return null; }
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
-        { Completed++; Outcome = outcome; }
+        { Volatile.Write(ref _outcome, (int)outcome); Interlocked.Increment(ref _completed); }
     }
 
     [Test]
@@ -172,6 +175,43 @@ public class ClusterMultiKeyTests
         await Assert.That(async () => await fixture.Client.ExecuteFireAndForgetAsync("DEL", "{a}one", "{b}two"))
             .ThrowsExactly<RespireCrossSlotException>();
         await Assert.That(fixture.Low.CommandsSeen + fixture.High.CommandsSeen).IsEqualTo(before);
+    }
+
+    [Test]
+    [Arguments(false, 1)]
+    [Arguments(false, 3)]
+    [Arguments(true, 1)]
+    [Arguments(true, 3)]
+    public async Task InvalidMSetValueRejectsBeforeAnyGroupIsSent(bool catalog, int valueIndex)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        RespireValue[] arguments = ["{a}one", "1", "{b}two", "2"];
+        arguments[valueIndex] = RespireValue.Null;
+        await Assert.That(async () =>
+        {
+            using var reply = catalog
+                ? await fixture.Client.ExecuteAsync(RespireCommands.String.MSET, arguments)
+                : await fixture.Client.ExecuteAsync("MSET", arguments);
+        }).Throws<ArgumentNullException>();
+        // A subsequent reply on each connection fences all writes from the failed call.
+        await fixture.Client.Strings.GetManyAsync("{a}one", "{b}two");
+        await Assert.That(fixture.Low.ReceivedCommands.Any(c => c.StartsWith("MSET ", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(fixture.High.ReceivedCommands.Any(c => c.StartsWith("MSET ", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task CancelledSplitReleasesAdmission()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await Assert.That(async () =>
+        {
+            using var reply = await fixture.Client.ExecuteWithAdmissionAsync(RespireCommands.String.MSET,
+                ["{a}one", "1", "{b}two", "2"], RespireCommandFlags.None, cancellation.Token, admission);
+        }).Throws<OperationCanceledException>();
+        await Assert.That(admission.Task.IsCompletedSuccessfully).IsTrue();
     }
 
     [Test]

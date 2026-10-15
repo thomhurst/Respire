@@ -347,11 +347,16 @@ Each group uses the normal slot routing, MOVED/ASK recovery, configured retries,
 reconnect backlog, read preference, and cache fences. A retry affects only that group;
 successful groups are not replayed by the splitter. Typed `MGET` retains per-key caching.
 Command hooks run once for the whole logical call, with completion after all groups finish.
+The splitter starts one operation per distinct slot without a separate concurrency cap.
+Each operation still obeys the connection's in-flight and backlog limits. For large key
+sets, submit smaller batches to bound pending operations and share capacity with other callers.
 
 If a group fails, the call joins all outstanding groups and throws
 `RespireClusterPartitionException`, exposing `CommandName`, `Slot`, the known failed
 `Endpoint`, and the underlying exception. If several groups fail, one failure is surfaced;
 no partial result is returned. Route discovery failures may have no single known endpoint.
+The exception does not enumerate successful slots, and a failed slot may still have applied
+its write if the reply was lost. Reconcile application state before attempting compensation.
 Caller cancellation remains `OperationCanceledException`; cancellation cannot roll back
 commands already accepted by a node. Do not blindly retry an entire failed write request.
 
