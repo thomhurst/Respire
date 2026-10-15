@@ -68,6 +68,8 @@ public sealed class RespireLock : IAsyncDisposable
     private readonly Lock _releaseSync = new();
     private ReleaseAttempt? _releaseAttempt;
 
+    internal RespireCommandHook? Hook => (_locks as LockCommands)?.Hook;
+
     internal RespireLock(
         IRespireLockCommands locks,
         RespireKey key,
@@ -151,11 +153,15 @@ public sealed class RespireLock : IAsyncDisposable
     public ValueTask<bool> ResetExpiryAsync(
         TimeSpan newDuration,
         CancellationToken cancellationToken = default)
-        => ExtendCoreAsync(newDuration, signalLeaseChanged: true, MarkOwnershipLost, cancellationToken);
+        => CommandHookScope.RunObservedAsync(Hook, "LOCK RENEW", cancellationToken,
+            (Lock: this, Duration: newDuration, Token: cancellationToken),
+            static (s, owner) => s.Lock.ExtendBorrowedAsync(s.Duration, true, s.Lock.MarkOwnershipLost, s.Token, owner));
 
     /// <summary>Checks Redis to verify that this handle's owner token still holds the key.</summary>
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
-        => IsHeldByOriginAsync(cancellationToken);
+        => CommandHookScope.RunObservedAsync(Hook, "LOCK VERIFY", cancellationToken,
+            (Lock: this, Token: cancellationToken),
+            static (s, owner) => s.Lock.IsHeldByOriginBorrowedAsync(s.Token, owner));
 
     internal ValueTask<bool> RenewAsync(Action onOutcomeUncertain, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default)
@@ -240,7 +246,8 @@ public sealed class RespireLock : IAsyncDisposable
     /// run for a lock at a time.
     /// </summary>
     public ValueTask<RespireLockKeepAlive> KeepAliveAsync(CancellationToken cancellationToken = default)
-        => DispatchResponseSource<RespireLockKeepAlive>.Run((Lock: this, Token: cancellationToken),
+        => CommandHookScope.RunObservedAsync(Hook, "LOCK KEEPALIVE START", cancellationToken,
+            (Lock: this, Token: cancellationToken),
             static (state, _) => ValueTask.FromResult(state.Lock.StartKeepAlive(state.Token)));
 
     internal void StartOwnedKeepAlive()
@@ -289,7 +296,8 @@ public sealed class RespireLock : IAsyncDisposable
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
     /// </returns>
     public ValueTask<RespireLockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
-        => DispatchResponseSource<RespireLockReleaseOutcome>.Run((Lock: this, Token: cancellationToken),
+        => CommandHookScope.RunObservedAsync(Hook, "LOCK RELEASE", cancellationToken,
+            (Lock: this, Token: cancellationToken),
             static (state, owner) => state.Lock.ReleaseBorrowedAsync(state.Token, owner));
 
     private ValueTask<RespireLockReleaseOutcome> ReleaseBorrowedAsync(
@@ -480,6 +488,10 @@ public sealed class RespireLock : IAsyncDisposable
     /// release itself must be observed.
     /// </remarks>
     public ValueTask DisposeAsync()
+        => CommandHookScope.RunObservedAsync(Hook, "LOCK DISPOSE", CancellationToken.None,
+            this, static (@lock, owner) => @lock.DisposeBorrowedAsync(owner));
+
+    internal ValueTask DisposeUnhookedAsync()
         => DispatchResponseSource.Run(this, static (@lock, owner) => @lock.DisposeBorrowedAsync(owner));
 
     internal async ValueTask DisposeBorrowedAsync(RespireTelemetry.ErrorObservation observation)
@@ -840,7 +852,8 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
 
     /// <summary>Stops renewal and waits for the background renewal loop to finish.</summary>
     public ValueTask DisposeAsync()
-        => DispatchResponseSource.Run(this, static (keepAlive, owner) => keepAlive.DisposeBorrowedAsync(owner));
+        => CommandHookScope.RunObservedAsync(_lock.Hook, "LOCK KEEPALIVE STOP", CancellationToken.None,
+            this, static (keepAlive, owner) => keepAlive.DisposeBorrowedAsync(owner));
 
     internal async ValueTask DisposeBorrowedAsync(RespireTelemetry.ErrorObservation observation)
     {

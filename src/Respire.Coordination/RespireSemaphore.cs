@@ -71,8 +71,11 @@ public sealed class RespireSemaphore
     /// <exception cref="RespireSemaphoreCapacityMismatchException">
     /// Active permits on this key were acquired with a different capacity.
     /// </exception>
-    public ValueTask<RespireSemaphorePermitAttempt> TryAcquireAsync(
-        TimeSpan? expiry = null, CancellationToken cancellationToken = default)
+    public ValueTask<RespireSemaphorePermitAttempt> TryAcquireAsync(TimeSpan? expiry = null, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "SEMAPHORE ACQUIRE", cancellationToken,
+            (Owner: this, Expiry: expiry, Token: cancellationToken), static s => s.Owner.TryAcquireUnhookedAsync(s.Expiry, s.Token));
+
+    private ValueTask<RespireSemaphorePermitAttempt> TryAcquireUnhookedAsync(TimeSpan? expiry = null, CancellationToken cancellationToken = default)
         => _client is RespireClient
             ? DispatchResponseSource<RespireSemaphorePermitAttempt>.Run(
                 (Semaphore: this, Expiry: expiry, Token: cancellationToken),
@@ -601,6 +604,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// </para>
     /// </remarks>
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "SEMAPHORE VERIFY", cancellationToken,
+            (Owner: this, Token: cancellationToken), static s => s.Owner.VerifyStillHeldUnhookedAsync(s.Token));
+
+    private ValueTask<bool> VerifyStillHeldUnhookedAsync(CancellationToken cancellationToken = default)
         => _client is RespireClient
             ? DispatchResponseSource<bool>.Run((Permit: this, Token: cancellationToken),
                 static (state, observation) => state.Permit.VerifyStillHeldCoreAsync(state.Token, observation))
@@ -649,6 +656,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <param name="expiry">Expiry of at least one millisecond, truncated to whole milliseconds, or null for owner-only release.</param>
     /// <param name="cancellationToken">Cancels waiting and the Redis command.</param>
     public ValueTask<bool> ResetExpiryAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "SEMAPHORE RENEW", cancellationToken,
+            (Owner: this, Expiry: expiry, Token: cancellationToken), static s => s.Owner.ResetExpiryUnhookedAsync(s.Expiry, s.Token));
+
+    private ValueTask<bool> ResetExpiryUnhookedAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)
         => _client is RespireClient
             ? DispatchResponseSource<bool>.Run((Permit: this, Expiry: expiry, Token: cancellationToken),
                 static (state, observation) => state.Permit.ResetExpiryCoreAsync(state.Expiry, state.Token, observation))
@@ -771,6 +782,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// return true if this call removes the permit during cleanup.
     /// </returns>
     public ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "SEMAPHORE RELEASE", cancellationToken,
+            (Owner: this, Token: cancellationToken), static s => s.Owner.ReleaseUnhookedAsync(s.Token));
+
+    private ValueTask<bool> ReleaseUnhookedAsync(CancellationToken cancellationToken = default)
         => _client is RespireClient
             ? DispatchResponseSource<bool>.Run((Permit: this, Token: cancellationToken),
                 static (state, observation) => state.Permit.ReleaseCoreAsync(state.Token, observation))
@@ -794,7 +809,8 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     /// <summary>Releases this permit on a best-effort basis.</summary>
     /// <remarks>
-    /// Disposal waits about one second at most and never throws. When release is not confirmed in
+    /// Once admitted by the command hook, disposal waits about one second at most and never throws cleanup failures.
+    /// A hook rejection leaves ownership unchanged and propagates to the caller. When release is not confirmed in
     /// that time, for example because a renewal is in flight or Redis is unreachable, owner-token
     /// release continues in the background with capped backoff for up to one minute. Failures are not
     /// thrown; a cleanup that gives up increments the <c>respire.coordination.cleanup.abandoned</c>
@@ -802,7 +818,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// there until it is removed manually, so prefer a finite expiry when clients can lose
     /// connectivity.
     /// </remarks>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => CoordinationCommandHooks.RunAsync(_client, "SEMAPHORE DISPOSE", CancellationToken.None,
+            this, static owner => owner.DisposeUnhookedAsync());
+
+    internal async ValueTask DisposeUnhookedAsync()
     {
         var internalOwner = _client is RespireClient ? DispatchResponseSource<bool>.Start() : null;
         var observation = internalOwner?.Observation ?? default;

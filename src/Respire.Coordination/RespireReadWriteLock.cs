@@ -85,13 +85,17 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     /// Only a definitive "not held" reply ends local ownership. Once release starts, the handle
     /// stays closed even if its reply is uncertain; a later owner-checked release can be retried.
     /// </remarks>
-    public async ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LOCK VERIFY READWRITE", cancellationToken,
+            (Owner: this, Token: cancellationToken), static s => s.Owner.VerifyStillHeldUnhookedAsync(s.Token));
+
+    private async ValueTask<bool> VerifyStillHeldUnhookedAsync(CancellationToken cancellationToken = default)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (IsReleased) return false;
-            using var response = await _client.Scripts.ExecuteLeaseAsync(
+            using var response = await CoordinationCommandHooks.ExecuteAsync(_client,
                 RespireCoordination.VerifyReadWriteLock, [Key], [OwnerBytes(), Role], cancellationToken).ConfigureAwait(false);
             if (response.AsInteger() == 1) return Volatile.Read(ref _released) == 0;
             MarkOwnershipUnavailable();
@@ -109,7 +113,11 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     /// gives up local ownership and sends a best-effort release, because Redis may or may not have
     /// applied the renewal.
     /// </remarks>
-    public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+    public ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LOCK RENEW READWRITE", cancellationToken,
+            (Owner: this, Duration: duration, Token: cancellationToken), static s => s.Owner.ResetExpiryUnhookedAsync(s.Duration, s.Token));
+
+    private async ValueTask<bool> ResetExpiryUnhookedAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
         if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
@@ -125,7 +133,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 Volatile.Write(ref _snapshot, new LeaseSnapshot(renewedTicks, started));
             try
             {
-                using var response = await _client.Scripts.ExecuteLeaseAsync(
+                using var response = await CoordinationCommandHooks.ExecuteAsync(_client,
                     RespireCoordination.RenewReadWriteLock, [Key], [OwnerBytes(), Role, milliseconds], cancellationToken).ConfigureAwait(false);
                 var completed = Stopwatch.GetTimestamp();
                 var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
@@ -157,7 +165,11 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     /// Local ownership closes and the owner-checked Redis command is dispatched before this method
     /// first yields. A lost reply keeps the handle closed and leaves release retryable.
     /// </remarks>
-    public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LOCK RELEASE READWRITE", cancellationToken,
+            (Owner: this, Token: cancellationToken), static s => s.Owner.ReleaseUnhookedAsync(s.Token));
+
+    private async ValueTask<bool> ReleaseUnhookedAsync(CancellationToken cancellationToken = default)
     {
         // A pre-cancelled token sends nothing, so keep the handle releasable.
         cancellationToken.ThrowIfCancellationRequested();
@@ -188,7 +200,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
             fallbackTimeout = _client is RespireClient client && client.Core.Options.CommandTimeout is null
                 ? new CancellationTokenSource(ReleaseFallbackTimeout)
                 : null;
-            using var response = await _client.Scripts.ExecuteLeaseAsync(
+            using var response = await CoordinationCommandHooks.ExecuteAsync(_client,
                 RespireCoordination.ReleaseReadWriteLock, [Key], [OwnerBytes(), Role],
                 fallbackTimeout?.Token ?? CancellationToken.None).ConfigureAwait(false);
             var released = response.AsInteger() == 1;
@@ -211,9 +223,13 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     }
 
     /// <summary>Releases this lease on a best-effort basis.</summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => CoordinationCommandHooks.RunAsync(_client, "LOCK DISPOSE READWRITE", CancellationToken.None,
+            this, static owner => owner.DisposeUnhookedAsync());
+
+    internal async ValueTask DisposeUnhookedAsync()
     {
-        try { _ = await ReleaseAsync().ConfigureAwait(false); }
+        try { _ = await ReleaseUnhookedAsync().ConfigureAwait(false); }
         catch (Exception) { }
     }
 
@@ -238,7 +254,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         {
             try
             {
-                _ = await ReleaseAsync().AsTask().WaitAsync(ReleaseFallbackTimeout).ConfigureAwait(false);
+                _ = await ReleaseUnhookedAsync().AsTask().WaitAsync(ReleaseFallbackTimeout).ConfigureAwait(false);
                 return;
             }
             catch (TimeoutException) { return; }

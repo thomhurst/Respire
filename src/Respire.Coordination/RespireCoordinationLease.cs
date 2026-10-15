@@ -62,10 +62,18 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
 
     /// <summary>Checks that this owner still holds the expiring hash field.</summary>
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_coordination.Client, "COORDINATION LEASE VERIFY", cancellationToken,
+            (Owner: this, Token: cancellationToken), static s => s.Owner.VerifyStillHeldUnhookedAsync(s.Token));
+
+    private ValueTask<bool> VerifyStillHeldUnhookedAsync(CancellationToken cancellationToken = default)
         => _coordination.VerifyHashFieldLeaseAsync(HashKey, Field, _owner, cancellationToken);
 
     /// <summary>Renews only this owner and preserves the hash field's independent expiry; uncertain state fails closed.</summary>
-    public async ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+    public ValueTask<bool> ResetExpiryAsync(TimeSpan duration, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_coordination.Client, "COORDINATION LEASE RENEW", cancellationToken,
+            (Owner: this, Duration: duration, Token: cancellationToken), static s => s.Owner.ResetExpiryUnhookedAsync(s.Duration, s.Token));
+
+    private async ValueTask<bool> ResetExpiryUnhookedAsync(TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var milliseconds = RespireCoordination.ValidateLease(HashKey, Field, duration);
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -114,6 +122,10 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
 
     /// <summary>Releases only this owner, leaving unrelated hash fields untouched. Each attempt has a two-second deadline.</summary>
     public ValueTask<RespireLockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_coordination.Client, "COORDINATION LEASE RELEASE", cancellationToken,
+            (Owner: this, Token: cancellationToken), static s => s.Owner.ReleaseUnhookedAsync(s.Token));
+
+    private ValueTask<RespireLockReleaseOutcome> ReleaseUnhookedAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_releaseSync)
@@ -208,11 +220,15 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     }
 
     /// <summary>Releases this lease on a best-effort basis.</summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => CoordinationCommandHooks.RunAsync(_coordination.Client, "COORDINATION LEASE DISPOSE", CancellationToken.None,
+            this, static owner => owner.DisposeUnhookedAsync());
+
+    internal async ValueTask DisposeUnhookedAsync()
     {
         try
         {
-            await ReleaseAsync().ConfigureAwait(false);
+            await ReleaseUnhookedAsync().ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is RespireConnectionException or RespireTimeoutException
             or ObjectDisposedException or OperationCanceledException)
