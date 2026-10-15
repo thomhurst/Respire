@@ -213,7 +213,10 @@ internal sealed partial class StreamCommands
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
-            return ReadContinuouslyAsync(SnapshotStreams(client, streams), batchSize, cancellationToken);
+            var snapshot = SnapshotStreams(client, streams);
+            return client.Core.Options.CommandHook is { } hook
+                ? ReadContinuouslyHookedAsync(snapshot, batchSize, hook, cancellationToken)
+                : ReadContinuouslyAsync(snapshot, batchSize, cancellationToken);
         }
         catch (Exception error)
         {

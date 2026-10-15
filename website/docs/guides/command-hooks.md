@@ -250,6 +250,22 @@ requested page separately. Completion includes parsing that page, before its ite
 yielded. Rejecting a later page prevents its send while leaving earlier pages delivered.
 Cancellation between yielded items is outside the already completed page.
 
+Continuous `Streams.ReadAllAsync` (single or multiple streams) admits one `XREAD`
+scope for each fetched page. The first page includes resolving every `$` start position
+with internal `XREVRANGE` calls; rejection prevents those calls too. Initial resolution
+failures are terminal. Read recovery, backoff and redirects stay inside the admitted page,
+and a rejection is never retried even when the hook throws a connection exception.
+Completion follows dedicated-connection cleanup and validation of the whole page,
+including stream keys and increasing entry IDs, before any entry is yielded. Buffered
+entries produce no further callbacks. Cancellation between entries is outside the completed
+page; cancellation during recovery completes that page as `Canceled`. Disposing the iterator
+does not admit another operation. The hook-absent path retains incremental entry validation.
+
+`Streams.CreateGroupAsync` completes `XGROUP CREATE` after reducing `BUSYGROUP` to
+the successful result `false`. Other server errors fail the operation. Admission rejection
+always propagates, including when a hook throws a `BUSYGROUP`-shaped server exception.
+`ContinuousStreamCommandHookTests` records these boundaries for [#1773](https://github.com/thomhurst/Respire/issues/1773).
+
 ### Locks and tracked coordination
 
 These composite operations use logical names, rather than the Redis command selected by
