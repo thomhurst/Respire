@@ -267,6 +267,55 @@ public class JobQueueControlTests(RedisTestContainer redis)
         finally { release.TrySetResult(); await worker.StopAsync(deadline.Token); }
     }
 
+    [Test, NotInParallel]
+    public async Task RecoveryPassAdmitsOneAtATimeAndGivesNewJobsATurnAfterTheBatch()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var queue = Queue(client);
+        for (var i = 0; i < 6; i++) await queue.EnqueueAsync("old-" + i, "payload");
+        await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync(queue.StreamKey, Group, "abandoned", new() { Count = 6 });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var state = new HandlerState
+        {
+            Handle = async token =>
+            {
+                if (entered.TrySetResult()) await release.Task.WaitAsync(token);
+            },
+        };
+        var services = new ServiceCollection().AddSingleton<IRespireClient>(client).AddSingleton(state);
+        services.AddRespireJobQueue<Handler, string>("controls", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
+            new()
+            {
+                ConsumerName = "recovery", BatchSize = 3, DeliveryLimit = 5,
+                MinimumIdleTime = TimeSpan.FromMilliseconds(1), RecoveryPollInterval = TimeSpan.FromSeconds(5),
+                ReadWait = TimeSpan.FromMilliseconds(20),
+            }, new() { SchedulingPollInterval = TimeSpan.FromMilliseconds(20) });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IHostedService>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await worker.StartAsync(deadline.Token);
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            await queue.EnqueueAsync("fresh", "payload");
+            await queue.PauseAsync();
+            release.TrySetResult();
+            await Until(async () => (await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count == 5, deadline.Token);
+            await Task.Delay(100, deadline.Token);
+            await Assert.That(state.Jobs.Count).IsEqualTo(1);
+            var pending = await client.Streams.PendingAsync(queue.StreamKey, Group);
+            await Assert.That(pending.All(entry => entry.Consumer == "abandoned")).IsTrue();
+            await queue.ResumeAsync();
+            using var passDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await Until(() => Task.FromResult(state.Jobs.Count >= 4), passDeadline.Token);
+            await Assert.That(state.Jobs.SequenceEqual(new[] { "old-0", "old-1", "old-2", "fresh" })).IsTrue();
+            await Until(async () => (await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count == 3, passDeadline.Token);
+        }
+        finally { release.TrySetResult(); await worker.StopAsync(CancellationToken.None); }
+    }
+
     private static ServiceProvider Worker(IRespireClient client, HandlerState state, string name, RespireJobRateLimit? rate = null)
     {
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(state);

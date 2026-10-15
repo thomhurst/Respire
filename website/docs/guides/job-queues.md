@@ -226,6 +226,9 @@ startup replay and abandoned-job recovery all check pause atomically before clai
 Pause does not cancel handlers or wait for them to drain.
 
 Job readers admit one entry at a time, regardless of the generic worker's `BatchSize`.
+For recovery, `BatchSize` bounds the number of single-entry scan pages in a pass. Each page
+checks pause and rate limits again; the recovery interval restarts after the bounded pass,
+giving fresh jobs a read turn between passes.
 Idle or paused readers check again within `SchedulingPollInterval` (one second when no queue
 options are supplied), subject to Redis availability. Busy readers check on every claim.
 Idle reads also honor a shorter `ReadWait`. Generic stream workers retain blocking, batched reads.

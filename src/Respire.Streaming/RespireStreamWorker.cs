@@ -117,6 +117,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         var readOptions = new RespireStreamReadOptions { Count = options.BatchSize, WaitFor = options.ReadWait };
         RespireStreamId? cursor = options.ConsumerName is null ? (RespireStreamId?)null : RespireStreamId.Beginning;
         var recoveryCursor = RespireStreamId.Beginning;
+        var recoveryPagesRemaining = 0;
         var recoveryClock = Stopwatch.StartNew();
         var schedulingClock = new Stopwatch();
         try
@@ -154,7 +155,15 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                         continue;
                     }
                     if (replay) cursor = page.Cursor.CompareTo(RespireStreamId.Beginning) == 0 ? (RespireStreamId?)null : page.Cursor;
-                    if (recover) { recoveryCursor = page.Cursor; recoveredBatch = true; }
+                    if (recover)
+                    {
+                        // Preserve a bounded batch's scan budget while checking admission per entry.
+                        // Denied admissions above neither advance the cursor nor spend this budget.
+                        if (recoveryPagesRemaining == 0) recoveryPagesRemaining = options.BatchSize;
+                        recoveryCursor = page.Cursor;
+                        recoveredBatch = --recoveryPagesRemaining == 0 || recoveryCursor == RespireStreamId.Beginning;
+                        if (recoveredBatch) recoveryPagesRemaining = 0;
+                    }
                     deliveries = page.Deliveries;
                     if (deliveries.Length == 0 && !replay && !recover)
                     {
