@@ -108,32 +108,38 @@ the [HTTP idempotency integration](../integrations/idempotency.md).
 for a fenced lease, renews it halfway through its duration, and revokes leadership when
 renewal fails, the local deadline elapses, or the host shuts down.
 
+Call this registration helper with your host's service collection and scheduled-work
+callback. Register the caller-owned `IRespireClient` before starting the host.
+
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 using Respire;
 using Respire.Coordination;
 
-// Register your caller-owned IRespireClient before adding the hosted service.
-services.AddHostedService(provider => new RespireLeaderElection(
-    provider.GetRequiredService<IRespireClient>(),
-    "{scheduler}:leader", "{scheduler}:fence",
-    new RespireLeaderElectionOptions
-    {
-        LeaseDuration = TimeSpan.FromSeconds(30),
-        RetryDelay = TimeSpan.FromSeconds(1),
-        OnElected = async leadership =>
+static void RegisterLeaderElection(IServiceCollection services,
+    Func<long, CancellationToken, Task> runScheduledWorkAsync)
+{
+    services.AddHostedService(provider => new RespireLeaderElection(
+        provider.GetRequiredService<IRespireClient>(),
+        "{scheduler}:leader", "{scheduler}:fence",
+        new RespireLeaderElectionOptions
         {
-            while (!leadership.CancellationToken.IsCancellationRequested)
+            LeaseDuration = TimeSpan.FromSeconds(30),
+            RetryDelay = TimeSpan.FromSeconds(1),
+            OnElected = async leadership =>
             {
-                // Send leadership.FencingToken with each protected write.
-                // The receiving resource must reject stale tokens atomically.
-                await RunScheduledWorkAsync(leadership.FencingToken,
-                    leadership.CancellationToken);
-                await Task.Delay(TimeSpan.FromSeconds(1), leadership.CancellationToken);
-            }
-        },
-        OnRevoked = leadership => Task.CompletedTask,
-    }));
+                while (!leadership.CancellationToken.IsCancellationRequested)
+                {
+                    // Send leadership.FencingToken with each protected write.
+                    // The receiving resource must reject stale tokens atomically.
+                    await runScheduledWorkAsync(leadership.FencingToken,
+                        leadership.CancellationToken);
+                    await Task.Delay(TimeSpan.FromSeconds(1), leadership.CancellationToken);
+                }
+            },
+            OnRevoked = leadership => Task.CompletedTask,
+        }));
+}
 ```
 
 Every contender uses the same two distinct keys in one Cluster slot. The client remains
@@ -148,6 +154,17 @@ drains. Both must finish before this instance campaigns again. Callback exceptio
 the hosted service after lease cleanup. Observe cancellation and do not launch detached
 work. Host shutdown deadlines can stop waiting for uncooperative work; renewal still
 stops and the server lease expires.
+
+For a leader that only needs to hold its term until revocation, keep the callback pending:
+
+```csharp
+using Respire.Coordination;
+
+var electionOptions = new RespireLeaderElectionOptions
+{
+    OnElected = term => Task.Delay(Timeout.Infinite, term.CancellationToken),
+};
+```
 
 `CurrentLeadership` returns the current local term or null when its token is cancelled.
 It is a local observation, not a server ownership check. `LeadershipChanged` reports

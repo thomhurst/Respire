@@ -123,6 +123,7 @@ public sealed class RespireLeaderElection : BackgroundService
                 finally
                 {
                     // Never start another term while this instance's previous work is still running.
+                    // Observe callback faults after revocation; unwinding then disposes renewal and the lease.
                     try { await work.ConfigureAwait(false); }
                     catch (OperationCanceledException error) when (
                         error.CancellationToken == term.CancellationToken && term.CancellationToken.IsCancellationRequested) { }
