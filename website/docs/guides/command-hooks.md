@@ -1,6 +1,6 @@
 ---
 title: Logical command hooks
-description: Admit and observe logical commands, including native sends, streaming results, subscription resources and single-key cache hits.
+description: Admit and observe logical commands, including scripts, cursor pages, blocking replies, streaming results and subscriptions.
 ---
 
 # Logical command hooks
@@ -10,13 +10,11 @@ default is `null`: it creates no hook context or delegate and enters no extra as
 Client views created with a key prefix, read preference, or cache bypass share the hook.
 
 :::important Scope
-Supported paths include ordinary converted-response commands, streaming results,
-subscription setup/teardown, and non-interpolated `ExecuteAsync`, `ExecuteLeaseAsync`
-and `ExecuteFireAndForgetAsync`. It is **not a
-client-wide command-blocking policy**. Specialized and aggregate coverage is still being
-implemented in [#1707](https://github.com/thomhurst/Respire/issues/1707),
-[#1720](https://github.com/thomhurst/Respire/issues/1720) and
-[#1708](https://github.com/thomhurst/Respire/issues/1708).
+Supported routes include ordinary converted-response commands, non-interpolated Execute
+APIs, script execution, dedicated blocking converted replies, ordinary cursor pages,
+streaming results, subscription setup/teardown, specialized server operations and cluster scan pages.
+This is **not a client-wide command-blocking policy**. Remaining specialized dispatch and
+aggregate coverage are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 :::
 
 <!-- doc-test-tail-declaration: split-before=sealed class CommandAudit -->
@@ -122,9 +120,27 @@ and response cleanup. Ordinary appends and explicitly supplied IDMP options also
 their typed conversion inside the scope. Argument validation and command construction
 remain preflight work before admission.
 
+### Scripts, blocking replies and cursor pages
+
+Script-object `Scripts.ExecuteAsync`, `ExecuteSpanAsync`, `ExecuteLeaseAsync`,
+`ExecuteLeaseSpanAsync`, and the typed/integer/string execution conveniences use one
+`EVALSHA` (or `EVALSHA_RO`) scope. It encloses NOSCRIPT fallback to EVAL, declared
+retries, cache mutation cleanup, and the selected result conversion. Owned results finish
+materialization before completion; leased results complete when the lease is returned to
+the caller. The caller's subsequent conversion or disposal of that lease is outside the
+hook boundary.
+
+Dedicated blocking list, sorted-set, and stream commands that use the blocking converted
+response helper complete after reply conversion and dedicated connection cleanup. Their
+internal connection setup and cancellation control commands do not create hook events.
+
+Ordinary `Keys.ScanAsync` and collection SSCAN/HSCAN/ZSCAN enumerations admit each
+requested page separately. Completion includes parsing that page, before its items are
+yielded. Rejecting a later page prevents its send while leaving earlier pages delivered.
+Cancellation between yielded items is outside the already completed page.
+
 The following paths do not yet have a complete hook contract: interpolated commands,
-function execution/library recovery, script objects and NOSCRIPT
-fallback, ordinary cursor pages, dedicated blocking facets, multi-key
+function execution/library recovery, multi-key
 cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction
