@@ -152,7 +152,7 @@ are diagnostic equivalents, not identical counters or a message parsing contract
 | `qs` (sent commands awaiting responses) | Closest: `InflightCount`, but Respire also counts buffered slots, abandoned waits, and transaction intermediates. Use the stage to determine write progress. |
 | `qu` (awaiting write), `bw` (backlog writer), `ws` (write state) | `Buffered`/`Writing`, `PendingWriteBytes`, and `TimeSinceLastWrite`. Respire does not expose the same backlog-writer state machine. |
 | `rs` (reader state) | No direct reader-state enum. Inspect stage, `TimeSinceLastRead`, scheduling delays, and blocked application work. |
-| `in`, `in-pipe` (unread inbound bytes) | No direct inbound-byte counter in the timeout snapshot. `InflightBytes` counts requests, not unread replies. Check payload sizes and read progress. |
+| `in` (bytes available on the socket), `in-pipe` (bytes buffered in the read pipe) | No direct inbound-byte counter in the timeout snapshot. `InflightBytes` counts requests, not unread replies. Distinguish socket availability from bytes already buffered when checking payload sizes and read progress. |
 | `out-pipe` (outbound buffered bytes) | Closest: `PendingWriteBytes`; transport boundaries differ. |
 | `inst` (operations since heartbeat) | No direct timeout field. Correlate command throughput using [observability](../integrations/observability.md). |
 | `IOCP: Busy/Min`, `WORKER: Busy/Min` | `BusyIoThreads`/`MinIoThreads` and `BusyWorkerThreads`/`MinWorkerThreads`; message labels are `IO busy/min` and `workers busy/min`. |
