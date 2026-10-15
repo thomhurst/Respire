@@ -96,7 +96,19 @@ internal sealed partial class ServerCommands
         return ConvertAsync(call.Operation, call.Command, cancellationToken, call.Convert);
     }
 
-    private async ValueTask<RespireServerResult<T>[]> ExecuteMetadataOnAllNodesAsync<T>(MetadataCall<T> call, CancellationToken cancellationToken)
+    private ValueTask<RespireServerResult<T>[]> ExecuteMetadataOnAllNodesAsync<T>(MetadataCall<T> call, CancellationToken cancellationToken)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, call.Operation, cancellationToken,
+                (Server: this, Call: call, Token: cancellationToken),
+                static s => s.Server.ExecuteMetadataOnAllNodesUnhookedAsync(s.Call, s.Token),
+                static s =>
+                {
+                    if (s.Call.RequiresAdmin) s.Server.EnsureAdminAllowed(s.Call.Operation);
+                    return s.Call.Operation;
+                })
+            : ExecuteMetadataOnAllNodesUnhookedAsync(call, cancellationToken);
+
+    private async ValueTask<RespireServerResult<T>[]> ExecuteMetadataOnAllNodesUnhookedAsync<T>(MetadataCall<T> call, CancellationToken cancellationToken)
     {
         if (call.RequiresAdmin) EnsureAdminAllowed(call.Operation);
         cancellationToken.ThrowIfCancellationRequested();
@@ -106,7 +118,7 @@ internal sealed partial class ServerCommands
         var fence = cache is null ? default : cache.BeforeCommand(call.Operation, call.Command);
         try
         {
-            return await FanOutAsync(call.Operation, new MutationCommand<CmdN>(call.Command, fence), cancellationToken, call.Convert).ConfigureAwait(false);
+            return await FanOutUnhookedAsync(call.Operation, new MutationCommand<CmdN>(call.Command, fence), cancellationToken, call.Convert).ConfigureAwait(false);
         }
         finally
         {

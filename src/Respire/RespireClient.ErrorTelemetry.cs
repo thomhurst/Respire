@@ -307,7 +307,7 @@ public sealed partial class RespireClient
         return convert(result);
     }
 
-    internal ValueTask<TResult> ConvertOnConnectionAsync<TCommand, TState, TResult>(
+    private ValueTask<TResult> ConvertOnConnectionUnhookedAsync<TCommand, TState, TResult>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, TResult> converter, bool pinToConnection = true,
         RespireTelemetry.ErrorObservation observation = default, bool admit = false)
@@ -317,7 +317,7 @@ public sealed partial class RespireClient
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Operation: operation, Connection: connection, Command: command, Token: cancellationToken,
                     State: state, Converter: converter, Pinned: pinToConnection, Admit: admit),
-                static (state, owner) => state.Client.ConvertOnConnectionAsync(state.Operation, state.Connection,
+                static (state, owner) => state.Client.ConvertOnConnectionUnhookedAsync(state.Operation, state.Connection,
                     state.Command, state.Token, state.State, state.Converter, state.Pinned, owner, state.Admit));
         ValueTask<RespValue> response;
         try

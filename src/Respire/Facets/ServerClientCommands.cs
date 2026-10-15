@@ -60,7 +60,15 @@ internal sealed partial class ServerCommands
         => DispatchResponseSource<RespireServerClientConnection>.Run((Client: this, cancellationToken: cancellationToken),
             static (state, observation) => state.Client.GetClientConnectionBorrowedAsync(state.cancellationToken, observation));
 
-    private async ValueTask<RespireServerClientConnection> GetClientConnectionBorrowedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    private ValueTask<RespireServerClientConnection> GetClientConnectionBorrowedAsync(CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "CLIENT ID", cancellationToken,
+                (Server: this, Token: cancellationToken, Observation: observation),
+                static s => s.Server.GetClientConnectionUnhookedAsync(s.Token, s.Observation))
+            : GetClientConnectionUnhookedAsync(cancellationToken, observation);
+
+    private async ValueTask<RespireServerClientConnection> GetClientConnectionUnhookedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);

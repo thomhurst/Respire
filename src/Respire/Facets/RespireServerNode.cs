@@ -458,7 +458,26 @@ public sealed partial class RespireServerNode
                 return state.Parser(in reply);
             }, cancellationToken, commandTimeout, observation: observation);
 
-    private async ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, NodeCallKind callKind,
+    private ValueTask<T> WithNodeConnectionAsync<TState, T>(string operation, NodeCallKind callKind,
+        TState state, Func<RespireConnection, TState, CancellationToken, ClientSideCacheCoordinator.MutationFence,
+            RespireTelemetry.ErrorObservation, ValueTask<T>> execute,
+        CancellationToken cancellationToken, TimeSpan? commandTimeout = null, RespireTelemetry.ErrorObservation observation = default)
+        => _client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Node: this, Operation: operation, Kind: callKind, State: state, Execute: execute,
+                    Token: cancellationToken, Timeout: commandTimeout, Observation: observation),
+                static s => s.Node.WithNodeConnectionUnhookedAsync(s.Operation, s.Kind, s.State,
+                    s.Execute, s.Token, s.Timeout, s.Observation),
+                static s =>
+                {
+                    if (s.Kind is NodeCallKind.Mutation or NodeCallKind.ControlMutation)
+                        ServerCommands.EnsureAdminAllowed(s.Node._client, s.Operation);
+                    return s.Operation;
+                })
+            : WithNodeConnectionUnhookedAsync(operation, callKind, state, execute,
+                cancellationToken, commandTimeout, observation);
+
+    private async ValueTask<T> WithNodeConnectionUnhookedAsync<TState, T>(string operation, NodeCallKind callKind,
         TState state, Func<RespireConnection, TState, CancellationToken, ClientSideCacheCoordinator.MutationFence,
             RespireTelemetry.ErrorObservation, ValueTask<T>> execute,
         CancellationToken cancellationToken, TimeSpan? commandTimeout = null, RespireTelemetry.ErrorObservation observation = default)
@@ -467,7 +486,7 @@ public sealed partial class RespireServerNode
             return await DispatchResponseSource<T>.Run(
                 (Node: this, Operation: operation, Kind: callKind, State: state, Execute: execute,
                     Token: cancellationToken, Timeout: commandTimeout),
-                static (call, owner) => call.Node.WithNodeConnectionAsync(call.Operation, call.Kind,
+                static (call, owner) => call.Node.WithNodeConnectionUnhookedAsync(call.Operation, call.Kind,
                     call.State, call.Execute, call.Token, call.Timeout, owner)).ConfigureAwait(false);
         try
         {

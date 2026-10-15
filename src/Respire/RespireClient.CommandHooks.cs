@@ -1,5 +1,6 @@
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -25,6 +26,20 @@ public sealed partial class RespireClient
         => ConvertResponseUnhookedAsync(operation, command, ct, this,
             static (RespireClient _, in RespValue value) => ResponseReader.OkOrNull(in value),
             observation: observation);
+
+    internal ValueTask<TResult> ConvertOnConnectionAsync<TCommand, TState, TResult>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
+        TState state, ResponseConverter<TState, TResult> converter, bool pinToConnection = true,
+        RespireTelemetry.ErrorObservation observation = default, bool admit = false)
+        where TCommand : struct, IRespCommand
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Client: this, Operation: operation, Connection: connection, Command: command, Token: cancellationToken,
+                    State: state, Converter: converter, Pinned: pinToConnection, Observation: observation, Admit: admit),
+                static s => s.Client.ConvertOnConnectionUnhookedAsync(s.Operation, s.Connection, s.Command,
+                    s.Token, s.State, s.Converter, s.Pinned, s.Observation, s.Admit))
+            : ConvertOnConnectionUnhookedAsync(operation, connection, command, cancellationToken,
+                state, converter, pinToConnection, observation, admit);
 
     internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
         string operation, in TCommand command, CancellationToken ct, TState state,
