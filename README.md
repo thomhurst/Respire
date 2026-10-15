@@ -2,7 +2,7 @@
 
 **A fast, modern Redis client for .NET, with distributed locks, rate limiters, and server-assisted client caching.**
 
-Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
+Works with Redis, Valkey, KeyDB, and other RESP-compatible servers
 
 [Documentation](https://thomhurst.github.io/Respire/) ·
 [Getting started](https://thomhurst.github.io/Respire/docs/getting-started) ·
