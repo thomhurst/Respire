@@ -117,6 +117,32 @@ public sealed partial class RespireClient
                 static s => s.Client.ValidateHookCommand(s.Command, s.Args, RespireCommandFlags.None, fireAndForget: true))
             : ExecuteCommandFireAndForgetUnhookedAsync(command, args, cancellationToken);
 
+    // Only configured calls allocate this holder. Preflight captures caller-owned memory before
+    // admission, and every result owner dispatches that same snapshot without rebuilding it.
+    private sealed class InterpolatedHookCommand
+    {
+        internal (string Operation, RespireValue[] Tokens) Snapshot;
+    }
+
+    private string ValidateInterpolatedHookCommand(RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags, bool fireAndForget, InterpolatedHookCommand prepared)
+    {
+        if (!fireAndForget) ValidateResultFlags(flags);
+        var (initialOperation, tokens) = command.Build();
+        for (var i = 0; i < tokens.Length; i++) tokens[i] = tokens[i].Snapshot();
+        prepared.Snapshot = (initialOperation, tokens);
+        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        if (fireAndForget)
+            ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
+        _ = StoredProcedureName(operation, arguments);
+        _ = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        if (!fireAndForget && _core.Cluster is not null
+            && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
+            ValidateClusterWideFlags(operation, flags);
+        return operation;
+    }
+
     // Only the opt-in hook path needs this early validation. Keep using the dispatch validators
     // so rejection cannot mask their errors, without adding work to unconfigured calls.
     private string ValidateHookCommand(RespireCommand command, RespireValue[] args,

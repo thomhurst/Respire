@@ -8,7 +8,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-public class CommandHookTests
+public partial class CommandHookTests
 {
     [Test]
     [Arguments("owned")]
@@ -131,6 +131,9 @@ public class CommandHookTests
     [Arguments("catalog")]
     [Arguments("lease")]
     [Arguments("forget")]
+    [Arguments("interpolated-owned")]
+    [Arguments("interpolated-lease")]
+    [Arguments("interpolated-forget")]
     public async Task AdmissionPrecedesWireAndCompletionPreservesState(string route)
     {
         await using var server = Server();
@@ -160,6 +163,9 @@ public class CommandHookTests
     [Arguments("catalog")]
     [Arguments("lease")]
     [Arguments("forget")]
+    [Arguments("interpolated-owned")]
+    [Arguments("interpolated-lease")]
+    [Arguments("interpolated-forget")]
     public async Task RejectionSendsNothingAndReportsTheSameException(string route)
     {
         await using var server = Server();
@@ -452,6 +458,15 @@ public class CommandHookTests
                     await Assert.That(result.AsString()).IsEqualTo("42");
                 break;
             case "forget": await client.ExecuteFireAndForgetAsync("GET", "key"); break;
+            case "interpolated-owned":
+                using (var result = await client.ExecuteAsync($"GET {"key"}"))
+                    await Assert.That(result.AsString()).IsEqualTo("42");
+                break;
+            case "interpolated-lease":
+                using (var result = await client.ExecuteLeaseAsync($"GET {"key"}"))
+                    await Assert.That(result.AsString()).IsEqualTo("42");
+                break;
+            case "interpolated-forget": await client.ExecuteFireAndForgetAsync($"GET {"key"}"); break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
@@ -478,6 +493,7 @@ public class CommandHookTests
     private sealed class RecordingHook : RespireCommandHook
     {
         internal Action<RespireCommandContext>? Before;
+        internal Action? After;
         internal bool ThrowOnCompleted;
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
@@ -490,6 +506,7 @@ public class CommandHookTests
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, state, outcome, error));
+            After?.Invoke();
             if (ThrowOnCompleted) throw new InvalidOperationException("Observer failure");
         }
     }

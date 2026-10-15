@@ -10,7 +10,7 @@ default is `null`: it creates no hook context or delegate and enters no extra as
 Client views created with a key prefix, read preference, or cache bypass share the hook.
 
 :::important Scope
-Supported routes include ordinary converted-response commands, non-interpolated Execute
+Supported routes include ordinary converted-response commands, interpolated and non-interpolated Execute
 APIs, function calls and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
 streaming results, subscription setup/teardown, specialized server operations and cluster scan pages.
 This is **not a client-wide command-blocking policy**. Remaining specialized dispatch and
@@ -62,6 +62,21 @@ Non-interpolated `ExecuteAsync`, `ExecuteLeaseAsync`, and `ExecuteFireAndForgetA
 are covered for both catalog descriptors and caller-supplied command names. Raw command
 names are normalized and inline arguments are omitted from the context. Do not interpret
 this name-only API as a key/value authorization mechanism.
+
+The interpolated overloads of all three Execute APIs also admit after preflight validation
+and before dispatch. With a hook configured, tokens and caller-owned binary arguments are
+snapshotted before admission; dispatch uses that same snapshot even if the hook changes the
+original buffers or appends to an explicitly constructed handler.
+Literal command names and recognized subcommands are normalized;
+interpolated arguments are never included in the context. Owned `ExecuteAsync` completes
+after materialization and disposal of the temporary reply lease. `ExecuteLeaseAsync`
+completes when it transfers the result lease to the caller, who must still dispose it.
+Later caller-selected conversions (for example `result.AsDouble()`) are outside both
+result boundaries, including conversion failures. Fire-and-forget completes after its
+existing write/redirect handling. Retries, redirects, blocking dispatch, cluster-wide
+mutation legs and their mutation fences remain within one admitted operation.
+Hooks do not change replay eligibility: interpolated commands retain their raw-command
+restriction against retry-policy replay; cluster redirects keep their existing behavior.
 
 ### Functions
 
@@ -165,7 +180,7 @@ requested page separately. Completion includes parsing that page, before its ite
 yielded. Rejecting a later page prevents its send while leaving earlier pages delivered.
 Cancellation between yielded items is outside the already completed page.
 
-The following paths do not yet have a complete hook contract: interpolated commands,
+The following paths do not yet have a complete hook contract:
 multi-key cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction

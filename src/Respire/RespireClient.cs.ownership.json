@@ -134,7 +134,7 @@
     {
       "Name": "interpolated-helper",
       "Role": "helper",
-      "Member": "Respire.RespireClient.ExecuteInterpolatedAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteInterpolatedAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation,InterpolatedHookCommand?):ValueTask<RespireResult>",
       "Owner": "Respire.RespireClient.ExecuteAsync(RespireCommandInterpolatedStringHandler,RespireCommandFlags,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Delegate final publication to the public interpolated entry."
     },

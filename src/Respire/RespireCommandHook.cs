@@ -2,7 +2,7 @@ namespace Respire;
 
 /// <summary>Admits and observes supported logical command executions.</summary>
 /// <remarks>
-/// Covers ordinary converted commands, single-key cached GET, non-interpolated Execute APIs,
+/// Covers ordinary converted commands, single-key cached GET, interpolated and non-interpolated Execute APIs,
 /// script execution, blocking converted replies, ordinary cursor pages, streaming results and
 /// explicit subscription setup/teardown. Downloads complete on stream
 /// transfer, not later payload consumption. Uploads retain borrowed buffers through completion.
