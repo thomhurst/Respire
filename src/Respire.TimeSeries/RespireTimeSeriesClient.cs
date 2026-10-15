@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire.TimeSeries;
@@ -18,28 +19,42 @@ public sealed partial class RespireTimeSeriesClient
     private static readonly string[] LatestOption = ["LATEST"];
     private static readonly string[] DebugOption = ["DEBUG"];
 
-    private readonly RespireTimeSeriesCommandsImplementation _commands;
+    private readonly IRespireClient _client;
 
     /// <summary>Creates TimeSeries operations over an existing client.</summary>
     public RespireTimeSeriesClient(IRespireClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
-        _commands = new RespireTimeSeriesCommandsImplementation(client);
+        _client = client;
     }
 
     /// <summary>Creates an empty time series.</summary>
-    public async ValueTask CreateAsync(RespireKey key, RespireTimeSeriesOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask CreateAsync(RespireKey key, RespireTimeSeriesOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.CREATE", cancellationToken,
+                (Owner: this, key, options, cancellationToken),
+                static s => s.Owner.CreateUnhookedAsync(s.key, s.options, s.cancellationToken))
+            : CreateUnhookedAsync(key, options, cancellationToken);
+
+    private async ValueTask CreateUnhookedAsync(RespireKey key, RespireTimeSeriesOptions? options = null, CancellationToken cancellationToken = default)
     {
         var arguments = options?.ToArguments(allowEncoding: true) ?? [];
-        using var result = await _commands.CreateAsync(key, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(CreateCommand, [key, .. arguments], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Updates retention, chunk size, duplicate policy, IGNORE thresholds, or labels for an existing series.</summary>
     /// <exception cref="ArgumentException"><see cref="RespireTimeSeriesOptions.Encoding"/> is set; TS.ALTER cannot change it.</exception>
-    public async ValueTask AlterAsync(RespireKey key, RespireTimeSeriesOptions options, CancellationToken cancellationToken = default)
+    public ValueTask AlterAsync(RespireKey key, RespireTimeSeriesOptions options, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.ALTER", cancellationToken,
+                (Owner: this, key, options, cancellationToken),
+                static s => s.Owner.AlterUnhookedAsync(s.key, s.options, s.cancellationToken))
+            : AlterUnhookedAsync(key, options, cancellationToken);
+
+    private async ValueTask AlterUnhookedAsync(RespireKey key, RespireTimeSeriesOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
-        using var result = await _commands.AlterAsync(key, options.ToArguments(allowEncoding: false), cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(AlterCommand, [key, .. options.ToArguments(allowEncoding: false)], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Adds a sample, creating the series if needed, and returns its timestamp.</summary>
@@ -48,11 +63,18 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="value">The sample value.</param>
     /// <param name="options">Options for this write and for a series it creates.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
-    public async ValueTask<long> AddAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp, double value, RespireTimeSeriesAddOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask<long> AddAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp, double value, RespireTimeSeriesAddOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.ADD", cancellationToken,
+                (Owner: this, key, timestamp, value, options, cancellationToken),
+                static s => s.Owner.AddUnhookedAsync(s.key, s.timestamp, s.value, s.options, s.cancellationToken))
+            : AddUnhookedAsync(key, timestamp, value, options, cancellationToken);
+
+    private async ValueTask<long> AddUnhookedAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp, double value, RespireTimeSeriesAddOptions? options = null, CancellationToken cancellationToken = default)
     {
         var token = timestamp.RequireWrite(nameof(timestamp));
         var arguments = options?.ToArguments() ?? [];
-        using var result = await _commands.AddAsync(key, token, value, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(AddCommand, [key, token, value, .. arguments], cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
 
@@ -99,7 +121,14 @@ public sealed partial class RespireTimeSeriesClient
     /// <exception cref="RespireTimeSeriesMultiAddCanceledException">
     /// Cancellation occurred after a confirmed chunk. The exception retains the original cancellation token and reports progress.
     /// </exception>
-    public async ValueTask<long[]> MultiAddAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, int maxBatchSize, CancellationToken cancellationToken = default)
+    public ValueTask<long[]> MultiAddAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, int maxBatchSize, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.MADD", cancellationToken,
+                (Owner: this, samples, maxBatchSize, cancellationToken),
+                static s => s.Owner.MultiAddUnhookedAsync(s.samples, s.maxBatchSize, s.cancellationToken))
+            : MultiAddUnhookedAsync(samples, maxBatchSize, cancellationToken);
+
+    private async ValueTask<long[]> MultiAddUnhookedAsync(IReadOnlyList<RespireTimeSeriesWrite> samples, int maxBatchSize, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(samples);
         if (samples.Count == 0) throw new ArgumentException("At least one sample is required.", nameof(samples));
@@ -136,7 +165,7 @@ public sealed partial class RespireTimeSeriesClient
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 uncertainCount = count;
-                using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
+                using var result = await DispatchAsync(MultiAddCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
                 if (result.Type != RespireDataType.Array || result.Count != count)
                     throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
 
@@ -183,10 +212,17 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="increment">The amount added to the latest value.</param>
     /// <param name="options">The sample timestamp, and settings for a series this call creates.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
-    public async ValueTask<long> IncrementByAsync(RespireKey key, double increment, RespireTimeSeriesIncrementOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask<long> IncrementByAsync(RespireKey key, double increment, RespireTimeSeriesIncrementOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.INCRBY", cancellationToken,
+                (Owner: this, key, increment, options, cancellationToken),
+                static s => s.Owner.IncrementByUnhookedAsync(s.key, s.increment, s.options, s.cancellationToken))
+            : IncrementByUnhookedAsync(key, increment, options, cancellationToken);
+
+    private async ValueTask<long> IncrementByUnhookedAsync(RespireKey key, double increment, RespireTimeSeriesIncrementOptions? options = null, CancellationToken cancellationToken = default)
     {
         var arguments = options?.ToArguments() ?? [];
-        using var result = await _commands.IncrementByAsync(key, increment, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(IncrementByCommand, [key, increment, .. arguments], cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
 
@@ -195,17 +231,31 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="decrement">The amount subtracted from the latest value.</param>
     /// <param name="options">The sample timestamp, and settings for a series this call creates.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
-    public async ValueTask<long> DecrementByAsync(RespireKey key, double decrement, RespireTimeSeriesIncrementOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask<long> DecrementByAsync(RespireKey key, double decrement, RespireTimeSeriesIncrementOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.DECRBY", cancellationToken,
+                (Owner: this, key, decrement, options, cancellationToken),
+                static s => s.Owner.DecrementByUnhookedAsync(s.key, s.decrement, s.options, s.cancellationToken))
+            : DecrementByUnhookedAsync(key, decrement, options, cancellationToken);
+
+    private async ValueTask<long> DecrementByUnhookedAsync(RespireKey key, double decrement, RespireTimeSeriesIncrementOptions? options = null, CancellationToken cancellationToken = default)
     {
         var arguments = options?.ToArguments() ?? [];
-        using var result = await _commands.DecrementByAsync(key, decrement, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(DecrementByCommand, [key, decrement, .. arguments], cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
 
     /// <summary>Gets the latest sample, or null when the series has no samples.</summary>
-    public async ValueTask<RespireTimeSeriesSample?> GetAsync(RespireKey key, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
+    public ValueTask<RespireTimeSeriesSample?> GetAsync(RespireKey key, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.GET", cancellationToken,
+                (Owner: this, key, latestPartialBucket, cancellationToken),
+                static s => s.Owner.GetUnhookedAsync(s.key, s.latestPartialBucket, s.cancellationToken))
+            : GetUnhookedAsync(key, latestPartialBucket, cancellationToken);
+
+    private async ValueTask<RespireTimeSeriesSample?> GetUnhookedAsync(RespireKey key, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.GetAsync(key, latestPartialBucket ? LatestOption : [], cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(GetCommand, [key, .. (latestPartialBucket ? LatestOption : [])], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseLatest(result);
     }
 
@@ -216,60 +266,102 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="latestPartialBucket">Includes the latest partially compacted bucket of compaction series.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
     /// <exception cref="NotSupportedException">The client is a key-prefixed view.</exception>
-    public async ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiGetAsync(IReadOnlyList<string> filters, bool withLabels = false, IReadOnlyList<string>? selectedLabels = null, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
+    public ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiGetAsync(IReadOnlyList<string> filters, bool withLabels = false, IReadOnlyList<string>? selectedLabels = null, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.MGET", cancellationToken,
+                (Owner: this, filters, withLabels, selectedLabels, latestPartialBucket, cancellationToken),
+                static s => s.Owner.MultiGetUnhookedAsync(s.filters, s.withLabels, s.selectedLabels, s.latestPartialBucket, s.cancellationToken))
+            : MultiGetUnhookedAsync(filters, withLabels, selectedLabels, latestPartialBucket, cancellationToken);
+
+    private async ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiGetUnhookedAsync(IReadOnlyList<string> filters, bool withLabels = false, IReadOnlyList<string>? selectedLabels = null, bool latestPartialBucket = false, CancellationToken cancellationToken = default)
     {
         RespireTimeSeriesRangeOptions.ValidateFilters(filters, nameof(filters));
         var arguments = new List<RespireValue>(filters.Count + (selectedLabels?.Count ?? 0) + 3);
         if (latestPartialBucket) arguments.Add("LATEST");
         RespireTimeSeriesRangeOptions.AppendLabelSelection(arguments, withLabels, selectedLabels);
         RespireTimeSeriesRangeOptions.AppendFilters(arguments, filters, nameof(filters));
-        using var result = await _commands.MultiGetAsync([.. arguments], cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(MultiGetCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseSeries(result, latestSample: true);
     }
 
     /// <summary>Reads one series in ascending timestamp order.</summary>
-    public async ValueTask<RespireTimeSeriesRangeResult> RangeAsync(RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask<RespireTimeSeriesRangeResult> RangeAsync(RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.RANGE", cancellationToken,
+                (Owner: this, key, range, options, cancellationToken),
+                static s => s.Owner.RangeUnhookedAsync(s.key, s.range, s.options, s.cancellationToken))
+            : RangeUnhookedAsync(key, range, options, cancellationToken);
+
+    private async ValueTask<RespireTimeSeriesRangeResult> RangeUnhookedAsync(RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions? options = null, CancellationToken cancellationToken = default)
     {
         var (from, to) = range.ToTokens(nameof(range));
         var arguments = options?.ToArguments(multiSeries: false) ?? [];
-        using var result = await _commands.RangeAsync(key, from, to, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(RangeCommand, [key, from, to, .. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseRange(result);
     }
 
     /// <summary>Reads one series in descending timestamp order.</summary>
-    public async ValueTask<RespireTimeSeriesRangeResult> ReverseRangeAsync(RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions? options = null, CancellationToken cancellationToken = default)
+    public ValueTask<RespireTimeSeriesRangeResult> ReverseRangeAsync(RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.REVRANGE", cancellationToken,
+                (Owner: this, key, range, options, cancellationToken),
+                static s => s.Owner.ReverseRangeUnhookedAsync(s.key, s.range, s.options, s.cancellationToken))
+            : ReverseRangeUnhookedAsync(key, range, options, cancellationToken);
+
+    private async ValueTask<RespireTimeSeriesRangeResult> ReverseRangeUnhookedAsync(RespireKey key, RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions? options = null, CancellationToken cancellationToken = default)
     {
         var (from, to) = range.ToTokens(nameof(range));
         var arguments = options?.ToArguments(multiSeries: false) ?? [];
-        using var result = await _commands.ReverseRangeAsync(key, from, to, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(ReverseRangeCommand, [key, from, to, .. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseRange(result);
     }
 
     /// <summary>Reads series matching <see cref="RespireTimeSeriesRangeOptions.Filters"/> in ascending timestamp order.</summary>
     /// <exception cref="NotSupportedException">The client is a key-prefixed view.</exception>
-    public async ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiRangeAsync(RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions options, CancellationToken cancellationToken = default)
+    public ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiRangeAsync(RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions options, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.MRANGE", cancellationToken,
+                (Owner: this, range, options, cancellationToken),
+                static s => s.Owner.MultiRangeUnhookedAsync(s.range, s.options, s.cancellationToken))
+            : MultiRangeUnhookedAsync(range, options, cancellationToken);
+
+    private async ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiRangeUnhookedAsync(RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         var (from, to) = range.ToTokens(nameof(range));
-        using var result = await _commands.MultiRangeAsync(from, to, options.ToArguments(multiSeries: true), cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(MultiRangeCommand, [from, to, .. options.ToArguments(multiSeries: true)], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseSeries(result, latestSample: false);
     }
 
     /// <summary>Reads series matching <see cref="RespireTimeSeriesRangeOptions.Filters"/> in descending timestamp order.</summary>
     /// <exception cref="NotSupportedException">The client is a key-prefixed view.</exception>
-    public async ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiReverseRangeAsync(RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions options, CancellationToken cancellationToken = default)
+    public ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiReverseRangeAsync(RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions options, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.MREVRANGE", cancellationToken,
+                (Owner: this, range, options, cancellationToken),
+                static s => s.Owner.MultiReverseRangeUnhookedAsync(s.range, s.options, s.cancellationToken))
+            : MultiReverseRangeUnhookedAsync(range, options, cancellationToken);
+
+    private async ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> MultiReverseRangeUnhookedAsync(RespireTimeSeriesRange range, RespireTimeSeriesRangeOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         var (from, to) = range.ToTokens(nameof(range));
-        using var result = await _commands.MultiReverseRangeAsync(from, to, options.ToArguments(multiSeries: true), cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(MultiReverseRangeCommand, [from, to, .. options.ToArguments(multiSeries: true)], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseSeries(result, latestSample: false);
     }
 
     /// <summary>Deletes samples in an inclusive timestamp range and returns the deleted count.</summary>
-    public async ValueTask<long> DeleteRangeAsync(RespireKey key, RespireTimeSeriesRange range, CancellationToken cancellationToken = default)
+    public ValueTask<long> DeleteRangeAsync(RespireKey key, RespireTimeSeriesRange range, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.DEL", cancellationToken,
+                (Owner: this, key, range, cancellationToken),
+                static s => s.Owner.DeleteRangeUnhookedAsync(s.key, s.range, s.cancellationToken))
+            : DeleteRangeUnhookedAsync(key, range, cancellationToken);
+
+    private async ValueTask<long> DeleteRangeUnhookedAsync(RespireKey key, RespireTimeSeriesRange range, CancellationToken cancellationToken = default)
     {
         var (from, to) = range.ToTokens(nameof(range));
-        using var result = await _commands.DeleteRangeAsync(key, from, to, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(DeleteRangeCommand, [key, from, to], cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
 
@@ -283,7 +375,14 @@ public sealed partial class RespireTimeSeriesClient
     /// </param>
     /// <param name="alignTimestamp">Aligns buckets so one starts at this millisecond timestamp; defaults to the epoch.</param>
     /// <param name="cancellationToken">Cancels the operation.</param>
-    public async ValueTask CreateRuleAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, long bucketDurationMilliseconds, long? alignTimestamp = null, CancellationToken cancellationToken = default)
+    public ValueTask CreateRuleAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, long bucketDurationMilliseconds, long? alignTimestamp = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.CREATERULE", cancellationToken,
+                (Owner: this, source, destination, aggregation, bucketDurationMilliseconds, alignTimestamp, cancellationToken),
+                static s => s.Owner.CreateRuleUnhookedAsync(s.source, s.destination, s.aggregation, s.bucketDurationMilliseconds, s.alignTimestamp, s.cancellationToken))
+            : CreateRuleUnhookedAsync(source, destination, aggregation, bucketDurationMilliseconds, alignTimestamp, cancellationToken);
+
+    private async ValueTask CreateRuleUnhookedAsync(RespireKey source, RespireKey destination, RespireTimeSeriesAggregation aggregation, long bucketDurationMilliseconds, long? alignTimestamp = null, CancellationToken cancellationToken = default)
     {
         if (bucketDurationMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(bucketDurationMilliseconds));
         if (alignTimestamp < 0) throw new ArgumentOutOfRangeException(nameof(alignTimestamp));
@@ -291,7 +390,7 @@ public sealed partial class RespireTimeSeriesClient
         RespireValue[] arguments = alignTimestamp is { } align
             ? ["AGGREGATION", aggregationName, bucketDurationMilliseconds, align]
             : ["AGGREGATION", aggregationName, bucketDurationMilliseconds];
-        using var result = await _commands.CreateRuleAsync(source, destination, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(CreateRuleCommand, [source, destination, .. arguments], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Creates a compaction rule that aggregates a source series into an existing destination series.</summary>
@@ -309,15 +408,29 @@ public sealed partial class RespireTimeSeriesClient
     }
 
     /// <summary>Deletes the compaction rule from a source series to a destination series.</summary>
-    public async ValueTask DeleteRuleAsync(RespireKey source, RespireKey destination, CancellationToken cancellationToken = default)
+    public ValueTask DeleteRuleAsync(RespireKey source, RespireKey destination, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.DELETERULE", cancellationToken,
+                (Owner: this, source, destination, cancellationToken),
+                static s => s.Owner.DeleteRuleUnhookedAsync(s.source, s.destination, s.cancellationToken))
+            : DeleteRuleUnhookedAsync(source, destination, cancellationToken);
+
+    private async ValueTask DeleteRuleUnhookedAsync(RespireKey source, RespireKey destination, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.DeleteRuleAsync(source, destination, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(DeleteRuleCommand, [source, destination], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Returns series metadata from TS.INFO: sample counts, retention, chunks, labels, and compaction rules.</summary>
-    public async ValueTask<RespireTimeSeriesInfo> GetInfoAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<RespireTimeSeriesInfo> GetInfoAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.INFO", cancellationToken,
+                (Owner: this, key, cancellationToken),
+                static s => s.Owner.GetInfoUnhookedAsync(s.key, s.cancellationToken))
+            : GetInfoUnhookedAsync(key, cancellationToken);
+
+    private async ValueTask<RespireTimeSeriesInfo> GetInfoUnhookedAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.InfoAsync(key, [], cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(InfoCommand, [key], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseInfo(result);
     }
 
@@ -329,22 +442,68 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="read">Projects the response. The result is disposed when it returns, so it must not escape.</param>
     /// <param name="debug">Sends TS.INFO DEBUG, which adds per-chunk details.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
-    public async ValueTask<T> GetRawInfoAsync<T>(RespireKey key, Func<RespireResult, T> read, bool debug = false, CancellationToken cancellationToken = default)
+    public ValueTask<T> GetRawInfoAsync<T>(RespireKey key, Func<RespireResult, T> read, bool debug = false, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.INFO", cancellationToken,
+                (Owner: this, key, read, debug, cancellationToken),
+                static s => s.Owner.GetRawInfoUnhookedAsync<T>(s.key, s.read, s.debug, s.cancellationToken))
+            : GetRawInfoUnhookedAsync<T>(key, read, debug, cancellationToken);
+
+    private async ValueTask<T> GetRawInfoUnhookedAsync<T>(RespireKey key, Func<RespireResult, T> read, bool debug = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(read);
-        using var result = await _commands.InfoAsync(key, debug ? DebugOption : [], cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(InfoCommand, [key, .. (debug ? DebugOption : [])], cancellationToken).ConfigureAwait(false);
         return read(result);
     }
 
     /// <summary>Finds binary-safe keys of series matching label filters.</summary>
     /// <exception cref="NotSupportedException">The client is a key-prefixed view.</exception>
-    public async ValueTask<RespireKey[]> QueryIndexAsync(IReadOnlyList<string> filters, CancellationToken cancellationToken = default)
+    public ValueTask<RespireKey[]> QueryIndexAsync(IReadOnlyList<string> filters, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.QUERYINDEX", cancellationToken,
+                (Owner: this, filters, cancellationToken),
+                static s => s.Owner.QueryIndexUnhookedAsync(s.filters, s.cancellationToken))
+            : QueryIndexUnhookedAsync(filters, cancellationToken);
+
+    private async ValueTask<RespireKey[]> QueryIndexUnhookedAsync(IReadOnlyList<string> filters, CancellationToken cancellationToken = default)
     {
         RespireTimeSeriesRangeOptions.ValidateFilters(filters, nameof(filters));
         // TS.QUERYINDEX takes bare filter expressions, without the FILTER token.
-        using var result = await _commands.QueryIndexAsync([.. filters], cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(QueryIndexCommand, [.. filters], cancellationToken).ConfigureAwait(false);
         var keys = new RespireKey[result.Count];
         for (var index = 0; index < keys.Length; index++) keys[index] = new RespireKey(result[index].AsBytes());
         return keys;
+    }
+
+    private static readonly RespireCommand RangeKeysCommand = RespireCommand.Create("TS.NRANGE", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand ReverseRangeKeysCommand = RespireCommand.Create("TS.NREVRANGE", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand QueryLabelsCommand = RespireCommand.Create("TS.QUERYLABELS", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand ReadCommand = RespireCommand.Create("TS.READ", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand CreateCommand = RespireCommand.Create("TS.CREATE", RespireCacheMutation.SingleKey);
+    private static readonly RespireCommand AlterCommand = RespireCommand.Create("TS.ALTER", RespireCacheMutation.SingleKey);
+    private static readonly RespireCommand AddCommand = RespireCommand.Create("TS.ADD", RespireCacheMutation.Unknown);
+    private static readonly RespireCommand MultiAddCommand = RespireCommand.Create("TS.MADD", RespireCacheMutation.Unknown);
+    private static readonly RespireCommand IncrementByCommand = RespireCommand.Create("TS.INCRBY", RespireCacheMutation.Unknown);
+    private static readonly RespireCommand DecrementByCommand = RespireCommand.Create("TS.DECRBY", RespireCacheMutation.Unknown);
+    private static readonly RespireCommand GetCommand = RespireCommand.Create("TS.GET", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand MultiGetCommand = RespireCommand.Create("TS.MGET", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand RangeCommand = RespireCommand.Create("TS.RANGE", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand ReverseRangeCommand = RespireCommand.Create("TS.REVRANGE", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand MultiRangeCommand = RespireCommand.Create("TS.MRANGE", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand MultiReverseRangeCommand = RespireCommand.Create("TS.MREVRANGE", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand DeleteRangeCommand = RespireCommand.Create("TS.DEL", RespireCacheMutation.Unknown);
+    private static readonly RespireCommand CreateRuleCommand = RespireCommand.Create("TS.CREATERULE", RespireCacheMutation.MultiKey);
+    private static readonly RespireCommand DeleteRuleCommand = RespireCommand.Create("TS.DELETERULE", RespireCacheMutation.MultiKey);
+    private static readonly RespireCommand InfoCommand = RespireCommand.Create("TS.INFO", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand QueryIndexCommand = RespireCommand.Create("TS.QUERYINDEX", RespireCacheMutation.ReadOnly);
+
+    // Only a concrete client's explicit typed owner borrows dispatch. Decorators retain
+    // their public ExecuteAsync boundary, including their own hooks and interception.
+    private ValueTask<RespireResult> DispatchAsync(RespireCommand command, RespireValue[] arguments, CancellationToken token)
+    {
+        if (token.IsCancellationRequested) return ValueTask.FromCanceled<RespireResult>(token);
+        return _client is RespireClient client && client.Core.Options.CommandHook is not null
+            ? client.ExecuteOwnedCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token)
+            : _client.ExecuteAsync(command, arguments, cancellationToken: token);
     }
 }

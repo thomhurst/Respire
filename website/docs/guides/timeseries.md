@@ -10,6 +10,11 @@ dotnet add package Respire.TimeSeries
 
 With C# 14 or later, import `Respire.TimeSeries` and use `client.TimeSeries` on `RespireClient` or `IRespireClient`. It returns one wrapper per client (a `WithKeyPrefix` view gets its own; see [Key prefixes and Cluster](#key-prefixes-and-cluster)), does no network I/O, and never disposes the client. On earlier C# versions, use `new RespireTimeSeriesClient(client)`.
 
+On concrete clients, [logical command hooks](command-hooks.md#timeseries-result-owners)
+include typed reply parsing and `GetRawInfoAsync` projections. A chunked `MultiAddAsync`
+reports one completion after all chunks and any partial-progress exception translation.
+`FollowAsync` reports each underlying `TS.READ` separately.
+
 ```csharp
 using Respire;
 using Respire.TimeSeries;

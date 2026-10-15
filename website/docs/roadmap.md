@@ -157,6 +157,7 @@ Public interface compatibility and the post-2.0 extension policy are described i
   cache-aside factories, distributed-cache operations, interpolated and non-interpolated Execute APIs,
   function execution and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
   streaming upload/download results, explicit subscription setup/teardown,
+  typed TimeSeries results including chunked `TS.MADD` partial-progress failures,
   specialized server/pinned/fan-out operations, resumable cluster scan pages,
   stream appends including automatic IDMP retries and capability fallback,
   explicit batch/transaction members (including WAIT/WAITAOF), WATCH setup, immediate hash imports,

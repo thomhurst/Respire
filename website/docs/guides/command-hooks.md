@@ -118,7 +118,7 @@ does not promise their outer typed result or composite lifetime:
 | --- | --- |
 | JSON | Typed deserialization, cardinality, text/numeric conversion, serialization and buffer cleanup are covered above; `Commands` transfers raw results. |
 | Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery are covered below. |
-| TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion: [#1778](https://github.com/thomhurst/Respire/issues/1778). |
+| TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion are covered below. |
 | Probabilistic | Typed boolean/numeric/array and dump-chunk conversion and owned cleanup are covered above; Info and Top-K List transfer raw results. |
 
 This inventory does not establish a client-wide blocking policy; the final audit remains
@@ -160,6 +160,29 @@ interface; Respire does not unwrap them. Their underlying client's raw-command h
 therefore complete before the outer Search parser and observe recovery as separate calls.
 This does not establish a client-wide blocking policy; the final audit remains in
 [#1708](https://github.com/thomhurst/Respire/issues/1708).
+
+### TimeSeries result owners
+
+With a concrete `RespireClient` (including its prefixed and cache-bypass views), typed
+`RespireTimeSeriesClient` calls admit before preparing or sending the operation and complete
+after parsing, projecting, and disposing their replies. Supported names are `TS.CREATE`,
+`TS.ALTER`, `TS.ADD`, `TS.MADD`, `TS.INCRBY`, `TS.DECRBY`, `TS.GET`, `TS.MGET`, `TS.RANGE`,
+`TS.REVRANGE`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.DEL`, `TS.CREATERULE`, `TS.DELETERULE`,
+`TS.INFO`, `TS.QUERYINDEX`, `TS.NRANGE`, `TS.NREVRANGE`, `TS.QUERYLABELS`, and `TS.READ`.
+`GetRawInfoAsync` includes the caller's projection in its `TS.INFO` result. Label-name and
+label-value queries both use `TS.QUERYLABELS`. `FollowAsync` owns each `TS.READ` separately;
+consumer processing and delays between reads are outside those command boundaries.
+
+Both `MultiAddAsync` overloads own one `TS.MADD` completion across all chunks, including
+per-sample errors and final partial-progress exception translation. The completion receives
+the same final exception as the caller; cancellation after confirmed progress reports
+`Canceled`. Rejection and pre-cancellation send no chunks. This does not make multiple
+chunks atomic or replay an uncertain write.
+
+Internal sends retain routing, key prefixing, retry rules, and cache mutation fences.
+Commands started by a hook or projection have their own owners. An external `IRespireClient`
+decorator retains its public `ExecuteAsync` dispatch and raw-result boundary; the module
+does not unwrap it. The client-wide policy disclaimer above still applies pending #1708.
 
 ### Cache operation owners
 
