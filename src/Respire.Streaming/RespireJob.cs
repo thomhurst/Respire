@@ -4,6 +4,10 @@ namespace Respire.Streaming;
 /// <typeparam name="T">The application payload type.</typeparam>
 public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId) : IJobDelivery, IJobRetry
 {
+    /// <summary>The application group identity from enqueue, or null for an ungrouped job.</summary>
+    /// <remarks>This is envelope metadata, not the Redis consumer group or a scheduling guarantee.</remarks>
+    public string? Group { get; init; }
+
     private TimeSpan? _retryDelay;
     TimeSpan? IJobRetry.RetryDelay => _retryDelay;
 
@@ -33,10 +37,11 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
 
     /// <summary>Compares the job envelope, excluding per-delivery progress, result and retry control state.</summary>
     public bool Equals(RespireJob<T>? other) => other is not null
-        && Id == other.Id && EqualityComparer<T>.Default.Equals(Payload, other.Payload) && EntryId == other.EntryId;
+        && Id == other.Id && EqualityComparer<T>.Default.Equals(Payload, other.Payload)
+        && EntryId == other.EntryId && Group == other.Group;
 
     /// <summary>Hashes the job envelope, excluding per-delivery progress, result and retry control state.</summary>
-    public override int GetHashCode() => HashCode.Combine(Id, Payload, EntryId);
+    public override int GetHashCode() => HashCode.Combine(Id, Payload, EntryId, Group);
 
     /// <summary>Appends progress from 0 through 100 for this delivery; false means it is no longer current.</summary>
     /// <remarks>Only hosted deliveries can report progress. Reports do not extend the visibility timeout.

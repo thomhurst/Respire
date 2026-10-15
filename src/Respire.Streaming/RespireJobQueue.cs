@@ -129,7 +129,8 @@ public sealed partial class RespireJobQueue<T>
         using var result = await _client.Scripts.ExecuteAsync(JobQueueScheduling.Enqueue, [.. keys],
             [jobId, bytes, (long)Math.Ceiling(options.DeduplicationWindow.TotalMilliseconds),
                 (long)Math.Ceiling(options.Delay.TotalMilliseconds), options.Priority,
-                (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
+                (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State,
+                options.Group ?? string.Empty], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }
@@ -151,6 +152,6 @@ public sealed partial class RespireJobQueue<T>
         var id = entry.GetString("_respire.job.id");
         if (string.IsNullOrWhiteSpace(id)) throw new FormatException("The stream entry has no job ID.");
         var payload = entry["_respire.job.payload"] ?? throw new FormatException("The stream entry has no job payload.");
-        return new(id, deserialize(payload), entry.Id);
+        return new(id, deserialize(payload), entry.Id) { Group = entry.GetString("_respire.job.group") };
     }
 }

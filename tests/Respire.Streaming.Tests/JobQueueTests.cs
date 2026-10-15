@@ -10,6 +10,37 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test]
+    public async Task GroupIsPartOfTheEnvelopeButDeliveryControlsAreNot()
+    {
+        var ungrouped = new RespireJob<string>("id", "payload", "1-0");
+        var grouped = ungrouped with { Group = "tenant" };
+        var equal = grouped with { };
+        var different = grouped with { Group = "Tenant" };
+        var jobs = new HashSet<RespireJob<string>> { ungrouped, grouped, equal, different };
+        grouped.RetryAfter(TimeSpan.Zero);
+        grouped.Complete([1]);
+        await Assert.That(ungrouped.Group).IsNull();
+        await Assert.That(grouped.Equals(equal)).IsTrue();
+        await Assert.That(grouped.GetHashCode()).IsEqualTo(equal.GetHashCode());
+        await Assert.That(jobs.Count).IsEqualTo(3);
+        await Assert.That(jobs.Contains(grouped)).IsTrue();
+    }
+
+    [Test]
+    public async Task InvalidGroupIsRejectedBeforeSerialization()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", _ => throw new InvalidOperationException());
+        foreach (var group in new[] { "", " ", "\t\r\n" })
+            await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", new() { Group = group }))
+                .Throws<ArgumentException>();
+        foreach (var group in new[] { "\ud800", "\udc00" })
+            await Assert.That(async () => await queue.EnqueueScheduledAsync("id", "payload", new() { Group = group }))
+                .Throws<EncoderFallbackException>();
+    }
+
+    [Test]
     public async Task OversizedFlowInputsAndResultsAreRejected()
     {
         await using var server = new RespireFakeServer();

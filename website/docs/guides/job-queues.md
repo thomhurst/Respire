@@ -99,6 +99,39 @@ Retry with the same job ID within the window. An expired or evicted deduplicatio
 another enqueue, so handlers still need idempotent side effects. A deduplicated submission returns
 the earlier stream ID even if an operator has since deleted that entry.
 
+## Application group identity
+
+Set `RespireJobEnqueueOptions.Group` when calling `EnqueueScheduledAsync` to attach an
+application group, such as a tenant ID. A zero delay makes the job eligible on the next
+scheduling pass. Register the worker with a `RespireJobQueueOptions` instance to enable those
+passes, as described under [delay, priority and expiry](#delay-priority-and-expiry).
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
+await queue.EnqueueScheduledAsync("report:42", "build-report",
+    new RespireJobEnqueueOptions { Group = "tenant:42" });
+```
+
+The handler reads the identity from `job.Group`. Null means ungrouped, including entries
+created before this field existed, immediate `EnqueueAsync` jobs, flow nodes and recurring
+jobs. A non-null group must be nonblank valid Unicode. Its exact text is preserved, without
+trimming or case folding; it is stored in `_respire.job.group`, never interpolated into a Redis
+key. It survives promotion, durable retries, consumer recovery and dead-lettering. Deduplication
+remains queue-wide by job ID: changing the group does not create a second job or update the
+first job's group. Include the tenant in the job ID if IDs are only unique within a tenant.
+
+Application groups are distinct from the Redis consumer group shared by workers. Group identity
+is currently metadata only: it does not provide round-robin fairness, per-group concurrency or
+rate limits, or pause/resume. Those controls and group dashboard support are tracked separately
+in [fair scheduling](https://github.com/thomhurst/Respire/issues/1824),
+[group controls](https://github.com/thomhurst/Respire/issues/1825), and
+[group dashboard](https://github.com/thomhurst/Respire/issues/1826).
+
 ## Processing, retry and dead letters
 
 A handler returns one of these explicit results:

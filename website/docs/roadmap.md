@@ -103,7 +103,7 @@ Public interface compatibility and the post-2.0 extension policy are described i
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   on dedicated connections.
 - [Typed job queues](guides/job-queues.md) with delayed scheduling, batch priority, TTL, durable
-  retry backoff, bounded enqueue deduplication, scoped handlers, visibility recovery, dead letters,
+  retry backoff, bounded enqueue deduplication, application group metadata, scoped handlers, visibility recovery, dead letters,
   fenced progress, retained completion events, enqueue-to-processing trace links, nested
   parent/child flows with retained results and failure policies, and durable
   UTC cron/fixed-interval schedules with cross-instance tick deduplication and missed-tick policies.
