@@ -10,6 +10,78 @@ namespace Respire.Tests.Networking;
 public class CommandHookTests
 {
     [Test]
+    [Arguments("owned", false, false)]
+    [Arguments("owned", false, true)]
+    [Arguments("owned", true, false)]
+    [Arguments("owned", true, true)]
+    [Arguments("lease", false, false)]
+    [Arguments("lease", false, true)]
+    [Arguments("lease", true, false)]
+    [Arguments("lease", true, true)]
+    [Arguments("forget", false, false)]
+    [Arguments("forget", false, true)]
+    [Arguments("forget", true, false)]
+    [Arguments("forget", true, true)]
+    public async Task PreflightErrorsDoNotInvokeHooks(string route, bool catalog, bool reject)
+    {
+        using var endpoint = new ReservedUnavailablePort();
+        var hook = new RecordingHook { Before = reject ? _ => throw new InvalidOperationException("Rejected") : null };
+        var options = new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", endpoint.Port)], UseCluster = true,
+            Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+        };
+        await using var plain = RespireClient.Create(options);
+        await using var hooked = RespireClient.Create(options with { CommandHook = hook });
+        (string Name, RespireValue[] Args, bool Prefix, RespireCommandFlags Flags)[] cases =
+        [
+            ("MGET", ["{a}:one", "{b}:two"], false, RespireCommandFlags.None),
+            ("JSON.MGET", ["{a}:one", "{b}:two", "$"], true, RespireCommandFlags.None),
+        ];
+        foreach (var item in cases)
+            await Check(item.Name, item.Args, item.Prefix, item.Flags);
+        if (catalog)
+        {
+            await Check("SELECT", [1], false, RespireCommandFlags.None);
+            await Check("KEYS", ["*"], true, RespireCommandFlags.None);
+            await Check("GET", [RespireValue.Null], true, RespireCommandFlags.None);
+        }
+        if (route == "forget")
+        {
+            await Check("BLPOP", ["key", 0], false, RespireCommandFlags.None);
+            if (!catalog) await Check("SELECT", [1], false, RespireCommandFlags.None);
+        }
+        else
+        {
+            await Check("GET", ["key"], false, (RespireCommandFlags)128);
+            await Check("FUNCTION FLUSH", [], false, RespireCommandFlags.NoRedirect);
+        }
+        if (!catalog)
+            await Check("MGET {a}:one", ["{b}:two"], false, RespireCommandFlags.None);
+
+        await Assert.That(hook.Entered.Count).IsEqualTo(0);
+        await Assert.That(hook.Completed.Count).IsEqualTo(0);
+        await Assert.That(plain.IsConnected).IsFalse();
+        await Assert.That(hooked.IsConnected).IsFalse();
+
+        async Task Check(string name, RespireValue[] args, bool prefix, RespireCommandFlags flags)
+        {
+            var command = catalog ? RespireCommands.All.ToArray().Single(c => c.Name == name) : (RespireCommand)name;
+            var expected = await Failure(() => Send(prefix ? plain.WithKeyPrefix("prefix:") : plain));
+            var actual = await Failure(() => Send(prefix ? hooked.WithKeyPrefix("prefix:") : hooked));
+            await Assert.That(actual.GetType()).IsEqualTo(expected.GetType());
+            await Assert.That(actual.Message).IsEqualTo(expected.Message);
+
+            async Task Send(IRespireClient client)
+            {
+                if (route == "forget") await client.ExecuteFireAndForgetAsync(command, args);
+                else if (route == "lease") { using var result = await client.ExecuteLeaseAsync(command, args, flags); }
+                else { using var result = await client.ExecuteAsync(command, args, flags); }
+            }
+        }
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("typed")]

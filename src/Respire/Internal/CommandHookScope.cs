@@ -5,8 +5,10 @@ namespace Respire.Internal;
 internal static class CommandHookScope
 {
     internal static async ValueTask<TResult> RunAsync<TState, TResult>(RespireCommandHook hook,
-        string command, CancellationToken token, TState state, Func<TState, ValueTask<TResult>> execute)
+        string command, CancellationToken token, TState state, Func<TState, ValueTask<TResult>> execute,
+        Func<TState, string>? preflight = null)
     {
+        if (preflight is not null) command = preflight(state);
         var context = new RespireCommandContext(command, token);
         object? hookState = null;
         var outcome = RespireCommandOutcome.Rejected;
@@ -33,8 +35,10 @@ internal static class CommandHookScope
     }
 
     internal static async ValueTask RunAsync<TState>(RespireCommandHook hook,
-        string command, CancellationToken token, TState state, Func<TState, ValueTask> execute)
+        string command, CancellationToken token, TState state, Func<TState, ValueTask> execute,
+        Func<TState, string>? preflight = null)
     {
+        if (preflight is not null) command = preflight(state);
         var context = new RespireCommandContext(command, token);
         object? hookState = null;
         var outcome = RespireCommandOutcome.Rejected;
