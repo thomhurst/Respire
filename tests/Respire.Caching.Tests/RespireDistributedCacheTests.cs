@@ -1127,6 +1127,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+        using var clientIdResponse = await timeoutClient.ExecuteAsync("CLIENT", "ID");
+        var originalClientId = clientIdResponse.AsInteger();
 
         // WRITE parks EVALSHA but lets the control connection's CLIENT KILL finish.
         // Release explicitly after the timeout/fence; the long expiry is only a safety net.
@@ -1153,6 +1155,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             }
 
             await Assert.That(failure).IsNotNull();
+            // Prove fencing removed the original connection, even while its write is paused.
+            // Key absence alone cannot distinguish a killed write from one still queued.
+            using var originalConnection = await Client.ExecuteAsync("CLIENT", "LIST", "ID", originalClientId);
+            await Assert.That(originalConnection.AsString()).IsEqualTo(string.Empty);
             using var exists = await Client.ExecuteAsync("EXISTS", "fenced-no-expiration");
             await Assert.That(exists.AsInteger()).IsEqualTo(0);
         }
