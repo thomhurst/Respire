@@ -1258,6 +1258,33 @@ public class AvailabilityZoneRoutingTests
     [Arguments(1, true)]
     [Arguments(2, true)]
     public async Task ReplicaRoleFallbackRetainsZoneAfterMovedRefresh(int mode, bool mixedSockets)
+        => await RunReplicaRoleFallbackAsync(mode, mixedSockets);
+
+    [Test]
+    public async Task ReplicaRoleFallbackFailureReportsProtocolAndRuntimeEvidence()
+    {
+        // Cancel at a protocol milestone, not after a delay: this exercises the real batch
+        // failure report without depending on the intermittent timeout in #1749.
+        var error = await Assert.That(async () => await RunReplicaRoleFallbackAsync(1, false, cancelRefresh: true))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.InnerException is OperationCanceledException).IsTrue();
+        await Assert.That(error.Message).Contains("read started");
+        await Assert.That(error.Message).Contains("refresh reply withheld; cancel requested");
+        await Assert.That(error.Message).Contains("canceled=True");
+        await Assert.That(error.Message).Contains("primary: reads=1");
+        await Assert.That(error.Message).Contains("old-replica: reads=1");
+        await Assert.That(error.Message).Contains("target: reads=0");
+        await Assert.That(error.Message).Contains("local: reads=0");
+        await Assert.That(error.Message).Contains("remote: reads=0");
+        await Assert.That(error.Message).Contains("CLUSTER SLOTS");
+        await Assert.That(error.Message).Contains("workers=");
+        await Assert.That(error.Message).Contains("pending=");
+        await Assert.That(error.Message).Contains("completed-delta=");
+        await Assert.That(error.Message).Contains("gc-delta=");
+        await Assert.That(error.Message).Contains("gc-pause-delta-ms=");
+    }
+
+    private static async Task RunReplicaRoleFallbackAsync(int mode, bool mixedSockets, bool cancelRefresh = false)
     {
         await using var primary = Node("primary", "local", false);
         await using var oldReplica = Node("old-replica", "remote", true);
@@ -1282,10 +1309,13 @@ public class AvailabilityZoneRoutingTests
         }
         var redirected = 0;
         var originalPrimaryReply = primary.ReplyOverride!;
+        // Keep forwarding the scripted topology, not the target's diagnostic wrapper:
+        // a query received by primary must not appear as target socket traffic.
+        var refreshedTopologyReply = target.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command switch
         {
             _ when command.StartsWith("GET ") || command.StartsWith("XREAD ") => "-LOADING primary unavailable\r\n"u8.ToArray(),
-            "CLUSTER SLOTS" when Volatile.Read(ref redirected) != 0 => target.ReplyOverride!(id, command),
+            "CLUSTER SLOTS" when Volatile.Read(ref redirected) != 0 => refreshedTopologyReply(id, command),
             _ => originalPrimaryReply(id, command),
         };
         var originalReplicaReply = oldReplica.ReplyOverride!;
@@ -1295,36 +1325,114 @@ public class AvailabilityZoneRoutingTests
             Volatile.Write(ref redirected, 1);
             return Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
         };
+        var trace = new ReplicaFallbackTrace(
+            ("primary", primary), ("old-replica", oldReplica), ("target", target),
+            ("local", localReplica), ("remote", remoteReplica));
+        using var timeout = new CancellationTokenSource();
+        if (cancelRefresh)
+        {
+            var previous = target.ReplyOverride!;
+            target.ReplyOverride = (id, command) =>
+            {
+                if (command != "CLUSTER SLOTS") return previous(id, command);
+                trace.Record($"target[{id}] refresh reply withheld; cancel requested");
+                timeout.Cancel();
+                return [];
+            };
+        }
+        trace.ObserveReplies();
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with
         {
             Connections = mixedSockets ? 2 : 1, ClusterTopologyRefreshInterval = null,
         });
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        string? result;
-        if (mode == 1)
+        trace.Record("read started");
+        using var cancellation = timeout.Token.Register(() => trace.Record("read token canceled"));
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
         {
-            using var batch = client.CreateBatch();
-            var pending = batch.Strings.GetString(key);
-            await batch.ExecuteAsync(timeout.Token);
-            result = await pending;
+            string? result;
+            if (mode == 1)
+            {
+                using var batch = client.CreateBatch();
+                var pending = batch.Strings.GetString(key);
+                await batch.ExecuteAsync(timeout.Token);
+                result = await pending;
+            }
+            else if (mode == 2)
+            {
+                await using var stream = await client.Strings.GetStreamAsync(key, timeout.Token);
+                using var reader = new StreamReader(stream!);
+                result = await reader.ReadToEndAsync(timeout.Token);
+            }
+            else if (mode == 3)
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+                    ["BLOCK", 1, "STREAMS", key, "0"], cancellationToken: timeout.Token);
+                result = reply.AsString();
+            }
+            else result = await client.GetStringAsync(key, timeout.Token);
+            await Assert.That(result).IsEqualTo("local");
+            await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
+            await Assert.That(oldReplica.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
         }
-        else if (mode == 2)
+        catch (Exception error)
         {
-            await using var stream = await client.Strings.GetStreamAsync(key, timeout.Token);
-            using var reader = new StreamReader(stream!);
-            result = await reader.ReadToEndAsync(timeout.Token);
+            // Snapshot before client/server disposal adds unrelated time and traffic.
+            trace.Record($"read failed; canceled={timeout.IsCancellationRequested}");
+            throw new InvalidOperationException(
+                $"Cluster replica fallback failed (mode={mode}, mixedSockets={mixedSockets}).{Environment.NewLine}{trace.Describe()}", error);
         }
-        else if (mode == 3)
+    }
+
+    private sealed class ReplicaFallbackTrace(params (string Name, FakeRespServer Server)[] nodes)
+    {
+        private readonly long _started = System.Diagnostics.Stopwatch.GetTimestamp();
+        private readonly long _completed = ThreadPool.CompletedWorkItemCount;
+        private readonly int[] _collections = [GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2)];
+        private readonly TimeSpan _pause = GC.GetTotalPauseDuration();
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Entry> _events = new();
+
+        public void ObserveReplies()
         {
-            using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD,
-                ["BLOCK", 1, "STREAMS", key, "0"], cancellationToken: timeout.Token);
-            result = reply.AsString();
+            Record("fixture ready");
+            foreach (var (name, server) in nodes)
+            {
+                var previous = server.ReplyOverride!;
+                server.ReplyOverride = (id, command) =>
+                {
+                    Record($"{name}[{id}] port={server.Port} received {command}");
+                    var reply = previous(id, command);
+                    Record($"{name}[{id}] reply prepared; bytes={reply?.Length ?? 0}");
+                    return reply;
+                };
+            }
         }
-        else result = await client.GetStringAsync(key, timeout.Token);
-        await Assert.That(result).IsEqualTo("local");
-        await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
-        await Assert.That(oldReplica.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
+
+        public void Record(string phase)
+        {
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_started).TotalMilliseconds;
+            // Defer counter formatting until failure to minimize diagnostic work on the wire path.
+            _events.Enqueue(new(elapsed, phase, ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount,
+                ThreadPool.CompletedWorkItemCount - _completed, GC.CollectionCount(0) - _collections[0],
+                GC.CollectionCount(1) - _collections[1], GC.CollectionCount(2) - _collections[2],
+                (GC.GetTotalPauseDuration() - _pause).TotalMilliseconds));
+        }
+
+        public string Describe()
+        {
+            var text = new StringBuilder("Protocol timestamps precede socket writes; a prepared reply does not prove client receipt. Runtime counters are process-wide, not proof of causation.");
+            foreach (var entry in _events.OrderBy(entry => entry.ElapsedMilliseconds))
+                text.AppendLine().Append(FormattableString.Invariant(
+                    $"{entry.ElapsedMilliseconds:F3} ms: {entry.Phase}; workers={entry.Workers}, pending={entry.Pending}, completed-delta={entry.Completed}, gc-delta={entry.Gen0}/{entry.Gen1}/{entry.Gen2}, gc-pause-delta-ms={entry.PauseMilliseconds:F3}"));
+            foreach (var (name, server) in nodes)
+                text.AppendLine().Append(name).Append(": reads=").Append(server.ReceivedCommands.Count(
+                    command => command.StartsWith("GET ") || command.StartsWith("XREAD ")));
+            return text.ToString();
+        }
+
+        private readonly record struct Entry(double ElapsedMilliseconds, string Phase, int Workers,
+            long Pending, long Completed, int Gen0, int Gen1, int Gen2, double PauseMilliseconds);
     }
 
     [Test]
