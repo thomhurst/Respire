@@ -166,8 +166,7 @@ yielded. Rejecting a later page prevents its send while leaving earlier pages de
 Cancellation between yielded items is outside the already completed page.
 
 The following paths do not yet have a complete hook contract: interpolated commands,
-function execution/library recovery, multi-key
-cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
+multi-key cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction
 members also remain outside this command hook. Use the separate
