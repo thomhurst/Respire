@@ -2827,9 +2827,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         // server. A fresh circuit-admitted scan instead reselects below, so the pin follows the
         // server that answers.
         var pinned = CursorCommandMetadata.HasServerCursor(in command);
-        var readDeadline = CreateReplicaDispatchDeadline();
         var cursorRead = readKind == ReadCommandKind.CursorRead;
-        var connection = cursorRead && (continuation || affinity?.IsPinned == true)
+        var acquirePinned = cursorRead && (continuation || affinity?.IsPinned == true);
+        // Continuations cannot enter the recovery FIFO. Their pinned acquisition keeps
+        // its existing caller cancellation, and transport admission starts the deadline.
+        var readDeadline = acquirePinned ? default : CreateReplicaDispatchDeadline();
+        var connection = acquirePinned
             ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
                 affinity is null && continuation, cancellationToken, observation).ConfigureAwait(false)
             : await SelectReplicaForDispatchAsync(operation, cancellationToken, readDeadline, observation, cursorRead, affinity).ConfigureAwait(false);
@@ -3694,19 +3697,19 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         string? storedProcedureName, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var deadline = CreateReplicaDispatchDeadline();
         if (CursorCommandMetadata.IsServerCursorContinuation(in command))
         {
             var pinned = await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, null, true,
                 cancellationToken, observation).ConfigureAwait(false);
             if (_core.Circuits is not null)
                 await SendFireAndForgetOnConnectionAsync(operation, pinned, command, cancellationToken,
-                    storedProcedureName, observation, deadline).ConfigureAwait(false);
+                    storedProcedureName, observation).ConfigureAwait(false);
             else
                 await SendFireAndForgetOnConnectionUncheckedAsync(operation, pinned, command, cancellationToken,
-                    storedProcedureName, deadline, pinToConnection: true, observation: observation).ConfigureAwait(false);
+                    storedProcedureName, pinToConnection: true, observation: observation).ConfigureAwait(false);
             return;
         }
+        var deadline = CreateReplicaDispatchDeadline();
         var connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, deadline, observation).ConfigureAwait(false);
         if (connection is null)
         {
