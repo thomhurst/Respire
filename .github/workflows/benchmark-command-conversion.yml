@@ -21,6 +21,6 @@ jobs:
       expected-head-sha: ${{ github.event.pull_request.head.sha }}
       fixture: benchmarks/Respire.Benchmarks/CommandConversionBenchmarks.cs
       filter: '*CommandConversionBenchmarks*'
-      expected-case-count: 6
-      expected-methods: SmallLength,LargeSetRange,SmallLengthPipeline,LargeSetRangePipeline,RawLength,RawLengthPipeline
+      expected-case-count: 9
+      expected-methods: SmallLength,LargeSetRange,SmallLengthPipeline,LargeSetRangePipeline,RawLength,RawLengthPipeline,InterpolatedOwnedLength,InterpolatedLeasedLength,InterpolatedFireAndForgetLength
       artifact-prefix: command-conversion-comparison

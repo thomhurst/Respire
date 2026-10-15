@@ -117,6 +117,25 @@ public sealed partial class RespireClient
                 static s => s.Client.ValidateHookCommand(s.Command, s.Args, RespireCommandFlags.None, fireAndForget: true))
             : ExecuteCommandFireAndForgetUnhookedAsync(command, args, cancellationToken);
 
+    // Interpolated result owners keep their existing dispatch and cleanup paths. Preflight is
+    // repeated only when configured, before admission (including the pre-canceled case).
+    private string ValidateInterpolatedHookCommand(RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags, bool fireAndForget)
+    {
+        if (!fireAndForget) ValidateResultFlags(flags);
+        var (initialOperation, tokens) = command.Build();
+        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        if (fireAndForget)
+            ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
+        _ = StoredProcedureName(operation, arguments);
+        _ = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        if (!fireAndForget && _core.Cluster is not null
+            && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
+            ValidateClusterWideFlags(operation, flags);
+        return operation;
+    }
+
     // Only the opt-in hook path needs this early validation. Keep using the dispatch validators
     // so rejection cannot mask their errors, without adding work to unconfigured calls.
     private string ValidateHookCommand(RespireCommand command, RespireValue[] args,

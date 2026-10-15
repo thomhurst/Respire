@@ -37,12 +37,32 @@ public class CommandConversionBenchmarks
         var expected = "benchmark-value".Length;
         if (await SmallLength() != expected || await LargeSetRange() != expected
             || await SmallLengthPipeline() != 8 * expected || await LargeSetRangePipeline() != 8 * expected
-            || await RawLength() != expected || await RawLengthPipeline() != 8 * expected)
+            || await RawLength() != expected || await RawLengthPipeline() != 8 * expected
+            || await InterpolatedOwnedLength() != expected || await InterpolatedLeasedLength() != expected)
             throw new InvalidOperationException("Conversion fixture did not preserve all replies.");
+        await InterpolatedFireAndForgetLength();
     }
 
     [Benchmark] public ValueTask<long> SmallLength() => _client.Strings.LengthAsync(_key);
     [Benchmark] public ValueTask<long> LargeSetRange() => _client.Strings.SetRangeAsync(_key, _offset, _value);
+
+    // Cover the three public interpolation owners with hooks disabled, including handler construction.
+    [Benchmark]
+    public async ValueTask<long> InterpolatedOwnedLength()
+    {
+        using var reply = await _client.ExecuteAsync($"STRLEN {_key}");
+        return reply.AsInteger();
+    }
+
+    [Benchmark]
+    public async ValueTask<long> InterpolatedLeasedLength()
+    {
+        using var reply = await _client.ExecuteLeaseAsync($"STRLEN {_key}");
+        return reply.AsInteger();
+    }
+
+    [Benchmark]
+    public ValueTask InterpolatedFireAndForgetLength() => _client.ExecuteFireAndForgetAsync($"STRLEN {_key}");
 
     [Benchmark]
     public async ValueTask<long> RawLength()
