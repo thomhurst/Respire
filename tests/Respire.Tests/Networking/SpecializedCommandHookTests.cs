@@ -25,6 +25,7 @@ public class SpecializedCommandHookTests
     [Arguments("script-flush")]
     [Arguments("scan")]
     [Arguments("modern-scan")]
+    [Arguments("valkey")]
     public async Task SpecializedOwnersRejectCancelAndPublishOneFinalOutcome(string route)
     {
         await using var server = new FakeRespServer(64, FakeRespServer.OkReply);
@@ -163,6 +164,80 @@ public class SpecializedCommandHookTests
         {
             await Assert.That(rows.Length).IsEqualTo(1);
             await Assert.That(rows[0].IsSuccess).IsEqualTo(!malformed && server.SuppressReply is null);
+        }
+    }
+
+    [Test]
+    [Arguments("commandlog-get", "COMMANDLOG GET")]
+    [Arguments("commandlog-length", "COMMANDLOG LEN")]
+    [Arguments("commandlog-reset", "COMMANDLOG RESET")]
+    [Arguments("diagnostic", "SLOWLOG LEN")]
+    [Arguments("diagnostic-fanout", "SLOWLOG LEN")]
+    [Arguments("hotkeys-start", "HOTKEYS START")]
+    [Arguments("hotkeys-stop", "HOTKEYS STOP")]
+    [Arguments("hotkeys-reset", "HOTKEYS RESET")]
+    [Arguments("acl", "ACL LIST")]
+    [Arguments("metadata", "MODULE LIST")]
+    [Arguments("cluster", "CLUSTER MYID")]
+    public async Task ServerPreCanceledCallsAdmitBeforeCancellation(string route, string operation)
+    {
+        await using var server = new FakeRespServer(64, FakeRespServer.OkReply);
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        foreach (var enabled in new[] { false, true })
+        {
+            var hook = new RecordingHook();
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+                Connections = 1, ThreadPoolMonitoring = false, AllowAdmin = true,
+                CommandHook = enabled ? hook : null,
+            });
+            hook.Reset();
+            var baseline = server.CommandsSeen;
+            var error = await Failure(Execute);
+            await Assert.That(error is OperationCanceledException).IsTrue();
+            await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(canceled.Token);
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+            await Assert.That(hook.Entered.Count).IsEqualTo(enabled ? 1 : 0);
+            await Assert.That(hook.Completed.Count).IsEqualTo(enabled ? 1 : 0);
+            if (enabled)
+            {
+                var result = hook.Completed.Single();
+                await Assert.That(result.Context.Command).IsEqualTo(operation);
+                await Assert.That(result.Context).IsSameReferenceAs(hook.Entered.Single());
+                await Assert.That(result.Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
+                await Assert.That(result.Error).IsSameReferenceAs(error);
+
+                hook.Reset();
+                var rejection = new InvalidOperationException("denied before cancellation");
+                hook.Before = _ => throw rejection;
+                error = await Failure(Execute);
+                await Assert.That(error).IsSameReferenceAs(rejection);
+                await Assert.That(hook.Entered.Count).IsEqualTo(1);
+                await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Rejected);
+                await Assert.That(hook.Completed.Single().Error).IsSameReferenceAs(rejection);
+                await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+            }
+
+            async Task Execute()
+            {
+                switch (route)
+                {
+                    case "commandlog-get": await client.Server.CommandLogAsync(RespireCommandLogType.Slow, cancellationToken: canceled.Token); break;
+                    case "commandlog-length": await client.Server.CommandLogLengthAsync(RespireCommandLogType.Slow, canceled.Token); break;
+                    case "commandlog-reset": await client.Server.ResetCommandLogAsync(RespireCommandLogType.Slow, canceled.Token); break;
+                    case "diagnostic": await client.Server.SlowLogLengthAsync(canceled.Token); break;
+                    case "diagnostic-fanout": await client.Server.SlowLogLengthOnAllNodesAsync(canceled.Token); break;
+                    case "hotkeys-start": await client.Server.StartHotKeysOnAllNodesAsync(new RespireHotKeysOptions(), canceled.Token); break;
+                    case "hotkeys-stop": await client.Server.StopHotKeysOnAllNodesAsync(canceled.Token); break;
+                    case "hotkeys-reset": await client.Server.ResetHotKeysOnAllNodesAsync(canceled.Token); break;
+                    case "acl": await client.Server.AclListAsync(canceled.Token); break;
+                    case "metadata": await client.Server.ModuleListAsync(canceled.Token); break;
+                    case "cluster": await client.Server.ClusterMyIdAsync(canceled.Token); break;
+                    default: throw new ArgumentOutOfRangeException(nameof(route));
+                }
+            }
         }
     }
 

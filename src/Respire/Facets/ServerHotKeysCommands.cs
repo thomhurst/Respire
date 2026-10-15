@@ -47,7 +47,8 @@ internal sealed partial class ServerCommands
             EnsureAdminAllowed("HOTKEYS START");
             ArgumentNullException.ThrowIfNull(options);
             var command = options.BuildCommand();
-            cancellationToken.ThrowIfCancellationRequested();
+            // Configured fan-out owns cancellation after hook admission.
+            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
             return owner.Attach(FanOutAsync("HOTKEYS START", command, cancellationToken,
                 static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value), observation: observation));
         }
@@ -95,7 +96,7 @@ internal sealed partial class ServerCommands
         where TCommand : struct, IRespCommand
     {
         EnsureAdminAllowed(operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return FanOutAsync(operation, command, cancellationToken, convert, observation: observation);
     }
 }

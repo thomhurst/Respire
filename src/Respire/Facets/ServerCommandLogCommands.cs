@@ -68,13 +68,13 @@ internal sealed partial class ServerCommands
 
     public ValueTask<RespireCommandLogEntry[]> CommandLogAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync("COMMANDLOG GET", BuildCommandLogGet(type, count), cancellationToken, CommandLogConverter(type));
     }
 
     public ValueTask<long> CommandLogLengthAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync("COMMANDLOG LEN", new Cmd1(CommandLogLen, CommandLogTypeToken(type)), cancellationToken,
             static (ServerCommands _, in RespValue value) => CommandLogParser.NonnegativeInteger(in value));
     }
@@ -82,7 +82,7 @@ internal sealed partial class ServerCommands
     public ValueTask ResetCommandLogAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
         EnsureAdminAllowed("COMMANDLOG RESET");
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return DiscardCommandLogResetAsync(ConvertAsync("COMMANDLOG RESET", new Cmd1(CommandLogReset, CommandLogTypeToken(type)),
             cancellationToken, static (ServerCommands _, in RespValue value) => CommandLogParser.Ok(in value)));
     }
