@@ -54,7 +54,7 @@ without waiting for expiration. Byte-array state exercises binary write/read;
 byte-list state exercises both clear modes because the upstream activator cannot
 create an empty byte array after clear.
 
-`SiloScenarios.cs` and `LifecycleGrain.cs` add five original adapter-only integration
+`SiloScenarios.cs`, `TopologyScenarios.cs` and `LifecycleGrain.cs` add nine original adapter-only integration
 cases (not ports of upstream tests). They use real Orleans silo/client hosts and
 the existing `RespireContainerFixture` with Redis 7.0.15:
 
@@ -70,15 +70,30 @@ the existing `RespireContainerFixture` with Redis 7.0.15:
 - Sentinel: fence replication, stop the primary, observe connection to the promoted
   replica, continue provider operations, join a second silo, return the old primary
   as a replica, and read persisted state from a new activation.
+- Cluster migration (two cases): transfer the membership key, publish its new slot owner,
+  and join a silo through the existing adapter. The ASK variant asserts that insertion
+  during migration fails without inserting the row, then recovers after migration completes.
+- Six-node Cluster: coordinated promotion of all three replicas while a silo runs,
+  followed by state/reminder operations, another silo joining and reactivation there.
+  This uses the test-only `ClusterDeployment`, also pinned to Redis 7.0.15.
+- Abrupt silo death: `Program.cs` starts a child silo without entering the test runner;
+  kill that process and require the surviving silo to mark it Dead within 60 seconds.
+  Log elapsed detection time and verify the survivor can serve a grain. Test-only
+  membership options use one-second probes/refreshes/heartbeats, two missed probes,
+  and one death vote. These are not production latency guarantees.
 
 Every deployment is owned by Testcontainers and disposed even on failure. The
 administrative fault/fence connection does not execute any provider operations.
-The suite now has **23 cases per framework/protocol combination**: 18 provider
-cases and five real-host cases. CI runs all cases on net8.0/net10.0 and RESP2/RESP3.
+The suite now has **27 cases per framework/protocol combination**: 18 provider
+cases and nine real-host cases. CI runs all cases on net8.0/net10.0 and RESP2/RESP3.
 
 This is selected upstream acceptance with additional adapter regressions, not the
 full upstream suite. Sustained parallel stress, large hash-ring distributions,
-all persistence datasets/serializers, abrupt silo death, multi-host partitions,
-Cluster resharding/replica failover, and provider-owned topology recovery remain
+all persistence datasets/serializers, multi-host partitions, unplanned Cluster primary
+crashes, failover racing provider transactions, and provider-owned topology recovery remain
 unvalidated. Nonzero Cluster databases and combined Cluster/Sentinel configuration
-are unsupported. See the website guide for the exact topology and recovery limits.
+are unsupported, as are membership writes while slot migration returns ASK.
+Multi-host partitions cannot be represented by this CI fixture: Redis processes share
+one container and silos advertise loopback. Independent addresses and selective network
+fault injection are prerequisites; killing a process or its TCP connections is not a
+substitute. See the website guide for the exact topology and recovery limits.

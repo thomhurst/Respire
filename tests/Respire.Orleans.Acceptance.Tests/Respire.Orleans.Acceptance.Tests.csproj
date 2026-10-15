@@ -5,6 +5,8 @@
     <AssemblyName>Orleans.Redis.Tests</AssemblyName>
     <IsTestProject>true</IsTestProject>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <GenerateTestingPlatformEntryPoint>false</GenerateTestingPlatformEntryPoint>
+    <GenerateTestingPlatformApplicationHelper>true</GenerateTestingPlatformApplicationHelper>
   </PropertyGroup>
   <ItemGroup>
     <!-- Keep the source inventory and recorded results on their assessed provider version. -->

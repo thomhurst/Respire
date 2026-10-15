@@ -302,16 +302,20 @@ public class HashFieldLeaseWireTests
     public async Task CancellationBeforeAcquireReplyAttemptsOwnerCheckedCleanup()
     {
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        server.DelayReply(2, 250);
+        var acquireReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acquireReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.GateCommand("EVALSHA ", acquireReply.Task, () => acquireReceived.TrySetResult());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         var pending = new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30), cancellation.Token).AsTask();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
-            await Task.Delay(5, timeout.Token);
-        await Task.Delay(50, timeout.Token);
-        cancellation.Cancel();
+        try
+        {
+            await acquireReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Keep the reply blocked until cancellation callbacks have run, even on a busy runner.
+            await cancellation.CancelAsync();
+        }
+        finally { acquireReply.TrySetResult(); }
 
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();

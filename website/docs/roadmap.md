@@ -210,8 +210,10 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) runs the Orleans Redis
   clustering, grain storage, and reminder providers on the adapter. Real silo/client scenarios cover
   activation, persistent state, reminder delivery, graceful restart, shared and provider-owned shutdown,
-  stable three-primary Cluster routing, socket reconnect, and Sentinel primary promotion on .NET 8/10
-  with RESP2/RESP3. Cluster resharding/failover, abrupt silo death and multi-host partitions remain unvalidated.
+  stable three-primary Cluster routing, completed Cluster slot moves, coordinated replica promotion,
+  abrupt silo death, socket reconnect, and Sentinel primary promotion on .NET 8/10 with RESP2/RESP3.
+  Membership writes during ASK migration remain unsupported; unplanned Cluster failover and
+  multi-host partitions remain unvalidated.
 
 ### Retries and write outcomes
 
@@ -287,11 +289,10 @@ They track remaining work, not release commitments.
   ([#1694](https://github.com/thomhurst/Respire/issues/1694)) maps cancellation, disposal,
   replacement, late-reply, and reuse coverage. Its bounded tests and quiescent reference
   checks do not prove complete heap reclamation or every scheduler/topology combination.
-- [Remaining Orleans topology validation](https://github.com/thomhurst/Respire/issues/1799):
-  Cluster resharding, replica promotion/failover, abrupt silo death, and multi-host partitions. The completed
-  [silo lifecycle suite](guides/orleans-compatibility.md#silo-lifecycle-and-redis-recovery)
-  covers activation, provider-owned shutdown, stable Cluster routing, socket reconnect,
-  and Sentinel promotion; it does not establish support for every failure scenario.
+- [Orleans topology assessment](https://github.com/thomhurst/Respire/issues/1799):
+  lifecycle, provider-owned shutdown, completed Cluster slot moves, coordinated replica promotion,
+  Sentinel failover and abrupt silo death have acceptance coverage. Membership writes during
+  ASK migration remain unsupported; multi-host partitions need an independent-network test harness.
 - [Cluster availability-zone replica fallback timeout](https://github.com/thomhurst/Respire/issues/1749):
   investigate the failure under concurrent test load and validate recovery.
 
