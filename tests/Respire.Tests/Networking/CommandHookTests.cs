@@ -22,7 +22,7 @@ public class CommandHookTests
     public async Task AdmissionPrecedesWireAndCompletionPreservesState(string route)
     {
         await using var server = Server();
-        var hook = new RecordingHook();
+        var hook = new RecordingHook { ThrowOnCompleted = true };
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
         var baseline = server.CommandsSeen;
         hook.Before = _ =>
@@ -152,6 +152,61 @@ public class CommandHookTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SharedCacheMissesCompleteEachCallerIndependently(bool cancelLeader)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "GET key") return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        var hook = new RecordingHook();
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
+        });
+        using var cancellation = new CancellationTokenSource();
+        var leader = client.GetStringAsync("key", cancelLeader ? cancellation.Token : default).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var follower = client.GetStringAsync("key", cancelLeader ? default : cancellation.Token).AsTask();
+        var contexts = hook.Entered.ToArray();
+        await Assert.That(contexts.Length).IsEqualTo(2);
+        await Assert.That(ReferenceEquals(contexts[0], contexts[1])).IsFalse();
+        await Assert.That(hook.Completed).IsEmpty();
+
+        cancellation.Cancel();
+        var canceled = cancelLeader ? leader : follower;
+        var surviving = cancelLeader ? follower : leader;
+        var error = await Failure(async () => await canceled.WaitAsync(TimeSpan.FromSeconds(5)));
+        await Assert.That(error is OperationCanceledException).IsTrue();
+        var canceledCompletion = hook.Completed.Single();
+        await Assert.That(canceledCompletion.Context).IsSameReferenceAs(contexts[cancelLeader ? 0 : 1]);
+        await Assert.That(canceledCompletion.State).IsSameReferenceAs(canceledCompletion.Context);
+        await Assert.That(canceledCompletion.Context.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(canceledCompletion.Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
+        await Assert.That(canceledCompletion.Error).IsSameReferenceAs(error);
+        await Assert.That(surviving.IsCompleted).IsFalse();
+
+        await server.SendRawAsync("$2\r\n42\r\n"u8.ToArray());
+        await Assert.That(await surviving.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("42");
+        var completions = hook.Completed.ToArray();
+        await Assert.That(completions.Length).IsEqualTo(2);
+        await Assert.That(completions[1].Context).IsSameReferenceAs(contexts[cancelLeader ? 1 : 0]);
+        await Assert.That(completions[1].State).IsSameReferenceAs(completions[1].Context);
+        await Assert.That(completions[1].Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+        await Assert.That(completions[1].Error).IsNull();
+        await Assert.That(hook.Entered.Count).IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RetriesShareOneAdmissionAndCompletion()
     {
         var attempts = 0;
@@ -237,7 +292,10 @@ public class CommandHookTests
             case "converted": await client.Strings.LengthAsync("key"); break;
             case "raw": using (await client.ExecuteAsync("GET", "key")) { } break;
             case "catalog": using (await client.ExecuteAsync(RespireCommands.String.GET, "key")) { } break;
-            case "lease": using (await client.ExecuteLeaseAsync("GET", "key")) { } break;
+            case "lease":
+                using (var result = await client.ExecuteLeaseAsync("GET", "key"))
+                    await Assert.That(result.AsString()).IsEqualTo("42");
+                break;
             case "forget": await client.ExecuteFireAndForgetAsync("GET", "key"); break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
