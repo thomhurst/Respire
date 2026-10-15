@@ -491,8 +491,9 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         // Retry groups hold no continuations, but a fresh cursor page must still record
                         // the server that issues its cursor. Each attempt revalidates that pin, so the next
                         // page finds the server that answered the final attempt.
-                        (connection, _) = await AcquireGroupConnectionsAsync(slot, operations, readFrom, token,
-                            operations[0].Observation).ConfigureAwait(false);
+                        (connection, _) = attempt == 1 && initialConnection is not null ? (initialConnection, null)
+                            : await AcquireGroupConnectionsAsync(slot, operations, readFrom, token,
+                                operations[0].Observation).ConfigureAwait(false);
                         DeferredOperation.SetAttempts(operations, operations[0].Observation.Attempts);
                         DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
                     }
@@ -543,7 +544,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     for (var i = 0; i < operations.Count; i++)
                     {
                         if (core.Cluster is not null)
-                            _ = await operations[i].CompleteClusterSendAsync(this, connection, sends[i], readFrom, token, observations[i]).ConfigureAwait(false);
+                            _ = await operations[i].CompleteClusterSendAsync(this, connection, sends[i], readFrom, token, observations[i], deadline).ConfigureAwait(false);
                         else
                             await operations[i].CaptureReplyAsync(sends[i]).ConfigureAwait(false);
                     }
@@ -731,12 +732,18 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         int? slot,
         List<Op> operations,
         RespireReadFrom readFrom,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RespireConnection? initialConnection = null, CommandDeadline deadline = default)
     {
+        if (initialConnection is null && !operations.Exists(static op => op.IsCursorRead)
+            && _client.Core.Cluster!.ShouldBacklog(slot, readFrom))
+        {
+            await RunBackloggedClusterGroupAsync(slot, operations, readFrom, cancellationToken, deadline).ConfigureAwait(false);
+            return;
+        }
         if (_client.Core.CommandRetries is not null
             && operations.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
         {
-            _ = await RunRetryableBatchAsync(cancellationToken, operations, slot, readFrom).ConfigureAwait(false);
+            _ = await RunRetryableBatchAsync(cancellationToken, operations, slot, readFrom, initialConnection, deadline).ConfigureAwait(false);
             return;
         }
         RespireConnection connection;
@@ -748,8 +755,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         {
             if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
                 slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(cancellationToken).ConfigureAwait(false);
-            (connection, continuationConnection) = await AcquireGroupConnectionsAsync(
-                slot, operations, readFrom, cancellationToken, selectionObservation).ConfigureAwait(false);
+            (connection, continuationConnection) = initialConnection is not null ? (initialConnection, null)
+                : await AcquireGroupConnectionsAsync(slot, operations, readFrom, cancellationToken, selectionObservation).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -775,7 +782,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 try
                 {
                     var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
-                    sends[i] = operations[i].StartClusterSend(_client, operationConnection, cancellationToken, observations[i]);
+                    sends[i] = operations[i].StartClusterSend(_client, operationConnection, cancellationToken, observations[i], deadline);
                 }
                 catch (Exception ex)
                 {
@@ -787,11 +794,30 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             {
                 var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
                 _ = await operations[i].CompleteClusterSendAsync(
-                        this, operationConnection, sends[i], readFrom, cancellationToken, observations[i])
+                        this, operationConnection, sends[i], readFrom, cancellationToken, observations[i], deadline)
                     .ConfigureAwait(false);
+                if (initialConnection is not null) operations[i].PublishReply(_client);
             }
         }
         finally { ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true); }
+    }
+
+    private async Task RunBackloggedClusterGroupAsync(int? slot, List<Op> operations, RespireReadFrom readFrom,
+        CancellationToken cancellationToken, CommandDeadline deadline)
+    {
+        if (!deadline.IsSet) deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
+        try
+        {
+            foreach (var op in operations) op.Snapshot();
+            await _client.RunClusterBacklogAsync("PIPELINE", slot, readFrom, cancellationToken, deadline,
+                operations[0].Observation, async (ready, originalDeadline) =>
+                {
+                    await RunClusterGroupAsync(slot, operations, readFrom, cancellationToken, ready, originalDeadline).ConfigureAwait(false);
+                    return true;
+                }).ConfigureAwait(false);
+        }
+        catch (Exception error) { foreach (var op in operations) op.Fail(error); }
+        finally { foreach (var op in operations) op.ReleaseSnapshot(); }
     }
 
     private async ValueTask<(RespireConnection Connection, RespireConnection? Continuation)> AcquireGroupConnectionsAsync(
@@ -1033,7 +1059,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             ValueTask<RespValue> send,
             RespireReadFrom readFrom,
             CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation);
+            RespireTelemetry.ErrorObservation observation, CommandDeadline deadline = default);
 
     }
 
@@ -1091,7 +1117,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             ValueTask<RespValue> send,
             RespireReadFrom readFrom,
             CancellationToken cancellationToken,
-            RespireTelemetry.ErrorObservation observation)
+            RespireTelemetry.ErrorObservation observation, CommandDeadline deadline = default)
         {
             try
             {
@@ -1144,9 +1170,9 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             ValueTask<RespValue> ResumeCommandAsync<TReplay>(TReplay replay, Exception error, bool retired) where TReplay : struct, IRespCommand
                 => retired
                     ? batch._client.ResumeRetiredClusterSendAsync(Operation, replay, connection,
-                        (RespireConnectionRetiredException)error, readFrom, cancellationToken, observation: observation)
+                        (RespireConnectionRetiredException)error, readFrom, cancellationToken, observation: observation, deadline: deadline)
                     : batch._client.ResumeRejectedClusterSendAsync(Operation, replay, connection,
-                        (RespireServerException)error, readFrom, cancellationToken, observation: observation);
+                        (RespireServerException)error, readFrom, cancellationToken, observation: observation, deadline: deadline);
         }
 
         public override async ValueTask<Task<Exception?>> StartImportAsync(

@@ -141,9 +141,10 @@ Review these before you switch; they can change application behavior.
   to 1024 waiting operations; each keeps its original timeout and cancellation. Set
   `BacklogPolicy = RespireBacklogPolicy.FailFast` to opt out. This does not replay accepted
   commands and does not require `RetryPolicy`. Sentinel waiting survives generation retirement
-  and selects a ROLE-validated current primary. Cluster and replica-routing backlog support
-  remains tracked in [#1735](https://github.com/thomhurst/Respire/issues/1735) and
-  [#1736](https://github.com/thomhurst/Respire/issues/1736).
+  and selects a ROLE-validated current primary.. Cluster commands use independent slot queues,
+  reselecting the current owner and read policy before sending; a batch slot group or unwatched
+  transaction counts as one entry. Standalone/Sentinel replica routing remains tracked
+  in [#1736](https://github.com/thomhurst/Respire/issues/1736).
   See [connection recovery](./guides/reconnect-policy.md#standalone-command-backlog) for exclusions
   and the distinction between backlog, reconnect and command retry policies.
 - **Batch results throw before the batch runs.** Reading `RespirePending<T>.Result` before

@@ -192,15 +192,14 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ### Retries and write outcomes
 
-- A bounded [primary reconnect backlog](./guides/reconnect-policy.md#standalone-command-backlog)
+- A bounded [standalone, Sentinel and Cluster reconnect backlog](./guides/reconnect-policy.md#standalone-command-backlog)
   waits for replacement command connections by default, including typed/raw commands,
   fire-and-forget, batches and unwatched transactions. It preserves FIFO admission, original
   deadlines and cancellation, with `BacklogCapacity` and a `FailFast` opt-out. Accepted commands
   are not replayed by the backlog. Sentinel primary recovery uses a router-owned FIFO that
   survives generation replacement and validates the elected primary before dispatch.
-  Cluster and replica-routing integration remains
-  tracked in [#1735](https://github.com/thomhurst/Respire/issues/1735) and
-  [#1736](https://github.com/thomhurst/Respire/issues/1736).
+  Cluster queues are independent per slot and reselect owners and read policies during recovery.
+  Standalone/Sentinel replica routing remains tracked in [#1736](https://github.com/thomhurst/Respire/issues/1736).
 - Opt-in [command retry policies](./guides/command-retries) through `RespireOptions.RetryPolicy`.
   Each command has a retry category that decides whether it may be resent after it might have run.
   Retries cover immediate commands, raw/script/function requests with a declared category,

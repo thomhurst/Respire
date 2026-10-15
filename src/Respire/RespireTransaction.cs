@@ -325,7 +325,17 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 // when it cannot use a ready connection; both stages share one absolute budget.
                 if (connection is null && !_hasCursorContinuation && _client.UsesPrimaryBacklog)
                     connection = _client.SelectPrimaryBacklogConnection(cancellationToken);
-                result = connection is null && !_hasCursorContinuation && _client.UsesPrimaryBacklog
+                var clusterSlot = _hasClusterSlot ? _clusterSlot : (int?)null;
+                result = connection is null && !_hasCursorContinuation && core.Cluster is { } backlogCluster
+                    && backlogCluster.ShouldBacklog(clusterSlot)
+                    ? await _client.RunClusterBacklogAsync("MULTI/EXEC", clusterSlot, RespireReadFrom.Primary,
+                        cancellationToken, deadline, observation, (ready, originalDeadline) =>
+                        {
+                            connection = ready;
+                            deadline = originalDeadline;
+                            return SendAsync();
+                        }).ConfigureAwait(false)
+                    : connection is null && !_hasCursorContinuation && _client.UsesPrimaryBacklog
                     ? await _client.RunPrimaryBacklogAsync("MULTI/EXEC", cancellationToken, deadline,
                         (ready, originalDeadline) =>
                         {
