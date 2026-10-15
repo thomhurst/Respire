@@ -1351,8 +1351,11 @@ public class ReadEndpointRoutingTests
     }
 
     [Test]
-    public async Task RemovedReplicaFinishesAStreamedReadBeforeClosing()
+    [Arguments(0)]
+    [Arguments(300)]
+    public async Task RemovedReplicaFinishesAStreamedReadBeforeClosing(int discoveryDelayMilliseconds)
     {
+        var commandTimeout = TimeSpan.FromSeconds(2);
         const int payloadLength = 128 * 1024;
         var frame = new byte[payloadLength + 32];
         var header = Encoding.ASCII.GetBytes($"${payloadLength}\r\n");
@@ -1388,8 +1391,9 @@ public class ReadEndpointRoutingTests
             SentinelPrimaryName = "mymaster",
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10),
-            // Far shorter than the time the consumer below holds the stream open.
-            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            // This also bounds Sentinel discovery. Keep setup independent of the shorter
+            // retirement grace, then hold the stream for several command timeouts below.
+            CommandTimeout = commandTimeout,
             Protocol = RespireProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
@@ -1401,12 +1405,30 @@ public class ReadEndpointRoutingTests
         var serving = first.ReceivedCommands.Contains("GET big") ? first : second;
         var other = ReferenceEquals(serving, first) ? second : first;
 
+        var router = client.Core.ReadRouter;
+        var connection = router.CaptureHealthConnections().Single(x => x.Endpoint.Port == serving.Port).Connection!;
+        await Assert.That(connection).IsNotNull();
+        sentinel.DelayCommand("SENTINEL REPLICAS ", discoveryDelayMilliseconds);
+        Console.WriteLine($"stream opened: serving={serving.Port}, bytes={total}");
         Volatile.Write(ref replicaPorts, [other.Port]);
-        await client.Core.ReadRouter.RefreshNowAsync(CancellationToken.None);
-        // Retirement starts after a grace of min(CommandTimeout, 1 s) and no longer has an idle
-        // cutoff. Pause for several command timeouts past that grace while the retired stream
-        // stays open, then keep pausing between reads; the stream must remain usable.
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await router.RefreshNowAsync(CancellationToken.None);
+        var publishedPorts = router.CaptureHealthConnections().Select(x => x.Endpoint.Port).ToArray();
+        Console.WriteLine($"refresh returned: topology={string.Join(',', publishedPorts)}, serving={serving.Port}");
+        // RefreshNowAsync retains the old topology on discovery failure. Prove removal was
+        // published rather than misreporting a failed refresh as a later peer-close timeout.
+        await Assert.That(publishedPorts).IsEquivalentTo([other.Port]);
+        using (var retirementStarted = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            while (connection.IsAcceptingCommands) await Task.Delay(5, retirementStarted.Token);
+        }
+        Console.WriteLine($"retirement started: connected={connection.IsConnected}, pending={connection.PendingResponseCount}");
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(connection.PendingResponseCount).IsEqualTo(1);
+        // The payload exceeds the receive pipe's capacity, so it cannot finish while this
+        // consumer is paused. Observe retirement first, then outlive several command timeouts.
+        await Task.Delay(commandTimeout * 3);
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(serving.PeerClosed.IsCompleted).IsFalse();
         int read;
         while ((read = await stream.ReadAsync(buffer)) > 0)
         {
@@ -1415,8 +1437,11 @@ public class ReadEndpointRoutingTests
         }
 
         await Assert.That(total).IsEqualTo(payloadLength);
+        Console.WriteLine($"stream complete: bytes={total}, pending={connection.PendingResponseCount}, accepting={connection.IsAcceptingCommands}");
         // Once the stream completes, the drained replica closes without waiting for client disposal.
         await serving.PeerClosed.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(connection.DrainedSuccessfully).IsTrue();
+        Console.WriteLine("peer closed after successful drain");
     }
 
     [Test]
