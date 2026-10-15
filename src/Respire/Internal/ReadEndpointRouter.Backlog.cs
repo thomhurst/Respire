@@ -78,7 +78,17 @@ internal sealed partial class ReadEndpointRouter
             {
                 ThrowIfDisposed();
                 wait.ThrowIfCancellationRequested();
-                try { return await SelectBacklogHeadAsync(readFrom, wait, observation, cursorRead, affinity).ConfigureAwait(false); }
+                // A strict replica round cannot attempt recovery while every candidate is
+                // cooling down. Poll membership without spending this head's retry budget.
+                // Fallback policies still have an eligible primary attempt of their own.
+                if (discoveryBudget is not null && readFrom == RespireReadFrom.Replica
+                    && !IsSentinelRefreshDue() && AreAllReplicasCoolingDown())
+                {
+                    await Task.Delay(BacklogRetryDelayMilliseconds, wait).ConfigureAwait(false);
+                    continue;
+                }
+                try { return await SelectBacklogHeadAsync(readFrom, wait, observation, cursorRead, affinity,
+                    reselectSharedCursor: true).ConfigureAwait(false); }
                 catch (Exception error) when (IsUnavailable(error, wait))
                 {
                     wait.ThrowIfCancellationRequested();
@@ -101,12 +111,23 @@ internal sealed partial class ReadEndpointRouter
         });
     }
 
+    private bool AreAllReplicasCoolingDown()
+    {
+        var endpoints = Volatile.Read(ref _replicas);
+        if (endpoints.Length == 0) return false;
+        foreach (var endpoint in endpoints)
+        {
+            if (!_entries.TryGetValue(endpoint, out var entry) || !entry.IsCoolingDown) return false;
+        }
+        return ReferenceEquals(endpoints, Volatile.Read(ref _replicas));
+    }
+
     private async ValueTask<RespireConnection> SelectBacklogHeadAsync(RespireReadFrom readFrom,
         CancellationToken token, RespireTelemetry.ErrorObservation observation, bool cursorRead, ReadAffinity? affinity,
-        bool readyOnly = false)
+        bool readyOnly = false, bool reselectSharedCursor = false)
     {
         var connection = cursorRead
-            ? await GetCursorConnectionAsync(readFrom, affinity, false, token, observation, readyOnly).ConfigureAwait(false)
+            ? await GetCursorConnectionAsync(readFrom, affinity, false, token, observation, readyOnly, reselectSharedCursor).ConfigureAwait(false)
             : await GetConnectionAsync(readFrom, token, observation, readyOnly).ConfigureAwait(false);
         if (cursorRead && (Volatile.Read(ref _selectionHistory) & SelectedReplica) == 0)
         {

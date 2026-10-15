@@ -191,35 +191,18 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     /// <summary>Selects a connection for a read under <paramref name="readFrom"/>.</summary>
     /// <remarks>The pooled ValueTask must be consumed exactly once, including asynchronous fallback.</remarks>
-    internal ValueTask<RespireConnection> GetConnectionAsync(
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    internal async ValueTask<RespireConnection> GetConnectionAsync(
         RespireReadFrom readFrom, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
         bool readyOnly = false)
     {
         try
         {
             ThrowIfDisposed();
-            // Published routes need no async state machine. Keep exceptions in the returned
-            // ValueTask, matching the slow selector's acquisition contract.
             if (readFrom is RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred
-                && TryAcquireReadyConnection(readFrom, cancellationToken) is { } ready) return new(ready);
-            return GetConnectionSlowAsync(readFrom, cancellationToken, observation, readyOnly);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return ValueTask.FromCanceled<RespireConnection>(cancellationToken);
-        }
-        catch (Exception error) { return ValueTask.FromException<RespireConnection>(error); }
-    }
-
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private async ValueTask<RespireConnection> GetConnectionSlowAsync(
-        RespireReadFrom readFrom, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation, bool readyOnly)
-    {
-        try
-        {
+                && TryAcquireReadyConnection(readFrom, cancellationToken) is { } ready) return ready;
             var selection = await SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
             RecordSelection(selection.Replica is not null);
             return selection.Connection;
@@ -427,10 +410,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     /// </summary>
     internal ValueTask<RespireConnection> GetCursorConnectionAsync(
         RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation, bool readyOnly = false)
+        RespireTelemetry.ErrorObservation observation, bool readyOnly = false, bool reselectSharedCursor = false)
     {
         ThrowIfDisposed();
-        return Cursors.GetConnectionAsync(this, readFrom, affinity, isContinuation, cancellationToken, observation, readyOnly);
+        return Cursors.GetConnectionAsync(this, readFrom, affinity, isContinuation, cancellationToken, observation, readyOnly, reselectSharedCursor);
     }
 
     internal ClientCore Core => core;

@@ -266,14 +266,18 @@ public class ReadEndpointRoutingTests
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReplicaRole, Bulk("replica"))
         {
-            SuppressReply = command => command == "ROLE" && Volatile.Read(ref failRevalidation) != 0,
+            // Fail revalidation explicitly. A short setup timeout tests scheduler load,
+            // not whether a failed ROLE check removes a cooling replica from health.
+            ReplyOverride = (_, command) => command == "ROLE"
+                ? Volatile.Read(ref failRevalidation) != 0 ? "-ERR ROLE unavailable\r\n"u8.ToArray() : ReplicaRole
+                : Bulk("replica"),
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
             BacklogPolicy = RespireBacklogPolicy.FailFast, // This test asserts immediate selection failure.
             Protocol = RespireProtocol.Resp2,
             Connections = 1,
-            CommandTimeout = TimeSpan.FromMilliseconds(300),
+            CommandTimeout = TimeSpan.FromSeconds(10),
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],

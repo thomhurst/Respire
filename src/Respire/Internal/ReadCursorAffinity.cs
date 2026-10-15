@@ -35,7 +35,8 @@ internal sealed class ReadCursorAffinity
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool readyOnly = false)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool readyOnly = false,
+        bool reselectSharedCursor = false)
     {
         if (affinity is not null)
         {
@@ -47,7 +48,8 @@ internal sealed class ReadCursorAffinity
             return first.Connection;
         }
 
-        if (_shared.TryGetValue(readFrom, out var shared))
+        ReadAffinity? shared;
+        if ((!reselectSharedCursor || isContinuation) && _shared.TryGetValue(readFrom, out shared))
         {
             if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
                 return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
@@ -66,7 +68,7 @@ internal sealed class ReadCursorAffinity
         else await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_shared.TryGetValue(readFrom, out shared))
+            if (!reselectSharedCursor && _shared.TryGetValue(readFrom, out shared))
             {
                 if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
                     return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);

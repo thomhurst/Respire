@@ -331,7 +331,18 @@ public class NearestReadRoutingTests
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
         await using var client = await RespireClient.ConnectAsync(options);
         // Connection handshakes and topology discovery are setup, not sampling wait time.
-        // Warm every transport through ordinary replica reads, leaving latency samples cold.
+        // Acquire every transport before dispatch: once one replica is ready, ordinary reads
+        // can keep using it while skipping cold alternatives. Leave latency samples cold.
+        var slot = ClusterHash.GetSlot("key");
+        var connections = new HashSet<int>();
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var connection = cluster
+                ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default, observation: default)
+                : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
+            connections.Add(connection.Port);
+        }
+        await Assert.That(connections).IsEquivalentTo(new[] { first.Port, second.Port, third.Port });
         await using var replicas = client.WithReadFrom(RespireReadFrom.Replica);
         var warmed = new HashSet<string?>();
         for (var attempt = 0; attempt < 30 && warmed.Count < 3; attempt++)
@@ -351,7 +362,6 @@ public class NearestReadRoutingTests
         }, static () => 0);
         if (cluster) client.Core.Cluster!.NearestLatency = sampler;
         else client.Core.ReadRouter.NearestLatency = sampler;
-        var slot = ClusterHash.GetSlot("key");
         var primaryConnection = cluster
             ? client.Core.Cluster!.GetKnownSlotOwner(slot)!.GetConnection(slot)
             : client.Core.Multiplexer.GetConnection();

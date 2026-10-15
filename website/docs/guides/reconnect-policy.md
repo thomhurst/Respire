@@ -144,6 +144,15 @@ all eligible candidates report terminal exhaustion, the read fails. Initial acqu
 server-local cursor continuations and dedicated/blocking rentals retain their existing behavior.
 Strict `Replica` reads fail immediately when no standalone replicas are configured; only Sentinel
 discovery can populate an empty replica set during recovery.
+
+Standalone reads wait for eligible connection recovery to succeed or become terminal. With no
+command timeout, that wait can be indefinite while a route remains nonterminal, for example with
+unlimited reconnect attempts or repeated ROLE failures. Later reads remain behind the FIFO head.
+Set a command timeout or cancel the caller to bound that wait. Sentinel heads also have a
+per-command discovery retry budget from `ReconnectPolicy`. Strict replica heads wait through
+cooldown without consuming attempts, while still allowing due Sentinel discovery. Policies that
+permit primary fallback continue to attempt that primary and count those selection rounds.
+
 The backlog never replays an accepted read or an optional hedge. A streamed read releases the
 drain when its stream is returned; the consumer still owns reading and disposing that stream.
 

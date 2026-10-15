@@ -165,6 +165,105 @@ public class ReplicaReconnectBacklogTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SentinelReadBacklogWaitsForRoleCooldownBeforeSpendingRetry(bool remainsUnavailable)
+    {
+        await using var replica = Server();
+        await using var sentinel = new FakeRespServer(64, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL REPLICAS ", StringComparison.Ordinal)
+                ? ReplicasReply([replica.Port]) : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
+        });
+        await using var view = client.WithReadFrom(RespireReadFrom.Replica);
+        await view.GetStringAsync("warm");
+        var router = client.Core.ReadRouter;
+        router.RoleRevalidationInterval = TimeSpan.Zero;
+        router.FailedReplicaCooldown = TimeSpan.FromMilliseconds(500);
+        replica.ReplyOverride = (_, command) => command == "ROLE"
+            ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Value;
+        await Assert.That(async () => await router.GetConnectionAsync(RespireReadFrom.Replica, default, default))
+            .Throws<RespireConnectionException>();
+        if (!remainsUnavailable) replica.ReplyOverride = (_, command) => command == "ROLE" ? ReplicaRole : Value;
+        router.RoleRevalidationInterval = TimeSpan.FromMinutes(1);
+        var first = view.GetStringAsync("first").AsTask();
+        var second = view.GetStringAsync("second").AsTask();
+        if (remainsUnavailable)
+        {
+            await Assert.That(async () => await first.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
+            await Assert.That(async () => await second.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
+            // Two heads each get an initial actual ROLE attempt and one retry.
+            await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(6);
+            await Assert.That(replica.ReceivedCommands.Contains("GET first")).IsFalse();
+            await Assert.That(replica.ReceivedCommands.Contains("GET second")).IsFalse();
+            return;
+        }
+        await Assert.That(await first.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(await second.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(3);
+        await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith("GET ", StringComparison.Ordinal)).ToArray())
+            .IsEquivalentTo(new[] { "GET warm", "GET first", "GET second" }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task QueuedFreshRawCursorBypassesSharedPin(bool fireAndForget)
+    {
+        await using var primary = Server();
+        await using var first = Server();
+        await using var second = Server();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        var affinity = new ReadAffinity();
+        var pinned = await router.GetCursorConnectionAsync(RespireReadFrom.Replica, affinity, false, default, default);
+        router.Cursors.PinShared(RespireReadFrom.Replica, affinity);
+        var pinnedServer = pinned.Port == first.Port ? first : second;
+        var replacement = pinned.Port == first.Port ? second : first;
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pinnedServer.GateCommand("ROLE", resume.Task);
+        affinity.Replica!.MarkFailed();
+        router.RoleRevalidationInterval = TimeSpan.Zero;
+        await using var view = client.WithReadFrom(RespireReadFrom.Replica);
+        try
+        {
+            if (fireAndForget) await view.ExecuteFireAndForgetAsync(RespireCommands.Key.SCAN, ["0"]).AsTask().WaitAsync(Limit);
+            else { using var reply = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]).AsTask().WaitAsync(Limit); }
+            await view.GetStringAsync("barrier");
+            await Assert.That(replacement.ReceivedCommands.Contains("SCAN 0")).IsTrue();
+            await Assert.That(pinnedServer.ReceivedCommands.Contains("SCAN 0")).IsFalse();
+            await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.Replica, out var selected)).IsTrue();
+            // A discarded fresh cursor has no returned continuation to publish. It leaves
+            // the existing shared scan pin intact, while a reply-bearing scan replaces it.
+            var continuationServer = fireAndForget ? pinnedServer : replacement;
+            await Assert.That(selected!.Replica!.Endpoint.Port).IsEqualTo(continuationServer.Port);
+            // An existing typed continuation still owns its original pin.
+            await Assert.That(affinity.Replica.Endpoint.Port).IsEqualTo(pinnedServer.Port);
+            resume.TrySetResult();
+            router.RoleRevalidationInterval = TimeSpan.FromMinutes(1);
+            using var continuation = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]).AsTask().WaitAsync(Limit);
+            await Assert.That(continuationServer.ReceivedCommands.Contains("SCAN 7")).IsTrue();
+            await Assert.That((fireAndForget ? replacement : pinnedServer).ReceivedCommands.Contains("SCAN 7")).IsFalse();
+        }
+        finally { resume.TrySetResult(); }
+    }
+
+    [Test]
     public async Task PreferredReadUsesPermittedPrimaryFallback()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -740,8 +839,11 @@ public class ReplicaReconnectBacklogTests
             try
             {
                 var fixture = new Fixture(primary, replica, client, connecting, resume);
-                await fixture.View.GetStringAsync("warm");
                 client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.FromMinutes(1);
+                // Setup must not spend the deliberately short command deadline used by the
+                // timeout test. The router selection still connects, validates and records history.
+                await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+                if (timeout is null) await fixture.View.GetStringAsync("warm");
                 var connection = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
                 await connection.DisposeAsync();
                 return fixture;
