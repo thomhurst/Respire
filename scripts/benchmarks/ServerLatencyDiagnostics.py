@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -46,6 +47,23 @@ def validate_measurements(cases, reports):
         raise ValueError('BenchmarkDotNet results must cover exactly the 46 diagnostic methods')
 
 
+def wait_for_redis(container_id, timeout=30):
+    deadline = time.monotonic() + timeout
+    last_error = 'no PONG received'
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', container_id, 'redis-cli', '-p', '6380', 'PING'],
+                capture_output=True, text=True, timeout=min(5, remaining))
+            if result.returncode == 0 and result.stdout.strip() == 'PONG':
+                return
+            last_error = (result.stderr or result.stdout).strip()
+        except subprocess.TimeoutExpired:
+            last_error = 'PING timed out'
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+    raise TimeoutError(f'Redis did not become ready within {timeout}s: {last_error}')
+
+
 def main():
     root = Path(__file__).resolve().parents[2]
     os.chdir(root)
@@ -69,8 +87,7 @@ def main():
             'redis-server', '--port', '6380'], text=True).strip()
         (output / 'containers.json').write_text(subprocess.check_output(
             ['docker', 'inspect', container_id, host_id], text=True))
-        # Fail promptly if the host-network server is unavailable.
-        subprocess.run(['docker', 'exec', host_id, 'redis-cli', '-p', '6380', 'PING'], check=True)
+        wait_for_redis(host_id)
         # Bracket the host-network control with the original bridge path on the SAME runner.
         # A fresh process per method keeps per-client process CPU attributable to that workload.
         for phase, port, mode in [('bridge-a', '6379', 'plain'), ('host', '6380', 'plain'),
@@ -82,12 +99,12 @@ def main():
                 with (directory / 'console.log').open('w') as log:
                     subprocess.run(['dotnet', str(dll), case['name'], str(directory), mode],
                                    env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=90)
+                    observations.append(json.loads((directory / 'observation.json').read_text()))
+                    (output / 'observations.json').write_text(json.dumps(observations, indent=2))
                     if mode == 'trace':
                         subprocess.run(['dotnet', str(dll), '--summarize', str(directory / 'cpu.nettrace'),
                                         str(directory / 'stacks.json')], stdout=log, stderr=subprocess.STDOUT,
-                                       check=True, timeout=90)
-                observations.append(json.loads((directory / 'observation.json').read_text()))
-        (output / 'observations.json').write_text(json.dumps(observations, indent=2))
+                                       check=True, timeout=300)
     finally:
         if host_id is not None:
             subprocess.run(['docker', 'rm', '-f', host_id], check=True)
