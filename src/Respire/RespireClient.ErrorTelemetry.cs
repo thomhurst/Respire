@@ -301,6 +301,7 @@ public sealed partial class RespireClient
         TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
+        // Re-enter the unhooked helper so acquiring an error owner does not repeat admission.
         if (observation.IsEmpty)
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken, State: state, Converter: converter),

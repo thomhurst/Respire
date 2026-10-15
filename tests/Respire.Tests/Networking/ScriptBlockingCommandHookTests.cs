@@ -207,6 +207,36 @@ public class ScriptBlockingCommandHookTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task SingleStreamCancellationDrainsTheCurrentBatchThenEndsQuietly(bool configured, bool pending)
+    {
+        await using var server = new FakeRespServer(4,
+            "*1\r\n*2\r\n$6\r\nstream\r\n*2\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$3\r\n2-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray());
+        using var cancellation = new CancellationTokenSource();
+        var hook = new RecordingHook();
+        var options = Options(server, hook);
+        if (!configured) options = options with { CommandHook = null };
+        await using var client = await RespireClient.ConnectAsync(options);
+        await using var enumerator = client.Streams.ReadGroupAsync("stream", "group", "consumer",
+            startAt: pending ? RespireStreamId.Beginning : (RespireStreamId?)null,
+            cancellationToken: cancellation.Token).GetAsyncEnumerator();
+
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        cancellation.Cancel();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(await enumerator.MoveNextAsync()).IsFalse();
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        await Assert.That(hook.Entered.Count).IsEqualTo(configured ? 1 : 0);
+        await Assert.That(hook.Completed.Count).IsEqualTo(configured ? 1 : 0);
+        if (configured)
+            await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+    }
+
+    [Test]
     public async Task BlockingCompletionIncludesConvertedResult()
     {
         await using var server = new FakeRespServer(4, "*2\r\n$4\r\nlist\r\n$5\r\nvalue\r\n"u8.ToArray());

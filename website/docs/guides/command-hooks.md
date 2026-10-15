@@ -125,18 +125,20 @@ remain preflight work before admission.
 Script-object `Scripts.ExecuteAsync`, `ExecuteSpanAsync`, `ExecuteLeaseAsync`,
 `ExecuteLeaseSpanAsync`, and the typed/integer/string execution conveniences use one
 `EVALSHA` (or `EVALSHA_RO`) scope. It encloses NOSCRIPT fallback to EVAL, declared
-retries, cache mutation cleanup, and the selected result conversion. Owned results finish
-materialization before completion; leased results complete when the lease is returned to
-the caller. The caller's subsequent conversion or disposal of that lease is outside the
-hook boundary.
+retries, cache mutation cleanup, and the selected result conversion. Both callbacks retain
+the `EVALSHA` or `EVALSHA_RO` command name even when fallback sends `EVAL` or `EVAL_RO`.
+Owned results finish materialization before completion; leased results complete when the
+lease is returned to the caller. The caller's subsequent conversion or disposal of that
+lease is outside the hook boundary.
 
 Dedicated blocking list, sorted-set, and stream commands that use the blocking converted
 response helper complete after reply conversion and dedicated connection cleanup. Their
 internal connection setup and cancellation control commands do not create hook events.
-Continuous `ReadGroupAsync` enumerations admit each requested page before observing
-cancellation. With a configured hook, cancellation between batches admits the next page
-and throws `OperationCanceledException`; without a hook, the single-stream overload that
-accepts `startAt` can instead end the enumeration quietly at that boundary.
+Continuous `ReadGroupAsync` enumerations with a configured hook admit an initially
+canceled call before reporting cancellation. The single-stream overload that accepts
+`startAt` drains an already fetched batch and then ends quietly if canceled, with or
+without a hook; it does not admit another page. The `StreamReadOptions` overload checks
+cancellation between entries and throws outside the already completed page scope.
 
 Ordinary `Keys.ScanAsync` and collection SSCAN/HSCAN/ZSCAN enumerations admit each
 requested page separately. Completion includes parsing that page, before its items are

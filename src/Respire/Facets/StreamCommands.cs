@@ -1125,8 +1125,11 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             }
             catch (Exception error) { failure = error; throw; }
             var cursor = startAt ?? RespireStreamId.Beginning;
-            while (client.Core.Options.CommandHook is not null || !cancellationToken.IsCancellationRequested)
+            // Admit an initially canceled call, but preserve quiet exit after a fetched batch.
+            var admitFirstPage = client.Core.Options.CommandHook is not null;
+            while (admitFirstPage || !cancellationToken.IsCancellationRequested)
             {
+                admitFirstPage = false;
                 RespireStreamEntry[] entries;
                 try
                 {
