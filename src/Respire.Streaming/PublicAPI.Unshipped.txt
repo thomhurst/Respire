@@ -41,6 +41,31 @@ override Respire.Streaming.RespireJobFlowResult.GetHashCode() -> int
 override Respire.Streaming.RespireJobFlowResult.ToString() -> string!
 static Respire.Streaming.RespireJobFlowResult.operator ==(Respire.Streaming.RespireJobFlowResult? left, Respire.Streaming.RespireJobFlowResult? right) -> bool
 static Respire.Streaming.RespireJobFlowResult.operator !=(Respire.Streaming.RespireJobFlowResult? left, Respire.Streaming.RespireJobFlowResult? right) -> bool
+Respire.Streaming.RespireJobMissedTickPolicy
+Respire.Streaming.RespireJobMissedTickPolicy.Skip = 0 -> Respire.Streaming.RespireJobMissedTickPolicy
+Respire.Streaming.RespireJobMissedTickPolicy.CatchUp = 1 -> Respire.Streaming.RespireJobMissedTickPolicy
+Respire.Streaming.RespireJobSchedule
+Respire.Streaming.RespireJobSchedule.<Clone>$() -> Respire.Streaming.RespireJobSchedule!
+Respire.Streaming.RespireJobSchedule.RespireJobSchedule() -> void
+Respire.Streaming.RespireJobSchedule.Cron.get -> string?
+Respire.Streaming.RespireJobSchedule.Cron.init -> void
+Respire.Streaming.RespireJobSchedule.Interval.get -> System.TimeSpan?
+Respire.Streaming.RespireJobSchedule.Interval.init -> void
+Respire.Streaming.RespireJobSchedule.MissedTickPolicy.get -> Respire.Streaming.RespireJobMissedTickPolicy
+Respire.Streaming.RespireJobSchedule.MissedTickPolicy.init -> void
+Respire.Streaming.RespireJobSchedule.Equals(Respire.Streaming.RespireJobSchedule? other) -> bool
+override Respire.Streaming.RespireJobSchedule.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJobSchedule.GetHashCode() -> int
+override Respire.Streaming.RespireJobSchedule.ToString() -> string!
+static Respire.Streaming.RespireJobSchedule.operator !=(Respire.Streaming.RespireJobSchedule? left, Respire.Streaming.RespireJobSchedule? right) -> bool
+static Respire.Streaming.RespireJobSchedule.operator ==(Respire.Streaming.RespireJobSchedule? left, Respire.Streaming.RespireJobSchedule? right) -> bool
+Respire.Streaming.RespireJobQueue<T>.CreateScheduler(System.TimeProvider? timeProvider = null) -> Respire.Streaming.RespireJobScheduler<T>!
+Respire.Streaming.RespireJobScheduler<T>
+Respire.Streaming.RespireJobScheduler<T>.UpsertAsync(string! scheduleId, T payload, Respire.Streaming.RespireJobSchedule! schedule, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireJobScheduler<T>.RemoveAsync(string! scheduleId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobScheduler<T>.RunDueAsync(int maximumTicks = 64, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<int>
+Respire.Streaming.RespireJobSchedulerServiceCollectionExtensions
+static Respire.Streaming.RespireJobSchedulerServiceCollectionExtensions.AddRespireJobScheduler<T>(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, string! queueName, System.TimeSpan? pollInterval = null, int maximumTicksPerPass = 64) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
 Respire.Streaming.RespireJob<T>.ReportProgressAsync(int percent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobEvent
 Respire.Streaming.RespireJobEvent.Attempt.get -> long

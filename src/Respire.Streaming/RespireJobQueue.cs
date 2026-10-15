@@ -66,6 +66,11 @@ public sealed partial class RespireJobQueue<T>
     /// <summary>The retained progress and completion stream. No automatic expiry or trimming is applied.</summary>
     public string EventsStreamKey => StreamKey + ":events";
 
+    /// <summary>Creates a durable recurring scheduler for this queue using the supplied UTC clock.</summary>
+    /// <remarks>Call RunDueAsync periodically, or register AddRespireJobScheduler to run it in the host.</remarks>
+    public RespireJobScheduler<T> CreateScheduler(TimeProvider? timeProvider = null)
+        => new(_client, StreamKey, _serialize, timeProvider ?? TimeProvider.System);
+
     /// <summary>Observes retained events after a cursor, resuming transient connections until cancellation.</summary>
     /// <remarks>Defaults to the beginning. Persist each event's Id after processing and pass it when restarting.
     /// Replaying an older cursor can deliver duplicates; trimming or eviction can lose events. Independent

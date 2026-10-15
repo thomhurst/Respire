@@ -306,6 +306,90 @@ On Redis 8.2+, these transitions also require `COMMAND INFO` to detect `XACKDEL`
 or acknowledging. Denied discovery fails the transition and leaves the original delivery pending.
 Older servers retain acknowledged entries for trimming. Expiry does not remove the deduplication record.
 
+## Recurring and cron jobs
+
+Create a scheduler from a typed producer to manage durable recurring schedules:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "email", Encoding.UTF8.GetBytes);
+var scheduler = queue.CreateScheduler();
+await scheduler.UpsertAsync("hourly-reminder", "customer@example.com", new RespireJobSchedule
+{
+    Interval = TimeSpan.FromHours(1),
+    MissedTickPolicy = RespireJobMissedTickPolicy.CatchUp,
+});
+await scheduler.UpsertAsync("weekday-summary", "reports@example.com", new RespireJobSchedule
+{
+    Cron = "0 9 * * MON-FRI",
+});
+
+// Run periodically when managing the scheduler yourself.
+var enqueued = await scheduler.RunDueAsync(maximumTicks: 64);
+await scheduler.RemoveAsync("hourly-reminder");
+```
+
+Alternatively, call `services.AddRespireJobScheduler<string>("email")` after registering the
+matching `AddRespireJobQueue<EmailHandler, string>("email", ...)`. This adds a hosted scheduler
+with a one-second polling interval and a 64-candidate pass limit, plus a keyed
+`RespireJobScheduler<string>` resolved with `GetRequiredKeyedService` using the queue name.
+The optional `pollInterval` and `maximumTicksPerPass` arguments configure those bounds; the
+maximum is 256. A failed pass is logged and retried after the interval. Register a `TimeProvider`
+to control the hosted scheduler's UTC clock and timers, or pass one to `CreateScheduler` for
+manual scheduling and deterministic tests. Queue consumers run independently of the scheduler.
+
+Specify exactly one of `Interval` or `Cron`. Intervals are positive whole milliseconds and are
+anchored at upsert time. Cron uses [Cronos](https://github.com/HangfireIO/Cronos)'s five-field
+format (minute, hour, day of month, month, day of week), evaluated in UTC; local time zones and
+six-field expressions are not accepted. The first occurrence is strictly after upsert time.
+An expression with no future occurrence is rejected. If a schedule reaches its last representable
+occurrence, its definition remains removable but no further ticks are due.
+
+`Skip` (the default) coalesces missed occurrences into the latest tick at or before the pass's
+clock snapshot. `CatchUp` enqueues each overdue tick in order, carrying remaining backlog to
+later bounded passes. Passes visit schedule IDs in round-robin order using a shared Redis cursor,
+so a sustained catch-up backlog cannot starve other schedules, even with a one-candidate pass.
+The candidate budget includes schedules that are not yet due or have no future occurrences;
+large schedule sets can require several passes to visit every schedule. The cursor survives
+restarts and removal of its last visited schedule. Neither mode shifts an interval's cadence when a pass runs late. Scheduling
+pauses when no scheduler is running and resumes from Redis state on restart. Polling, queue backlog,
+and worker availability affect execution time; a tick is an enqueue opportunity, not an execution deadline.
+
+Every upsert creates a new revision, replaces the stored payload and policy, and resets the next
+occurrence. Manage schedules through one control plane; do not upsert them on every worker startup.
+Removal prevents further commits for that schedule and returns whether a definition existed.
+Replacement and removal do not retract jobs already enqueued. A snapshot read before an upsert or
+removal cannot subsequently commit against the new state.
+
+Many instances may run scheduling passes. A Redis script atomically appends a tick to the existing
+ready stream and advances its persisted due time. Only one instance can commit a given revision
+and tick, including when a successful reply is lost or a process restarts. There is no expiring
+deduplication window for these transitions. Jobs use IDs of the form `recurring:<revision>:<unix-ms>`;
+reserve that prefix for the scheduler. Stream entries also carry `_respire.job.schedule` and
+`_respire.job.tick`. Existing typed handlers, acknowledgement, retries, and job events apply.
+Each tick uses the existing `job enqueue` producer span and propagates its W3C context (or the
+ambient context when no producer span is sampled) to the worker's processing span.
+Recurring jobs are immediate ready jobs; they do not carry delayed-enqueue priority or TTL options.
+One enqueue per tick does **not** make handler side effects exactly once: handlers must still tolerate redelivery.
+
+Unlike delayed-job promotion, recurring scheduling uses the application's `TimeProvider` UTC time.
+Synchronize clocks across instances. A fast clock can enqueue early, a slow clock can delay a pass,
+and a forward jump applies the missed-tick policy. Backward jumps do not repeat committed ticks.
+The guarantee depends on Redis retaining both the stream and schedule state through persistence
+and failover; protect these keys from eviction, expiry, trimming, and independent modification.
+
+Recurring scheduling adds `:recurring` (definition hash), `:recurring-due` (sorted set),
+`:recurring-order` (schedule ID sorted set) and `:recurring-cursor` (string) to the
+ready-stream key. They share its Cluster slot, including through prefixed clients. In addition to
+script execution, allow `TYPE`, `HGET`, `HSET`, `HDEL`, `ZRANGEBYLEX`, `ZSCORE`, `ZADD`, `ZREM`, `GET`, `SET`,
+and `XADD`/`XDEL` on the appropriate keys. Scripts check key types and write/cleanup permissions
+before mutations and roll back an appended job if advancing the due index fails. Redis 7.0 or
+later is required. No recurring-scheduler permissions are needed by immediate-only producers.
+
 ## Progress and completion observers
 
 Call `await job.ReportProgressAsync(percent, cancellationToken)` with an integer from 0 to 100
