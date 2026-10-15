@@ -7,8 +7,8 @@ namespace Respire;
 /// explicit subscription setup/teardown. Downloads complete on stream
 /// transfer, not later payload consumption. Uploads retain borrowed buffers through completion.
 /// Also covers specialized server dispatch, cluster scan pages and stream appends including
-/// automatic IDMP retries and capability fallback. Other specialized owners
-/// and explicit aggregate members remain outside this contract; this is not a
+/// automatic IDMP retries and capability fallback, explicit aggregate members (including
+/// WAIT/WAITAOF), and WATCH setup. Other composite owners remain outside this contract; this is not a
 /// client-wide blocking policy. Callbacks may run concurrently and reentrantly. A command started
 /// by a callback has its own callbacks; applications must prevent unbounded recursion.
 /// </remarks>

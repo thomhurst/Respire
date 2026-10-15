@@ -1549,7 +1549,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         try
         {
             ObjectDisposedException.ThrowIf(_core.Disposed, this);
-            cancellationToken.ThrowIfCancellationRequested();
+            if (_core.Options.CommandHook is null || watchKeys.Length == 0)
+                cancellationToken.ThrowIfCancellationRequested();
             if (watchKeys.Length == 0)
                 return owner.Attach(new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this)));
             // Resolve and own keys before the first await so routing and WATCH use the same bytes.
@@ -1562,7 +1563,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     RespireTransactionBase.ValidateClusterSlot(keySlot, ref slot);
             }
             // The asynchronous setup takes ownership only after preflight succeeds.
-            return owner.Attach(CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation));
+            return owner.Attach(_core.Options.CommandHook is { } hook
+                ? CommandHookScope.RunAsync(hook, "WATCH", cancellationToken,
+                    (Client: this, Keys: keys, Slot: slot, Token: cancellationToken, Observation: observation),
+                    static s => s.Client.CreateWatchedTransactionAsync(s.Keys, s.Slot, s.Token, s.Observation))
+                : CreateWatchedTransactionAsync(keys, slot, cancellationToken, observation));
         }
         catch (Exception error)
         {

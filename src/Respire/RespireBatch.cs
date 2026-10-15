@@ -247,8 +247,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     /// Invalid lifecycle use, such as executing a disposed or already-sent batch, still throws.
     /// </summary>
     public ValueTask<RespireBatchResult> TryExecuteAsync(CancellationToken cancellationToken = default)
-        => _client.Core.Options.PipelineHook is { } hook
-            ? TryExecuteHookedAsync(hook, cancellationToken)
+        => _client.Core.Options.PipelineHook is not null || _client.Core.Options.CommandHook is not null
+            ? TryExecuteHookedAsync(_client.Core.Options.PipelineHook, cancellationToken)
             : TryExecuteCoreAsync(cancellationToken);
 
     private async ValueTask<RespireBatchResult> TryExecuteCoreAsync(CancellationToken cancellationToken, bool admitted = false)
@@ -1061,8 +1061,6 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 PublishResponse(client, value);
             }
         }
-
-        public abstract Exception? Error { get; }
 
         public abstract bool IsReadOnly { get; }
 
