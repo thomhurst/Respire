@@ -15,7 +15,7 @@ APIs, function calls and mutations, script execution, dedicated blocking convert
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
 explicit pipeline/transaction members, WATCH setup, immediate hash imports,
-import-session acquisition and explicit health-probe rounds.
+import-session acquisition, explicit health-probe rounds and typed RedisJSON operations.
 Managed locks, semaphores, countdown latches and the tracked coordination leases described below are also covered.
 This is **not a client-wide command-blocking policy**. Remaining composite coverage and
 the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
@@ -61,6 +61,46 @@ conversion in those helpers. Native sends, ready connections, replica routing, a
 query-cache hits use the same boundary. Single-key GET admission precedes cache lookup,
 so rejecting a cached read also prevents returning its value. Each caller of a coalesced
 cache miss receives its own admission and completion.
+
+### Module result owners
+
+For a concrete `RespireClient`, typed `RespireJsonClient` operations own admission through
+final conversion and disposal of their internal result and serialization buffer. `GetAsync<T>`
+therefore reports `Failed` for invalid JSON or a JSONPath matching multiple values; it does not
+report success when only the raw reply has arrived. Admission also precedes serialization,
+so rejection sends no command and does not invoke the JSON converter. Cancellation and
+serialization failures finish the same owner. Argument validation inside the typed operation
+is reported as `Failed` after admission. `OnCompleted` runs after owned cleanup.
+
+| JSON methods | Hook name |
+| --- | --- |
+| `GetAsync<T>`, `GetManyAsync<T>`, `GetJsonAsync` | `JSON.GET` |
+| `MultiGetAsync<T>` | `JSON.MGET` |
+| `SetAsync<T>`, both `SetJsonAsync` overloads | `JSON.SET` |
+| `MultiSetAsync<T>` | `JSON.MSET` |
+| `MergeAsync<T>` | `JSON.MERGE` |
+| `DeleteAsync`, `ForgetAsync` | `JSON.DEL`, `JSON.FORGET` |
+| `GetMemoryUsageAsync` | `JSON.DEBUG MEMORY` |
+
+The `Commands` property continues to expose raw-result transfers: completion occurs before
+any conversion the caller performs later. A client supplied through an external `IRespireClient`
+decorator retains its public `ExecuteAsync` dispatch and that decorator's boundary. Respire
+does not unwrap it or suppress its hooks. Application commands started by a JSON converter
+or hook retain independent scopes. Key prefixing, Cluster slot checks and mutation fences
+still run in the ordinary command dispatch path.
+
+The module inventory distinguishes these remaining owners; raw execution coverage alone
+does not promise their outer typed result or composite lifetime:
+
+| Module | Result owner and remaining work |
+| --- | --- |
+| JSON | Typed deserialization, cardinality, text/numeric conversion, serialization and buffer cleanup are covered above; `Commands` transfers raw results. |
+| Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery: [#1777](https://github.com/thomhurst/Respire/issues/1777). |
+| TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion: [#1778](https://github.com/thomhurst/Respire/issues/1778). |
+| Probabilistic | Typed boolean/numeric/array and dump-chunk conversion versus raw Info transfers: [#1779](https://github.com/thomhurst/Respire/issues/1779). |
+
+This inventory does not establish a client-wide blocking policy; the final audit remains
+[#1708](https://github.com/thomhurst/Respire/issues/1708).
 
 ### Cache operation owners
 
@@ -430,7 +470,7 @@ boundaries; it does not establish client-wide coverage for the remaining composi
 
 For ordinary commands, after argument construction and preflight validation, `OnExecuting` runs synchronously
 before the covered operation dispatches or reads the cache. It can return any state object.
-Composite coordination owners admit before entering their operation; validation performed
+Composite coordination and typed JSON owners admit before entering their operation; validation performed
 inside that operation is reported as a failed admitted call.
 Throwing rejects the operation and produces one `Rejected` completion with that same
 exception and null state. This also applies when admission throws a cancellation exception.

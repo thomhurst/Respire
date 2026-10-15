@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Respire.Internal;
 using Respire.Protocol;
 using Respire.Serialization;
 
@@ -28,7 +29,7 @@ public sealed class RespireJsonClient
     private const int MaxStackAllocatedOffsets = 128;
 
     private readonly RespireJsonCommandsImplementation _commands;
-    private readonly RespireJsonModifierCommandsImplementation _modifiers;
+    private readonly IRespireClient _client;
     private SerializationBuffer? _availableBuffer;
 
     /// <summary>Creates RedisJSON operations over an existing Respire client.</summary>
@@ -36,7 +37,7 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(client);
         _commands = new RespireJsonCommandsImplementation(client);
-        _modifiers = new RespireJsonModifierCommandsImplementation(client);
+        _client = client;
     }
 
     /// <summary>Low-level source-generated commands for the documented RedisJSON command set.</summary>
@@ -49,8 +50,20 @@ public sealed class RespireJsonClient
     /// A null patch itself replaces the target with JSON null; it does not delete the document key.
     /// Argument and serialization failures are reported through the returned task.
     /// </remarks>
+    public ValueTask MergeAsync<T>(
+        RespireKey key,
+        T patch,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path = default,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.MERGE", cancellationToken,
+                (Owner: this, key, patch, jsonTypeInfo, path, cancellationToken),
+                static s => s.Owner.MergeUnhookedAsync(s.key, s.patch, s.jsonTypeInfo, s.path, s.cancellationToken))
+            : MergeUnhookedAsync(key, patch, jsonTypeInfo, path, cancellationToken);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    public async ValueTask MergeAsync<T>(
+    private async ValueTask MergeUnhookedAsync<T>(
         RespireKey key,
         T patch,
         JsonTypeInfo<T> jsonTypeInfo,
@@ -60,7 +73,7 @@ public sealed class RespireJsonClient
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         using var buffer = RentBuffer(jsonTypeInfo.Options);
         var payload = buffer.Serialize(patch, jsonTypeInfo);
-        using var result = await _commands.MergeAsync(key, path.Value, payload, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(MergeCommand, [key, path.Value, payload], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Gets one typed JSON value.</summary>
@@ -81,14 +94,25 @@ public sealed class RespireJsonClient
     /// A JSONPath (<c>$</c>) path matched more than one value. Use <see cref="GetManyAsync{T}"/> for paths
     /// that can match several values, such as wildcards.
     /// </exception>
-    public async ValueTask<RespireJsonGetResult<T>> GetAsync<T>(
+    public ValueTask<RespireJsonGetResult<T>> GetAsync<T>(
+        RespireKey key,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path = default,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.GET", cancellationToken,
+                (Owner: this, key, jsonTypeInfo, path, cancellationToken),
+                static s => s.Owner.GetUnhookedAsync(s.key, s.jsonTypeInfo, s.path, s.cancellationToken))
+            : GetUnhookedAsync(key, jsonTypeInfo, path, cancellationToken);
+
+    private async ValueTask<RespireJsonGetResult<T>> GetUnhookedAsync<T>(
         RespireKey key,
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path = default,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        using var result = await _commands.GetPathAsync(key, path.Value, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(GetCommand, [key, path.Value], cancellationToken).ConfigureAwait(false);
         var values = DeserializeValues(result, path, jsonTypeInfo);
         if (values.Length > 1)
             throw new InvalidOperationException("The JSONPath matched multiple values; use GetManyAsync.");
@@ -100,14 +124,25 @@ public sealed class RespireJsonClient
     /// Returns an empty array when the key does not exist or a JSONPath matches nothing. A legacy path
     /// returns at most one value.
     /// </remarks>
-    public async ValueTask<RespireJsonGetResult<T>[]> GetManyAsync<T>(
+    public ValueTask<RespireJsonGetResult<T>[]> GetManyAsync<T>(
+        RespireKey key,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.GET", cancellationToken,
+                (Owner: this, key, jsonTypeInfo, path, cancellationToken),
+                static s => s.Owner.GetManyUnhookedAsync(s.key, s.jsonTypeInfo, s.path, s.cancellationToken))
+            : GetManyUnhookedAsync(key, jsonTypeInfo, path, cancellationToken);
+
+    private async ValueTask<RespireJsonGetResult<T>[]> GetManyUnhookedAsync<T>(
         RespireKey key,
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        using var result = await _commands.GetPathAsync(key, path.Value, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(GetCommand, [key, path.Value], cancellationToken).ConfigureAwait(false);
         return DeserializeValues(result, path, jsonTypeInfo);
     }
 
@@ -116,13 +151,23 @@ public sealed class RespireJsonClient
     /// Redis rejects requests that mix legacy and JSONPath paths; that error surfaces as a
     /// <see cref="RespireServerException"/>.
     /// </remarks>
-    public async ValueTask<string?> GetJsonAsync(
+    public ValueTask<string?> GetJsonAsync(
+        RespireKey key,
+        RespireJsonGetOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.GET", cancellationToken,
+                (Owner: this, key, options, cancellationToken),
+                static s => s.Owner.GetJsonUnhookedAsync(s.key, s.options, s.cancellationToken))
+            : GetJsonUnhookedAsync(key, options, cancellationToken);
+
+    private async ValueTask<string?> GetJsonUnhookedAsync(
         RespireKey key,
         RespireJsonGetOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.GetAsync(
-            key, (options ?? new RespireJsonGetOptions()).ToArguments(), cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(GetCommand,
+            GetArguments(key, options), cancellationToken).ConfigureAwait(false);
         return result.IsNull ? null : result.AsString();
     }
 
@@ -132,8 +177,21 @@ public sealed class RespireJsonClient
     /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
     /// <remarks>Argument and serialization failures are reported through the returned task, not thrown synchronously.</remarks>
+    public ValueTask<bool> SetAsync<T>(
+        RespireKey key,
+        T value,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path = default,
+        RespireJsonSetCondition condition = RespireJsonSetCondition.None,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.SET", cancellationToken,
+                (Owner: this, key, value, jsonTypeInfo, path, condition, cancellationToken),
+                static s => s.Owner.SetUnhookedAsync(s.key, s.value, s.jsonTypeInfo, s.path, s.condition, s.cancellationToken))
+            : SetUnhookedAsync(key, value, jsonTypeInfo, path, condition, cancellationToken);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    public async ValueTask<bool> SetAsync<T>(
+    private async ValueTask<bool> SetUnhookedAsync<T>(
         RespireKey key,
         T value,
         JsonTypeInfo<T> jsonTypeInfo,
@@ -155,7 +213,19 @@ public sealed class RespireJsonClient
     /// <see cref="RespireServerException"/>. Argument failures are reported through the returned task.
     /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
-    public async ValueTask<bool> SetJsonAsync(
+    public ValueTask<bool> SetJsonAsync(
+        RespireKey key,
+        string json,
+        RespireJsonPath path = default,
+        RespireJsonSetCondition condition = RespireJsonSetCondition.None,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.SET", cancellationToken,
+                (Owner: this, key, json, path, condition, cancellationToken),
+                static s => s.Owner.SetJsonUnhookedAsync(s.key, s.json, s.path, s.condition, s.cancellationToken))
+            : SetJsonUnhookedAsync(key, json, path, condition, cancellationToken);
+
+    private async ValueTask<bool> SetJsonUnhookedAsync(
         RespireKey key,
         string json,
         RespireJsonPath path = default,
@@ -173,7 +243,19 @@ public sealed class RespireJsonClient
     /// <see cref="RespireServerException"/>. Argument failures are reported through the returned task.
     /// </remarks>
     /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
-    public async ValueTask<bool> SetJsonAsync(
+    public ValueTask<bool> SetJsonAsync(
+        RespireKey key,
+        ReadOnlyMemory<byte> utf8Json,
+        RespireJsonPath path = default,
+        RespireJsonSetCondition condition = RespireJsonSetCondition.None,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.SET", cancellationToken,
+                (Owner: this, key, utf8Json, path, condition, cancellationToken),
+                static s => s.Owner.SetJsonUnhookedAsync(s.key, s.utf8Json, s.path, s.condition, s.cancellationToken))
+            : SetJsonUnhookedAsync(key, utf8Json, path, condition, cancellationToken);
+
+    private async ValueTask<bool> SetJsonUnhookedAsync(
         RespireKey key,
         ReadOnlyMemory<byte> utf8Json,
         RespireJsonPath path = default,
@@ -197,7 +279,18 @@ public sealed class RespireJsonClient
     /// values matched by <paramref name="path"/>: one value for a legacy path, and every match (possibly
     /// none) for a JSONPath.
     /// </returns>
-    public async ValueTask<RespireJsonGetResult<T>[]?[]> MultiGetAsync<T>(
+    public ValueTask<RespireJsonGetResult<T>[]?[]> MultiGetAsync<T>(
+        IReadOnlyList<RespireKey> keys,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path = default,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.MGET", cancellationToken,
+                (Owner: this, keys, jsonTypeInfo, path, cancellationToken),
+                static s => s.Owner.MultiGetUnhookedAsync(s.keys, s.jsonTypeInfo, s.path, s.cancellationToken))
+            : MultiGetUnhookedAsync(keys, jsonTypeInfo, path, cancellationToken);
+
+    private async ValueTask<RespireJsonGetResult<T>[]?[]> MultiGetUnhookedAsync<T>(
         IReadOnlyList<RespireKey> keys,
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path = default,
@@ -206,14 +299,11 @@ public sealed class RespireJsonClient
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         if (keys.Count == 0) throw new ArgumentException("At least one key is required.", nameof(keys));
-        // Generated commands only read the array, so an array input is passed through without a copy.
-        if (keys is not RespireKey[] keyArray)
-        {
-            keyArray = new RespireKey[keys.Count];
-            for (var index = 0; index < keyArray.Length; index++) keyArray[index] = keys[index];
-        }
-
-        using var result = await _commands.MultiGetAsync(keyArray, path.Value, cancellationToken).ConfigureAwait(false);
+        var count = keys.Count;
+        var arguments = new RespireValue[checked(count + 1)];
+        for (var index = 0; index < count; index++) arguments[index] = keys[index];
+        arguments[^1] = path.Value;
+        using var result = await DispatchAsync(MultiGetCommand, arguments, cancellationToken).ConfigureAwait(false);
         var values = new RespireJsonGetResult<T>[]?[result.Count];
         for (var index = 0; index < values.Length; index++)
         {
@@ -228,8 +318,18 @@ public sealed class RespireJsonClient
     /// Every entry is serialized before anything is sent, so a serialization failure writes nothing.
     /// JSON.MSET has no conditional form and replies OK or an error, so the method has no result.
     /// </remarks>
+    public ValueTask MultiSetAsync<T>(
+        IReadOnlyList<RespireJsonSetEntry<T>> entries,
+        JsonTypeInfo<T> jsonTypeInfo,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.MSET", cancellationToken,
+                (Owner: this, entries, jsonTypeInfo, cancellationToken),
+                static s => s.Owner.MultiSetUnhookedAsync(s.entries, s.jsonTypeInfo, s.cancellationToken))
+            : MultiSetUnhookedAsync(entries, jsonTypeInfo, cancellationToken);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    public async ValueTask MultiSetAsync<T>(
+    private async ValueTask MultiSetUnhookedAsync<T>(
         IReadOnlyList<RespireJsonSetEntry<T>> entries,
         JsonTypeInfo<T> jsonTypeInfo,
         CancellationToken cancellationToken = default)
@@ -239,7 +339,7 @@ public sealed class RespireJsonClient
         if (entries.Count == 0) throw new ArgumentException("At least one entry is required.", nameof(entries));
         using var buffer = RentBuffer(jsonTypeInfo.Options);
         var arguments = SerializeEntries(entries, jsonTypeInfo, buffer);
-        using var result = await _commands.MultiSetAsync(arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(MultiSetCommand, arguments, cancellationToken).ConfigureAwait(false);
     }
 
     private static RespireValue[] SerializeEntries<T>(
@@ -337,27 +437,51 @@ public sealed class RespireJsonClient
         });
 
     /// <summary>Deletes a document or path and returns the number of deleted values.</summary>
-    public async ValueTask<long> DeleteAsync(
+    public ValueTask<long> DeleteAsync(
+        RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.DEL", cancellationToken,
+                (Owner: this, key, path, cancellationToken),
+                static s => s.Owner.DeleteUnhookedAsync(s.key, s.path, s.cancellationToken))
+            : DeleteUnhookedAsync(key, path, cancellationToken);
+
+    private async ValueTask<long> DeleteUnhookedAsync(
         RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.DeleteAsync(key, path.Value, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(DeleteCommand, [key, path.Value], cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
 
     /// <summary>Deletes a document or path using JSON.FORGET.</summary>
-    public async ValueTask<long> ForgetAsync(
+    public ValueTask<long> ForgetAsync(
+        RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.FORGET", cancellationToken,
+                (Owner: this, key, path, cancellationToken),
+                static s => s.Owner.ForgetUnhookedAsync(s.key, s.path, s.cancellationToken))
+            : ForgetUnhookedAsync(key, path, cancellationToken);
+
+    private async ValueTask<long> ForgetUnhookedAsync(
         RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.ForgetAsync(key, path.Value, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(ForgetCommand, [key, path.Value], cancellationToken).ConfigureAwait(false);
         return result.AsInteger();
     }
 
     /// <summary>Reports the memory used by the values at a path, in bytes, with JSON.DEBUG MEMORY.</summary>
     /// <returns>One size for a legacy path, or one size per JSONPath match.</returns>
-    public async ValueTask<long[]> GetMemoryUsageAsync(
+    public ValueTask<long[]> GetMemoryUsageAsync(
+        RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.DEBUG MEMORY", cancellationToken,
+                (Owner: this, key, path, cancellationToken),
+                static s => s.Owner.GetMemoryUsageUnhookedAsync(s.key, s.path, s.cancellationToken))
+            : GetMemoryUsageUnhookedAsync(key, path, cancellationToken);
+
+    private async ValueTask<long[]> GetMemoryUsageUnhookedAsync(
         RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
     {
-        using var result = await _modifiers.DebugAsync("MEMORY", key, path.Value, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(DebugCommand, ["MEMORY", key, path.Value], cancellationToken).ConfigureAwait(false);
         if (result.IsNull) return [];
         if (result.Type is not (RespireDataType.Array or RespireDataType.Set))
             return [result.AsInteger()];
@@ -370,10 +494,39 @@ public sealed class RespireJsonClient
         RespireKey key, RespireValue json, RespireJsonPath path, string? condition, CancellationToken cancellationToken)
     {
         using var result = condition is null
-            ? await _commands.SetAsync(key, path.Value, json, cancellationToken).ConfigureAwait(false)
-            : await _modifiers.SetConditionalAsync(key, path.Value, json, condition, cancellationToken).ConfigureAwait(false);
+            ? await DispatchAsync(SetCommand, [key, path.Value, json], cancellationToken).ConfigureAwait(false)
+            : await DispatchAsync(SetCommand, [key, path.Value, json, condition], cancellationToken).ConfigureAwait(false);
         // NX and XX rejections are the only null replies; unconditional writes reply OK or fail.
         return !result.IsNull;
+    }
+
+    // These descriptors match the generated commands, including their mutation metadata.
+    private static readonly RespireCommand GetCommand = RespireCommand.Create("JSON.GET", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand MultiGetCommand = RespireCommand.Create("JSON.MGET", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand SetCommand = RespireCommand.Create("JSON.SET", RespireCacheMutation.SingleKey);
+    private static readonly RespireCommand MultiSetCommand = RespireCommand.Create("JSON.MSET", RespireCacheMutation.MultiKey);
+    private static readonly RespireCommand MergeCommand = RespireCommand.Create("JSON.MERGE", RespireCacheMutation.SingleKey);
+    private static readonly RespireCommand DeleteCommand = RespireCommand.Create("JSON.DEL", RespireCacheMutation.SingleKey);
+    private static readonly RespireCommand ForgetCommand = RespireCommand.Create("JSON.FORGET", RespireCacheMutation.SingleKey);
+    private static readonly RespireCommand DebugCommand = RespireCommand.Create("JSON.DEBUG", RespireCacheMutation.ReadOnly);
+
+    // Only called by the private result owners above. External decorators retain public dispatch;
+    // the Commands property uses its original generated implementation and raw-result boundary.
+    private ValueTask<RespireResult> DispatchAsync(RespireCommand command, RespireValue[] arguments, CancellationToken token)
+    {
+        if (token.IsCancellationRequested) return ValueTask.FromCanceled<RespireResult>(token);
+        return _client is RespireClient client && client.Core.Options.CommandHook is not null
+            ? client.ExecuteOwnedCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token)
+            : _client.ExecuteAsync(command, arguments, cancellationToken: token);
+    }
+
+    private static RespireValue[] GetArguments(RespireKey key, RespireJsonGetOptions? options)
+    {
+        var values = (options ?? new RespireJsonGetOptions()).ToArguments();
+        var arguments = new RespireValue[checked(values.Length + 1)];
+        arguments[0] = key;
+        for (var index = 0; index < values.Length; index++) arguments[index + 1] = values[index];
+        return arguments;
     }
 
     private static string? ConditionToken(RespireJsonSetCondition condition) => condition switch
