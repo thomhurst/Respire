@@ -9,6 +9,7 @@ public sealed class RespireCoordination
 {
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
+    private readonly TimeProvider _fencedLockClock;
     internal IRespireClient Client => _client;
 
     private readonly struct FencedLockWaitTarget(
@@ -49,9 +50,12 @@ public sealed class RespireCoordination
     }
 
     /// <summary>Creates coordination operations without taking ownership of <paramref name="client"/>.</summary>
-    public RespireCoordination(IRespireClient client)
+    public RespireCoordination(IRespireClient client) : this(client, TimeProvider.System) { }
+
+    internal RespireCoordination(IRespireClient client, TimeProvider fencedLockClock)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        _fencedLockClock = fencedLockClock;
         RateLimiters = new(this);
     }
 
@@ -492,7 +496,7 @@ public sealed class RespireCoordination
             .ConfigureAwait(false);
     }
 
-    private static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
+    internal static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
     {
         var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
         if (milliseconds <= 0)
@@ -820,13 +824,13 @@ public sealed class RespireCoordination
         RespireKey key, RespireKey counterKey, long milliseconds, CancellationToken cancellationToken)
     {
         var owner = RespireLock.NewToken();
-        var started = Stopwatch.GetTimestamp();
+        var started = _fencedLockClock.GetTimestamp();
         using var response = await CoordinationCommandHooks.ExecuteAsync(_client, AcquireFencedLock, [key, counterKey],
             [owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
         if (response.IsNull) return default;
 
         var lease = new RespireLock(_client.Locks, key, owner,
-            TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started);
+            TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started, _fencedLockClock);
         var transferred = false;
         try
         {

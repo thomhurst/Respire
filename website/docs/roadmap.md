@@ -145,6 +145,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   [atomic composite rate limits](guides/coordination.md#composite-limits) and
   [runtime rate-limit updates](guides/coordination.md#updating-settings-at-runtime), plus
   [deny lists and admission metrics](guides/coordination.md#deny-lists-and-admission-metrics).
+- [Hosted leader election](guides/coordination.md#hosted-leader-election) with renewable
+  fenced leases, cancellation on revocation, callbacks, events, and transition metrics.
 - Typed [JSON](guides/json.md), [Search](guides/search.md), [TimeSeries](guides/timeseries.md),
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
 - Source-generated [JSON mappers](guides/generated-json-mappers.md),

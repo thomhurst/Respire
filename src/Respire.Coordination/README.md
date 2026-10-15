@@ -1,6 +1,6 @@
 # Respire.Coordination
 
-Distributed coordination primitives including fenced locks, rate limiters, semaphores, latches, and leases.
+Distributed coordination primitives including hosted leader election, fenced locks, rate limiters, semaphores, latches, and leases.
 
 ## Install
 
