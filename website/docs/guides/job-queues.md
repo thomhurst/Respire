@@ -99,7 +99,7 @@ Retry with the same job ID within the window. An expired or evicted deduplicatio
 another enqueue, so handlers still need idempotent side effects. A deduplicated submission returns
 the earlier stream ID even if an operator has since deleted that entry.
 
-## Application group identity
+## Job groups and fair scheduling
 
 Set `RespireJobEnqueueOptions.Group` when calling `EnqueueScheduledAsync` to attach an
 application group, such as a tenant ID. A zero delay makes the job eligible on the next
@@ -125,10 +125,62 @@ key. It survives promotion, durable retries, consumer recovery and dead-letterin
 remains queue-wide by job ID: changing the group does not create a second job or update the
 first job's group. Include the tenant in the job ID if IDs are only unique within a tenant.
 
-Application groups are distinct from the Redis consumer group shared by workers. Group identity
-is currently metadata only: it does not provide round-robin fairness, per-group concurrency or
-rate limits, or pause/resume. Those controls and group dashboard support are tracked separately
-in [fair scheduling](https://github.com/thomhurst/Respire/issues/1824),
+Application groups are distinct from the Redis consumer group shared by workers. Scheduling-enabled
+workers rotate groups in Redis, selecting at most one job per group visit. The shared cursor and
+indexes survive worker restarts; independent worker processes participate in the same rotation.
+Selection, promotion and delivery into the consumer group's pending list run in one Lua script.
+Grouped jobs stay staged until a reader can take them, so one group's backlog cannot flood the
+ready stream ahead of a newly enqueued group. A lost read reply leaves a pending delivery for
+ordinary visibility recovery rather than losing or selecting the staged job twice.
+
+Each hosted-worker read visits one group after checking the shared pause and rate-limit policy
+in the same Redis script. Denied admission leaves staged jobs and the rotation cursor unchanged.
+Groups rotate in encoded UTF-8 byte
+order, starting after the persisted cursor and wrapping at the end. Empty groups leave the
+rotation; a new group joins at its lexical position. Delayed groups consume a visit without
+dispatching a job. The candidate budget within a visit is `SchedulingBatchSize`: select the
+oldest due members in that group, then dispatch the highest priority candidate, with due time
+and lexicographic staging ID breaking ties. Priority never outranks another group's turn.
+An expired or missing candidate is removed and consumes that turn. Continuous higher-priority
+arrivals within a candidate window can postpone a lower-priority job in the same group; use
+equal priorities for deterministic due-time and staging-ID ordering within that group.
+
+For a fixed set of **G** groups with due, live, equal-priority jobs, each group receives one
+selection within at most **G** visits. With 10,000 jobs in one group and 10 in another, all 10
+small-group jobs are selected within **20 visits**, regardless of the large backlog. Tests
+exercise this bound with independent clients and reconnect both midway through the rotation.
+This is a selection bound, not a wall-clock completion deadline: handler duration, concurrent
+readers (one admission per reader), pause/rate limits, polling, retries and recovery affect starts
+and finishes. Fair selection does not limit concurrency: several jobs from one group can run
+simultaneously. Adding groups or expired/missing candidates changes the bound.
+
+Ungrouped jobs keep their existing stream path. Immediate jobs, activated flow nodes, recurring
+ticks and promoted ungrouped scheduled jobs have FIFO precedence over grouped selection.
+Workers drain unread ready entries before selecting grouped jobs. A sustained ungrouped backlog
+can therefore delay every application group; use a separate queue when both workloads need
+independent latency guarantees. Pending replay and visibility recovery also precede new reads
+and do not consume a group turn. Durable retries retain the exact group, priority and absolute
+expiry, and rejoin its staged index at their new due time. Deduplication remains queue-wide.
+
+The group format adds `:group-order` and `:group-jobs` sorted sets and a `:group-cursor` string
+under the ready-stream key. Every key is explicitly supplied to Lua and shares the queue's
+Cluster hash tag; even groups containing braces, separators or null characters only appear in
+encoded members and envelope values. In addition to scheduling permissions, grant `ZRANGEBYLEX`,
+`ZSCORE`, `ZADD`, `ZREM`, `GET` and `SET` on these indexes, plus `XREADGROUP` on the ready stream.
+Protect all these keys and the staging stream from independent deletion, trimming or eviction.
+Type and mutation/cleanup permission checks precede grouped writes; failed indexing, cursor
+updates and retry acknowledgement compensate newly appended bodies.
+
+**Upgrade every scheduling worker before enabling grouped producers.** Older workers cannot
+read the new grouped indexes, and mixed worker versions are unsupported for grouped queues.
+For queues produced by the earlier metadata-only implementation, stop producers and drain
+their ready, pending and scheduled jobs before upgrading (including jobs with long delays),
+or start a new queue. Existing entries in the old global due index keep their old scheduling
+order; upgrading does not reindex them or retroactively provide group fairness. Retain the
+new indexes when restarting workers; there is no client-local cursor to restore.
+
+Group scheduling does not provide per-group concurrency or rate limits, or pause/resume.
+Those controls and group dashboard support are tracked separately in
 [group controls](https://github.com/thomhurst/Respire/issues/1825), and
 [group dashboard](https://github.com/thomhurst/Respire/issues/1826).
 
@@ -366,7 +418,7 @@ options, retains immediate-only processing and requires no access to the schedul
 Enable scheduling on every worker for a scheduled queue, and grant the permissions below
 before switching producers to `EnqueueScheduledAsync`.
 
-Each worker reader promotes at most `SchedulingBatchSize` due jobs (default 64, maximum 256) before reading or recovering
+For ungrouped scheduled jobs, each worker reader promotes at most `SchedulingBatchSize` due jobs (default 64, maximum 256) before reading or recovering
 work, at most once per `SchedulingPollInterval`. Redis `TIME` determines due times and expiry; application clocks are not used. Clock jumps
 on the Redis server or after failover can advance or postpone eligibility. Delay is a minimum,
 not an execution deadline. Busy handlers, polling, ready-stream backlog and recovery can add latency.
@@ -375,7 +427,7 @@ wakes at least every `SchedulingPollInterval` (default one second); handlers are
 to run a scheduling pass. An index entry whose staged body was deleted is removed and skipped
 so it cannot block later jobs; the missing payload cannot be recovered.
 
-The scheduler selects the oldest due jobs first (equal due times use Redis lexicographic staging
+The ungrouped scheduler selects the oldest due jobs first (equal due times use Redis lexicographic staging
 ID order), then orders that bounded batch by descending integer `Priority`, preserving selection
 order for equal priorities. Priority defaults to zero and accepts negative values. This is **batch
 priority**, not a global priority heap: it cannot reorder entries already in the ready stream,

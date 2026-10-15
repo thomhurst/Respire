@@ -30,13 +30,20 @@ public class JobGroupIntegrationTests(RedisTestContainer redis)
         var duplicate = await queue.EnqueueScheduledAsync("id", "replacement", new() { Group = "other" });
         await Assert.That(duplicate.Enqueued).IsFalse();
         await Assert.That(duplicate.EntryId).IsEqualTo(first.EntryId);
-        await Assert.That(await Promote(client, queue)).IsEqualTo(0);
+        await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
+        await Assert.That((await Read(client, queue, "owner")).Length).IsEqualTo(0);
         var staged = (await client.Streams.ReadAsync(queue.StreamKey + ":scheduled")).Single();
         await Assert.That(staged.GetString("_respire.job.group")).IsEqualTo(ApplicationGroup);
 
-        // Advance this job's test-owned due score without relying on a wall-clock delay.
-        using (await root.ExecuteAsync("ZADD", [client.ResolveKey(queue.StreamKey + ":due").ToBytes(), 0, first.EntryId.Value])) { }
-        await Assert.That(await Promote(client, queue)).IsEqualTo(1);
+        // Advance this test-owned lexicographic due member without a wall-clock delay.
+        var index = client.ResolveKey(queue.StreamKey + ":group-jobs").ToBytes();
+        using var members = await root.ExecuteAsync("ZRANGE", [index, 0, -1]);
+        var member = members[0].AsString();
+        var separator = member.IndexOf('|');
+        var dueNow = member[..(separator + 1)] + "0000000000000000" + member[(separator + 17)..];
+        using (await root.ExecuteAsync("ZREM", [index, member])) { }
+        using (await root.ExecuteAsync("ZADD", [index, 0, dueNow])) { }
+        await Assert.That((await Read(client, queue, "owner")).Length).IsEqualTo(1);
         var ready = (await client.Streams.ReadAsync(queue.StreamKey)).Single();
         await Assert.That(ready.GetString("_respire.job.group")).IsEqualTo(ApplicationGroup);
         await Assert.That(ready.GetString("_respire.job.payload")).IsEqualTo("original");
@@ -54,9 +61,9 @@ public class JobGroupIntegrationTests(RedisTestContainer redis)
         var queue = Queue(client);
         var expectedGroup = grouped ? ApplicationGroup : null;
         await queue.EnqueueScheduledAsync("id", "payload", new() { Group = expectedGroup });
-        await Promote(client, queue);
         await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
-        var original = (await client.Streams.ReadGroupOnceAsync(queue.StreamKey, ConsumerGroup, "retry-owner")).Single();
+        await Promote(client, queue);
+        var original = (await Read(client, queue, "retry-owner")).Single();
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("Retry"), Keys(queue),
             [ConsumerGroup, "retry-owner", original.Id.Value, 1, 0, 0])).IsEqualTo(1);
         var staged = (await client.Streams.ReadAsync(queue.StreamKey + ":scheduled")).Single();
@@ -66,7 +73,7 @@ public class JobGroupIntegrationTests(RedisTestContainer redis)
         // A separate consumer disappears with the retried delivery pending.
         RespireStreamId abandoned;
         await using (var crashed = await ConnectAsync())
-            abandoned = (await crashed.Streams.ReadGroupOnceAsync(queue.StreamKey, ConsumerGroup, "crashed")).Single().Id;
+            abandoned = (await Read(crashed, queue, "crashed")).Single().Id;
         await Assert.That(abandoned).IsNotEqualTo(original.Id);
 
         var handler = new Handler();
@@ -131,7 +138,24 @@ public class JobGroupIntegrationTests(RedisTestContainer redis)
         => await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "groups", Encoding.UTF8.GetBytes);
-    private static RespireKey[] Keys(RespireJobQueue<string> queue) => [queue.StreamKey, queue.StreamKey + ":scheduled", queue.StreamKey + ":due"];
+    internal static RespireKey[] Keys(RespireJobQueue<string> queue) => [queue.StreamKey, queue.StreamKey + ":scheduled", queue.StreamKey + ":due",
+        queue.StreamKey + ":group-order", queue.StreamKey + ":group-jobs", queue.StreamKey + ":group-cursor"];
+    internal static async Task<RespireStreamEntry[]> Read(IRespireClient client, RespireJobQueue<string> queue, string consumer,
+        int count = 1, int candidates = 64, RespireScript? script = null)
+    {
+        using var reply = await client.Scripts.ExecuteAsync(script ?? Script("ReadGroups"), Keys(queue),
+            [ConsumerGroup, consumer, count, candidates]);
+        var entries = new RespireStreamEntry[reply.Count];
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var row = reply[i];
+            var values = row[1];
+            var fields = new KeyValuePair<string, byte[]>[values.Count / 2];
+            for (var j = 0; j < fields.Length; j++) fields[j] = new(values[j * 2].AsString(), values[j * 2 + 1].AsBytes());
+            entries[i] = new(new(row[0].AsString()), fields);
+        }
+        return entries;
+    }
     private static ValueTask<long> Promote(IRespireClient client, RespireJobQueue<string> queue)
         => client.Scripts.ExecuteIntegerAsync(Script("Promote"), Keys(queue), [64]);
     private static RespireScript Script(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly

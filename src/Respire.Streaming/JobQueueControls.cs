@@ -58,35 +58,51 @@ internal static class JobQueueControls
     // One admission per reader avoids reserving a batch that could start long after a pause.
     // Reuse the stream worker's replay/recovery fencing and capability handling unchanged.
     internal static readonly RespireScript Read = Wrap(ReadSource, "'0-0'");
+    internal static readonly RespireScript ReadGrouped = Wrap("local function grouped()\n"
+        + JobQueueScheduling.ReadGroupsSource + "\nend\n" + """
+        local rows = grouped()
+        if rows.err then return rows end
+        local entries = {}
+        for _, entry in ipairs(rows) do
+            table.insert(entries, {entry[1], entry[2], '1'})
+        end
+        return {'0-0', entries}
+        """, "'0-0'", 7);
     internal static readonly RespireScript Replay = Wrap(StreamWorkerScripts.ReplaySource, "ARGV[4]");
     internal static readonly RespireScript Claim = Wrap(StreamWorkerScripts.CapabilityClaimSource, "ARGV[4]");
 
-    private static RespireScript Wrap(string source, string cursor) => RespireScript.Create("local cursor = " + cursor + "\n" + """
-        if redis.call('HGET', KEYS[2], 'paused') == '1' then return {cursor, {}, 1, 0} end
-        local limit = tonumber(redis.call('HGET', KEYS[2], 'limit') or '0')
+    private static RespireScript Wrap(string source, string cursor, int controlKey = 2) => RespireScript.Create(
+        "local control = KEYS[" + controlKey + "]\nlocal cursor = " + cursor + "\n" + AdmissionSource
+        + source + "\nend\n" + CompletionSource);
+
+    private const string AdmissionSource = """
+        if redis.call('HGET', control, 'paused') == '1' then return {cursor, {}, 1, 0} end
+        local limit = tonumber(redis.call('HGET', control, 'limit') or '0')
         local count = 0
         if limit > 0 then
             local time = redis.call('TIME')
             local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
-            local untilTime = tonumber(redis.call('HGET', KEYS[2], 'until') or '0')
-            count = tonumber(redis.call('HGET', KEYS[2], 'count') or '0')
+            local untilTime = tonumber(redis.call('HGET', control, 'until') or '0')
+            count = tonumber(redis.call('HGET', control, 'count') or '0')
             if untilTime <= now then
-                untilTime = now + tonumber(redis.call('HGET', KEYS[2], 'duration'))
+                untilTime = now + tonumber(redis.call('HGET', control, 'duration'))
                 count = 0
             end
             if count >= limit then
-                redis.call('HINCRBY', KEYS[2], 'hits', 1)
+                redis.call('HINCRBY', control, 'hits', 1)
                 return {cursor, {}, 0, untilTime - now}
             end
             -- Reserve before claiming. An ambiguous failure can waste a permit, never exceed the limit.
-            redis.call('HSET', KEYS[2], 'until', untilTime, 'count', count + 1)
+            redis.call('HSET', control, 'until', untilTime, 'count', count + 1)
         end
         local function read()
 
-        """ + source + "\nend\n" + """
+        """;
+
+    private const string CompletionSource = """
         local page = read()
         if page.err then return page end
-        if limit > 0 and #page[2] == 0 then redis.call('HSET', KEYS[2], 'count', count) end
+        if limit > 0 and #page[2] == 0 then redis.call('HSET', control, 'count', count) end
         return {page[1], page[2], 0, 0}
-        """);
+        """;
 }

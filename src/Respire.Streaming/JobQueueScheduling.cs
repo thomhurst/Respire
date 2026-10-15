@@ -45,8 +45,31 @@ internal static class JobQueueScheduling
             for i = 1, #fields, 2 do if fields[i] == name then return fields[i+1] end end
             return fallback
         end
+
+        """ + JobGroupScheduling.StageHelpers + """
+        local function unstage(fields, due, id)
+            local prefix = groupPrefix(fields)
+            if prefix then
+                removeGrouped(prefix, prefix .. string.format('%016.0f', due) .. '|' .. id)
+            else redis.call('ZREM', KEYS[3], id) end
+            redis.call('XDEL', KEYS[2], id)
+        end
         local function stage(fields, due)
+            local prefix = groupPrefix(fields)
+            if prefix then groupPermissions() end
             local id = redis.call('XADD', KEYS[2], '*', unpack(fields))
+            if prefix then
+                local member = prefix .. string.format('%016.0f', due) .. '|' .. id
+                local indexed = redis.pcall('ZADD', grouped, 0, member)
+                if not (type(indexed) == 'table' and indexed.err) then
+                    indexed = redis.pcall('ZADD', order, 0, prefix)
+                end
+                if type(indexed) == 'table' and indexed.err then
+                    unstage(fields, due, id)
+                    return indexed
+                end
+                return id
+            end
             local indexed = redis.pcall('ZADD', KEYS[3], due, id)
             if type(indexed) == 'table' and indexed.err then
                 redis.call('XDEL', KEYS[2], id)
@@ -67,7 +90,7 @@ internal static class JobQueueScheduling
 
         """;
 
-    internal static readonly RespireScript Enqueue = RespireScript.Create(Helpers + """
+    internal static readonly RespireScript Enqueue = RespireScript.Create("local groupOffset = 5\n" + Helpers + """
         local existing = redis.call('GET', KEYS[4])
         -- A deduplication hit needs no mutation permissions.
         if existing then return {existing, 0} end
@@ -87,18 +110,20 @@ internal static class JobQueueScheduling
             table.insert(fields, 'traceparent'); table.insert(fields, ARGV[7])
             if ARGV[8] and ARGV[8] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[8]) end
         end
-        local id = stage(fields, clock + tonumber(ARGV[4]))
+        local due = clock + tonumber(ARGV[4])
+        local id = stage(fields, due)
         if type(id) == 'table' then return id end
         local recorded = redis.pcall('SET', KEYS[4], id, 'PX', ARGV[3])
         if type(recorded) == 'table' and recorded.err then
-            redis.call('ZREM', KEYS[3], id)
-            redis.call('XDEL', KEYS[2], id)
+            unstage(fields, due, id)
             return recorded
         end
         return {id, 1}
         """);
 
-    internal static readonly RespireScript Promote = RespireScript.Create(Helpers + """
+    private const string WorkerHelpers = "local groupOffset = 4\n" + Helpers;
+
+    internal static readonly RespireScript Promote = RespireScript.Create(WorkerHelpers + """
         permit('XADD', KEYS[1], '*', 'field', 'value')
         permit('XDEL', KEYS[2], '0-0')
         permit('ZREM', KEYS[3], '0-0')
@@ -131,6 +156,21 @@ internal static class JobQueueScheduling
         return promoted
         """);
 
+    internal static readonly RespireScript ReadGroups = RespireScript.Create(ReadGroupsSource);
+
+    internal const string ReadGroupsSource = WorkerHelpers + """
+        permit('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'COUNT', ARGV[3], 'STREAMS', KEYS[1], '>')
+        -- Existing immediate, flow and legacy scheduled jobs retain stream FIFO precedence.
+        -- This also validates the consumer group before any grouped promotion mutation.
+        local ready = redis.call('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'COUNT', ARGV[3], 'STREAMS', KEYS[1], '>')
+        if ready then return ready[1][2] end
+
+        """ + JobGroupScheduling.Select + """
+        if selected == 0 then return {} end
+        local ready = redis.call('XREADGROUP', 'GROUP', ARGV[1], ARGV[2], 'COUNT', selected, 'STREAMS', KEYS[1], '>')
+        return ready[1][2]
+        """;
+
     private const string Fence = """
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
@@ -162,7 +202,7 @@ internal static class JobQueueScheduling
 
         """;
 
-    internal static readonly RespireScript Retry = RespireScript.Create(Helpers + Fence + StagePermissions + Acknowledge + """
+    internal static readonly RespireScript Retry = RespireScript.Create(WorkerHelpers + Fence + StagePermissions + Acknowledge + """
         local rows = redis.call('XRANGE', KEYS[1], ARGV[3], ARGV[3])
         if #rows ~= 1 then return acknowledge() end
         local fields = rows[1][2]
@@ -177,9 +217,12 @@ internal static class JobQueueScheduling
             if fields[i] == '_respire.job.attempts' then fields[i+1] = tostring(attempts); updated = true end
         end
         if not updated then table.insert(fields, '_respire.job.attempts'); table.insert(fields, tostring(attempts)) end
-        local id = stage(fields, clock + tonumber(ARGV[5]))
+        permit('ZREM', KEYS[3], '0-0')
+        local due = clock + tonumber(ARGV[5])
+        local id = stage(fields, due)
         if type(id) == 'table' then return id end
-        acknowledge()
+        local ok, result = pcall(acknowledge)
+        if not ok then unstage(fields, due, id); return redis.error_reply(result) end
         return 1
         """);
 

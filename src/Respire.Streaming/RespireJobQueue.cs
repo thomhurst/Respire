@@ -122,7 +122,9 @@ public sealed partial class RespireJobQueue<T>
         options.Validate();
         cancellationToken.ThrowIfCancellationRequested();
         var deduplicationKey = StreamKey + ":dedup:" + Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(jobId)));
-        string[] keys = [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey];
+        string[] keys = options.Group is null
+            ? [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey]
+            : [.. JobQueueScheduling.Keys(StreamKey), deduplicationKey, .. JobGroupScheduling.Keys(StreamKey).Skip(3)];
         JobQueueScheduling.ValidateKeys(_client, keys);
         using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");

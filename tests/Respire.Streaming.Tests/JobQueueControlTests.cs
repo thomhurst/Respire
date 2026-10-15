@@ -19,6 +19,43 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task GroupedSelectionHonorsPauseAndSharedAdmissionBudget(int protocol)
+    {
+        await using var connection = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+            with { Protocol = (RespireProtocol)protocol });
+        var client = connection.WithKeyPrefix("group-controls:" + Guid.NewGuid().ToString("N") + ":");
+        var queue = Queue(client);
+        await queue.SetRateLimitAsync(new() { PermitLimit = 1, Window = TimeSpan.FromHours(1) });
+        await client.Streams.CreateGroupAsync(queue.StreamKey, Group, RespireStreamId.Beginning);
+        using (var empty = await Read()) await Assert.That(empty[1].Count).IsEqualTo(0);
+        await queue.EnqueueScheduledAsync("one", "p", new() { Group = "a" });
+        await queue.EnqueueScheduledAsync("two", "p", new() { Group = "b" });
+        await queue.PauseAsync();
+        using (var paused = await Read()) await Assert.That(paused[2].AsInteger()).IsEqualTo(1);
+        await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(2);
+        await queue.ResumeAsync();
+        using (var first = await Read())
+        {
+            await Assert.That(first[1].Count).IsEqualTo(1);
+            await Assert.That(first[1][0][2].AsString()).IsEqualTo("1");
+        }
+        using (var denied = await Read())
+        {
+            await Assert.That(denied[1].Count).IsEqualTo(0);
+            await Assert.That(denied[3].AsInteger()).IsGreaterThan(0);
+        }
+        await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(1);
+        await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count).IsEqualTo(1);
+        await queue.SetRateLimitAsync(null);
+        using var second = await Read();
+        await Assert.That(second[1].Count).IsEqualTo(1);
+
+        ValueTask<RespireResult> Read() => Admit(client, queue, "ReadGrouped");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task PauseIsDurableIdempotentAndEmitsTypedEvents(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
@@ -349,6 +386,9 @@ public class JobQueueControlTests(RedisTestContainer redis)
 
     internal static ValueTask<RespireResult> Admit(IRespireClient client, RespireJobQueue<string> queue, string operation)
     {
+        if (operation == "ReadGrouped")
+            return client.Scripts.ExecuteAsync(ControlScript(operation),
+                [.. JobGroupIntegrationTests.Keys(queue), queue.ControlKey], [Group, "owner", 1, 64]);
         RespireValue[] args = operation == "Replay" ? [Group, "owner", 1, "0-0"]
             : operation == "Claim" ? [Group, "recovery", 0, "0-0", 1] : [Group, "owner"];
         return client.Scripts.ExecuteAsync(ControlScript(operation), [queue.StreamKey, queue.ControlKey], args);
