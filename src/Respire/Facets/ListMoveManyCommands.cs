@@ -58,7 +58,8 @@ internal sealed partial class ListCommands
         var owner = DispatchResponseSource<string[]?>.Start();
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // Both converted routes admit configured hooks before observing caller cancellation.
+            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
             var (operation, command) = MoveManyCommand(client, source, destination, count, from, to, countMode, order, waitFor);
             return owner.Attach(waitFor.HasValue
                 ? MoveManyBlockingAsync(operation, command, cancellationToken, owner.Observation)

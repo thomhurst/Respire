@@ -58,7 +58,8 @@ internal static class CollectionScan
         var owner = DispatchResponseSource<(ulong Cursor, T[] Page)>.Start();
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // Configured pages check cancellation after hook admission in the conversion helper.
+            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
             var args = Arguments(key, cursor, match, countHint, noValues);
             return owner.Attach(client.ConvertCursorPageAsync(operation, new CmdN(verb, args), affinity,
                 cancellationToken, (Operation: operation, Parser: parsePage),

@@ -269,6 +269,18 @@ public sealed partial class RespireClient
         string operation, TCommand command, ReadAffinity affinity, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Client: this, Operation: operation, Command: command, Affinity: affinity,
+                    Token: cancellationToken, State: state, Converter: converter, Observation: observation),
+                static s => s.Client.ConvertCursorPageUnhookedAsync(s.Operation, s.Command, s.Affinity,
+                    s.Token, s.State, s.Converter, s.Observation))
+            : ConvertCursorPageUnhookedAsync(operation, command, affinity, cancellationToken, state, converter, observation);
+
+    private ValueTask<TResult> ConvertCursorPageUnhookedAsync<TCommand, TState, TResult>(
+        string operation, TCommand command, ReadAffinity affinity, CancellationToken cancellationToken,
+        TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation)
+        where TCommand : struct, IRespCommand
         => ConvertObservedResponseAsync(operation, command, cancellationToken, state, converter, false,
             _readFrom != RespireReadFrom.Primary && command.ReadKind == ReadCommandKind.CursorRead ? affinity : null, observation);
 
@@ -276,11 +288,24 @@ public sealed partial class RespireClient
         string operation, TCommand command, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Client: this, Operation: operation, Command: command, Token: cancellationToken,
+                    State: state, Converter: converter, Observation: observation),
+                static s => s.Client.ConvertBlockingResponseUnhookedAsync(s.Operation, s.Command,
+                    s.Token, s.State, s.Converter, s.Observation))
+            : ConvertBlockingResponseUnhookedAsync(operation, command, cancellationToken, state, converter, observation);
+
+    private ValueTask<TResult> ConvertBlockingResponseUnhookedAsync<TCommand, TState, TResult>(
+        string operation, TCommand command, CancellationToken cancellationToken,
+        TState state, ResponseConverter<TState, TResult> converter, RespireTelemetry.ErrorObservation observation)
+        where TCommand : struct, IRespCommand
     {
+        // Re-enter the unhooked helper so acquiring an error owner does not repeat admission.
         if (observation.IsEmpty)
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken, State: state, Converter: converter),
-                static (state, owner) => state.Client.ConvertBlockingResponseAsync(
+                static (state, owner) => state.Client.ConvertBlockingResponseUnhookedAsync(
                     state.Operation, state.Command, state.Token, state.State, state.Converter, owner));
         // SendBlockingAsync captures preflight errors in its ValueTask. The converter owns
         // the lease through dedicated connection cleanup and final reply publication.
@@ -288,15 +313,41 @@ public sealed partial class RespireClient
         return PooledResponseSource<TState, TResult>.Create(response, state, converter, observation: observation);
     }
 
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    internal async ValueTask<TResult> ExecuteScriptConvertedAsync<TResult>(
+    // Public script results include materialization before completion. Internal correction
+    // callers keep using ExecuteScriptAsync/ExecuteScriptBorrowedAsync under their own owner.
+    internal ValueTask<RespireResult> ExecuteScriptResultAsync(RespireScript script, RespireValue[] tail,
+        CancellationToken cancellationToken, bool owned, RespireTelemetry.ErrorObservation observation)
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, script.EvalShaOperation, cancellationToken,
+                (Client: this, Script: script, Tail: tail, Token: cancellationToken, Owned: owned, Observation: observation),
+                static s => s.Client.ExecuteScriptResultUnhookedAsync(s.Script, s.Tail, s.Token, s.Owned, s.Observation))
+            : ExecuteScriptResultUnhookedAsync(script, tail, cancellationToken, owned, observation);
+
+    private ValueTask<RespireResult> ExecuteScriptResultUnhookedAsync(RespireScript script, RespireValue[] tail,
+        CancellationToken cancellationToken, bool owned, RespireTelemetry.ErrorObservation observation)
+    {
+        var response = ExecuteScriptAsync(script, tail, cancellationToken, observation);
+        return owned ? RespireResult.MaterializeAsync(response) : response;
+    }
+
+    internal ValueTask<TResult> ExecuteScriptConvertedAsync<TResult>(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken,
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation transferred = default)
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, script.EvalShaOperation, cancellationToken,
+                (Client: this, Script: script, Tail: tail, Token: cancellationToken, Convert: convert, Observation: transferred),
+                static s => s.Client.ExecuteScriptConvertedUnhookedAsync(s.Script, s.Tail, s.Token, s.Convert, s.Observation))
+            : ExecuteScriptConvertedUnhookedAsync(script, tail, cancellationToken, convert, transferred);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<TResult> ExecuteScriptConvertedUnhookedAsync<TResult>(
+        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken,
+        Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation transferred)
     {
         if (transferred.IsEmpty)
             return await DispatchResponseSource<TResult>.Run(
                 (Client: this, Script: script, Tail: tail, Token: cancellationToken, Convert: convert),
-                static (state, owner) => state.Client.ExecuteScriptConvertedAsync(
+                static (state, owner) => state.Client.ExecuteScriptConvertedUnhookedAsync(
                     state.Script, state.Tail, state.Token, state.Convert, owner)).ConfigureAwait(false);
         if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
         var cache = _core.ClientCache;

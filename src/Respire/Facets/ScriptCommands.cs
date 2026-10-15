@@ -333,16 +333,14 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         if (borrowed.IsOpen)
         {
             ArgumentNullException.ThrowIfNull(script);
-            var response = client.ExecuteScriptAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, borrowed);
-            return owned ? RespireResult.MaterializeAsync(response) : response;
+            return client.ExecuteScriptResultAsync(script, client.BuildScriptTailFromSpans(keys, args), cancellationToken, owned, borrowed);
         }
         var owner = DispatchResponseSource<RespireResult>.Start();
         try
         {
             ArgumentNullException.ThrowIfNull(script);
             var tail = client.BuildScriptTailFromSpans(keys, args);
-            var response = client.ExecuteScriptAsync(script, tail, cancellationToken, owner.Observation);
-            return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
+            return owner.Attach(client.ExecuteScriptResultAsync(script, tail, cancellationToken, owned, owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }

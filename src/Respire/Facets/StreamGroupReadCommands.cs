@@ -100,7 +100,7 @@ internal sealed partial class StreamCommands
                 RespireStreamReadResult[] results;
                 try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
                     results = await ReadGroupBorrowedAsync([(key, cursor ?? (RespireStreamId)">")],
                         group, consumer, options, cancellationToken, owner.Observation).ConfigureAwait(false);
                 }

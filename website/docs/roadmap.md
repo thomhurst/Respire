@@ -151,12 +151,12 @@ Public interface compatibility and the post-2.0 extension policy are described i
 - [Explicit pipeline and transaction hooks](guides/batches-and-transactions.md#observe-or-reject-explicit-executions)
   for admission rejection, auditing, and completion timing. [Logical command hooks](guides/command-hooks.md)
   cover ordinary converted dispatch, single-key cached GET, non-interpolated Execute APIs,
+  script execution, dedicated blocking converted replies, ordinary cursor pages,
   streaming upload/download results, explicit subscription setup/teardown,
   specialized server/pinned/fan-out operations, resumable cluster scan pages,
   and stream appends including automatic IDMP retries and capability fallback.
-  Specialized coverage and the complete client-wide policy audit remain tracked in
-  [#1707](https://github.com/thomhurst/Respire/issues/1707), [#1720](https://github.com/thomhurst/Respire/issues/1720)
-  and [#1708](https://github.com/thomhurst/Respire/issues/1708).
+  Remaining specialized coverage and the complete client-wide policy audit are tracked in
+  [#1708](https://github.com/thomhurst/Respire/issues/1708).
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
   with a generated builder covering every client option and validation at host startup.
 - An [in-memory test server](guides/in-memory-testing.md) with controlled server time and `KEYS`/`SCAN` enumeration, [Redis/Valkey container fixtures](guides/testing-containers.md),
