@@ -191,18 +191,35 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
     /// <summary>Selects a connection for a read under <paramref name="readFrom"/>.</summary>
     /// <remarks>The pooled ValueTask must be consumed exactly once, including asynchronous fallback.</remarks>
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<RespireConnection> GetConnectionAsync(
+    internal ValueTask<RespireConnection> GetConnectionAsync(
         RespireReadFrom readFrom, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
         bool readyOnly = false)
     {
-        ThrowIfDisposed();
         try
         {
+            ThrowIfDisposed();
+            // Published routes need no async state machine. Keep exceptions in the returned
+            // ValueTask, matching the slow selector's acquisition contract.
             if (readFrom is RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred
-                && TryAcquireReadyConnection(readFrom, cancellationToken) is { } ready) return ready;
+                && TryAcquireReadyConnection(readFrom, cancellationToken) is { } ready) return new(ready);
+            return GetConnectionSlowAsync(readFrom, cancellationToken, observation, readyOnly);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<RespireConnection>(cancellationToken);
+        }
+        catch (Exception error) { return ValueTask.FromException<RespireConnection>(error); }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespireConnection> GetConnectionSlowAsync(
+        RespireReadFrom readFrom, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation, bool readyOnly)
+    {
+        try
+        {
             var selection = await SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
             if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
             return selection.Connection;

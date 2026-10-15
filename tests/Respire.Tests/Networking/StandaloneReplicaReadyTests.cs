@@ -14,6 +14,31 @@ public class StandaloneReplicaReadyTests
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PreparedSelectionReturnsAcquisitionFailureWithoutThrowingSynchronously(bool dispose)
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        using var caller = new CancellationTokenSource();
+        if (dispose) await client.DisposeAsync();
+        else await caller.CancelAsync();
+
+        // Deliberately outside the assertion delegate: acquisition must return its failure.
+        var pending = router.GetConnectionAsync(RespireReadFrom.Replica, caller.Token, default);
+        if (dispose)
+            await Assert.That(async () => await pending).Throws<ObjectDisposedException>();
+        else
+        {
+            var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+    }
+
+    [Test]
     [Arguments(RespireReadFrom.Replica)]
     [Arguments(RespireReadFrom.ReplicaPreferred)]
     public async Task PreparedStringReadUsesSpecializedReplySource(RespireReadFrom policy)

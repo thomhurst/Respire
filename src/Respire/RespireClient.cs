@@ -2837,17 +2837,28 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         {
             var snapshot = new BacklogCommand<TCommand>(command, operation);
             return await RunReplicaBacklogAsync(operation, cancellationToken, readDeadline,
-                (ready, deadline) => SendOnConnectionAsync(operation, ready, snapshot, cancellationToken,
-                    commandDeadline: deadline, allowStreamingConnectionReroute: !pinned, observation: observation),
+                (ready, deadline) => SendSelectedReadFromAsync(operation, ready, snapshot, cancellationToken,
+                    deadline, pinned, continuation, affinity, observation),
                 observation, cursorRead, affinity).ConfigureAwait(false);
         }
+        return await SendSelectedReadFromAsync(operation, connection, command, cancellationToken,
+            readDeadline, pinned, continuation, affinity, observation).ConfigureAwait(false);
+    }
+
+    // Both direct selection and a dequeued fresh scan retain routing ownership until
+    // transport acceptance. Retirement must update the cursor pin on either path.
+    private ValueTask<RespValue> SendSelectedReadFromAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
+        CommandDeadline readDeadline, bool pinned, bool continuation, ReadAffinity? affinity,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
         if (pinned && !continuation && UsesCircuitResponsePath(operation, pinToConnection: false))
         {
             // One telemetry scope and one command deadline span the reselection.
             var telemetry = RespireTelemetry.IsOperationEnabled(operation)
                 ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database)
                 : default;
-            return await SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking: false,
+            return SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking: false,
                 commandDeadline: readDeadline, allowStreamingConnectionReroute: false, observation, telemetry,
                 reselect: token =>
                 {
@@ -2860,10 +2871,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     }
                     return _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity, isContinuation: false,
                         token, observation);
-                }).ConfigureAwait(false);
+                });
         }
-        return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
-            commandDeadline: readDeadline, allowStreamingConnectionReroute: !pinned, observation: observation).ConfigureAwait(false);
+        return SendOnConnectionAsync(operation, connection, command, cancellationToken,
+            commandDeadline: readDeadline, allowStreamingConnectionReroute: !pinned, observation: observation);
     }
 
     /// <summary>
