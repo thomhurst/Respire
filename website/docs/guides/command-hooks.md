@@ -64,7 +64,10 @@ names are normalized and inline arguments are omitted from the context. Do not i
 this name-only API as a key/value authorization mechanism.
 
 The interpolated overloads of all three Execute APIs also admit after preflight validation
-and before dispatch. Literal command names and recognized subcommands are normalized;
+and before dispatch. With a hook configured, tokens and caller-owned binary arguments are
+snapshotted before admission; dispatch uses that same snapshot even if the hook changes the
+original buffers or appends to an explicitly constructed handler.
+Literal command names and recognized subcommands are normalized;
 interpolated arguments are never included in the context. Owned `ExecuteAsync` completes
 after materialization and disposal of the temporary reply lease. `ExecuteLeaseAsync`
 completes when it transfers the result lease to the caller, who must still dispose it.

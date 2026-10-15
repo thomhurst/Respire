@@ -477,15 +477,15 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken = default)
         => _core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, string.Empty, cancellationToken,
-                (Client: this, Command: command, Token: cancellationToken),
-                static s => s.Client.ExecuteInterpolatedFireAndForgetUnhookedAsync(s.Command, s.Token),
-                static s => s.Client.ValidateInterpolatedHookCommand(s.Command, RespireCommandFlags.None, fireAndForget: true))
+                (Client: this, Command: command, Token: cancellationToken, Prepared: new InterpolatedHookCommand()),
+                static s => s.Client.ExecuteInterpolatedFireAndForgetUnhookedAsync(s.Command, s.Token, s.Prepared),
+                static s => s.Client.ValidateInterpolatedHookCommand(s.Command, RespireCommandFlags.None, fireAndForget: true, s.Prepared))
             : ExecuteInterpolatedFireAndForgetUnhookedAsync(command, cancellationToken);
 
     private ValueTask ExecuteInterpolatedFireAndForgetUnhookedAsync(
-        RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken)
-        => DispatchResponseSource.Run((Client: this, Command: command, Token: cancellationToken),
-            static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner));
+        RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken, InterpolatedHookCommand? prepared = null)
+        => DispatchResponseSource.Run((Client: this, Command: command, Token: cancellationToken, Prepared: prepared),
+            static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner, state.Prepared));
 
     private ValueTask<RespireResult> ExecuteCommandUnhookedAsync(
         RespireCommand command,
@@ -936,17 +936,18 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken = default)
         => _core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, string.Empty, cancellationToken,
-                (Client: this, Command: command, Flags: flags, Token: cancellationToken),
-                static s => s.Client.ExecuteOwnedInterpolatedUnhookedAsync(s.Command, s.Flags, s.Token),
-                static s => s.Client.ValidateInterpolatedHookCommand(s.Command, s.Flags, fireAndForget: false))
+                (Client: this, Command: command, Flags: flags, Token: cancellationToken, Prepared: new InterpolatedHookCommand()),
+                static s => s.Client.ExecuteOwnedInterpolatedUnhookedAsync(s.Command, s.Flags, s.Token, s.Prepared),
+                static s => s.Client.ValidateInterpolatedHookCommand(s.Command, s.Flags, fireAndForget: false, s.Prepared))
             : ExecuteOwnedInterpolatedUnhookedAsync(command, flags, cancellationToken);
 
     private ValueTask<RespireResult> ExecuteOwnedInterpolatedUnhookedAsync(
-        RespireCommandInterpolatedStringHandler command, RespireCommandFlags flags, CancellationToken cancellationToken)
+        RespireCommandInterpolatedStringHandler command, RespireCommandFlags flags, CancellationToken cancellationToken,
+        InterpolatedHookCommand? prepared = null)
         => DispatchResponseSource<RespireResult>.Run(
-            (Client: this, Command: command, Flags: flags, Token: cancellationToken),
+            (Client: this, Command: command, Flags: flags, Token: cancellationToken, Prepared: prepared),
             static (state, owner) => RespireResult.MaterializeAsync(state.Client.ExecuteInterpolatedAsync(
-                state.Command, state.Flags, state.Token, owner)));
+                state.Command, state.Flags, state.Token, owner, state.Prepared)));
 
     /// <summary>Sends an interpolated command and returns a pooled result that must be disposed. Each hole is one argument.</summary>
     public ValueTask<RespireResult> ExecuteLeaseAsync(
@@ -955,16 +956,17 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken = default)
         => _core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, string.Empty, cancellationToken,
-                (Client: this, Command: command, Flags: flags, Token: cancellationToken),
-                static s => s.Client.ExecuteLeasedInterpolatedUnhookedAsync(s.Command, s.Flags, s.Token),
-                static s => s.Client.ValidateInterpolatedHookCommand(s.Command, s.Flags, fireAndForget: false))
+                (Client: this, Command: command, Flags: flags, Token: cancellationToken, Prepared: new InterpolatedHookCommand()),
+                static s => s.Client.ExecuteLeasedInterpolatedUnhookedAsync(s.Command, s.Flags, s.Token, s.Prepared),
+                static s => s.Client.ValidateInterpolatedHookCommand(s.Command, s.Flags, fireAndForget: false, s.Prepared))
             : ExecuteLeasedInterpolatedUnhookedAsync(command, flags, cancellationToken);
 
     private ValueTask<RespireResult> ExecuteLeasedInterpolatedUnhookedAsync(
-        RespireCommandInterpolatedStringHandler command, RespireCommandFlags flags, CancellationToken cancellationToken)
+        RespireCommandInterpolatedStringHandler command, RespireCommandFlags flags, CancellationToken cancellationToken,
+        InterpolatedHookCommand? prepared = null)
         => DispatchResponseSource<RespireResult>.Run(
-            (Client: this, Command: command, Flags: flags, Token: cancellationToken),
-            static (state, owner) => state.Client.ExecuteInterpolatedAsync(state.Command, state.Flags, state.Token, owner));
+            (Client: this, Command: command, Flags: flags, Token: cancellationToken, Prepared: prepared),
+            static (state, owner) => state.Client.ExecuteInterpolatedAsync(state.Command, state.Flags, state.Token, owner, state.Prepared));
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -972,13 +974,14 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     private async ValueTask<RespireResult> ExecuteInterpolatedAsync(
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default,
+        InterpolatedHookCommand? prepared = null)
     {
         if (observation.IsEmpty)
         {
             return await DispatchResponseSource<RespireResult>.Run(
-                (Client: this, Command: command, Flags: flags, Token: cancellationToken),
-                static (state, owner) => state.Client.ExecuteInterpolatedAsync(state.Command, state.Flags, state.Token, owner)).ConfigureAwait(false);
+                (Client: this, Command: command, Flags: flags, Token: cancellationToken, Prepared: prepared),
+                static (state, owner) => state.Client.ExecuteInterpolatedAsync(state.Command, state.Flags, state.Token, owner, state.Prepared)).ConfigureAwait(false);
         }
         string operation;
         string? storedProcedureName;
@@ -986,7 +989,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool isBlocking;
         ClusterRouter? clusterWide = null;
         ValidateResultFlags(flags);
-        var (initialOperation, tokens) = command.Build();
+        var (initialOperation, tokens) = prepared is null ? command.Build() : prepared.Snapshot;
         (operation, var firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
         var arguments = tokens.AsSpan(firstArgumentIndex);
         storedProcedureName = StoredProcedureName(operation, arguments);
@@ -1043,16 +1046,17 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 #endif
     private async ValueTask ExecuteInterpolatedFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default,
+        InterpolatedHookCommand? prepared = null)
     {
         if (observation.IsEmpty)
         {
             await DispatchResponseSource.Run(
-                (Client: this, Command: command, Token: cancellationToken),
-                static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner)).ConfigureAwait(false);
+                (Client: this, Command: command, Token: cancellationToken, Prepared: prepared),
+                static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner, state.Prepared)).ConfigureAwait(false);
             return;
         }
-        var (initialOperation, tokens) = command.Build();
+        var (initialOperation, tokens) = prepared is null ? command.Build() : prepared.Snapshot;
         var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
         var arguments = tokens.AsSpan(firstArgumentIndex);
         ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);

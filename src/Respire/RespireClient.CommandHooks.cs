@@ -117,13 +117,20 @@ public sealed partial class RespireClient
                 static s => s.Client.ValidateHookCommand(s.Command, s.Args, RespireCommandFlags.None, fireAndForget: true))
             : ExecuteCommandFireAndForgetUnhookedAsync(command, args, cancellationToken);
 
-    // Interpolated result owners keep their existing dispatch and cleanup paths. Preflight is
-    // repeated only when configured, before admission (including the pre-canceled case).
+    // Only configured calls allocate this holder. Preflight captures caller-owned memory before
+    // admission, and every result owner dispatches that same snapshot without rebuilding it.
+    private sealed class InterpolatedHookCommand
+    {
+        internal (string Operation, RespireValue[] Tokens) Snapshot;
+    }
+
     private string ValidateInterpolatedHookCommand(RespireCommandInterpolatedStringHandler command,
-        RespireCommandFlags flags, bool fireAndForget)
+        RespireCommandFlags flags, bool fireAndForget, InterpolatedHookCommand prepared)
     {
         if (!fireAndForget) ValidateResultFlags(flags);
         var (initialOperation, tokens) = command.Build();
+        for (var i = 0; i < tokens.Length; i++) tokens[i] = tokens[i].Snapshot();
+        prepared.Snapshot = (initialOperation, tokens);
         var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
         var arguments = tokens.AsSpan(firstArgumentIndex);
         if (fireAndForget)

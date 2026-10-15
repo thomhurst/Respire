@@ -12,6 +12,39 @@ public partial class CommandHookTests
     [Arguments("owned")]
     [Arguments("lease")]
     [Arguments("forget")]
+    public async Task InterpolatedAdmissionFreezesBinaryTokensAndHandlerContents(string route)
+    {
+        await using var server = Server();
+        var subcommand = "EXISTS"u8.ToArray();
+        var digest = "digest"u8.ToArray();
+        var command = new RespireCommandInterpolatedStringHandler(6, 2);
+        command.AppendLiteral("SCRIPT");
+        command.AppendFormatted(subcommand);
+        command.AppendFormatted((ReadOnlyMemory<byte>)digest);
+        var hook = new RecordingHook
+        {
+            Before = _ =>
+            {
+                "FLUSH "u8.CopyTo(subcommand);
+                digest.AsSpan().Fill((byte)'x');
+                command.AppendLiteral("extra");
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+        await SendInterpolated(client, route, command);
+        // A reply-bearing command drains the connection after fire-and-forget writes.
+        await client.Strings.LengthAsync("barrier");
+        await Assert.That(server.ReceivedCommands.Where(c => c.StartsWith("SCRIPT", StringComparison.Ordinal)))
+            .IsEquivalentTo(["SCRIPT EXISTS digest"]);
+        await Assert.That(hook.Entered.First().Command).IsEqualTo("SCRIPT EXISTS");
+        await Assert.That(hook.Completed.First().Context.Command).IsEqualTo("SCRIPT EXISTS");
+        await Assert.That(hook.Completed.First().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+    }
+
+    [Test]
+    [Arguments("owned")]
+    [Arguments("lease")]
+    [Arguments("forget")]
     public async Task InterpolatedNamesOmitArgumentsAndNormalizeSubcommands(string route)
     {
         await using var server = Server();
