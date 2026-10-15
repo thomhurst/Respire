@@ -423,9 +423,13 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
+        => ExecuteOwnedCommandAsync(command, args, flags, cancellationToken);
+
+    private ValueTask<RespireResult> ExecuteOwnedCommandUnhookedAsync(
+        RespireCommand command, RespireValue[] args, RespireCommandFlags flags, CancellationToken cancellationToken)
         => DispatchResponseSource<RespireResult>.Run(
             (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken),
-            static (state, owner) => RespireResult.MaterializeAsync(state.Client.ExecuteCommandAsync(
+            static (state, owner) => RespireResult.MaterializeAsync(state.Client.ExecuteCommandUnhookedAsync(
                 state.Command, state.Args, state.Flags, state.Token, owner)));
 
     /// <summary>Sends a command and returns a pooled result. Dispose the root result after reading it.</summary>
@@ -474,7 +478,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         => DispatchResponseSource.Run((Client: this, Command: command, Token: cancellationToken),
             static (state, owner) => state.Client.ExecuteInterpolatedFireAndForgetAsync(state.Command, state.Token, owner));
 
-    private ValueTask<RespireResult> ExecuteCommandAsync(
+    private ValueTask<RespireResult> ExecuteCommandUnhookedAsync(
         RespireCommand command,
         RespireValue[] args,
         RespireCommandFlags flags,
@@ -483,7 +487,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         if (observation.IsEmpty)
             return DispatchResponseSource<RespireResult>.Run(
                 (Client: this, Command: command, Args: args, Flags: flags, Token: cancellationToken),
-                static (state, owner) => state.Client.ExecuteCommandAsync(state.Command, state.Args, state.Flags, state.Token, owner));
+                static (state, owner) => state.Client.ExecuteCommandUnhookedAsync(state.Command, state.Args, state.Flags, state.Token, owner));
         if (command.IsCallerSupplied)
         {
             if (_keyPrefix is not null && IsModuleCommand(command.Name))
@@ -534,7 +538,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             : ValueTask.FromException<RespireResult>(prefixError);
     }
 
-    private ValueTask ExecuteCommandFireAndForgetAsync(
+    private ValueTask ExecuteCommandFireAndForgetUnhookedAsync(
         RespireCommand command,
         RespireValue[] args,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -542,7 +546,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         if (observation.IsEmpty)
             return DispatchResponseSource.Run(
                 (Client: this, Command: command, Args: args, Token: cancellationToken),
-                static (state, owner) => state.Client.ExecuteCommandFireAndForgetAsync(state.Command, state.Args, state.Token, owner));
+                static (state, owner) => state.Client.ExecuteCommandFireAndForgetUnhookedAsync(state.Command, state.Args, state.Token, owner));
         if (command.IsCallerSupplied)
         {
             if (_keyPrefix is not null && IsModuleCommand(command.Name))
@@ -1785,7 +1789,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     private ClientSideCacheCoordinator? GetReadCache
         => _readFrom != RespireReadFrom.Primary && s_getIsReadOnly ? null : ReadCache;
 
-    internal ValueTask<TResult> CachedGetAsync<TResult>(
+    private ValueTask<TResult> CachedGetUnhookedAsync<TResult>(
         RespireKey resolvedKey,
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter,
@@ -1807,7 +1811,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             }
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Key: resolvedKey, Token: cancellationToken, Converter: converter),
-                static (state, owner) => state.Client.CachedGetAsync(
+                static (state, owner) => state.Client.CachedGetUnhookedAsync(
                     state.Key, state.Token, state.Converter, observeErrors: false, observation: owner));
         }
         var cache = GetReadCache;
@@ -1826,12 +1830,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// GET decoded as a string. Uncached reads take <see cref="StringOrNullAsync{TCommand}"/>,
     /// which decodes small bulk replies straight from the receive buffer.
     /// </summary>
-    internal ValueTask<string?> CachedGetStringAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+    private ValueTask<string?> CachedGetStringUnhookedAsync(RespireKey resolvedKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
         var cache = GetReadCache;
         // An empty observation lets StringOrNullAsync pick native dispatch or its own owner.
         if (cache is null)
-            return StringOrNullAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
+            return StringOrNullUnhookedAsync("GET", new Cmd1(Verbs.Get, resolvedKey.AsValue()), cancellationToken, observation: observation);
         if (observation.IsEmpty)
         {
             // A warm hit needs no dispatch owner (see TryGetCachedQuery). Misses and disposed
@@ -1839,7 +1843,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             if (_core.Sentinel is null && !_core.Disposed && cache.TryGetStringHit(in resolvedKey, out var hit))
                 return new ValueTask<string?>(hit);
             return DispatchResponseSource<string?>.Run((Client: this, Key: resolvedKey, Token: cancellationToken),
-                static (state, owner) => state.Client.CachedGetStringAsync(state.Key, state.Token, owner));
+                static (state, owner) => state.Client.CachedGetStringUnhookedAsync(state.Key, state.Token, owner));
         }
         var generation = _core.Sentinel?.Current;
         if (cache.TryGetString(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
@@ -2642,7 +2646,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             if (cache.CoalesceConcurrentMisses)
             {
                 if (operation == "GET" && query.Query.ArgumentCount == 1)
-                    return ObserveClusterError(CachedGetAsync(query.PrimaryKey, cancellationToken,
+                    return ObserveClusterError(CachedGetUnhookedAsync(query.PrimaryKey, cancellationToken,
                         static (RespireClient _, in RespValue value) => value.ToOwned(), observeErrors: false,
                         observation: observation), observeErrors, observation);
                 if (operation == "MGET" && query.Query.ArgumentCount > 0)

@@ -1,0 +1,14 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireCommandHook.OnExecuting(RespireCommandContext):object?",
+      "Reason": "Application admission callback; the caller's logical command boundary owns dispatch and rejection."
+    },
+    {
+      "Member": "Respire.RespireCommandHook.OnCompleted(RespireCommandContext,object?,RespireCommandOutcome,Exception?):void",
+      "Reason": "Application completion observer; does not dispatch and exceptions are contained."
+    }
+  ]
+}

@@ -425,6 +425,10 @@ public sealed record RespireOptions
     /// <remarks>Shared by client views. Does not intercept individual commands. Null adds no hook state or async wrapper.</remarks>
     public RespirePipelineHook? PipelineHook { get; init; }
 
+    /// <summary>Optional admission/completion hook for ordinary command dispatch. Null disables it.</summary>
+    /// <remarks>See <see cref="RespireCommandHook"/> for the supported scope; specialized and aggregate paths are not yet covered.</remarks>
+    public RespireCommandHook? CommandHook { get; init; }
+
     /// <summary>
     /// Opt-in retries for buffered immediate commands on standalone, Sentinel and Cluster clients,
     /// and complete unwatched transactions on standalone and Sentinel clients.
