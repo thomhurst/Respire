@@ -26,7 +26,7 @@ public sealed partial class RespireClient
                 state.Command, state.Token, state.State, state.Converter, state.Transfer, observation));
     }
 
-    private ValueTask<string?> StringOrNullUnhookedAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
+    internal ValueTask<string?> StringOrNullUnhookedAsync<TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty) return StringOrNullCoreAsync(operation, command, ct, observation);

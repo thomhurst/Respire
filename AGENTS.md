@@ -73,6 +73,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-sentinel-routing.yml` | `run-ready-strategy-benchmarks`, `run-sentinel-benchmarks` |
 | `benchmark-single-reply-completion.yml` | `run-single-reply-completion-benchmarks` |
 | `benchmark-standalone-replica.yml` | `run-standalone-replica-benchmarks` |
+| `benchmark-stream-add-hooks.yml` | `run-stream-add-hook-benchmarks` |
 | `benchmark-thread-pool.yml` | `run-thread-pool-benchmarks` |
 | `benchmark-transport.yml` | `run-transport-benchmarks` |
 | `benchmark-typed-serialization.yml` | `run-typed-serialization-benchmarks` |

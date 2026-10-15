@@ -152,7 +152,8 @@ Public interface compatibility and the post-2.0 extension policy are described i
   for admission rejection, auditing, and completion timing. [Logical command hooks](guides/command-hooks.md)
   cover ordinary converted dispatch, single-key cached GET, non-interpolated Execute APIs,
   streaming upload/download results, explicit subscription setup/teardown,
-  specialized server/pinned/fan-out operations and resumable cluster scan pages.
+  specialized server/pinned/fan-out operations, resumable cluster scan pages,
+  and stream appends including automatic IDMP retries and capability fallback.
   Specialized coverage and the complete client-wide policy audit remain tracked in
   [#1707](https://github.com/thomhurst/Respire/issues/1707), [#1720](https://github.com/thomhurst/Respire/issues/1720)
   and [#1708](https://github.com/thomhurst/Respire/issues/1708).

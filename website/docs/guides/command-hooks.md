@@ -110,8 +110,20 @@ run-ID and capability probes do not generate separate callbacks. Direct
 `ScanValkeyClusterPageAsync` uses a `CLUSTERSCAN` scope. A completed cursor still receives
 admission and completion when asked for another page, even though it sends no command.
 
+### Stream appends
+
+`Streams.AddAsync` admits one `XADD` and completes after publishing its stream ID or
+nullable result. Automatic producer identity, lost-reply retries, and fallback when an
+older server rejects IDMP all belong to that same scope. A null reply to an automatically
+idempotent required-result overload is `Failed`; a null optional result is `Succeeded`.
+Internal attempts do not create callbacks, while application commands started by a hook
+receive their own independent scopes. Completion follows the existing mutation fences
+and response cleanup. Ordinary appends and explicitly supplied IDMP options also finish
+their typed conversion inside the scope. Argument validation and command construction
+remain preflight work before admission.
+
 The following paths do not yet have a complete hook contract: interpolated commands,
-function execution/library recovery, idempotent XADD fallback, script objects and NOSCRIPT
+function execution/library recovery, script objects and NOSCRIPT
 fallback, ordinary cursor pages, dedicated blocking facets, multi-key
 cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
