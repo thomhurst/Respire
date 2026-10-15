@@ -40,8 +40,14 @@ public sealed partial class RespireClient
     {
         // Duration senders are reached only through CanUseDirectReplySource, which excluded listeners.
         var durationStarted = sender.ObserveDuration ? RespireTelemetry.CaptureCommandDurationStart(operation) : default;
-        RespireConnection connection;
-        try { connection = GetCircuitAwareConnection(multiplexer, cancellationToken); }
+        RespireConnection? connection;
+        try
+        {
+            connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                && !CursorCommandMetadata.IsServerCursorContinuation(in command)
+                ? SelectStandaloneConnection(cancellationToken)
+                : GetCircuitAwareConnection(multiplexer, cancellationToken);
+        }
         catch (Exception error)
         {
             // The captured generation names the attempted data node, with or without Sentinel.
@@ -52,6 +58,9 @@ public sealed partial class RespireClient
             if (observeSelectionErrors) RespireTelemetry.RecordError(error, internallyHandled: false, endpoint: endpoint);
             throw;
         }
+        if (connection is null)
+            return SendBackloggedReadyAsync<TCommand, TResult, TSend>(operation, command, cancellationToken, sender,
+                durationStarted, cache, mutationFence, observeSelectionErrors, observation);
         if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
             return SendCircuitReadyAsync<TCommand, TResult, TSend>(operation, connection, command, cancellationToken, sender,
                 durationStarted, cache, mutationFence, observation);
@@ -69,12 +78,51 @@ public sealed partial class RespireClient
         }
     }
 
+    private async ValueTask<TResult> SendBackloggedReadyAsync<TCommand, TResult, TSend>(
+        string operation, TCommand command, CancellationToken cancellationToken, TSend sender,
+        RespireTelemetry.OperationStart durationStarted, ClientSideCacheCoordinator? cache,
+        ClientSideCacheCoordinator.MutationFence mutationFence, bool observeErrors,
+        RespireTelemetry.ErrorObservation observation)
+        where TCommand : struct, IRespCommand
+        where TSend : struct, IReadySend<TResult>
+    {
+        var dispatched = false;
+        try
+        {
+            var deadline = CreateCircuitDeadline();
+            var snapshot = new BacklogCommand<TCommand>(command);
+            return await RunStandaloneBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
+            {
+                dispatched = true;
+                if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
+                    return SendCircuitReadyAsync<BacklogCommand<TCommand>, TResult, TSend>(operation, connection, snapshot,
+                        cancellationToken, sender, durationStarted, cache, mutationFence, observation, originalDeadline);
+                if (mutationFence.IsRequired)
+                    return SendReadyMutationAsync<BacklogCommand<TCommand>, TResult, TSend>(connection, operation, snapshot,
+                        cancellationToken, sender, cache!, mutationFence, durationStarted, observation, originalDeadline);
+                return sender.Send(connection, operation, snapshot, cancellationToken, durationStarted, originalDeadline,
+                    errorObservation: observation);
+            }).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            if (!dispatched)
+            {
+                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+                if (observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false,
+                    endpoint: _core.Multiplexer.ActiveConnectionEndpoint);
+            }
+            throw;
+        }
+    }
+
     // A typed source reports in GetResult, while the awaiting fence is still open. The fenced
     // path lends it an owner instead and reports once, after the logical mutation completes.
     private static ValueTask<TResult> SendReadyMutationAsync<TCommand, TResult, TSend>(
         RespireConnection connection, string operation, in TCommand command, CancellationToken cancellationToken,
         TSend sender, ClientSideCacheCoordinator cache, ClientSideCacheCoordinator.MutationFence mutationFence,
-        RespireTelemetry.OperationStart durationStarted, RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.OperationStart durationStarted, RespireTelemetry.ErrorObservation observation,
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
         where TSend : struct, IReadySend<TResult>
     {
@@ -82,7 +130,7 @@ public sealed partial class RespireClient
         try
         {
             response = sender.Send(connection, operation, new MutationCommand<TCommand>(command, mutationFence),
-                cancellationToken, durationStarted, errorObservation: observation);
+                cancellationToken, durationStarted, commandDeadline, errorObservation: observation);
         }
         catch (Exception error)
         {

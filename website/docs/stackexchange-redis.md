@@ -135,6 +135,15 @@ Review these before you switch; they can change application behavior.
   for timeout stages, diagnosis, and a mapping of StackExchange.Redis v3 message fields.
 - **Cancellation is supported.** Most methods accept a `CancellationToken`. Cancellation abandons
   the wait only; a command that was already written still runs.
+- **Standalone reconnect waits are bounded.** After initial connection, definitely-unsent
+  standalone primary commands wait in a FIFO backlog by default, including raw and
+  fire-and-forget commands, whole batches and unwatched transactions. `BacklogCapacity` defaults
+  to 1024 waiting operations; each keeps its original timeout and cancellation. Set
+  `BacklogPolicy = RespireBacklogPolicy.FailFast` to opt out. This does not replay accepted
+  commands and does not require `RetryPolicy`. Cluster, Sentinel and replica-routing backlog
+  support remains tracked in [#1717](https://github.com/thomhurst/Respire/issues/1717).
+  See [connection recovery](./guides/reconnect-policy.md#standalone-command-backlog) for exclusions
+  and the distinction between backlog, reconnect and command retry policies.
 - **Batch results throw before the batch runs.** Reading `RespirePending<T>.Result` before
   `ExecuteAsync` throws instead of deadlocking.
 - **RESP3 changes raw reply shapes.** Typed methods hide the difference. Raw `RespireResult`

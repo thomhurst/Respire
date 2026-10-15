@@ -7,8 +7,8 @@ command connection replacement (including Cluster node connections), dedicated c
 acquisitions, pub/sub recovery, and Cluster and Sentinel discovery fallback.
 
 The default is `null`: a failed command connection is replaced immediately, and a failed
-replacement is retried the next time a command needs it. A policy keeps that on-demand
-scheduling and adds delays and limits. It never resends an accepted command; for that, see the
+replacement is retried while queued standalone commands need it, or when a later command needs
+it. A policy adds delays and limits to recovery. It never resends an accepted command; for that, see the
 [command retry policy](command-retries.md).
 
 ```csharp
@@ -55,16 +55,60 @@ When every connection at an endpoint is exhausted, commands throw
 connection's server client ID throw when any connection is exhausted. Cleanup connections that
 Respire opens after an ambiguous outcome use their own `ConnectTimeout` and ignore this policy.
 
-Other behavior, with or without a policy:
+### Standalone command backlog
 
-- A command that notices a failed connection can still fail while the replacement proceeds.
+After a standalone client has connected, `RespireOptions.BacklogPolicy` defaults to
+`RespireBacklogPolicy.Queue`. When its primary command connections are unavailable during
+replacement, definitely-unsent operations wait in a bounded FIFO backlog. This works with
+`RetryPolicy = null`: waiting to send a command for the first time does not require permission
+to retry a command that may already have run.
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    BacklogPolicy = RespireBacklogPolicy.Queue, // Default.
+    BacklogCapacity = 1024,                    // Default; must be positive.
+    CommandTimeout = TimeSpan.FromSeconds(10),
+};
+```
+
+- Typed, native string/byte, raw and fire-and-forget commands participate. A batch or unwatched
+  transaction occupies one queue entry and sends no member before admission.
+- New arrivals stay behind older queued operations while the backlog drains. The capacity counts
+  waiting operations; a dispatched operation no longer occupies a waiting entry. A full queue
+  rejects new work with `RespireConnectionException`.
+- Each operation keeps its original `CommandTimeout` and caller cancellation through both queue
+  wait and execution. Expiry while waiting throws `RespireTimeoutException` with diagnostics stage
+  `Connecting`. A cancelled or expired entry is removed without being sent and releases capacity.
+- Cancelling one operation does not cancel shared recovery. Terminal reconnect exhaustion fails
+  pending work with `RespireReconnectLimitException`; disposing the client also ends pending waits.
+- Fire-and-forget still waits for admission. It does not promise successful execution or expose
+  server errors after admission.
+
+Set `BacklogPolicy = RespireBacklogPolicy.FailFast` to keep immediate connection-acquisition
+failure when no usable command connection is available. Connection recovery itself still runs.
+`ReconnectPolicy` controls replacement backoff and attempt limits; `BacklogPolicy` controls
+whether eligible unsent work waits for that replacement.
+
+This backlog currently covers initialized standalone primary command connections. Cluster,
+Sentinel and replica-routing integration is tracked in
+[#1717](https://github.com/thomhurst/Respire/issues/1717). Initial connection setup, dedicated
+connections, watched transactions, import sessions and server-local cursor continuations do not
+join this backlog. They retain their existing acquisition and recovery rules.
+
+Other behavior, with or without a reconnect policy:
+
+- A command already accepted by a failed connection can still fail while replacement proceeds.
+- Operations outside the standalone backlog, or with `FailFast`, can fail during replacement.
 - Each connection attempt keeps its `ConnectTimeout`. The policy does not retry the client's initial connection.
 - Command deadlines and caller cancellation bound their own waits. Cancelling one caller does not cancel shared recovery.
 - Disposing the client cancels scheduled delays and waits for recovery to finish.
 
 :::warning
-Commands accepted by a failed connection are never replayed, and a missing reply leaves the
-server outcome uncertain. Application retries must account for idempotency.
+Connection recovery and its backlog never replay commands accepted by a failed connection.
+A missing reply leaves the server outcome uncertain. Explicit command retry policies and
+application retries must account for idempotency.
 :::
 
 ## Dedicated connection acquisitions

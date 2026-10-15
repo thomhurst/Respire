@@ -332,13 +332,36 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
 
             RespireConnection? connection = null;
+            if (_client.UsesStandaloneBacklog && ConnectionPolicy.PinnedConnection is null
+                && !_ops.Exists(static op => op.IsCursorRead))
+            {
+                try
+                {
+                    connection = _client.SelectStandaloneConnection(cancellationToken);
+                    if (connection is null)
+                    {
+                        connection = await RunBackloggedBatchAsync(cancellationToken).ConfigureAwait(false);
+                        var queuedFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
+                        telemetry.Complete(core, telemetryOperation, error: queuedFailures is { Length: > 0 } ? queuedFailures[0].Error : null,
+                            connection: connection, batchSize: _ops.Count == 1 ? null : _ops.Count);
+                        return new RespireBatchResult(_ops.Count, queuedFailures);
+                    }
+                }
+                catch (Exception error)
+                {
+                    foreach (var op in _ops) op.Fail(error);
+                    telemetry.Complete(core, telemetryOperation, error: error, batchSize: _ops.Count == 1 ? null : _ops.Count);
+                    return new RespireBatchResult(_ops.Count,
+                        CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence));
+                }
+            }
             if (core.CommandRetries is not null && !ConnectionPolicy.IsImportSession
                 && _ops.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
             {
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartBatchOperation("PIPELINE", _ops, static op => op.Operation,
                         core.Options.Database, out telemetryOperation, sentinelStarted);
-                connection = await RunRetryableBatchAsync(cancellationToken).ConfigureAwait(false);
+                connection = await RunRetryableBatchAsync(cancellationToken, initialConnection: connection).ConfigureAwait(false);
                 if (core.Sentinel is not null && connection is not null)
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                 var failures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
@@ -348,7 +371,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
             try
             {
-                connection = ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+                connection ??= ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartBatchOperation(
                         "PIPELINE", _ops, static op => op.Operation,
@@ -402,12 +425,32 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         finally { cacheToInvalidate?.CompleteMutation(in mutationFence); }
     }
 
+    private async ValueTask<RespireConnection?> RunBackloggedBatchAsync(CancellationToken cancellationToken)
+    {
+        var deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
+        try
+        {
+            foreach (var op in _ops) op.Snapshot();
+            return await _client.RunStandaloneBacklogAsync<RespireConnection?>("PIPELINE", cancellationToken, deadline,
+                async (connection, originalDeadline) =>
+                {
+                    if (_client.Core.CommandRetries is not null
+                        && _ops.TrueForAll(static op => op.RetryCategory != RespireCommandRetryCategory.Never))
+                        return await RunRetryableBatchAsync(cancellationToken, initialConnection: connection,
+                            deadline: originalDeadline).ConfigureAwait(false);
+                    return await RunStandaloneBatchAsync(connection, cancellationToken, originalDeadline).ConfigureAwait(false);
+                }).ConfigureAwait(false);
+        }
+        finally { foreach (var op in _ops) op.ReleaseSnapshot(); }
+    }
+
     private async ValueTask<RespireConnection?> RunRetryableBatchAsync(CancellationToken callerToken, List<Op>? group = null,
-        int? slot = null, RespireReadFrom readFrom = RespireReadFrom.Primary)
+        int? slot = null, RespireReadFrom readFrom = RespireReadFrom.Primary,
+        RespireConnection? initialConnection = null, CommandDeadline deadline = default)
     {
         var core = _client.Core;
         var operations = group ?? _ops;
-        var deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
+        if (!deadline.IsSet) deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
         using var timeout = deadline.IsSet
             ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
             : null;
@@ -457,7 +500,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         core.Circuits?.Acquire(core.Multiplexer.ActiveConnectionEndpoint, token).Dispose();
                         connection = await core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
                     }
-                    else connection = await _client.AcquireConnectionAsync(null, token, operations[0].Observation).ConfigureAwait(false);
+                    else connection = initialConnection ?? await _client.AcquireConnectionAsync(null, token, operations[0].Observation).ConfigureAwait(false);
                     // Ordered admission has no immutable per-member write evidence. Once any
                     // send starts, treat the complete unit as a possible execution.
                     outcome = CommandWriteOutcome.Unknown;
@@ -579,10 +622,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespireConnection> RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken)
+    private async ValueTask<RespireConnection> RunStandaloneBatchAsync(RespireConnection connection, CancellationToken cancellationToken,
+        CommandDeadline deadline = default)
     {
         // Both admission paths include write-gate contention in the original timeout budget.
-        var deadline = connection.CreateCommandDeadline();
+        if (!deadline.IsSet) deadline = connection.CreateCommandDeadline();
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
         var executingConnection = connection;
@@ -886,6 +930,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
         internal void Snapshot()
         {
+            if (_attempt is not null) return;
             _attempt = new();
             try { _attempt.Snapshot = SnapshotArguments(); }
             catch (Exception error) { _attempt.SnapshotError = error; }

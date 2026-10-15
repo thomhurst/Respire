@@ -7,6 +7,8 @@ internal sealed partial class RespireConnectionMultiplexer
     private ReconnectBacklog? _backlog;
     private TaskCompletionSource? _backlogConnectionChanged;
 
+    internal bool IsBacklogDraining => Volatile.Read(ref _backlog)?.IsRunning == true;
+
     // Dormant until a dispatch owner opts in. One queue per endpoint preserves arrival
     // order across command kinds. The owner must carry its original deadline in the token
     // and keep all commands arriving during a drain on this same queue.
@@ -66,12 +68,13 @@ internal sealed partial class RespireConnectionMultiplexer
         private readonly RespireConnectionMultiplexer _owner;
         private readonly Lock _gate = new();
         private readonly LinkedList<Entry> _pending = new();
-        private bool _running;
+        private volatile bool _running;
         private Exception? _stopped;
 
         internal int Capacity { get; }
         // Includes the head waiting for recovery, excludes the dispatched unit.
         internal int Count { get { lock (_gate) return _pending.Count; } }
+        internal bool IsRunning => _running;
 
         internal ReconnectBacklog(RespireConnectionMultiplexer owner, int capacity)
         {
