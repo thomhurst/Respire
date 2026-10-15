@@ -491,11 +491,11 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, RespireBit
         writer.WriteArrayHeader(verb.Tokens + tokenCount);
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
-        // stackalloc-audit[bdc2c663bd4c186f]: init: each use writes byte 0 and TryFormat writes the width digits after it;
+        // stackalloc-audit[f29f3696bb954a6d]: init: each use writes byte 0 and TryFormat writes the width digits after it;
         // read: only encodingBuffer[..(encodingLength + 1)], the bytes just written; failure: a failed TryFormat
         // reports zero digits, so only the written prefix byte is read; an overflow-mode throw happens before any read.
         Span<byte> encodingBuffer = stackalloc byte[3];
-        // stackalloc-audit[bdc2c663bd4c186f]: init: each "#" use writes byte 0 and TryFormat writes the index digits after it;
+        // stackalloc-audit[f29f3696bb954a6d]: init: each "#" use writes byte 0 and TryFormat writes the index digits after it;
         // read: only offsetBuffer[..(offsetLength + 1)], the bytes just written; failure: a failed TryFormat
         // reports zero digits, so only the written prefix byte is read.
         Span<byte> offsetBuffer = stackalloc byte[21];
