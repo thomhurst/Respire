@@ -1125,7 +1125,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             }
             catch (Exception error) { failure = error; throw; }
             var cursor = startAt ?? RespireStreamId.Beginning;
-            while (!cancellationToken.IsCancellationRequested)
+            while (client.Core.Options.CommandHook is not null || !cancellationToken.IsCancellationRequested)
             {
                 RespireStreamEntry[] entries;
                 try

@@ -124,6 +124,14 @@ public class SpecializedCommandHookTests
     [Arguments("keys", true)]
     [Arguments("blocking-move", true)]
     [Arguments("move", true)]
+    [Arguments("stream-group", false)]
+    [Arguments("stream-group-options", false)]
+    [Arguments("stream-group-pending", false)]
+    [Arguments("stream-group-options-pending", false)]
+    [Arguments("stream-group", true)]
+    [Arguments("stream-group-options", true)]
+    [Arguments("stream-group-pending", true)]
+    [Arguments("stream-group-options-pending", true)]
     public async Task AlreadyCanceledCommandsAdmitBeforeCheckingCancellation(string route, bool reject)
     {
         await using var server = new FakeRespServer(4, FakeRespServer.OkReply);
@@ -174,6 +182,28 @@ public class SpecializedCommandHookTests
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
         await Assert.That(hook.Completed.Count).IsEqualTo(2);
         await Assert.That(hook.Completed.Last().Outcome).IsEqualTo(RespireCommandOutcome.Rejected);
+    }
+
+    [Test]
+    public async Task StreamCancellationBetweenEntriesDoesNotOpenAnotherPageScope()
+    {
+        await using var server = new FakeRespServer(4,
+            "*1\r\n*2\r\n$6\r\nstream\r\n*2\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$3\r\n2-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray());
+        using var cancellation = new CancellationTokenSource();
+        var hook = new RecordingHook();
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+        await using var enumerator = client.Streams.ReadGroupAsync(new StreamReadOptions(), "stream", "group", "consumer",
+            cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        var commands = server.CommandsSeen;
+        cancellation.Cancel();
+
+        var error = await Failure(async () => { _ = await enumerator.MoveNextAsync(); });
+
+        await Assert.That(error is OperationCanceledException).IsTrue();
+        await Assert.That(hook.Entered.Count).IsEqualTo(1);
+        await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+        await Assert.That(server.CommandsSeen).IsEqualTo(commands);
     }
 
     [Test]
@@ -293,6 +323,7 @@ public class SpecializedCommandHookTests
     {
         "blocking" => "BLPOP", "cursor" => "SSCAN", "keys" => "SCAN",
         "hash-cursor" => "HSCAN", "sorted-set-cursor" => "ZSCAN",
+        "stream-group" or "stream-group-options" or "stream-group-pending" or "stream-group-options-pending" => "XREADGROUP",
         "blocking-move" => "BLMOVEM", "move" => "LMOVEM", _ => "EVALSHA",
     };
 
@@ -315,6 +346,10 @@ public class SpecializedCommandHookTests
             case "sorted-set-cursor": await foreach (var _ in client.SortedSets.ScanAsync("sorted-set", cancellationToken: token)) { } break;
             case "blocking-move": _ = await client.Lists.MoveManyAsync("source", "destination", TimeSpan.FromSeconds(1), cancellationToken: token); break;
             case "move": _ = await client.Lists.MoveManyAsync("source", "destination", cancellationToken: token); break;
+            case "stream-group": await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", cancellationToken: token)) { } break;
+            case "stream-group-options": await foreach (var _ in client.Streams.ReadGroupAsync(new StreamReadOptions(), "stream", "group", "consumer", cancellationToken: token)) { } break;
+            case "stream-group-pending": await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
+            case "stream-group-options-pending": await foreach (var _ in client.Streams.ReadGroupAsync(new StreamReadOptions(), "stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
