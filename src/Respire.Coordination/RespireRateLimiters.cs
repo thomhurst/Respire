@@ -356,7 +356,12 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         return new RedisRateLimitLease(false, null);
     }
 
-    protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
+    protected override ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
+        => CoordinationCommandHooks.RunAsync(_coordination.Client, "RATE LIMIT ACQUIRE", cancellationToken,
+            (Limiter: this, Permits: permitCount, Token: cancellationToken),
+            static s => s.Limiter.AcquireObservedAsync(s.Permits, s.Token));
+
+    private async ValueTask<RateLimitLease> AcquireObservedAsync(int permitCount, CancellationToken cancellationToken)
     {
         if (permitCount < 0) throw new ArgumentOutOfRangeException(nameof(permitCount));
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -380,7 +385,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
     private async ValueTask<RateLimitLease> AcquireCoreAsync(int permitCount, CancellationToken cancellationToken)
     {
         var settingsVersion = Volatile.Read(ref _settingsVersion);
-        if (DenyList is not null && await DenyList.IsDeniedAsync(Identity!, cancellationToken).ConfigureAwait(false))
+        if (DenyList is not null && await DenyList.IsDeniedCoreAsync(Identity!, cancellationToken).ConfigureAwait(false))
             return new RedisRateLimitLease(false, null, denyList: true);
         if (permitCount == 0) return await AcquireFromRedisAsync(0, cancellationToken, checkDenyList: false).ConfigureAwait(false);
         if (Volatile.Read(ref _queuedPermits) != 0)
@@ -398,7 +403,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         bool checkDenyList = true)
     {
         if (checkDenyList && DenyList is not null
-            && await DenyList.IsDeniedAsync(Identity!, cancellationToken).ConfigureAwait(false))
+            && await DenyList.IsDeniedCoreAsync(Identity!, cancellationToken).ConfigureAwait(false))
             return new RedisRateLimitLease(false, null, denyList: true);
         await EnterRedisAttemptAsync(cancellationToken).ConfigureAwait(false);
         var attempt = ExecuteRegisteredAttemptAsync(permitCount, cancellationToken);

@@ -376,6 +376,27 @@ set.
 
 ## Redis-backed rate limits
 
+With a concrete `RespireClient`, command hooks admit each `AcquireAsync` as
+`RATE LIMIT ACQUIRE` before deny-list cache access, queue changes, or Redis work.
+One completion covers queued retries, capability fallback, final lease conversion and
+statistics/metrics. A returned unacquired lease (including cached deny-list rejection)
+is `Succeeded`; cancellation and exceptions report `Canceled` and `Failed` respectively.
+Completion ends at the caller's result: an already-submitted attempt may still drain its
+reply after cancellation, preserving the existing consumptive-permit semantics.
+
+Settings updates use `RATE LIMIT UPDATE`, including no-op updates and local `Adopt` changes.
+Admission precedes update gating and migration; completion includes local publication and
+queue wakeup. Public deny-list calls use `RATE LIMIT DENY LIST READ` and
+`RATE LIMIT DENY LIST WRITE`. Every caller gets a scope, including cache hits and callers
+sharing one pending read. Rejected writes leave the local cache intact; accepted writes
+retain invalidation on failure. A canceled coalesced reader does not cancel other readers.
+
+Internal deny-list checks, script attempts, queue pumping and abandoned-reply cleanup do
+not request admission again. Limiter construction, synchronous `AttemptAcquire` probes,
+statistics, local deny-list `Invalidate`, and limiter/lease disposal are local housekeeping
+and do not create hook scopes. Application calls started from hook callbacks still get
+independent scopes. See [command hooks](command-hooks.md) for the complete contract.
+
 `RespireCoordination.RateLimiters` creates fixed-window, sliding-window, token-bucket, GCRA and composite
 `System.Threading.RateLimiting.RateLimiter` implementations. Scripts use Redis server time and
 decide each permit atomically. Fixed windows use `INCREX` on Redis 8.8+ and an equivalent Lua
