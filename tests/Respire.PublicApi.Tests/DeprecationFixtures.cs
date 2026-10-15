@@ -44,3 +44,45 @@ public class DeprecationFixtures
     [Obsolete("Private APIs are outside the policy.")]
     private void PrivateMethod() { }
 }
+
+public class ProtectedDeprecationFixtures
+{
+    [Obsolete("Missing migration metadata.")]
+    protected ProtectedDeprecationFixtures() { }
+
+    [Obsolete("Missing migration metadata.")]
+    protected void InvalidMethod() { }
+
+    [Obsolete("Missing migration metadata.")]
+    protected internal int InvalidProperty { get; private set; }
+
+    [Obsolete("Missing migration metadata.")]
+    protected internal static int InvalidField;
+
+    [Obsolete("Missing migration metadata.")]
+    protected event Action InvalidEvent { add { } remove { } }
+
+    [Obsolete("Missing migration metadata.")]
+    protected class InvalidNestedType;
+
+    protected internal class NestedApi
+    {
+        [Obsolete("Missing migration metadata.")]
+        public void InvalidMethod() { }
+    }
+
+    [Obsolete("Use the replacement.", DiagnosticId = "TEST001", UrlFormat = "https://example.com/migrations/{0}")]
+    protected void ValidMethod() { }
+
+    [Obsolete("Assembly-only APIs are outside the policy.")]
+    private protected void PrivateProtectedMethod() { }
+
+    [Obsolete("Assembly-only APIs are outside the policy.")]
+    internal int InternalProperty => 0;
+
+    private protected class HiddenNestedApi
+    {
+        [Obsolete("The containing type is not externally accessible.")]
+        public void IgnoredMethod() { }
+    }
+}

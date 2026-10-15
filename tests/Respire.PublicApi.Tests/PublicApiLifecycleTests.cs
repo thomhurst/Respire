@@ -49,9 +49,16 @@ public class PublicApiLifecycleTests
             prefix + "DeprecationFixtures.InvalidProperty",
             prefix + "DeprecationFixtures.InvalidField",
             prefix + "DeprecationFixtures.InvalidEvent",
-            prefix + "DeprecatedRequiredMembersFixture..ctor"
+            prefix + "DeprecatedRequiredMembersFixture..ctor",
+            prefix + "ProtectedDeprecationFixtures..ctor",
+            prefix + "ProtectedDeprecationFixtures.InvalidMethod",
+            prefix + "ProtectedDeprecationFixtures.InvalidProperty",
+            prefix + "ProtectedDeprecationFixtures.InvalidField",
+            prefix + "ProtectedDeprecationFixtures.InvalidEvent",
+            prefix + "ProtectedDeprecationFixtures+InvalidNestedType",
+            prefix + "ProtectedDeprecationFixtures+NestedApi.InvalidMethod"
         ];
-        // Exact comparison also proves valid obsolete APIs and private members are accepted.
+        // Exact comparison also proves valid obsolete APIs and assembly-only members are accepted.
         await Assert.That(invalid).IsEquivalentTo(expected);
     }
 
@@ -75,9 +82,10 @@ public class PublicApiLifecycleTests
     }
 
     private static string[] FindInvalidDeprecations(Assembly assembly) =>
-        assembly.GetExportedTypes()
-            .SelectMany(type => type.GetMembers(BindingFlags.Public | BindingFlags.Instance |
+        assembly.GetTypes().Where(IsExternallyAccessibleType)
+            .SelectMany(type => type.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance |
                                                 BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(IsExternallyAccessibleMember)
                 .Prepend(type))
             .Where(member => member.GetCustomAttribute<ObsoleteAttribute>(inherit: false) is { } attribute &&
                              !IsRequiredMembersCompatibilityMarker(member, attribute) &&
@@ -86,6 +94,25 @@ public class PublicApiLifecycleTests
                               (member is Type type ? type.FullName : $"{member.DeclaringType?.FullName}.{member.Name}"))
             .Distinct()
             .ToArray();
+
+    private static bool IsExternallyAccessibleType(Type type) => type.IsNested
+        ? (type.IsNestedPublic || type.IsNestedFamily || type.IsNestedFamORAssem) &&
+          IsExternallyAccessibleType(type.DeclaringType!)
+        : type.IsPublic;
+
+    private static bool IsExternallyAccessibleMethod(MethodBase method) =>
+        method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly;
+
+    private static bool IsExternallyAccessibleMember(MemberInfo member) => member switch
+    {
+        Type type => IsExternallyAccessibleType(type),
+        MethodBase method => IsExternallyAccessibleMethod(method),
+        FieldInfo field => field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly,
+        PropertyInfo property => property.GetAccessors(nonPublic: true).Any(IsExternallyAccessibleMethod),
+        EventInfo @event => new[] { @event.GetAddMethod(true), @event.GetRemoveMethod(true), @event.GetRaiseMethod(true) }
+            .Any(method => method is not null && IsExternallyAccessibleMethod(method)),
+        _ => false
+    };
 
     // C# emits this exact Obsolete error to prevent older compilers from bypassing required members.
     // Authored Obsolete attributes on the same constructors must still follow the deprecation policy.
