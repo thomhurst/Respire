@@ -597,7 +597,8 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             var affinity = new ReadAffinity();
             do
             {
-                CollectionScan.CheckCancellation(token);
+                // Configured pages check cancellation after hook admission in the conversion helper.
+                if (client.Core.Options.CommandHook is null) CollectionScan.CheckCancellation(token);
                 var args = (effectiveMatch, typeToken) switch
                 {
                     (null, null) => new RespireValue[] { cursor, "COUNT", countHint },

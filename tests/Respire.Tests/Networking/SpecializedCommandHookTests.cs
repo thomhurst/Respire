@@ -112,6 +112,52 @@ public class SpecializedCommandHookTests
     }
 
     [Test]
+    [Arguments("cursor", false)]
+    [Arguments("hash-cursor", false)]
+    [Arguments("sorted-set-cursor", false)]
+    [Arguments("keys", false)]
+    [Arguments("blocking-move", false)]
+    [Arguments("move", false)]
+    [Arguments("cursor", true)]
+    [Arguments("hash-cursor", true)]
+    [Arguments("sorted-set-cursor", true)]
+    [Arguments("keys", true)]
+    [Arguments("blocking-move", true)]
+    [Arguments("move", true)]
+    public async Task AlreadyCanceledCommandsAdmitBeforeCheckingCancellation(string route, bool reject)
+    {
+        await using var server = new FakeRespServer(4, FakeRespServer.OkReply);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var rejection = new InvalidOperationException("Denied");
+        var hook = new RecordingHook { Before = _ => { if (reject) throw rejection; } };
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+        var baseline = server.CommandsSeen;
+
+        var error = await Failure(() => Execute(client, route, cancellation.Token));
+
+        await Assert.That(hook.Entered.Count).IsEqualTo(1);
+        var completed = hook.Completed.Single();
+        await Assert.That(completed.Context.Command).IsEqualTo(Command(route));
+        await Assert.That(completed.Context.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(completed.Error).IsSameReferenceAs(error);
+        await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        if (reject)
+        {
+            await Assert.That(error).IsSameReferenceAs(rejection);
+            await Assert.That(completed.Outcome).IsEqualTo(RespireCommandOutcome.Rejected);
+            await Assert.That(completed.State).IsNull();
+        }
+        else
+        {
+            await Assert.That(error is OperationCanceledException).IsTrue();
+            await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
+            await Assert.That(completed.Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
+            await Assert.That(completed.State).IsSameReferenceAs(completed.Context);
+        }
+    }
+
+    [Test]
     public async Task EachCursorPageHasItsOwnScopeAndCanBeRejected()
     {
         await using var server = new FakeRespServer("*2\r\n$1\r\n1\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
@@ -245,7 +291,9 @@ public class SpecializedCommandHookTests
 
     private static string Command(string route) => route switch
     {
-        "blocking" => "BLPOP", "cursor" => "SSCAN", "keys" => "SCAN", _ => "EVALSHA",
+        "blocking" => "BLPOP", "cursor" => "SSCAN", "keys" => "SCAN",
+        "hash-cursor" => "HSCAN", "sorted-set-cursor" => "ZSCAN",
+        "blocking-move" => "BLMOVEM", "move" => "LMOVEM", _ => "EVALSHA",
     };
 
     private static async Task Execute(RespireClient client, string route, CancellationToken token = default, bool readOnly = false)
@@ -263,6 +311,10 @@ public class SpecializedCommandHookTests
             case "blocking": _ = await client.Lists.PopAsync(["list"], TimeSpan.FromSeconds(1), cancellationToken: token); break;
             case "cursor": await foreach (var _ in client.Sets.ScanAsync("set", cancellationToken: token)) { } break;
             case "keys": await foreach (var _ in client.Keys.ScanAsync(cancellationToken: token)) { } break;
+            case "hash-cursor": await foreach (var _ in client.Hashes.ScanAsync("hash", cancellationToken: token)) { } break;
+            case "sorted-set-cursor": await foreach (var _ in client.SortedSets.ScanAsync("sorted-set", cancellationToken: token)) { } break;
+            case "blocking-move": _ = await client.Lists.MoveManyAsync("source", "destination", TimeSpan.FromSeconds(1), cancellationToken: token); break;
+            case "move": _ = await client.Lists.MoveManyAsync("source", "destination", cancellationToken: token); break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
