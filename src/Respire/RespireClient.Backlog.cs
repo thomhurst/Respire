@@ -140,10 +140,31 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         private readonly SnapshotCommand _snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: false);
+        private readonly RespireValue[] _arguments = SnapshotArguments(in command);
         public void Write(ref RespWriter writer) => _snapshot.Write(ref writer);
         public int GetWriteSizeHint() => _snapshot.GetWriteSizeHint();
         public bool TryGetClusterSlot(out int slot) => _snapshot.TryGetClusterSlot(out slot);
-        public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
+        public bool TryGetArgument(int index, out RespireValue value)
+        {
+            if ((uint)index < (uint)_arguments.Length)
+            {
+                value = _arguments[index];
+                return true;
+            }
+            value = default;
+            return false;
+        }
+
+        private static RespireValue[] SnapshotArguments(in TCommand command)
+        {
+            // Reply classification (including scripting engine detection) must observe the
+            // same arguments as the wire frame, even if the caller reuses borrowed storage.
+            List<RespireValue>? arguments = null;
+            for (var index = 0; command.TryGetArgument(index, out var value); index++)
+                (arguments ??= []).Add(value.Snapshot());
+            return arguments?.ToArray() ?? [];
+        }
+
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
         public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
             => command.TryGetClientCacheKey(operation, out key);

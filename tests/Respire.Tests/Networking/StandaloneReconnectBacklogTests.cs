@@ -217,6 +217,45 @@ public class StandaloneReconnectBacklogTests
     }
 
     [Test]
+    [Arguments("EVAL")]
+    [Arguments("EVAL_RO")]
+    [Arguments("SCRIPT LOAD")]
+    [Arguments("FUNCTION LOAD")]
+    [Arguments("FUNCTION LOAD REPLACE")]
+    public async Task QueuedScriptingErrorsUseSnapshottedArguments(string surface)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var source = "#!python\nreturn 42"u8.ToArray();
+        var replace = "REPLACE"u8.ToArray();
+        var operation = surface == "FUNCTION LOAD REPLACE" ? "FUNCTION LOAD" : surface;
+        RespireValue[] arguments = surface switch
+        {
+            "EVAL" or "EVAL_RO" => [source, 0],
+            "FUNCTION LOAD REPLACE" => [replace, source],
+            _ => [source],
+        };
+        const string inventory = "# Scripting Engines\r\nengines_count:0\r\n";
+        fixture.Server.ReplyOverride = (_, command) => command == "INFO scriptingengines"
+            ? Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(inventory)}\r\n{inventory}\r\n")
+            : command.StartsWith(operation + " ", StringComparison.Ordinal)
+                ? Encoding.UTF8.GetBytes(operation == "FUNCTION LOAD"
+                    ? "-ERR Engine 'python' not found\r\n"
+                    : "-ERR Could not find scripting engine 'python'\r\n")
+                : null;
+        var pending = fixture.Client.ExecuteAsync(operation, arguments).AsTask();
+        await fixture.Handshake.Task.WaitAsync(Limit);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        Array.Fill(source, (byte)'x');
+        Array.Fill(replace, (byte)'x');
+        await fixture.ReleaseAsync();
+        await Assert.That(async () => { using var reply = await pending.WaitAsync(Limit); })
+            .ThrowsExactly<RespireScriptingEngineUnavailableException>();
+        var expected = surface + " #!python\nreturn 42" + (operation is "EVAL" or "EVAL_RO" ? " 0" : "");
+        await Assert.That(fixture.Server.ReceivedCommands.Contains(expected)).IsTrue();
+        await Assert.That(fixture.Server.ReceivedCommands.Contains("INFO scriptingengines")).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task QueuedRawAndFireAndForgetWritesSnapshotBorrowedArguments(bool fireAndForget)
