@@ -957,7 +957,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         string consumer,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return client.FlagAsync(
             "XGROUP CREATECONSUMER", new Cmd3(XGroupCreateConsumer, client.Key(in key), group, consumer),
             cancellationToken);
@@ -975,7 +975,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             throw new ArgumentOutOfRangeException(nameof(entriesAdded), "Entries added must be non-negative.");
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
 
         if (entriesAdded is { } added && maxDeletedId is { } deleted)
         {

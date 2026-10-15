@@ -166,10 +166,12 @@ Public interface compatibility and the post-2.0 extension policy are described i
   and typed Search results (including hybrid capability discovery and cursor-page recovery).
   Typed RedisJSON owners include serialization, conversion and owned cleanup. Typed
   Probabilistic owners include argument preparation, conversion and owned cleanup, with
-  raw Info and Top-K List transfers retaining their own boundaries. TimeSeries result-owner
-  work is tracked in [#1778](https://github.com/thomhurst/Respire/issues/1778).
-  Remaining specialized coverage and the complete client-wide policy audit are tracked in
-  [#1708](https://github.com/thomhurst/Respire/issues/1708).
+  raw Info and Top-K List transfers retaining their own boundaries. Rate limiters and Redlock
+  groups admit their logical operations before internal work. The completed
+  [policy audit](guides/command-hooks.md#policy-boundaries-and-decorators) documents custom
+  facet cancellation, decorator/result boundaries, housekeeping exclusions and recorded
+  benchmark evidence. Hooks describe supported logical operations; they are not a universal
+  wire-command or arbitrary-wrapper authorization policy.
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
   with a generated builder covering every client option and validation at host startup.
 - An [in-memory test server](guides/in-memory-testing.md) with controlled server time and `KEYS`/`SCAN` enumeration, [Redis/Valkey container fixtures](guides/testing-containers.md),

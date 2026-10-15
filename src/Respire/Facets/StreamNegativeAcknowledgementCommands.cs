@@ -76,7 +76,7 @@ internal sealed partial class StreamCommands
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         RespireStreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return client.ConvertResponseAsync("XNACK", BuildNackCommand(client, key, group, mode, options, ids),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ParseNackCount(in value));
     }

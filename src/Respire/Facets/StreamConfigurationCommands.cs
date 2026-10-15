@@ -31,7 +31,7 @@ internal sealed partial class StreamCommands
 
     public ValueTask<bool> ConfigureAsync(RespireKey key, RespireStreamConfigurationOptions options, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return client.ConvertResponseAsync("XCFGSET", BuildConfigurationCommand(client, key, options),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ResponseReader.Ok(in value));
     }

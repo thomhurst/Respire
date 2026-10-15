@@ -423,7 +423,7 @@ internal sealed class ArrayCommands(RespireClient client) : IRespireArrayCommand
         var reverse = start > end;
         while (true)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
             var page = await ScanPageAsync(key, start, end, pageSize, cancellationToken).ConfigureAwait(false);
             if (page.Length == 0) yield break;
             foreach (var item in page) { cancellationToken.ThrowIfCancellationRequested(); yield return item; }
@@ -444,7 +444,7 @@ internal sealed class ArrayCommands(RespireClient client) : IRespireArrayCommand
         var reverse = start > end;
         while (true)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
             var page = await ScanPageAsync<T>(key, start, end, pageSize, cancellationToken).ConfigureAwait(false);
             if (page.Length == 0) yield break;
             foreach (var item in page) { cancellationToken.ThrowIfCancellationRequested(); yield return item; }

@@ -102,7 +102,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IRespireVectorSe
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAttributesAsync<T>(RespireKey key, RespireValue member, T attributes, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return SetAttributesJsonAsync(key, member, SerializeAttributes(client, attributes), cancellationToken);
     }
 
@@ -129,7 +129,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IRespireVectorSe
     private ValueTask<T> Convert<TCommand, TState, T>(string operation, TCommand command, CancellationToken cancellationToken,
         TState state, ResponseConverter<TState, T> convert) where TCommand : struct, IRespCommand
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return client.ConvertResponseAsync(operation, command, cancellationToken, state, convert);
     }
 

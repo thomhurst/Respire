@@ -147,6 +147,10 @@ public sealed partial class RespireTimeSeriesClient
         if (maximumConsecutiveEmptyReads is <= 0)
             throw new ArgumentOutOfRangeException(nameof(maximumConsecutiveEmptyReads));
         timestamp.RequireRead(nameof(timestamp));
+        // New already enters a TS.READ owner below. Only an explicit first read needs
+        // to defer cancellation to admission; cancellation between pages stays local.
+        var admitFirstRead = timestamp != RespireTimeSeriesTimestamp.New
+            && _client is RespireClient client && client.Core.Options.CommandHook is not null;
         if (timestamp == RespireTimeSeriesTimestamp.New)
         {
             var latest = await ReadAsync(key, RespireTimeSeriesTimestamp.Maximum,
@@ -164,7 +168,8 @@ public sealed partial class RespireTimeSeriesClient
         var emptyReads = 0;
         while (true)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (!admitFirstRead) cancellationToken.ThrowIfCancellationRequested();
+            admitFirstRead = false;
             var result = await ReadAsync(key, timestamp, options, cancellationToken).ConfigureAwait(false);
             if (result.Samples.Count == 0)
             {
