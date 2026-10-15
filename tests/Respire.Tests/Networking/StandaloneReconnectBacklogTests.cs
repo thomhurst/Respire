@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Net.Sockets;
 using Respire.Infrastructure;
@@ -12,6 +13,77 @@ public class StandaloneReconnectBacklogTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
     private static readonly byte[] ValueReply = "$5\r\nvalue\r\n"u8.ToArray();
+
+    [Test]
+    [NotInParallel]
+    [Arguments("string")]
+    [Arguments("bytes")]
+    [Arguments("typed")]
+    [Arguments("catalog")]
+    public async Task TracedReadsShareTheBacklogWithWrites(string surface)
+    {
+        using var listener = ListenToActivities();
+        await Assert.That(Respire.Internal.RespireTelemetry.Source.HasListeners()).IsTrue();
+        await using var fixture = await Fixture.CreateAsync();
+        var read = ExecuteAsync(fixture.Client, surface, "first");
+        await fixture.Handshake.Task.WaitAsync(Limit);
+        var write = fixture.Client.SetAsync("second", "value").AsTask();
+        await Assert.That(read.IsCompleted).IsFalse();
+        await Assert.That(write.IsCompleted).IsFalse();
+        await Assert.That(fixture.Server.ReceivedCommands.Any(IsApplicationCommand)).IsFalse();
+        await fixture.ReleaseAsync();
+        await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(await write.WaitAsync(Limit)).IsTrue();
+        await Assert.That(fixture.Server.ReceivedCommands.Where(IsApplicationCommand).ToArray())
+            .IsEquivalentTo(new[] { "GET first", "SET second value" }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task TracedReadCancellationReleasesBacklogCapacity()
+    {
+        using var listener = ListenToActivities();
+        await using var fixture = await Fixture.CreateAsync(capacity: 1);
+        using var caller = new CancellationTokenSource();
+        var pending = fixture.Client.GetStringAsync("cancelled", caller.Token).AsTask();
+        await fixture.Handshake.Task.WaitAsync(Limit);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await caller.CancelAsync();
+        var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        var next = fixture.Client.GetStringAsync("next").AsTask();
+        await fixture.ReleaseAsync();
+        await Assert.That(await next.WaitAsync(Limit)).IsEqualTo("value");
+        await Assert.That(fixture.Server.ReceivedCommands.Where(IsApplicationCommand).ToArray())
+            .IsEquivalentTo(new[] { "GET next" }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task TracedReadWaitTimeoutReportsConnecting()
+    {
+        using var listener = ListenToActivities();
+        await using var fixture = await Fixture.CreateAsync(commandTimeout: TimeSpan.FromMilliseconds(250));
+        var pending = fixture.Client.GetStringAsync("expired").AsTask();
+        await fixture.Handshake.Task.WaitAsync(Limit);
+        var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await fixture.ReleaseAsync();
+        await Assert.That(await fixture.Client.GetStringAsync("healthy")).IsEqualTo("value");
+        await Assert.That(fixture.Server.ReceivedCommands.Where(IsApplicationCommand).ToArray())
+            .IsEquivalentTo(new[] { "GET healthy" }, CollectionOrdering.Matching);
+    }
+
+    private static ActivityListener ListenToActivities()
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
+    }
 
     [Test]
     [Arguments("string")]

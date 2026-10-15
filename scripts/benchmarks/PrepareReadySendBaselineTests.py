@@ -65,8 +65,24 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                                      ready.index('    private readonly struct RawReadySend')]
             typed_helpers = ready[ready.index('    private readonly struct StringReadySend'):
                                   ready.rindex('\n}')]
+            backlog_helpers = ready[ready.index('    private async ValueTask<TResult> SendBackloggedReadyAsync'):
+                                    ready.index('    // A typed source reports')]
+            raw_sender = ready[ready.index('    private readonly struct RawReadySend'):
+                               ready.index('    private readonly struct StringReadySend')]
             self.assertIn(mutation_helpers, control)
             self.assertIn(typed_helpers, control)
+            self.assertIn(backlog_helpers, control)
+            self.assertIn(raw_sender, control)
+            raw_start = control.index('    private ValueTask<RespValue> SendOnReadyPrimaryAsync')
+            raw_body = control[raw_start:control.index('    private async ValueTask<TResult> SendBackloggedReadyAsync', raw_start)]
+            self.assertIn('''            connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                && !CursorCommandMetadata.IsServerCursorContinuation(in command)
+                ? SelectStandaloneConnection(cancellationToken)
+                : GetCircuitAwareConnection(multiplexer, cancellationToken);''', raw_body)
+            self.assertIn('''        if (connection is null)
+            return SendBackloggedReadyAsync<TCommand, RespValue, RawReadySend>(operation, command, cancellationToken,
+                new RawReadySend(this, observation), default, null, default, false, observation);''', raw_body)
+            self.assertIn('return SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);', raw_body)
             # Later replica, cluster, circuit and mutation ownership contracts remain available.
             for marker in ('TryDispatchReplica', 'SendOnReadyClusterAsync', 'SendCircuitReadyAsync',
                            'CompleteObservedMutationAsync', 'IReadySend<TResult>'):
@@ -88,23 +104,32 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                     sender_value = ('new ConvertedReadySend<TState, TResult>(state, converter, transferOwnership)'
                                     if method == 'ConvertResponseCoreAsync' else 'default')
                     expected = f'''                var durationStarted = RespireTelemetry.CaptureCommandDurationStart(operation);
-                RespireConnection connection;
-                try {{ connection = GetCircuitAwareConnection(readyMultiplexer, ct); }}
+                RespireConnection? connection;
+                try
+                {{
+                    connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                        && !CursorCommandMetadata.IsServerCursorContinuation(in command)
+                        ? SelectStandaloneConnection(ct)
+                        : GetCircuitAwareConnection(readyMultiplexer, ct);
+                }}
                 catch (Exception error)
                 {{
+                    // The captured generation names the attempted data node, with or without Sentinel.
+                    var endpoint = ct.IsCancellationRequested ? (RespireEndpoint?)null : readyMultiplexer.ActiveConnectionEndpoint;
                     if (core.Sentinel is not null)
-                        return CaptureReadySendFailure<{result}>(error, cache, mutationFence);
+                        return CaptureReadySendFailure<{result}>(error, cache, mutationFence, false, endpoint);
                     if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
                     throw;
                 }}
-                // Preserve later circuit and mutation ownership paths; only ordinary
-                // ready-primary dispatch returns to its pre-strategy direct send.
+                if (connection is null)
+                    return SendBackloggedReadyAsync<TCommand, {result}, {sender}>(operation, command, ct, {sender_value},
+                        durationStarted, cache, mutationFence, false, observation);
                 if (core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
-                    return SendCircuitReadyAsync<TCommand, {result}, {sender}>(
-                        operation, connection, command, ct, {sender_value}, durationStarted, cache, mutationFence, observation);
+                    return SendCircuitReadyAsync<TCommand, {result}, {sender}>(operation, connection, command, ct, {sender_value},
+                        durationStarted, cache, mutationFence, observation);
                 if (mutationFence.IsRequired)
-                    return SendReadyMutationAsync<TCommand, {result}, {sender}>(
-                        connection, operation, in command, ct, {sender_value}, cache!, mutationFence, durationStarted, observation);
+                    return SendReadyMutationAsync<TCommand, {result}, {sender}>(connection, operation, in command, ct, {sender_value},
+                        cache!, mutationFence, durationStarted, observation);
                 try
                 {{
                     return {send};

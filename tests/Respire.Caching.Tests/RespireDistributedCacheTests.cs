@@ -889,6 +889,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 Password = password,
                 ClientName = clientName,
                 Connections = 1,
+                // Each ping drives one failed replacement so its cleanup can be inspected.
+                BacklogPolicy = RespireBacklogPolicy.FailFast,
             };
             restrictedClient = await RespireClient.ConnectAsync(options);
             await restrictedClient.EnsureReliableCorrectionOrderingAsync();
