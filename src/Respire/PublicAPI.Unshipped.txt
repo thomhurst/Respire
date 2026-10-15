@@ -1,4 +1,10 @@
 #nullable enable
+Respire.RespireOptions.SplitCrossSlotCommands.get -> bool
+Respire.RespireOptions.SplitCrossSlotCommands.init -> void
+Respire.RespireClusterPartitionException
+Respire.RespireClusterPartitionException.CommandName.get -> string!
+Respire.RespireClusterPartitionException.Slot.get -> int
+Respire.RespireClusterPartitionException.RespireClusterPartitionException(string! commandName, int slot, Respire.RespireEndpoint? endpoint, System.Exception! innerException) -> void
 Respire.RespireBacklogPolicy
 Respire.RespireBacklogPolicy.Queue = 0 -> Respire.RespireBacklogPolicy
 Respire.RespireBacklogPolicy.FailFast = 1 -> Respire.RespireBacklogPolicy

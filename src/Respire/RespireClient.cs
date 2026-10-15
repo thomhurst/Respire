@@ -1251,7 +1251,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     }
 
     private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
-        => _core.Cluster is null ? default : RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments, _core.Options.IncludeCrossSlotKeyContext);
+    {
+        if (_core.Cluster is null) return default;
+        if (CanSplitClusterCommand(operation) && RawCommandKeyLayouts.TryGetLayout(operation, arguments, out var layout))
+        {
+            for (var index = 0; index < layout.Count; index++)
+                RespireValue.ThrowIfNull(arguments[layout.Start + index * layout.Stride], "args");
+            return layout.Count > 0 ? new(true, layout.Start) : RawCommandKeyLayouts.KeyRouting.NoKeys;
+        }
+        return RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments, _core.Options.IncludeCrossSlotKeyContext);
+    }
 
     private int GetRawRoutingKeyIndex(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {
@@ -1945,7 +1954,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         for (var index = 0; index < keys.Length; index++)
         {
             resolved[index] = (keysResolved ? keys[index] : ResolveKey(keys[index])).Snapshot();
-            ValidateMGetClusterSlot(in resolved[index], ref slot);
+            if (!CanSplitClusterCommand("MGET")) ValidateMGetClusterSlot(in resolved[index], ref slot);
         }
         return CommandHookScope.RunAsync(hook, "MGET", cancellationToken,
             (Client: this, Keys: resolved, Token: cancellationToken, Converter: converter, Observe: observeErrors, Observation: observation),
@@ -1964,6 +1973,20 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         observation = owner?.Observation ?? observation;
         try
         {
+            if (PlanMGetPartitions(keys, keysResolved) is { } groups)
+            {
+                var split = ConvertClusterPartitionsAsync("MGET", new CmdN(Verbs.MGet, []), groups, cancellationToken,
+                    (Client: this, Converter: converter),
+                    static ((RespireClient Client, ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
+                    {
+                        var values = response.AsArray();
+                        var result = new TResult[values.Length];
+                        for (var index = 0; index < values.Length; index++)
+                            result[index] = state.Converter(state.Client, in values[index]);
+                        return result;
+                    }, transferOwnership: false, observation, cachedMGet: true);
+                return owner is null ? split : owner.Attach(split);
+            }
             var cache = _readFrom == RespireReadFrom.Primary ? ReadCache : null;
             ValueTask<TResult[]> response;
             if (keys.Length == 0)
@@ -2737,6 +2760,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         mutationFence = default;
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (PlanClusterPartitions(operation, in command) is { } groups)
+            return SendClusterPartitionsAsync(operation, command, groups, cancellationToken, flags, allowReadFrom, observation);
         if (command is IStreamingRespCommand)
         {
             // Large uploads must not own a multiplexed connection's write path while the
@@ -3586,6 +3611,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (CanSplitClusterCommand(operation) && command.TryGetClientCacheKey(operation, out var arguments))
+        {
+            var values = new RespireValue[arguments.ArgumentCount];
+            for (var index = 0; index < values.Length; index++) values[index] = arguments.GetArgument(index);
+            _ = RawCommandKeyLayouts.ValidateClusterKeys(operation, values, core.Options.IncludeCrossSlotKeyContext);
+        }
         if (allowReadFrom && _readFrom != RespireReadFrom.Primary
             && command.ReadKind != ReadCommandKind.None)
         {
@@ -6099,6 +6130,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         var core = _core;
         if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
+        if (PlanClusterPartitions(operation, in command) is { } groups)
+            return ConvertClusterPartitionsAsync(operation, command, groups, ct, state, converter, transferOwnership, observation);
         if (TryDispatchReplica<TCommand, TResult, ConvertedReadySend<TState, TResult>>(
             operation, in command, ct, new(state, converter, transferOwnership), out var replicaResponse, observation))
             return replicaResponse;

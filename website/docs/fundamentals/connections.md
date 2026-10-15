@@ -292,7 +292,7 @@ var failure = new RespireConnectionException("Redis connection failed.")
 
 ### Client-side cross-slot validation
 
-In Cluster mode, keys in one multi-key command must share a slot after key prefixing.
+By default in Cluster mode, keys in one multi-key command must share a slot after key prefixing.
 A local mismatch throws `RespireCrossSlotException` before sending or enqueueing the
 command, including raw commands and MGET cache hits. `CommandName`, `ExpectedSlot`,
 and `ConflictingSlot` identify the rejected command and first detected slot conflict.
@@ -314,6 +314,46 @@ Redis `CROSSSLOT` replies still throw `RespireServerException` with
 `Code == RespireErrorCodes.CrossSlot`. Error metrics classify local rejection as
 `validation`, omit the server endpoint and `db.response.status_code`, and continue
 to classify server replies as `server` with the `CROSSSLOT` status code.
+
+### Splitting cross-slot commands
+
+Set `RespireOptions.SplitCrossSlotCommands = true` to split immediate `MGET`, `MSET`,
+`DEL`, `UNLINK`, `EXISTS`, and `TOUCH` requests by their physical hash slot:
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    UseCluster = true,
+    Endpoints = [new("localhost", 7000)],
+    SplitCrossSlotCommands = true,
+});
+await redis.Strings.SetManyAsync(("{customer:1}:name", "Ada"), ("{customer:2}:name", "Grace"));
+var names = await redis.Strings.GetManyAsync("{customer:2}:name", "{customer:1}:name");
+// names: ["Grace", "Ada"]
+```
+
+This opt-in applies to the typed facets and immediate catalog, raw, and interpolated
+Execute APIs. Groups run concurrently, including separate slots owned by the same
+node. `MGET` restores input order and preserves duplicates and nulls; `MSET` succeeds
+only if every group returns OK; the other commands sum their integer replies.
+Same-slot requests remain one command. Prefixes and hash tags determine the physical slots.
+
+**Cross-slot requests are not atomic.** In particular, part of an `MSET` can succeed
+before another group fails. Reads across slots are not a single consistent snapshot.
+`MSETNX`, set algebra, scripts, transactions, deferred batches, and fire-and-forget
+requests keep their existing single-slot restrictions. `JSON.MGET` is not split.
+
+Each group uses the normal slot routing, MOVED/ASK recovery, configured retries,
+reconnect backlog, read preference, and cache fences. A retry affects only that group;
+successful groups are not replayed by the splitter. Typed `MGET` retains per-key caching.
+Command hooks run once for the whole logical call, with completion after all groups finish.
+
+If a group fails, the call joins all outstanding groups and throws
+`RespireClusterPartitionException`, exposing `CommandName`, `Slot`, the known failed
+`Endpoint`, and the underlying exception. If several groups fail, one failure is surfaced;
+no partial result is returned. Route discovery failures may have no single known endpoint.
+Caller cancellation remains `OperationCanceledException`; cancellation cannot roll back
+commands already accepted by a node. Do not blindly retry an entire failed write request.
 
 ## Independent liveness bounds
 

@@ -150,6 +150,11 @@ public sealed record RespireOptions
     /// Hex is reversible. Key context is never added to telemetry tags or exception messages.</remarks>
     public bool IncludeCrossSlotKeyContext { get; init; }
 
+    /// <summary>Split immediate cross-slot MGET, MSET, DEL, UNLINK, EXISTS and TOUCH commands by slot. Default: false.</summary>
+    /// <remarks>Groups run concurrently and are not atomic together. A failure can leave some writes applied.
+    /// Transactions and deferred batches still require each command's keys to share one slot.</remarks>
+    public bool SplitCrossSlotCommands { get; init; }
+
     /// <summary>Returns a diagnostic representation without credentials or nested configuration material.</summary>
     public override string ToString() => "RespireOptions { <redacted> }";
 

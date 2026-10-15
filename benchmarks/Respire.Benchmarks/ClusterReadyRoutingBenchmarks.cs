@@ -18,6 +18,9 @@ public class ClusterReadyRoutingBenchmarks
     private readonly Process _process = Process.GetCurrentProcess();
     private RespireClient _cluster = null!;
     private RespireClient _standalone = null!;
+    private RespireClient _splitCluster = null!;
+    private readonly RespireKey[] _manyKeys = ["{cluster-many}:one", "{cluster-many}:two"];
+    private readonly (RespireKey Key, RespireValue Value)[] _manyPairs = [("{cluster-many}:one", "one"), ("{cluster-many}:two", "two")];
     private TimeSpan _cpuAt;
     private long _startedAt;
     private long _operations;
@@ -35,6 +38,13 @@ public class ClusterReadyRoutingBenchmarks
         };
         _cluster = await RespireClient.ConnectAsync(options with { UseCluster = true }).ConfigureAwait(false);
         _standalone = await RespireClient.ConnectAsync(options).ConfigureAwait(false);
+        var splitOptions = options with { UseCluster = true };
+        // The workflow copies this fixture to the baseline revision, where this opt-in may not exist.
+        typeof(RespireOptions).GetProperty("SplitCrossSlotCommands")?.SetValue(splitOptions, true);
+        _splitCluster = await RespireClient.ConnectAsync(splitOptions).ConfigureAwait(false);
+        if (!await _cluster.Strings.SetManyAsync(_manyPairs).ConfigureAwait(false)
+            || !(await _splitCluster.Strings.GetManyAsync(_manyKeys).ConfigureAwait(false)).SequenceEqual(new[] { "one", "two" }))
+            throw new InvalidOperationException("Same-slot multi-key benchmark setup failed.");
         if (RespireTelemetry.IsOperationEnabled("GET") || RespireTelemetry.IsOperationEnabled("STRLEN"))
             throw new InvalidOperationException("Cluster ready benchmarks require uninstrumented command dispatch.");
         if (!await _standalone.Strings.SetAsync(_key, _payload).ConfigureAwait(false))
@@ -128,6 +138,34 @@ public class ClusterReadyRoutingBenchmarks
         _operations += count;
     }
 
+    [Benchmark]
+    public ValueTask<string?[]> ClusterMGetSameSlot()
+    {
+        Count(nameof(ClusterMGetSameSlot), 1);
+        return _cluster.Strings.GetManyAsync(_manyKeys);
+    }
+
+    [Benchmark]
+    public ValueTask<string?[]> SplitClusterMGetSameSlot()
+    {
+        Count(nameof(SplitClusterMGetSameSlot), 1);
+        return _splitCluster.Strings.GetManyAsync(_manyKeys);
+    }
+
+    [Benchmark]
+    public ValueTask<bool> ClusterMSetSameSlot()
+    {
+        Count(nameof(ClusterMSetSameSlot), 1);
+        return _cluster.Strings.SetManyAsync(_manyPairs);
+    }
+
+    [Benchmark]
+    public ValueTask<bool> SplitClusterMSetSameSlot()
+    {
+        Count(nameof(SplitClusterMSetSameSlot), 1);
+        return _splitCluster.Strings.SetManyAsync(_manyPairs);
+    }
+
     [GlobalCleanup]
     public async Task Cleanup()
     {
@@ -143,7 +181,11 @@ public class ClusterReadyRoutingBenchmarks
         try { if (_cluster is not null) await _cluster.DisposeAsync().ConfigureAwait(false); }
         finally
         {
-            try { if (_standalone is not null) await _standalone.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                if (_standalone is not null) await _standalone.DisposeAsync().ConfigureAwait(false);
+                if (_splitCluster is not null) await _splitCluster.DisposeAsync().ConfigureAwait(false);
+            }
             finally { _process.Dispose(); }
         }
     }
