@@ -35,13 +35,14 @@ public class UploadPackagesToLocalNuGetModule : Module<int>
             try
             {
                 packageFile.CopyTo(destinationPath, overwrite: true);
-                context.Logger.LogInformation("Copied {PackageName} to local NuGet", packageFile.Name);
-                copiedCount++;
             }
             catch (Exception ex)
             {
-                context.Logger.LogWarning(ex, "Failed to copy {PackageName} to local NuGet", packageFile.Name);
+                throw new IOException($"Failed to copy package '{packageFile.FullName}' to local NuGet destination '{destinationPath}'.", ex);
             }
+
+            context.Logger.LogInformation("Copied {PackageName} to local NuGet", packageFile.Name);
+            copiedCount++;
         }
 
         context.Logger.LogInformation("Completed copying {Count} packages to local NuGet", copiedCount);
