@@ -1,27 +1,21 @@
 using Microsoft.Extensions.Logging;
 using ModularPipelines.Attributes;
 using ModularPipelines.Context;
-using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
 namespace Respire.Pipeline.Modules.LocalMachine;
 
 [DependsOn<CreateLocalNugetFolderModule>]
-public class AddLocalNugetSourceModule : Module<CommandResult>
+public class AddLocalNugetSourceModule : Module<string>
 {
-    protected override async Task<CommandResult?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
-        _ = await context.GetModule<CreateLocalNugetFolderModule>();
-        
-        context.Logger.LogInformation("Adding local NuGet source...");
-        
-        // TODO: Fix AddSource method call - ModularPipelines API needs updating
-        // For now, return a dummy successful result
-        
-        context.Logger.LogInformation("Skipping local NuGet source addition - needs API update");
-        
-        // Create a dummy successful CommandResult
-        await Task.CompletedTask;
-        return default!;
+        var folder = await context.GetModule<CreateLocalNugetFolderModule>();
+        var directory = folder.ValueOrDefault
+            ?? throw new InvalidOperationException("Local NuGet folder was not created");
+
+        var name = await LocalNugetSource.EnsureRegisteredAsync(directory.FullName, cancellationToken);
+        context.Logger.LogInformation("Local NuGet source {Name} is enabled at {Path}", name, directory.FullName);
+        return name;
     }
 }
