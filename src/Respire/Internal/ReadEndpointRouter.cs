@@ -203,6 +203,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             if (readFrom is RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred
                 && TryAcquireReadyConnection(readFrom, cancellationToken) is { } ready) return ready;
             var selection = await SelectAsync(readFrom, cancellationToken, observation).ConfigureAwait(false);
+            if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
             return selection.Connection;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -237,6 +238,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         cancellationToken.ThrowIfCancellationRequested();
         // Preserve the selector's shared cursor when a later publication adds replicas.
         Interlocked.Increment(ref _nextReplica);
+        if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
         return connection;
     }
 
@@ -712,6 +714,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         private TaskCompletionSource? _disposeCompletion;
 
         internal RespireEndpoint Endpoint => endpoint;
+        internal RespireConnectionMultiplexer? RecoveryOwner => Volatile.Read(ref _multiplexer);
         internal RespireConnection? GetExistingHealthConnection()
             => IsConnected ? Volatile.Read(ref _multiplexer)?.GetExistingHealthConnection() : null;
         internal bool IsOpen => Volatile.Read(ref _multiplexer) is not null;

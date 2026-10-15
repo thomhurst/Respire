@@ -244,6 +244,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
+            BacklogPolicy = RespireBacklogPolicy.FailFast, // This test asserts immediate selection failure.
             Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -269,6 +270,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
+            BacklogPolicy = RespireBacklogPolicy.FailFast, // This test asserts immediate selection failure.
             Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(300),
@@ -659,6 +661,7 @@ public class ReadEndpointRoutingTests
         }
         await using var client = RespireClient.Create(new RespireOptions
         {
+            BacklogPolicy = RespireBacklogPolicy.FailFast, // This test asserts immediate selection failure.
             Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.Zero,

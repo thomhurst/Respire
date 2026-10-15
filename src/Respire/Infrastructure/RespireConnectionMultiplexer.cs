@@ -1297,7 +1297,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         TimeSpan? Delay = null,
         bool Exhausted = false);
 
-    private void ThrowIfRecoveryExhausted(int? requiredSlot = null)
+    internal void ThrowIfRecoveryExhausted(int? requiredSlot = null)
     {
         if (_options.ReconnectPolicy is not { MaxAttempts: not null } policy) return;
         Exception? failure = null;

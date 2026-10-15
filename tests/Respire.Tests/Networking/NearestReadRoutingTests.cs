@@ -176,7 +176,11 @@ public class NearestReadRoutingTests
         await using var replica = Server("replica");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : Reply(command, "primary");
-        var options = Options(primary, replica) with { CommandTimeout = null, ConnectionIdleReadTimeout = null };
+        var options = Options(primary, replica) with
+        {
+            BacklogPolicy = RespireBacklogPolicy.FailFast, // Assert selection failure while every probe is occupied.
+            CommandTimeout = null, ConnectionIdleReadTimeout = null,
+        };
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
         await using var client = await RespireClient.ConnectAsync(options);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
