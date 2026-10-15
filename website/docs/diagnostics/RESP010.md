@@ -33,6 +33,10 @@ methods. It leaves field initializers, factories returning a client, and the
 application entry point's outer lifetime alone. Loop checks stop at nested
 function boundaries. Top-level `using` declarations are outside the ownership
 check, but client creation in top-level loops is still checked.
+The ownership check also follows a local initialized by a creation call into a
+later `using` statement or declaration in the same block, provided the local is
+not written in the intervening statements or the disposal statement. It does not
+follow chains of aliases or disposal inside a nested function or another block.
 It does not infer DI service scopes, trace custom factories,
 or prove how frequently a method runs.
 

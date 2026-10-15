@@ -42,12 +42,53 @@ public class CommonMisuseAnalyzerTests
         """);
 
     [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
+    public Task SubsequentLocalOwnership(string framework) => Verify(framework, new ShortLivedClientAnalyzer(), """
+        class Consumer
+        {
+            async Task Request()
+            {
+                var client = {|RESP010:RespireClient.Create("localhost")|};
+                await using (client) { }
+                var connected = await {|RESP010:RespireClient.ConnectAsync("localhost")|}.ConfigureAwait(false);
+                await using var owned = connected;
+                var any = await {|RESP010:RespireClient.ConnectAnyAsync(new[] { RespireOptions.Parse("localhost") })|};
+                await using (IAsyncDisposable alias = any) { }
+            }
+            async Task Reassigned(RespireClient shared)
+            {
+                var client = RespireClient.Create("localhost");
+                client = shared;
+                await using (client) { }
+                var other = RespireClient.Create("localhost");
+                Replace(ref other, shared);
+                await using var owned = other;
+            }
+            static void Replace(ref RespireClient client, RespireClient replacement) => client = replacement;
+            void Deferred()
+            {
+                var client = RespireClient.Create("localhost");
+                Func<Task> cleanup = async () => { await using (client) { } };
+                async Task Cleanup() { await using var owned = client; }
+            }
+            async Task DifferentSymbol()
+            {
+                { var client = RespireClient.Create("localhost"); }
+                { var client = {|RESP010:RespireClient.Create("localhost")|}; await using (client) { } }
+            }
+        }
+        """);
+
+    [Test]
     public Task EntryPointOwnsApplicationLifetime() => Verify("net10.0", new ShortLivedClientAnalyzer(), """
         class Program
         {
             static async Task Main()
             {
                 await using var client = await RespireClient.ConnectAsync("localhost");
+                var separate = RespireClient.Create("localhost");
+                await using (separate) { }
                 for (var i = 0; i < 2; i++)
                 {
                     await using var repeated = {|RESP010:RespireClient.Create("localhost")|};

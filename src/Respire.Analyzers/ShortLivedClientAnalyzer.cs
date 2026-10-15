@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
@@ -61,8 +62,60 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
         var inEntryPoint = scope is MethodDeclarationSyntax method
             && call.SemanticModel is { } model
             && SymbolEqualityComparer.Default.Equals(model.GetDeclaredSymbol(method, context.CancellationToken), entryPoint);
+        if (!inLoop && !inUsing && !inEntryPoint
+            && scope is MethodDeclarationSyntax or AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax)
+            inUsing = HasSubsequentLocalOwnership(call, context.CancellationToken);
         if (inLoop || (inUsing && scope is MethodDeclarationSyntax or AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax
                 && !inEntryPoint))
             context.ReportDiagnostic(Diagnostic.Create(Rule, call.Syntax.GetLocation()));
+    }
+
+    private static bool HasSubsequentLocalOwnership(IInvocationOperation call, System.Threading.CancellationToken cancellationToken)
+    {
+        // Follow only a creation result, including awaited/configured connections, into
+        // a single local initializer. Arbitrary calls and conditional values may replace it.
+        IOperation value = call;
+        while (value.Parent is IAwaitOperation or IConversionOperation or IParenthesizedOperation
+            || value.Parent is IInvocationOperation configured
+                && configured.TargetMethod.Name == "ConfigureAwait" && configured.Instance == value)
+            value = value.Parent;
+        if (value.Parent is not IVariableInitializerOperation { Parent: IVariableDeclaratorOperation declarator }
+            || declarator.Syntax.Parent?.Parent is not LocalDeclarationStatementSyntax declaration
+            || declaration.Declaration.Variables.Count != 1
+            || declaration.Parent is not BlockSyntax block
+            || call.SemanticModel is not { } model) return false;
+
+        var first = block.Statements.IndexOf(declaration) + 1;
+        for (var i = first; i < block.Statements.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var statement = block.Statements[i];
+            var ownsLocal = statement switch
+            {
+                UsingStatementSyntax owner => IsLocal(owner.Expression)
+                    || owner.Declaration?.Variables.Any(variable => IsLocal(variable.Initializer?.Value)) == true,
+                LocalDeclarationStatementSyntax owner when owner.UsingKeyword.RawKind != 0
+                    => owner.Declaration.Variables.Any(variable => IsLocal(variable.Initializer?.Value)),
+                _ => false
+            };
+            if (!ownsLocal) continue;
+
+            // Include nested writes and ref/out arguments. If the value might change,
+            // do not attribute subsequent disposal to the original creation.
+            var flow = model.AnalyzeDataFlow(block.Statements[first], statement);
+            if (flow is { Succeeded: true }
+                && !flow.WrittenInside.Any(symbol => SymbolEqualityComparer.Default.Equals(symbol, declarator.Symbol)))
+                return true;
+        }
+        return false;
+
+        bool IsLocal(ExpressionSyntax? expression)
+        {
+            if (expression is null) return false;
+            var operation = model.GetOperation(expression, cancellationToken);
+            while (operation is IConversionOperation conversion) operation = conversion.Operand;
+            return operation is ILocalReferenceOperation reference
+                && SymbolEqualityComparer.Default.Equals(reference.Local, declarator.Symbol);
+        }
     }
 }
