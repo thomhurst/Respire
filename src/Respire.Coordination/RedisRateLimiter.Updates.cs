@@ -50,7 +50,13 @@ internal sealed partial class RedisRateLimiter
         }
     }
 
-    internal async ValueTask UpdateAsync(IReadOnlyList<RespireRateLimit> settings, bool composite,
+    internal ValueTask UpdateAsync(IReadOnlyList<RespireRateLimit> settings, bool composite,
+        RespireRateLimitUpdateMode mode, CancellationToken cancellationToken)
+        => CoordinationCommandHooks.RunAsync(_coordination.Client, "RATE LIMIT UPDATE", cancellationToken,
+            (Limiter: this, Settings: settings, Composite: composite, Mode: mode, Token: cancellationToken),
+            static s => s.Limiter.UpdateCoreAsync(s.Settings, s.Composite, s.Mode, s.Token));
+
+    private async ValueTask UpdateCoreAsync(IReadOnlyList<RespireRateLimit> settings, bool composite,
         RespireRateLimitUpdateMode mode, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settings);

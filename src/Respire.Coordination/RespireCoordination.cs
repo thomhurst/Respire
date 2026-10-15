@@ -125,13 +125,25 @@ public sealed class RespireCoordination
 
     internal ValueTask<RespireResult> ExecuteRateLimitScriptAsync(
         RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
-        => _client.Scripts.ExecuteLeaseAsync(script, [key], args, cancellationToken);
+        => _client is RespireClient concrete && concrete.Core.Options.CommandHook is not null
+            ? CoordinationCommandHooks.ExecuteAsync(_client, script, [key], args, cancellationToken)
+            : _client.Scripts.ExecuteLeaseAsync(script, [key], args, cancellationToken);
 
-    // A single-command script batch sends EVAL directly, including on a cold server, and
-    // applies the client prefix and Cluster routing through the typed scripting API.
+    // Send EVAL directly even on a cold server, preserving the batch command's prefix,
+    // Cluster routing and mutation metadata without admitting an internal pipeline.
     internal async ValueTask<RespireResult> ExecuteCompositeRateLimitAsync(
         RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
     {
+        if (_client is RespireClient concrete
+            && (concrete.Core.Options.CommandHook is not null || concrete.Core.Options.PipelineHook is not null))
+        {
+            var tail = concrete.BuildScriptTail([key], args);
+            return await concrete.ConvertResponseUnhookedAsync(script.EvalOperation,
+                new BatchScriptCommand(script.EvalVerb, script.Source, tail, 1, script.RetryCategory),
+                cancellationToken, concrete,
+                static (RespireClient client, in Respire.Protocol.RespValue value) =>
+                    RespireResult.CreateOwned(in value, client.Core.Options.Serializer)).ConfigureAwait(false);
+        }
         using var batch = _client.CreateBatch();
         var pending = batch.Scripts.Evaluate(script, [key], args);
         await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);

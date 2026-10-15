@@ -6,6 +6,7 @@ namespace Respire.Coordination;
 /// Redis failures propagate and prevent admission; cached entries remain usable until expiry.</remarks>
 public sealed class RespireRateLimitDenyList
 {
+    private readonly IRespireClient? _client;
     private readonly Func<string, CancellationToken, ValueTask<bool>> _read;
     private readonly Func<string, bool, CancellationToken, ValueTask> _write;
     private readonly TimeProvider _time;
@@ -32,6 +33,7 @@ public sealed class RespireRateLimitDenyList
         TimeSpan? cacheDuration = null, int cacheCapacity = 1024)
     {
         ArgumentNullException.ThrowIfNull(client);
+        _client = client;
         if (key.IsEmpty) throw new ArgumentException("The deny-list key must not be empty.", nameof(key));
         _cacheDuration = ValidateDuration(cacheDuration ?? TimeSpan.FromSeconds(1));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cacheCapacity);
@@ -71,7 +73,20 @@ public sealed class RespireRateLimitDenyList
         """);
 
     /// <summary>Reads membership, using the local cache until its fixed lifetime expires.</summary>
-    public async ValueTask<bool> IsDeniedAsync(string identity, CancellationToken cancellationToken = default)
+    public ValueTask<bool> IsDeniedAsync(string identity, CancellationToken cancellationToken = default)
+        => _client is null ? IsDeniedCoreAsync(identity, cancellationToken)
+            : CoordinationCommandHooks.RunAsync(_client, "RATE LIMIT DENY LIST READ", cancellationToken,
+                (List: this, Identity: identity, Token: cancellationToken),
+                static s => s.List.IsDeniedCoreAsync(s.Identity, s.Token));
+
+    // Only a shared concrete client has already admitted this policy boundary.
+    internal ValueTask<bool> IsDeniedForAcquisitionAsync(IRespireClient acquisitionClient,
+        string identity, CancellationToken cancellationToken)
+        => _client is RespireClient && ReferenceEquals(_client, acquisitionClient)
+            ? IsDeniedCoreAsync(identity, cancellationToken)
+            : IsDeniedAsync(identity, cancellationToken);
+
+    private async ValueTask<bool> IsDeniedCoreAsync(string identity, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(identity);
         cancellationToken.ThrowIfCancellationRequested();
@@ -187,7 +202,13 @@ public sealed class RespireRateLimitDenyList
     /// <summary>Adds or removes an identity in Redis, then invalidates this instance's cache even on failure.</summary>
     /// <remarks>Membership has no automatic expiry. Concurrent updates follow Redis execution order.
     /// A cancelled or failed update may have reached Redis; the next read resolves its outcome.</remarks>
-    public async ValueTask SetDeniedAsync(string identity, bool denied, CancellationToken cancellationToken = default)
+    public ValueTask SetDeniedAsync(string identity, bool denied, CancellationToken cancellationToken = default)
+        => _client is null ? SetDeniedCoreAsync(identity, denied, cancellationToken)
+            : CoordinationCommandHooks.RunAsync(_client, "RATE LIMIT DENY LIST WRITE", cancellationToken,
+                (List: this, Identity: identity, Denied: denied, Token: cancellationToken),
+                static s => s.List.SetDeniedCoreAsync(s.Identity, s.Denied, s.Token));
+
+    private async ValueTask SetDeniedCoreAsync(string identity, bool denied, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(identity);
         cancellationToken.ThrowIfCancellationRequested();

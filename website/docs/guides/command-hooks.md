@@ -269,6 +269,9 @@ Use the names in this table when applying a policy to these APIs.
 | Hash-field lease verification, renewal, release, disposal | `COORDINATION LEASE VERIFY`, `COORDINATION LEASE RENEW`, `COORDINATION LEASE RELEASE`, `COORDINATION LEASE DISPOSE` |
 | Countdown latch creation, joining and reset | `LATCH CREATE`, `LATCH JOIN`, `LATCH RESET` |
 | Countdown latch signal and wait | `LATCH COUNTDOWN`, `LATCH WAIT` |
+| Rate limiter `AcquireAsync`, including composite limiters | `RATE LIMIT ACQUIRE` |
+| Rate limiter `UpdateAsync`, including local adoption | `RATE LIMIT UPDATE` |
+| Public deny-list membership read and write | `RATE LIMIT DENY LIST READ`, `RATE LIMIT DENY LIST WRITE` |
 
 Fenced lock handles delegate to managed locks and use their `LOCK` names for subsequent
 operations. Admission precedes tracked connection setup, mutation fences, ownership changes
@@ -312,8 +315,8 @@ clients and their views; opaque custom client decorators retain their own dispat
 conversion, compatibility fallback, wait teardown, cancellation and application reentrancy.
 
 This extends the tracked-owner inventory for [#1755](https://github.com/thomhurst/Respire/issues/1755)
-with [#1767](https://github.com/thomhurst/Respire/issues/1767). Rate limiters
-([#1768](https://github.com/thomhurst/Respire/issues/1768)) and multi-client Redlock groups
+with [#1767](https://github.com/thomhurst/Respire/issues/1767) and rate limiters
+([#1768](https://github.com/thomhurst/Respire/issues/1768)). Multi-client Redlock groups
 ([#1769](https://github.com/thomhurst/Respire/issues/1769)) still require their own composite
 boundaries. Their lower-level hooks do not establish a once-only outer operation contract.
 
