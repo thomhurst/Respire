@@ -46,3 +46,18 @@ var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 
 - Top-K add and increment return evicted items as nullable byte arrays, preserving binary items.
 - Keys receive the `WithKeyPrefix` prefix. Multi-key merges route by destination and source keys and enforce Cluster slot rules.
 - Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache.
+
+## Command hooks
+
+With a concrete `RespireClient`, [logical command hooks](command-hooks.md#module-result-owners)
+cover each typed operation from admission before argument preparation through final result
+conversion and owned cleanup. Rejection sends no command; conversion failures report `Failed`
+instead of success for the raw reply. Hook names are the Redis command names, such as `BF.ADD`,
+`CMS.MERGE` and `TDIGEST.QUANTILE`. Both merge overloads complete one owner.
+
+The five Info methods and `TopKListAsync` return raw results: completion occurs at transfer,
+and the caller must dispose the result after reading it. An external `IRespireClient`
+decorator retains its own public execution boundary. Nested commands started by application
+code or hook callbacks remain independently observed. This coverage does not establish a
+client-wide command-blocking policy; the final audit remains tracked in
+[#1708](https://github.com/thomhurst/Respire/issues/1708).

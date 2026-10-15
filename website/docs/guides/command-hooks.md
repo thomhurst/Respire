@@ -15,7 +15,7 @@ APIs, function calls and mutations, script execution, dedicated blocking convert
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
 explicit pipeline/transaction members, WATCH setup, immediate hash imports,
-import-session acquisition, explicit health-probe rounds and typed RedisJSON operations.
+import-session acquisition, explicit health-probe rounds, typed RedisJSON and Probabilistic operations.
 Managed locks, semaphores, countdown latches and the tracked coordination leases described below are also covered.
 This is **not a client-wide command-blocking policy**. Remaining composite coverage and
 the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
@@ -89,6 +89,28 @@ does not unwrap it or suppress its hooks. Application commands started by a JSON
 or hook retain independent scopes. Key prefixing, Cluster slot checks and mutation fences
 still run in the ordinary command dispatch path.
 
+Typed `RespireProbabilisticClient` operations over a concrete `RespireClient` likewise admit
+before validation, option preparation or enumeration of caller-supplied items. Completion
+includes boolean, numeric, array and dump-chunk conversion and disposal of the internal
+result. A malformed Cuckoo insert response, t-digest number or dump reply therefore reports
+`Failed`; rejection sends nothing, and cancellation completes once as `Canceled`.
+
+| Probabilistic family | Typed hook names |
+| --- | --- |
+| Bloom | `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.INSERT`, `BF.CARD`, `BF.SCANDUMP`, `BF.LOADCHUNK` |
+| Cuckoo | `CF.RESERVE`, `CF.ADD`, `CF.ADDNX`, `CF.INSERT`, `CF.INSERTNX`, `CF.DEL`, `CF.EXISTS`, `CF.MEXISTS`, `CF.COUNT`, `CF.SCANDUMP`, `CF.LOADCHUNK` |
+| Count-Min | `CMS.INITBYDIM`, `CMS.INITBYPROB`, `CMS.INCRBY`, `CMS.QUERY`, `CMS.MERGE` |
+| Top-K | `TOPK.RESERVE`, `TOPK.ADD`, `TOPK.INCRBY`, `TOPK.QUERY`, `TOPK.COUNT` |
+| t-digest | `TDIGEST.CREATE`, `TDIGEST.RESET`, `TDIGEST.MERGE`, `TDIGEST.ADD`, `TDIGEST.MIN`, `TDIGEST.MAX`, `TDIGEST.QUANTILE`, `TDIGEST.CDF`, `TDIGEST.RANK`, `TDIGEST.REVRANK`, `TDIGEST.BYRANK`, `TDIGEST.BYREVRANK`, `TDIGEST.TRIMMED_MEAN` |
+
+Each merge overload admits one owner. All five `*InfoAsync` methods and `TopKListAsync`
+retain raw-result transfer boundaries (`BF.INFO`, `CF.INFO`, `CMS.INFO`, `TOPK.INFO`,
+`TDIGEST.INFO` and `TOPK.LIST`); the caller disposes those results. External decorators keep
+their public dispatch and raw boundary. Application commands started by item enumeration
+or hook callbacks receive independent scopes. Prefixing, routing and mutation fences remain
+part of ordinary dispatch, including destination-only invalidation for merges. With no hook,
+typed calls do not create a hook scope.
+
 The module inventory distinguishes these remaining owners; raw execution coverage alone
 does not promise their outer typed result or composite lifetime:
 
@@ -97,7 +119,7 @@ does not promise their outer typed result or composite lifetime:
 | JSON | Typed deserialization, cardinality, text/numeric conversion, serialization and buffer cleanup are covered above; `Commands` transfers raw results. |
 | Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery: [#1777](https://github.com/thomhurst/Respire/issues/1777). |
 | TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion: [#1778](https://github.com/thomhurst/Respire/issues/1778). |
-| Probabilistic | Typed boolean/numeric/array and dump-chunk conversion versus raw Info transfers: [#1779](https://github.com/thomhurst/Respire/issues/1779). |
+| Probabilistic | Typed boolean/numeric/array and dump-chunk conversion and owned cleanup are covered above; Info and Top-K List transfer raw results. |
 
 This inventory does not establish a client-wide blocking policy; the final audit remains
 [#1708](https://github.com/thomhurst/Respire/issues/1708).

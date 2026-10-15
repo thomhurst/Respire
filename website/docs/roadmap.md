@@ -162,11 +162,11 @@ Public interface compatibility and the post-2.0 extension policy are described i
   explicit batch/transaction members (including WAIT/WAITAOF), WATCH setup, immediate hash imports,
   import-session acquisition, explicit health-probe rounds, managed locks, semaphores,
   tracked coordination leases and countdown latch operations (including notification waits).
-  Typed RedisJSON owners include serialization, conversion and owned cleanup. Search,
-  TimeSeries and Probabilistic result-owner work is tracked in
-  [#1777](https://github.com/thomhurst/Respire/issues/1777),
-  [#1778](https://github.com/thomhurst/Respire/issues/1778) and
-  [#1779](https://github.com/thomhurst/Respire/issues/1779).
+  Typed RedisJSON owners include serialization, conversion and owned cleanup. Typed
+  Probabilistic owners include argument preparation, conversion and owned cleanup, with
+  raw Info and Top-K List transfers retaining their own boundaries. Search and TimeSeries
+  result-owner work is tracked in [#1777](https://github.com/thomhurst/Respire/issues/1777) and
+  [#1778](https://github.com/thomhurst/Respire/issues/1778).
   Remaining specialized coverage and the complete client-wide policy audit are tracked in
   [#1708](https://github.com/thomhurst/Respire/issues/1708).
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
