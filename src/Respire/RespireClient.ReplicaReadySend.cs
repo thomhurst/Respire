@@ -35,7 +35,12 @@ public sealed partial class RespireClient
             || _core.ReadRouter.IsBacklogDraining
             || _readFrom is not (RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred)
             || cancellationToken.IsCancellationRequested || RespireTelemetry.IsOperationEnabled(operation)) return null;
-        try { return _core.ReadRouter.TryAcquireReadyConnection(_readFrom, cancellationToken); }
+        try
+        {
+            var connection = _core.ReadRouter.TryAcquireReadyConnection(_readFrom, cancellationToken);
+            // A drain can win admission while ready selection captures its publication.
+            return _core.ReadRouter.IsBacklogDraining ? null : connection;
+        }
         catch (Exception error) when (error is RespireConnectionException or ObjectDisposedException or OperationCanceledException)
         {
             // No command was accepted. The ordinary async route preserves acquisition failures.

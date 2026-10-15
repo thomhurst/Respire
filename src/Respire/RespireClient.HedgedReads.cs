@@ -86,6 +86,9 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation, RespireConnection connection, CommandDeadline commandDeadline)
         where TCommand : struct, IRespCommand
     {
+        // Cold acquisition keeps its connection budget, but both legs must share the
+        // command budget once selected. Preserve any deadline already spent in recovery.
+        if (_core.Cluster is null) commandDeadline = CreateCircuitDeadline(commandDeadline);
         var callerAttempts = observation.Attempts;
         var sent = false;
         var race = new HedgeRace();
