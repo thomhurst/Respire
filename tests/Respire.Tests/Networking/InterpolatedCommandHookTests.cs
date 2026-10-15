@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -8,6 +10,68 @@ namespace Respire.Tests.Networking;
 
 public partial class CommandHookTests
 {
+    [Test]
+    [NotInParallel]
+    [Arguments("owned", "preflight")]
+    [Arguments("lease", "preflight")]
+    [Arguments("forget", "preflight")]
+    [Arguments("owned", "rejection")]
+    [Arguments("lease", "rejection")]
+    [Arguments("forget", "rejection")]
+    [Arguments("owned", "cancellation")]
+    [Arguments("lease", "cancellation")]
+    [Arguments("forget", "cancellation")]
+    [Arguments("owned", "server")]
+    [Arguments("lease", "server")]
+    public async Task InterpolatedFailuresPublishOneCallerError(string route, string phase)
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command == "GET key" ? "-ERR failed\r\n"u8.ToArray() : null;
+        using var cancellation = new CancellationTokenSource();
+        var rejection = new InvalidOperationException("denied");
+        var hook = new RecordingHook
+        {
+            Before = _ =>
+            {
+                if (phase == "rejection") throw rejection;
+                if (phase == "cancellation") cancellation.Cancel();
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook));
+        using var errors = new InterpolatedErrorCapture();
+        var baseline = server.CommandsSeen;
+        RespireCommandInterpolatedStringHandler command = $"GET {"key"}";
+        if (phase == "preflight") command = new RespireCommandInterpolatedStringHandler(0, 0);
+        var error = await Failure(() => SendInterpolated(client, route, command, token: cancellation.Token));
+        if (phase == "rejection") await Assert.That(error).IsSameReferenceAs(rejection);
+        if (phase == "cancellation") await Assert.That(error is OperationCanceledException).IsTrue();
+        if (phase == "server") await Assert.That(error is RespireServerException).IsTrue();
+        else await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        await Assert.That(hook.Completed.Count).IsEqualTo(phase == "preflight" ? 0 : 1);
+        await Assert.That(errors.Items.Count).IsEqualTo(1);
+        await Assert.That((bool)errors.Items.Single()["redis.client.errors.internal"]!).IsFalse();
+    }
+
+    private sealed class InterpolatedErrorCapture : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal InterpolatedErrorCapture()
+        {
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                    listener.EnableMeasurementEvents(instrument);
+            };
+            _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+                Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
+            _listener.Start();
+        }
+
+        public void Dispose() => _listener.Dispose();
+    }
+
     [Test]
     [Arguments("owned")]
     [Arguments("lease")]
