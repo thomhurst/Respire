@@ -20,7 +20,7 @@ public class MultiItemCancellationOverloadTests
         var missing = new List<string>();
         foreach (var type in typeof(RespireClient).Assembly.GetExportedTypes()
                      .Where(type => type.IsInterface && type.Name.EndsWith("Commands", StringComparison.Ordinal)
-                         && !type.Name.StartsWith("IBatch", StringComparison.Ordinal)))
+                         && !type.Name.StartsWith("IRespireBatch", StringComparison.Ordinal)))
         {
             var methods = type.GetMethods();
             foreach (var method in methods)
@@ -49,7 +49,7 @@ public class MultiItemCancellationOverloadTests
                      .Concat([typeof(Json.RespireJsonClient), typeof(TimeSeries.RespireTimeSeriesClient),
                          typeof(Probabilistic.RespireProbabilisticClient)])
                      .Where(type => (type.IsInterface && type.Name.EndsWith("Commands", StringComparison.Ordinal)
-                         && !type.Name.StartsWith("IBatch", StringComparison.Ordinal))
+                         && !type.Name.StartsWith("IRespireBatch", StringComparison.Ordinal))
                          || type == typeof(IRespireClient) || type == typeof(RespireClient)
                          || type == typeof(RespireServerNode) || type == typeof(Json.RespireJsonClient)
                          || type == typeof(TimeSeries.RespireTimeSeriesClient)
@@ -100,7 +100,7 @@ public class MultiItemCancellationOverloadTests
                 || type == typeof(RespireWatchedTransaction)
                 || type == typeof(RespireTransactionBase)
                 || type == typeof(IRespireCommandQueue)
-                || type.Name.StartsWith("IBatch", StringComparison.Ordinal))
+                || type.Name.StartsWith("IRespireBatch", StringComparison.Ordinal))
             {
                 continue;
             }

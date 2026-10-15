@@ -65,4 +65,4 @@ Excluded:
 
 - Supported members are listed in the [migration guide](stackexchange-interop.md). Unsupported members and flags throw `NotSupportedException`.
 - Not covered: other Hangfire package versions, Redis Cluster or Sentinel, every dashboard query, every Hangfire feature, and general StackExchange.Redis parity.
-- `ListRightPop`, `HashExists`, `RespireSortedSetRankResult`, `SetContains`, and newer `StringSet` overloads appear only in upstream test setup and are not part of the supported surface unless the migration guide lists them.
+- `ListRightPop`, `HashExists`, `SortedSetRank`, `SetContains`, and newer `StringSet` overloads appear only in upstream test setup and are not part of the supported surface unless the migration guide lists them.
