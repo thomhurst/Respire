@@ -6,7 +6,7 @@ description: Cache Microsoft.Extensions.AI chat responses by cosine similarity, 
 # Semantic chat response cache
 
 :::warning Experimental API: RSP0002
-This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+This feature requires an explicit compiler opt-in and is outside the 2.0 compatibility promise.
 See [RSP0002](../diagnostics/RSP0002.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
 :::
 

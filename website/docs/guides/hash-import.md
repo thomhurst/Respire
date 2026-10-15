@@ -6,7 +6,7 @@ description: Import hashes through connection-local fieldsets on Redis 8.10.
 # Hash import sessions
 
 :::warning Experimental API: RSP0004
-This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+This feature requires an explicit compiler opt-in and is outside the 2.0 compatibility promise.
 See [RSP0004](../diagnostics/RSP0004.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
 :::
 

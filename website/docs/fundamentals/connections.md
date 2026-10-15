@@ -499,7 +499,7 @@ Replica sources: `ReplicaEndpoints` (standalone; `Endpoints` still holds one pri
 ### Hedged reads
 
 :::warning Experimental API: RSP0003
-This feature requires an explicit compiler opt-in and is outside the 1.0 compatibility promise.
+This feature requires an explicit compiler opt-in and is outside the 2.0 compatibility promise.
 See [RSP0003](../diagnostics/RSP0003.md) for the affected APIs and the exact `NoWarn` or `#pragma` opt-in.
 :::
 

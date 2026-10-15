@@ -12,7 +12,7 @@ Each library uses one name for its NuGet package, assembly, and root namespace: 
 Every shipping package has a checked-in public API baseline in
 `src/<package>/PublicAPI.Shipped.txt` and `PublicAPI.Unshipped.txt`. Both net8.0 and net10.0
 check the same baseline: the packages expose the same public surface on both frameworks.
-These baselines were seeded from the pre-1.0 API; the filename does not declare a stable release.
+These baselines were seeded from the pre-2.0 API; the filename does not declare a stable release.
 The PublicApiAnalyzers package checks signatures, including nullable annotations, during normal
 builds. Adding, changing, or removing an API without updating its declaration fails the build.
 The Modular Pipeline CI workflow builds all packages and frameworks with these checks enabled.
@@ -24,12 +24,12 @@ For contributors:
 - Keep shipped declarations. For an intentional removal, add `*REMOVED*` followed by the old
   declaration to the unshipped file. A changed signature is a removal plus an addition.
 - Build both target frameworks before submitting the change. API baselines make changes visible
-  for review; they do not authorize a breaking change. After 1.0, preserve compatibility or plan
+  for review; they do not authorize a breaking change. After 2.0, preserve compatibility or plan
   the removal for a major release.
 - At release time, merge accepted unshipped declarations into the shipped baseline, applying
   removal markers, and reset the unshipped file to `#nullable enable`.
 
-Deprecations are allowed, including after 1.0. An `[Obsolete]` attribute must provide a nonempty
+Deprecations are allowed, including after 2.0. An `[Obsolete]` attribute must provide a nonempty
 `DiagnosticId` and an HTTPS `UrlFormat` containing `{0}` (the diagnostic ID), pointing to a published
 migration note. The note should explain the replacement and migration steps. CI runs
 `Respire.PublicApi.Tests` on net8.0 and net10.0 to check exported public types and members in every
