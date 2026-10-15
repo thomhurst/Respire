@@ -1122,6 +1122,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 if (--_activeReconnects == 0) _reconnectsDrained?.TrySetResult();
             }
+            SignalBacklogConnectionChanged();
         }
         // Completion handlers must not wait for the reconnect that is invoking them.
         if (publish) DrainStateNotifications();
@@ -1134,6 +1135,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     private void ObservePublishedConnection(int slot, RespireConnection connection)
     {
+        SignalBacklogConnectionChanged();
         connection.ReplayUnpublishedMigrations();
         connection.MovingNotification += announcement => QueueMovingHandoff(slot, connection, announcement);
         // Replay a MOVING parsed before this handler existed (for example during the handshake).
