@@ -100,7 +100,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
 
     internal RespireCommandHook? CommandHook => core.Options.CommandHook;
 
-    private async ValueTask<RespireSubscription> SubscribeUnhookedAsync(
+    internal async ValueTask<RespireSubscription> SubscribeUnhookedAsync(
         RespireSubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,

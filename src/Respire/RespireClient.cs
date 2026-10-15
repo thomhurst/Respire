@@ -1354,11 +1354,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     // Pub/sub
 
+    internal ValueTask<RespireSubscription> SubscribeUnhookedAsync(
+        RespireChannel channel, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(channel.Kind, [channel], default, cancellationToken, observeCommand: false);
+
     private ValueTask<RespireSubscription> SubscribeCoreAsync(
         RespireSubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool observeCommand = true)
     {
         // One activation owns admission, control replies, redirects and rollback. Background
         // recovery never borrows this lease after the subscription has been returned.
@@ -1367,8 +1372,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         {
             if (_pubSubPrefix is not null)
                 for (var i = 0; i < names.Length; i++) names[i] = ResolveChannel(names[i]);
-            return owner.Attach(
-                _core.Hub.SubscribeAsync(kind, names, options, cancellationToken, owner.Observation));
+            return owner.Attach(observeCommand
+                ? _core.Hub.SubscribeAsync(kind, names, options, cancellationToken, owner.Observation)
+                : _core.Hub.SubscribeUnhookedAsync(kind, names, options, cancellationToken, owner.Observation));
         }
         catch (Exception error)
         {

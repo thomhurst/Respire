@@ -150,11 +150,16 @@ public sealed class RespireCoordination
     /// <param name="key">The latch key, before the client's key prefix.</param>
     /// <param name="cancellationToken">Cancels the Redis state read.</param>
     /// <returns>A handle for the current generation, or <see langword="null"/> when no latch exists.</returns>
-    public async ValueTask<RespireCountdownLatch?> JoinCountdownLatchAsync(
+    public ValueTask<RespireCountdownLatch?> JoinCountdownLatchAsync(
         RespireKey key, CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LATCH JOIN", cancellationToken,
+            (Owner: this, Key: key.Snapshot(), Token: cancellationToken),
+            static s => s.Owner.JoinCountdownLatchUnhookedAsync(s.Key, s.Token));
+
+    private async ValueTask<RespireCountdownLatch?> JoinCountdownLatchUnhookedAsync(
+        RespireKey snapshot, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var snapshot = key.Snapshot();
         using var result = await ReadLatchStateAsync(_client, snapshot, cancellationToken).ConfigureAwait(false);
         if (result[0].AsString() == "0") return null;
         var generation = result[1].AsString();
@@ -172,12 +177,12 @@ public sealed class RespireCoordination
     {
         try
         {
-            return await client.Scripts.ExecuteLeaseAsync(ReadCountdownLatch, [key], cancellationToken: cancellationToken)
+            return await CoordinationCommandHooks.ExecuteAsync(client, ReadCountdownLatch, [key], [], cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException error) when (IsUnsupportedReadOnlyScriptCommand(error))
         {
-            return await client.Scripts.ExecuteLeaseAsync(ReadCountdownLatchCompatibility, [key], cancellationToken: cancellationToken)
+            return await CoordinationCommandHooks.ExecuteAsync(client, ReadCountdownLatchCompatibility, [key], [], cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -196,15 +201,20 @@ public sealed class RespireCoordination
         RespireKey key, long count, CancellationToken cancellationToken = default)
         => CreateLatchAsync(key, count, reset: true, cancellationToken);
 
-    private async ValueTask<RespireCountdownLatch> CreateLatchAsync(
+    private ValueTask<RespireCountdownLatch> CreateLatchAsync(
         RespireKey key, long count, bool reset, CancellationToken cancellationToken)
+        => CoordinationCommandHooks.RunAsync(_client, reset ? "LATCH RESET" : "LATCH CREATE", cancellationToken,
+            (Owner: this, Key: key.Snapshot(), Count: count, Reset: reset, Token: cancellationToken),
+            static s => s.Owner.CreateLatchUnhookedAsync(s.Key, s.Count, s.Reset, s.Token));
+
+    private async ValueTask<RespireCountdownLatch> CreateLatchUnhookedAsync(
+        RespireKey snapshot, long count, bool reset, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (count < 0) throw new ArgumentOutOfRangeException(nameof(count), "Latch count must be nonnegative.");
-        var snapshot = key.Snapshot();
         var generation = Guid.NewGuid().ToString("N");
         var channel = "respire:latch:" + Guid.NewGuid().ToString("N");
-        using var result = await _client.Scripts.ExecuteLeaseAsync(
+        using var result = await CoordinationCommandHooks.ExecuteAsync(_client,
             reset ? ResetCountdownLatch : CreateCountdownLatch,
             [snapshot], [generation, count, channel], cancellationToken).ConfigureAwait(false);
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
