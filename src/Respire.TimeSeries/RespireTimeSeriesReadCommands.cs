@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Respire.Internal;
 
 namespace Respire.TimeSeries;
 
@@ -30,7 +31,16 @@ public sealed partial class RespireTimeSeriesClient
         CancellationToken cancellationToken = default)
         => ReadKeyRangeAsync(keys, range, options, reverse: true, cancellationToken);
 
-    private async ValueTask<IReadOnlyList<RespireTimeSeriesRow>> ReadKeyRangeAsync(
+    private ValueTask<IReadOnlyList<RespireTimeSeriesRow>> ReadKeyRangeAsync(
+        IReadOnlyList<RespireKey> keys, RespireTimeSeriesRange range, RespireTimeSeriesKeyRangeOptions? options,
+        bool reverse, CancellationToken cancellationToken)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, reverse ? "TS.NREVRANGE" : "TS.NRANGE", cancellationToken,
+                (Owner: this, keys, range, options, reverse, cancellationToken),
+                static s => s.Owner.ReadKeyRangeUnhookedAsync(s.keys, s.range, s.options, s.reverse, s.cancellationToken))
+            : ReadKeyRangeUnhookedAsync(keys, range, options, reverse, cancellationToken);
+
+    private async ValueTask<IReadOnlyList<RespireTimeSeriesRow>> ReadKeyRangeUnhookedAsync(
         IReadOnlyList<RespireKey> keys, RespireTimeSeriesRange range, RespireTimeSeriesKeyRangeOptions? options,
         bool reverse, CancellationToken cancellationToken)
     {
@@ -45,8 +55,8 @@ public sealed partial class RespireTimeSeriesClient
         arguments[keys.Count + 2] = to;
         extra.CopyTo(arguments, keys.Count + 3);
         using var result = reverse
-            ? await _commands.ReverseRangeKeysAsync(arguments, cancellationToken).ConfigureAwait(false)
-            : await _commands.RangeKeysAsync(arguments, cancellationToken).ConfigureAwait(false);
+            ? await DispatchAsync(ReverseRangeKeysCommand, [.. arguments], cancellationToken).ConfigureAwait(false)
+            : await DispatchAsync(RangeKeysCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseRows(result, width);
     }
 
@@ -58,17 +68,31 @@ public sealed partial class RespireTimeSeriesClient
     /// <summary>Lists distinct values of one label. Requires Redis 8.10.</summary>
     /// <remarks>Order is unspecified. Key-prefixed clients reject this keyless query.</remarks>
     public ValueTask<string[]> QueryLabelValuesAsync(string label, IReadOnlyList<string>? filters = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.QUERYLABELS", cancellationToken,
+                (Owner: this, label, filters, cancellationToken),
+                static s => s.Owner.QueryLabelValuesUnhookedAsync(s.label, s.filters, s.cancellationToken))
+            : QueryLabelValuesUnhookedAsync(label, filters, cancellationToken);
+
+    private ValueTask<string[]> QueryLabelValuesUnhookedAsync(string label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(label);
-        return QueryLabelTokensAsync(label, filters, cancellationToken);
+        return QueryLabelTokensUnhookedAsync(label, filters, cancellationToken);
     }
 
-    private async ValueTask<string[]> QueryLabelTokensAsync(string? label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
+    private ValueTask<string[]> QueryLabelTokensAsync(string? label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.QUERYLABELS", cancellationToken,
+                (Owner: this, label, filters, cancellationToken),
+                static s => s.Owner.QueryLabelTokensUnhookedAsync(s.label, s.filters, s.cancellationToken))
+            : QueryLabelTokensUnhookedAsync(label, filters, cancellationToken);
+
+    private async ValueTask<string[]> QueryLabelTokensUnhookedAsync(string? label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
     {
         var arguments = new List<RespireValue> { label is null ? "LABELS" : "VALUES" };
         if (label is not null) arguments.Add(label);
         if (filters is not null) RespireTimeSeriesRangeOptions.AppendFilters(arguments, filters, nameof(filters));
-        using var result = await _commands.QueryLabelsAsync([.. arguments], cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(QueryLabelsCommand, [.. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseLabelTokens(result);
     }
 
@@ -77,12 +101,20 @@ public sealed partial class RespireTimeSeriesClient
     /// Minimum, Maximum, and New resolve on the server. A blocking timeout or key deletion can return an empty list.
     /// Blocking reads use the dedicated blocking pool; cancellation releases the rented connection.
     /// </remarks>
-    public async ValueTask<RespireTimeSeriesRangeResult> ReadAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp,
+    public ValueTask<RespireTimeSeriesRangeResult> ReadAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp,
+        RespireTimeSeriesReadOptions? options = null, CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "TS.READ", cancellationToken,
+                (Owner: this, key, timestamp, options, cancellationToken),
+                static s => s.Owner.ReadUnhookedAsync(s.key, s.timestamp, s.options, s.cancellationToken))
+            : ReadUnhookedAsync(key, timestamp, options, cancellationToken);
+
+    private async ValueTask<RespireTimeSeriesRangeResult> ReadUnhookedAsync(RespireKey key, RespireTimeSeriesTimestamp timestamp,
         RespireTimeSeriesReadOptions? options = null, CancellationToken cancellationToken = default)
     {
         var token = timestamp.RequireRead(nameof(timestamp));
         var arguments = options?.ToArguments() ?? [];
-        using var result = await _commands.ReadAsync(key, token, arguments, cancellationToken).ConfigureAwait(false);
+        using var result = await DispatchAsync(ReadCommand, [key, token, .. arguments], cancellationToken).ConfigureAwait(false);
         return TimeSeriesReplyParser.ParseRange(result);
     }
 
