@@ -29,6 +29,7 @@ internal sealed partial class ReadEndpointRouter
                 primary = await GetPrimaryAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
+            catch (BacklogSelectionRequiredException) when (readyOnly) { }
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 RecordCandidateFailure(observation, error,
@@ -75,6 +76,7 @@ internal sealed partial class ReadEndpointRouter
                         if (connection is null) continue;
                         selection = new(connection, entry, null);
                     }
+                    catch (BacklogSelectionRequiredException) when (readyOnly) { continue; }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is not (ObjectDisposedException or BacklogSelectionRequiredException))
                     {
                         RecordCandidateFailure(observation, error, entry.Endpoint);
@@ -90,9 +92,8 @@ internal sealed partial class ReadEndpointRouter
             }
             // Start every eligible probe before waiting so a fast later candidate is visible even
             // when the first sample consumes the entire shared wait budget.
-            // The sampler owns shared probes. Only an admitted head may wait for their results.
-            if (readyOnly && best.HasPendingSamples) throw new BacklogSelectionRequiredException();
-            using var samplingWait = best.HasPendingSamples
+            // A pending probe excludes only its own socket, not an already measured candidate.
+            using var samplingWait = !readyOnly && best.HasPendingSamples
                 ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
             while (best.TryNextSample(out var pending))
             {
@@ -109,9 +110,9 @@ internal sealed partial class ReadEndpointRouter
                         : ReferenceEquals(selected.Primary, Core.Multiplexer))) return selected;
                 lastError ??= new RespireConnectionException("The read topology changed during selection.");
             }
+            if (readyOnly) throw new BacklogSelectionRequiredException();
             if (retry && Core.Sentinel is { } sentinel)
             {
-                if (readyOnly) throw new BacklogSelectionRequiredException();
                 // A healthy cached candidate never waits for discovery. Once all candidates fail,
                 // join a pending/due refresh before the one bounded retry. The same endpoint can
                 // recover during that wait, so unchanged addresses do not suppress reselection.

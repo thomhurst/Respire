@@ -487,7 +487,10 @@ public class NearestReadRoutingTests
         var wrongRole = false;
         replica.ReplyOverride = (_, command) => command == "ROLE" && Volatile.Read(ref wrongRole)
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Reply(command, "replica");
-        await using var client = RespireClient.Create(Options(primary, replica) with { ReplicaRefreshInterval = TimeSpan.Zero });
+        await using var client = RespireClient.Create(Options(primary, replica) with
+        {
+            ReplicaRefreshInterval = TimeSpan.Zero, BacklogPolicy = RespireBacklogPolicy.FailFast,
+        });
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);

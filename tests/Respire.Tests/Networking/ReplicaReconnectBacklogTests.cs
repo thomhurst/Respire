@@ -194,6 +194,99 @@ public class ReplicaReconnectBacklogTests
     }
 
     [Test]
+    public async Task StrictReplicaNeverConnectedFailsAfterPrimaryFallback()
+    {
+        await using var primary = Server();
+        using var unavailable = new ReservedUnavailablePort();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", unavailable.Port)],
+            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+        });
+        await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("fallback");
+        await Assert.That(async () => await client.Core.ReadRouter.SelectForDispatchAsync(
+            RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(client.Core.ReadRouter.IsBacklogDraining).IsFalse();
+    }
+
+    [Test]
+    public async Task NearestPendingProbeDoesNotQueueMeasuredCandidate()
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        var pending = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.NearestLatency = new((connection, _) => connection.Port == primary.Port
+            ? new ValueTask<long>(pending.Task) : ValueTask.FromResult(10L));
+        try
+        {
+            var selected = await router.SelectForDispatchAsync(RespireReadFrom.Nearest, default, default);
+            await Assert.That(selected?.Port).IsEqualTo(replica.Port);
+            await Assert.That(router.IsBacklogDraining).IsFalse();
+        }
+        finally { pending.TrySetResult(100L); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RoleValidationDoesNotBlockEligibleCandidates(bool required)
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        var warm = await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        var entry = (await router.SelectAsync(RespireReadFrom.Replica, default, default)).Replica!;
+        var health = (ReplicaHealth<Respire.Networking.RespireConnection>)typeof(ReadEndpointRouter.Entry)
+            .GetField("_health", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(entry)!;
+        var position = 0;
+        Respire.Protocol.RespParser.TryParseValue(ReplicaRole, ref position, out var role);
+        using (role)
+            health.Record(warm, System.Diagnostics.Stopwatch.GetTimestamp()
+                - (required ? 150 : 90) * System.Diagnostics.Stopwatch.Frequency, in role);
+        if (required)
+            router.NearestLatency = new((connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
+        var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replica.SuppressReply = command =>
+        {
+            if (command != "ROLE") return false;
+            validating.TrySetResult();
+            return true;
+        };
+        try
+        {
+            var selected = await router.SelectForDispatchAsync(
+                required ? RespireReadFrom.Nearest : RespireReadFrom.Replica, default, default);
+            await Assert.That(selected?.Port).IsEqualTo(required ? primary.Port : replica.Port);
+            await validating.Task.WaitAsync(Limit);
+            await Assert.That(router.IsBacklogDraining).IsFalse();
+        }
+        finally { await replica.SendRawAsync(ReplicaRole, 0); }
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default).AsTask().WaitAsync(Limit);
+        if (required)
+        {
+            var recovered = await router.SelectForDispatchAsync(RespireReadFrom.Nearest, default, default);
+            await Assert.That(recovered?.Port).IsEqualTo(replica.Port);
+        }
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task SentinelReplacementDialOwnsBoundedAdmissionBeforeWaiting()
     {
         await using var first = Server();

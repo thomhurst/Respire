@@ -43,8 +43,8 @@ public sealed partial class RespireClient
         deadline = CreateCircuitDeadline(deadline);
         var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
         return RunClusterBacklogAsync(operation, slot, _readFrom, cancellationToken, deadline, observation,
-            (ready, originalDeadline) => SendHedgedReadAsync(operation, snapshot, budget, flags, cancellationToken,
-                observation, observeErrors: false, initialConnection: ready, deadline: originalDeadline));
+            (ready, originalDeadline) => SendSelectedHedgedReadAsync(operation, snapshot, budget, flags, cancellationToken,
+                observation, ready, originalDeadline));
     }
 
     // Keep snapshots and delegate closures on the cold path, outside normal routed sends.

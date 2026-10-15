@@ -119,7 +119,9 @@ internal sealed partial class RespireConnectionMultiplexer
                 if (_pending.Count >= Capacity)
                 {
                     var endpoint = _getEndpoint();
-                    throw new RespireConnectionException($"Reconnect backlog capacity {Capacity} reached for {endpoint}.")
+                    throw new RespireConnectionException(endpoint is { } target
+                        ? $"Reconnect backlog capacity {Capacity} reached for {target}."
+                        : $"Read backlog capacity {Capacity} reached while waiting for an eligible read connection.")
                     { Endpoint = endpoint };
                 }
                 entry.Node = _pending.AddLast(entry);

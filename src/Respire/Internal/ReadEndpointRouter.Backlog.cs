@@ -6,14 +6,16 @@ namespace Respire.Internal;
 internal sealed partial class ReadEndpointRouter
 {
     private RespireConnectionMultiplexer.ReconnectBacklog? _backlog;
-    // Recovery eligibility belongs to this topology, across all views and Sentinel generations.
+    // Eligibility survives membership replacement, but a primary fallback does not initialize the strict replica route.
     private int _hasSelectedConnection;
+    private int _hasSelectedReplica;
 
     internal sealed class BacklogSelectionRequiredException : Exception { }
 
     internal bool IsBacklogDraining => Volatile.Read(ref _backlog)?.IsRunning == true;
-    private bool CanQueue => core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
-        && Volatile.Read(ref _hasSelectedConnection) != 0;
+    private bool CanQueue(RespireReadFrom readFrom) => core.Options.BacklogPolicy == RespireBacklogPolicy.Queue
+        && (readFrom == RespireReadFrom.Replica
+            ? Volatile.Read(ref _hasSelectedReplica) != 0 : Volatile.Read(ref _hasSelectedConnection) != 0);
 
     internal async ValueTask<RespireConnection?> SelectForDispatchAsync(RespireReadFrom readFrom,
         CancellationToken token, RespireTelemetry.ErrorObservation observation,
@@ -22,15 +24,15 @@ internal sealed partial class ReadEndpointRouter
         ThrowIfDisposed();
         token.ThrowIfCancellationRequested();
         ThrowIfNoConfiguredReplica(readFrom);
-        if (CanQueue && IsBacklogDraining) return null;
+        if (CanQueue(readFrom) && IsBacklogDraining) return null;
         try
         {
             var connection = await SelectBacklogHeadAsync(readFrom, token, observation, cursorRead, affinity,
-                readyOnly: CanQueue).ConfigureAwait(false);
-            return CanQueue && IsBacklogDraining ? null : connection;
+                readyOnly: CanQueue(readFrom)).ConfigureAwait(false);
+            return CanQueue(readFrom) && IsBacklogDraining ? null : connection;
         }
         catch (BacklogSelectionRequiredException) { return null; }
-        catch (Exception error) when (CanQueue && IsUnavailable(error, token))
+        catch (Exception error) when (CanQueue(readFrom) && IsUnavailable(error, token))
         {
             ThrowIfTerminal(readFrom, error);
             return null;
@@ -84,6 +86,9 @@ internal sealed partial class ReadEndpointRouter
             ? await GetCursorConnectionAsync(readFrom, affinity, false, token, observation, readyOnly).ConfigureAwait(false)
             : await GetConnectionAsync(readFrom, token, observation, readyOnly).ConfigureAwait(false);
         if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
+        if (cursorRead && Volatile.Read(ref _hasSelectedReplica) == 0
+            && _entries.Values.Any(entry => ReferenceEquals(entry.RecoveryOwner, connection.Multiplexer)))
+            Volatile.Write(ref _hasSelectedReplica, 1);
         return connection;
     }
 

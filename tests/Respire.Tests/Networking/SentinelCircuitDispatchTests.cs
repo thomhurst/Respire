@@ -147,6 +147,10 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => primary.Port, replica.Port);
         await using var client = await Connect(sentinel);
         await client.Core.ReadRouter.RefreshNowAsync(default);
+        // This test isolates circuit admission. Keep periodic discovery/ROLE freshness
+        // from invalidating its prepared route while a cold JIT or scheduler delays it.
+        client.Core.ReadRouter.SentinelRefreshInterval = TimeSpan.FromHours(1);
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.FromHours(1);
         var view = (RespireClient)client.WithReadFrom(policy);
         await Send(view, shape, "warm");
         await Assert.That(client.Core.ReadRouter.TryAcquireReadyConnection(policy, default)!.Port).IsEqualTo(replica.Port);

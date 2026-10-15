@@ -222,6 +222,8 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         {
             var selection = await SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
             if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
+            if (selection.Replica is not null && Volatile.Read(ref _hasSelectedReplica) == 0)
+                Volatile.Write(ref _hasSelectedReplica, 1);
             return selection.Connection;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -257,6 +259,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         // Preserve the selector's shared cursor when a later publication adds replicas.
         Interlocked.Increment(ref _nextReplica);
         if (Volatile.Read(ref _hasSelectedConnection) == 0) Volatile.Write(ref _hasSelectedConnection, 1);
+        if (Volatile.Read(ref _hasSelectedReplica) == 0) Volatile.Write(ref _hasSelectedReplica, 1);
         return connection;
     }
 
@@ -864,6 +867,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (selected is null) return null;
                 if (selected.IsAcceptingCommands && _health.Check(selected, interval) == ReplicaValidation.Fresh)
                     return selected;
+                if (readyOnly && selected.IsAcceptingCommands)
+                {
+                    if (Interlocked.CompareExchange(ref _backgroundValidation, 1, 0) == 0)
+                        _ = RevalidateInBackgroundAsync(sampler);
+                    if (selected.IsAcceptingCommands && _health.Check(selected, interval) != ReplicaValidation.Required)
+                        return selected;
+                }
                 if (rotation is { } ticket) current.RestoreReadSelectionRotation(ticket);
             }
 
@@ -956,6 +966,18 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 throw new ObjectDisposedException(nameof(ReadEndpointRouter));
             }
             finally { if (entered) _gate.Release(); }
+        }
+
+        private int _backgroundValidation;
+
+        private async Task RevalidateInBackgroundAsync(ReadLatencySampler<RespireConnection>? sampler)
+        {
+            try { await GetConnectionCoreAsync(router._lifetime.Token, null, sampler).ConfigureAwait(false); }
+            catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException))
+            {
+                if (!router._lifetime.IsCancellationRequested) router.TryRecordFailure(this, error, nearest: sampler is not null);
+            }
+            finally { Volatile.Write(ref _backgroundValidation, 0); }
         }
 
         private static RespireConnection? SelectSocket(RespireConnectionMultiplexer multiplexer, string? preferredZone,
