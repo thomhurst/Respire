@@ -87,6 +87,20 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
                 with { Username = username, Password = "dashboard-test-password" });
             var state = new DashboardState(client, DashboardSecurityTests.Options());
             await Assert.That(async () => await state.MutateAsync(0, id.ToString(), true, default)).Throws<RespireServerException>();
+            await using var app = await DashboardSecurityTests.CreateApplication(client);
+            using var http = app.GetTestClient();
+            http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
+            using var page = await http.GetAsync("/workers/");
+            var html = await page.Content.ReadAsStringAsync();
+            var token = System.Text.RegularExpressions.Regex.Match(html,
+                "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value;
+            http.DefaultRequestHeaders.Add("Cookie", page.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
+            using var response = await http.PostAsync("/workers/0/retry", new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["id"] = id.ToString(), ["__RequestVerificationToken"] = System.Net.WebUtility.HtmlDecode(token),
+            }));
+            await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.Forbidden);
+            await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Ask an administrator");
             await Assert.That(await admin.Streams.CountAsync("{dash}:source")).IsEqualTo(0);
             await Assert.That(await admin.Streams.CountAsync("{dash}:dead")).IsEqualTo(1);
         }
@@ -175,6 +189,39 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    public async Task UnavailableDeadLettersDoNotHideSourceInspection()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
+        await client.Streams.AddAsync("{dash}:source", ("payload", "test"));
+        using (await client.ExecuteAsync("SET", ["{dash}:dead", "wrong-type"])) { }
+        var snapshot = await new DashboardState(client, DashboardSecurityTests.Options()).ReadAsync(default);
+        await Assert.That(snapshot.Streams[0].Length).IsEqualTo(1);
+        await Assert.That(snapshot.Streams[0].Groups.Length).IsEqualTo(1);
+        var html = DashboardPage.Render(snapshot, "/workers", "token", "value");
+        await Assert.That(html).Contains("Dead-letter inspection unavailable");
+        await Assert.That(html).DoesNotContain("No dead letters.");
+    }
+
+    [Test]
+    public async Task MissingSourceStillAllowsDeadLetterInspectionAndDeletion()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var id = await AddDead(client);
+        var state = new DashboardState(client, DashboardSecurityTests.Options());
+        var snapshot = await state.ReadAsync(default);
+        await Assert.That(snapshot.Streams[0].Error).IsNotNull();
+        await Assert.That(snapshot.Streams[0].DeadLetters.Length).IsEqualTo(1);
+        var html = DashboardPage.Render(snapshot, "/workers", "token", "value");
+        await Assert.That(html).Contains("/0/delete");
+        await Assert.That(html).DoesNotContain("/0/retry");
+        await Assert.That(async () => await state.MutateAsync(0, id.ToString(), true, default)).Throws<RespireServerException>();
+        await Assert.That(await client.Streams.CountAsync("{dash}:dead")).IsEqualTo(1);
+        await Assert.That(await state.MutateAsync(0, id.ToString(), false, default)).IsEqualTo(1);
+        await Assert.That((await state.ReadAsync(default)).Streams[0].DeadLetters.Length).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task JobRetryRetainsIdentityAndResetsAttemptAndExpiry()
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
@@ -208,18 +255,35 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         }
         var options = DashboardSecurityTests.Options();
         options.EntryLimit = 2;
-        var state = new DashboardState(client, options);
+        var clock = new Clock();
+        var state = new DashboardState(client, options, clock);
         await client.Streams.ReadGroupOnceAsync("{dash}:source", "g", "worker", new StreamReadOptions { Count = 1 });
-        var first = (await state.ReadAsync(default)).Streams[0];
+        var initial = await state.ReadAsync(default);
+        var first = initial.Streams[0];
         await Assert.That(first.DeliveriesPerSecond).IsNull();
         await client.Streams.ReadGroupOnceAsync("{dash}:source", "g", "worker", new StreamReadOptions { Count = 5 });
+        var shared = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => state.ReadAsync(default)));
+        await Assert.That(shared.All(snapshot => ReferenceEquals(initial, snapshot))).IsTrue();
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var early = (await state.ReadAsync(default)).Streams[0];
+        await Assert.That(early.Groups.Single().Pending).IsEqualTo(5);
+        await Assert.That(early.DeliveriesPerSecond).IsNull();
+        clock.Advance(TimeSpan.FromSeconds(3));
         var second = (await state.ReadAsync(default)).Streams[0];
         await Assert.That(second.Pending.Length).IsEqualTo(2);
         await Assert.That(second.DeadLetters.Length).IsEqualTo(2);
         await Assert.That(second.Length).IsEqualTo(5);
         await Assert.That(second.DeadLetterLength).IsEqualTo(5);
         await Assert.That(second.Groups.Single().Pending).IsEqualTo(5);
-        await Assert.That(second.DeliveriesPerSecond > 0).IsTrue();
+        await Assert.That(second.DeliveriesPerSecond).IsEqualTo(0.8);
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        private long _timestamp;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _timestamp;
+        internal void Advance(TimeSpan elapsed) => _timestamp += elapsed.Ticks;
     }
 
     private static ValueTask<RespireStreamId> AddDead(IRespireClient client, string group = "g")

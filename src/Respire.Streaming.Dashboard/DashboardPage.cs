@@ -43,7 +43,7 @@ internal static class DashboardPage
             html.Append("<p class=\"notice\">No streams are configured. Add a stream to the dashboard registration to inspect its workers.</p>");
         foreach (var stream in snapshot.Streams)
             RenderStream(html, stream, path, tokenFieldName, requestToken);
-        html.Append("<footer>Snapshot loaded on request. Refresh to update counts and delivery rate. Retained entries include acknowledged work.</footer></main></div></body></html>");
+        html.Append("<footer>Snapshots are shared for two seconds. Refresh to update counts and delivery rate. Retained entries include acknowledged work.</footer></main></div></body></html>");
         return html.ToString();
     }
 
@@ -55,16 +55,16 @@ internal static class DashboardPage
             .Append("</h2><div class=\"key\">").Append(E(config.Stream)).Append("</div>");
         if (stream.Error is not null)
         {
-            html.Append("<p class=\"notice error\" role=\"status\">").Append(E(stream.Error)).Append("</p></div></article>");
-            return;
+            html.Append("<p class=\"notice error\" role=\"status\">").Append(E(stream.Error)).Append("</p>");
         }
-        html.Append("<dl class=\"stats\"><div><dt>Retained entries</dt><dd>").Append(N(stream.Length))
-            .Append("</dd></div><div><dt>Dead letters</dt><dd>").Append(config.DeadLetterStream is null ? "—" : N(stream.DeadLetterLength))
+        html.Append("<dl class=\"stats\"><div><dt>Retained entries</dt><dd>").Append(stream.SourceUnavailable ? "—" : N(stream.Length))
+            .Append("</dd></div><div><dt>Dead letters</dt><dd>").Append(config.DeadLetterStream is null || stream.DeadLettersUnavailable ? "—" : N(stream.DeadLetterLength))
             .Append("</dd></div><div><dt>Deliveries / second</dt><dd>").Append(stream.DeliveriesPerSecond?.ToString("0.00", CultureInfo.InvariantCulture) ?? "—")
             .Append("</dd></div></dl><p class=\"note\">Delivery rate for ").Append(E(config.Group))
-            .Append(" between page requests. It counts new group deliveries, not successful completions. A second snapshot is needed to calculate it.</p></div>");
+            .Append(" over samples at least five seconds apart. It counts new group deliveries, not successful completions. Refresh after five seconds to obtain a rate.</p></div>");
         html.Append("<section class=\"section\"><h3>Consumer groups</h3>");
-        if (stream.Groups.Length == 0) html.Append("<p class=\"empty\">No consumer groups exist yet. Start a worker to create its group.</p>");
+        if (stream.SourceUnavailable) html.Append("<p class=\"notice\">Source inspection unavailable.</p>");
+        else if (stream.Groups.Length == 0) html.Append("<p class=\"empty\">No consumer groups exist yet. Start a worker to create its group.</p>");
         else
         {
             html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Group</th><th scope=\"col\">Consumers</th><th scope=\"col\">Pending</th><th scope=\"col\">Lag</th><th scope=\"col\">Last delivered</th></tr></thead><tbody>");
@@ -74,7 +74,9 @@ internal static class DashboardPage
             html.Append("</tbody></table></div>");
         }
         html.Append("</section><section class=\"section\"><h3>Pending deliveries</h3><p class=\"note\">Group: ").Append(E(config.Group)).Append(". Oldest entries first; the configured entry limit applies.</p>");
-        if (!stream.Groups.Any(group => group.Name == config.Group))
+        if (stream.SourceUnavailable)
+            html.Append("<p class=\"notice\">Pending deliveries unavailable. Restore source access before retrying entries.</p>");
+        else if (!stream.Groups.Any(group => group.Name == config.Group))
             html.Append("<p class=\"notice\">The configured group does not exist. Start its worker before retrying entries.</p>");
         else if (stream.Pending.Length == 0) html.Append("<p class=\"empty\">No pending deliveries in this group.</p>");
         else
@@ -92,7 +94,8 @@ internal static class DashboardPage
             html.Append("<div class=\"key muted\">").Append(E(config.DeadLetterStream)).Append("</div><p class=\"note\">Oldest entries first; the configured entry limit applies. Retry moves one entry back to the source stream for all its consumer groups.");
             if (config.IsJobQueue) html.Append(" Job retries keep the job ID and payload, reset attempts, and remove the original expiry.");
             html.Append("</p>");
-            if (stream.DeadLetters.Length == 0) html.Append("<p class=\"empty\">No dead letters. Failed entries will appear here when workers move them to this stream.</p>");
+            if (stream.DeadLettersUnavailable) html.Append("<p class=\"notice\">Dead-letter inspection unavailable.</p>");
+            else if (stream.DeadLetters.Length == 0) html.Append("<p class=\"empty\">No dead letters. Failed entries will appear here when workers move them to this stream.</p>");
             foreach (var entry in stream.DeadLetters)
             {
                 html.Append("<div class=\"dead\"><div class=\"dead-head\"><span class=\"entry-id\">").Append(E(entry.Id.ToString()))
@@ -104,7 +107,8 @@ internal static class DashboardPage
                     html.Append("<dt>").Append(E(field.Key.Length > 256 ? field.Key[..256] + "…" : field.Key)).Append("</dt><dd>").Append(Preview(field.Value)).Append("</dd>");
                 }
                 html.Append("</dl><p class=\"note\">Preview shows at most 32 fields and 512 bytes per value. Actions use the complete stored entry.</p></details><div class=\"actions\">");
-                Form(html, stream.Index, entry.Id, "retry", "Retry entry", path, tokenFieldName, requestToken);
+                if (!stream.SourceUnavailable && stream.Groups.Any(group => group.Name == config.Group))
+                    Form(html, stream.Index, entry.Id, "retry", "Retry entry", path, tokenFieldName, requestToken);
                 html.Append("<details><summary>Delete entry…</summary><p>Delete this dead letter permanently? Its payload will no longer be available here.</p>");
                 Form(html, stream.Index, entry.Id, "delete", "Permanently delete", path, tokenFieldName, requestToken);
                 html.Append("</details></div></div>");

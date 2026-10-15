@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Respire.Internal;
 
@@ -8,7 +7,7 @@ internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> 
 internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream Configuration,
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
-    double? DeliveriesPerSecond, string? Error);
+    double? DeliveriesPerSecond, string? Error, bool SourceUnavailable = false, bool DeadLettersUnavailable = false);
 
 internal sealed class DashboardState
 {
@@ -17,13 +16,20 @@ internal sealed class DashboardState
     private readonly int _limit;
     private readonly (long Count, long Timestamp)?[] _samples;
     private readonly SemaphoreSlim _readGate = new(1, 1);
+    private readonly TimeProvider _clock;
+    private readonly double?[] _rates;
+    private DashboardSnapshot? _snapshot;
+    private long _snapshotTimestamp;
+    private long _version;
+    private long _snapshotVersion;
 
-    internal DashboardState(IRespireClient client, RespireDashboardOptions options)
+    internal DashboardState(IRespireClient client, RespireDashboardOptions options, TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         if (options.EntryLimit is < 1 or > 200) throw new ArgumentOutOfRangeException(nameof(options));
         if (options.Streams.Count is < 1 or > 100) throw new ArgumentException("Configure between 1 and 100 streams.", nameof(options));
         _client = client;
+        _clock = clock ?? TimeProvider.System;
         _limit = options.EntryLimit;
         _streams = options.Streams.Select(s => new RespireDashboardStream
         {
@@ -52,6 +58,7 @@ internal sealed class DashboardState
         if (deadKeys.Overlaps(sourceKeys))
             throw new ArgumentException("A dead-letter stream cannot also be a configured source.", nameof(options));
         _samples = new (long, long)?[_streams.Length];
+        _rates = new double?[_streams.Length];
     }
 
     internal async Task<DashboardSnapshot> ReadAsync(CancellationToken cancellationToken)
@@ -59,37 +66,71 @@ internal sealed class DashboardState
         await _readGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var version = Interlocked.Read(ref _version);
+            if (_snapshot is not null && _snapshotVersion == version
+                && _clock.GetElapsedTime(_snapshotTimestamp) < TimeSpan.FromSeconds(2)) return _snapshot;
             var result = new DashboardStreamSnapshot[_streams.Length];
-            for (var i = 0; i < _streams.Length; i++)
+            await Parallel.ForEachAsync(Enumerable.Range(0, _streams.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (i, token) =>
             {
                 var stream = _streams[i];
+                long length = 0, deadLength = 0;
+                RespireStreamGroupInfo[] groups = [];
+                RespireStreamPendingEntry[] pending = [];
+                RespireStreamEntry[] entries = [];
+                string? error = null;
+                var sourceUnavailable = false;
+                var deadLettersUnavailable = false;
                 try
                 {
-                    var length = await _client.Streams.CountAsync(stream.Stream, cancellationToken).ConfigureAwait(false);
-                    var groups = await _client.Streams.GroupInfoAsync(stream.Stream, cancellationToken).ConfigureAwait(false);
-                    var pending = groups.Any(g => g.Name == stream.Group)
+                    length = await _client.Streams.CountAsync(stream.Stream, token).ConfigureAwait(false);
+                    groups = await _client.Streams.GroupInfoAsync(stream.Stream, token).ConfigureAwait(false);
+                    pending = groups.Any(g => g.Name == stream.Group)
                         ? await _client.Streams.PendingAsync(stream.Stream, stream.Group,
-                            count: _limit, cancellationToken: cancellationToken).ConfigureAwait(false) : [];
-                    var deadLength = stream.DeadLetterStream is { } dead
-                        ? await _client.Streams.CountAsync(dead, cancellationToken).ConfigureAwait(false) : 0;
-                    var entries = stream.DeadLetterStream is { } deadStream
-                        ? await _client.Streams.RangeAsync(deadStream, count: _limit,
-                            cancellationToken: cancellationToken).ConfigureAwait(false) : [];
-                    var count = groups.FirstOrDefault(g => g.Name == stream.Group).EntriesRead;
-                    var now = Stopwatch.GetTimestamp();
-                    double? rate = null;
-                    if (count is { } current && _samples[i] is { } previous && current >= previous.Count && now > previous.Timestamp)
-                        rate = (current - previous.Count) / Stopwatch.GetElapsedTime(previous.Timestamp, now).TotalSeconds;
-                    _samples[i] = count is { } value ? (value, now) : null;
-                    result[i] = new(i, stream, length, deadLength, groups, pending, entries, rate, null);
+                            count: _limit, cancellationToken: token).ConfigureAwait(false) : [];
                 }
                 catch (RespireException)
                 {
-                    _samples[i] = null;
-                    result[i] = new(i, stream, 0, 0, [], [], [], null, "Stream unavailable. Check the configured keys, group and Redis permissions.");
+                    sourceUnavailable = true;
+                    error = "Source stream unavailable. Check the configured key, group and Redis permissions.";
                 }
-            }
-            return new(result);
+                try
+                {
+                    if (stream.DeadLetterStream is { } dead)
+                    {
+                        deadLength = await _client.Streams.CountAsync(dead, token).ConfigureAwait(false);
+                        entries = await _client.Streams.RangeAsync(dead, count: _limit, cancellationToken: token).ConfigureAwait(false);
+                    }
+                }
+                catch (RespireException)
+                {
+                    deadLettersUnavailable = true;
+                    error = (error is null ? "" : error + " ") + "Dead-letter stream unavailable. Check its key and Redis permissions.";
+                }
+                var count = sourceUnavailable ? null : groups.FirstOrDefault(g => g.Name == stream.Group).EntriesRead;
+                var now = _clock.GetTimestamp();
+                if (count is not { } current)
+                {
+                    _samples[i] = null;
+                    _rates[i] = null;
+                }
+                else if (_samples[i] is not { } previous || current < previous.Count)
+                {
+                    _samples[i] = (current, now);
+                    _rates[i] = null;
+                }
+                else if (_clock.GetElapsedTime(previous.Timestamp, now) >= TimeSpan.FromSeconds(5))
+                {
+                    _rates[i] = (current - previous.Count) / _clock.GetElapsedTime(previous.Timestamp, now).TotalSeconds;
+                    _samples[i] = (current, now);
+                }
+                result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
+                    sourceUnavailable, deadLettersUnavailable);
+            }).ConfigureAwait(false);
+            _snapshot = new(result);
+            _snapshotTimestamp = _clock.GetTimestamp();
+            _snapshotVersion = version;
+            return _snapshot;
         }
         finally { _readGate.Release(); }
     }
@@ -98,8 +139,12 @@ internal sealed class DashboardState
     {
         if (index < 0 || index >= _streams.Length || _streams[index].DeadLetterStream is not { } dead) return -2;
         var stream = _streams[index];
-        return await _client.Scripts.ExecuteIntegerAsync(DashboardScripts.Mutate,
-            [stream.Stream, dead], [stream.Group, id, retry ? "retry" : "delete", stream.IsJobQueue ? "1" : "0"],
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await _client.Scripts.ExecuteIntegerAsync(DashboardScripts.Mutate,
+                [stream.Stream, dead], [stream.Group, id, retry ? "retry" : "delete", stream.IsJobQueue ? "1" : "0"],
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally { Interlocked.Increment(ref _version); }
     }
 }

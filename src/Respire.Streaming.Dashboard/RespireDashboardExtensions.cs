@@ -91,6 +91,11 @@ public static class RespireDashboardExtensions
                 context.Response.StatusCode = StatusCodes.Status303SeeOther;
                 context.Response.Headers.Location = returnPath.TrimEnd('/') + "/";
             }
+            catch (RespireServerException exception) when (exception.Code == "NOPERM")
+            {
+                await WriteErrorAsync(context, returnPath, 403,
+                    "Redis permissions do not allow this action. Ask an administrator to update the dashboard Redis user's permissions.").ConfigureAwait(false);
+            }
             catch (RespireException)
             {
                 await WriteErrorAsync(context, returnPath, 503,

@@ -103,15 +103,19 @@ dead-letter destinations, source/dead-letter overlap, and group names exceeding 
   decode UTF-8, showing at most 32 fields and 512 bytes per value; binary data may display
   replacement characters. Retry uses the original Redis bytes, not the preview.
 - **Deliveries / second** measures the configured group's `entries-read` delta between page
-  requests on this application instance. Refresh twice to obtain a sample. It measures new
+  requests on this application instance, with at least five seconds between samples. Refresh
+  after five seconds to obtain a sample; quicker requests retain the last rate. It measures new
   deliveries, not successful processing, retry attempts, or historical throughput. Counter
   decreases, missing metadata, and the first request produce no rate. For completion rates and
   historical charts, export the [worker metrics](stream-workers.md).
 
 Pending and dead-letter lists show the oldest entries first. `EntryLimit` bounds each list
 to 1–200 entries per stream (default 50). There is no historical paging; retrying or deleting
-old dead letters reveals the next entries. Counts are live reads, not a transactional
-snapshot. Large field values still have to be retrieved from Redis before preview truncation.
+old dead letters reveals the next entries. Read snapshots are shared for two seconds across
+viewers, with up to four streams read concurrently. Dashboard mutations invalidate the cached
+snapshot. Counts are separate reads, not a transactional snapshot. If a source stream is
+unavailable, its retained dead letters can still be inspected and deleted; retry requires the
+source consumer group. Large field values still have to be retrieved from Redis before preview truncation.
 Delayed jobs in scheduling storage and retained completion events are outside this view.
 
 ## Retry and delete

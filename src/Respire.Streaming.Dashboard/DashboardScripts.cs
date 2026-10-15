@@ -9,6 +9,7 @@ internal static class DashboardScripts
         local entries = redis.call('XRANGE', KEYS[2], ARGV[2], ARGV[2], 'COUNT', 1)
         if #entries == 0 then return 0 end
         local f = entries[1][2]
+        -- 2058 values = two values per pair for 1024 original fields plus five metadata fields.
         if #f < 12 or #f > 2058 or f[1] ~= '_respire.source_id'
             or not string.match(f[2], '^%d+%-%d+$') or f[3] ~= '_respire.group' or f[4] ~= ARGV[1]
             or f[5] ~= '_respire.attempt' or not string.match(f[6], '^%d+$')
