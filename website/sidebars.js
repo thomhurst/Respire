@@ -5,6 +5,7 @@ const sidebars = {
     'getting-started',
     'guides/recipes',
     'packages',
+    'contributing',
     'guides/package-migration',
     'stackexchange-redis',
     {

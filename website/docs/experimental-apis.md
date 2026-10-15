@@ -22,3 +22,6 @@ VectorData, AI, and StackExchangeCompat carry assembly-level attributes, so thei
 The `RSPxxxx` IDs are compiler diagnostics for experimental features. They are distinct from the `RESP001`–`RESP006` analyzer and source-generator diagnostics, which are tracked as shipped in release 2.0.0. An experimental ID remains tied to its feature and will not be reused for a different feature after stabilization.
 
 See the [C# experimental attribute specification](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/proposals/csharp-12.0/experimental-attribute) for compiler behavior.
+
+Contributors changing these APIs should follow the
+[package-validation exception process](contributing.md#experimental-apis).

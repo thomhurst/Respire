@@ -40,6 +40,9 @@ The compiler's required-member compatibility marker is excluded; authored deprec
 constructors with required members still need migration metadata.
 These checks make no network requests; reviewers verify that the migration note exists.
 
+Packing also runs SDK package validation. See [Contributing API changes](contributing.md)
+for the released-package baseline, intentional-break process, and experimental API exceptions.
+
 ## Choose a package
 
 | Package, assembly, and root namespace | Purpose |
