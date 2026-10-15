@@ -12,6 +12,31 @@ namespace Respire.Streaming.Dashboard.Tests;
 public class DashboardIntegrationTests(RedisTestContainer redis)
 {
     [Test]
+    public async Task JobQueueSnapshotAndPageExposeControlsWithoutLeakingUnavailableState()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var queue = new RespireJobQueue<string>(client.WithKeyPrefix("tenant:"), "dashboard", System.Text.Encoding.UTF8.GetBytes);
+        await queue.PauseAsync();
+        var view = client.WithKeyPrefix("tenant:");
+        await view.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('HINCRBY', KEYS[1], 'hits', 7)"),
+            [queue.ControlKey], []);
+        var options = new RespireDashboardOptions();
+        options.Streams.Add(new() { Name = "jobs", Stream = queue.StreamKey, Group = RespireJobQueue<string>.ConsumerGroup, IsJobQueue = true });
+        var snapshot = await new DashboardState(view, options).ReadAsync(default);
+        await Assert.That(snapshot.Streams[0].IsPaused).IsTrue();
+        await Assert.That(snapshot.Streams[0].RateLimitHits).IsEqualTo(7);
+        var html = DashboardPage.Render(snapshot, "/dashboard", "token", "value");
+        await Assert.That(html).Contains("Paused");
+        await Assert.That(html).Contains("Limiter hits</dt><dd>7");
+        await view.Scripts.ExecuteIntegerAsync(RespireScript.Create("redis.call('DEL', KEYS[1]); redis.call('SET', KEYS[1], 'wrong-type'); return 1"),
+            [queue.ControlKey], []);
+        snapshot = await new DashboardState(view, options).ReadAsync(default);
+        await Assert.That(snapshot.Streams[0].IsPaused).IsNull();
+        await Assert.That(snapshot.Streams[0].RateLimitHits).IsNull();
+        await Assert.That(snapshot.Streams[0].Error!).Contains("Queue controls unavailable");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task WorkerGeneratedDeadLetterCanBeRetriedAndConsumed(bool jobs)

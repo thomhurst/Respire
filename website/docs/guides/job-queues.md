@@ -197,6 +197,63 @@ Entries retain `_respire.job.id` and binary `_respire.job.payload`, plus worker 
 fixing a poison job, choose a new application ID or wait for the original deduplication window
 and preserve an application-level idempotency key. Reading a dead letter does not requeue it.
 
+## Queue-wide pause and rate limits
+
+Pause is persistent Redis state, shared by every hosted worker for the same queue and key prefix:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "email", Encoding.UTF8.GetBytes);
+await queue.PauseAsync();
+var state = await queue.GetStateAsync();
+await queue.SetRateLimitAsync(new RespireJobRateLimit
+{
+    PermitLimit = 100,
+    Window = TimeSpan.FromSeconds(1),
+});
+await queue.ResumeAsync();
+```
+
+`PauseAsync` and `ResumeAsync` return whether the state changed. Each transition atomically
+appends a `paused` or `resumed` event to `ReadEventsAsync`; repeated calls emit no extra events.
+These events have an empty `JobId`, `EntryId` of `0-0`, and `Attempt` of zero. Enqueue and
+scheduling can continue while paused. Already admitted deliveries finish normally; new reads,
+startup replay and abandoned-job recovery all check pause atomically before claiming work.
+Pause does not cancel handlers or wait for them to drain.
+
+Job readers admit one entry at a time, regardless of the generic worker's `BatchSize`.
+For recovery, `BatchSize` bounds the number of single-entry scan pages in a pass. Each page
+checks pause and rate limits again; the recovery interval restarts after the bounded pass,
+giving fresh jobs a read turn between passes.
+Idle or paused readers check again within `SchedulingPollInterval` (one second when no queue
+options are supplied), subject to Redis availability. Busy readers check on every claim.
+Idle reads also honor a shorter `ReadWait`. Generic stream workers retain blocking, batched reads.
+
+The rate policy uses fixed windows and Redis server time. All hosts share one admission budget,
+including replay and recovery attempts. At most `PermitLimit` claims are admitted during a window;
+bursts can occur on either side of a window boundary. This limits admissions, not handler completion
+times or concurrent execution. When exhausted, workers leave jobs in place and retry after the
+remaining window or the next poll, whichever is sooner. Denial never invokes a handler, changes
+the entry ID, increments delivery attempts, or uses a failure retry. An uncertain Redis result
+can waste a permit until the next window, preserving the upper bound.
+
+Set `RespireJobQueueOptions.RateLimit` to initialize a shared policy at startup. Non-null startup
+policies must match existing Redis configuration; a mismatch fails worker startup. Null uses the
+existing policy, or unlimited admission for a new queue. Use `SetRateLimitAsync` to change a live
+policy, or pass null to disable it. Updates preserve usage in the current window; a changed duration
+applies when the next window starts. Update startup configuration too before restarting workers.
+
+`GetStateAsync` returns `IsPaused` and cumulative `RateLimitHits`. Hits count denied reader
+admissions, including polls while no jobs are ready, rather than distinct jobs. The dashboard shows
+both values for entries configured with `IsJobQueue = true`. The `Respire.Streaming` meter exposes
+`respire.job.queue.paused` (latest observed state, 0 or 1) and `respire.job.queue.rate_limit_hits`
+(local confirmed denials), tagged only with `respire.worker.name`. Pause observations may remain
+unchanged while a handler runs. Sum hit counters across workers; do not sum pause gauges.
+
 ## Parent and child job flows
 
 `EnqueueFlowAsync` submits a tree of up to 256 jobs to one queue. Leaves run first; a parent
@@ -512,7 +569,8 @@ fixed application role for `TelemetryName`, not a per-tenant or per-job name.
 Queue names must be nonblank and cannot contain braces. The generated ready stream is
 `{respire-job:<name>}:ready`; its default dead-letter stream appends `:dead`, and deduplication
 keys append `:dedup:<SHA256-of-job-ID>`. The staging stream appends `:scheduled`, and its due-time
-sorted set appends `:due`. The event stream appends `:events`. The shared hash tag keeps the atomic operations in one
+sorted set appends `:due`. The event stream appends `:events`; the persistent control hash appends
+`:control` (`queue.ControlKey`). The shared hash tag keeps the atomic operations in one
 Redis Cluster slot, including through key-prefixed clients. Reserve this namespace exclusively
 for the queue. All worker hosts must agree on the codecs and worker policy for a queue.
 
@@ -531,6 +589,12 @@ recovery, and acknowledgement permissions; rollback requires `XDEL`. These desti
 resolve to distinct keys in the ready stream's Cluster slot. Observers require `XREAD`
 (and `XREVRANGE` when starting at `$`). Recovery alone in
 the underlying stream worker supports Redis 6.2, but that is not sufficient for this job queue.
+All job workers need `HGET` on the control hash, even with no rate policy. Rate-limited workers
+also need `TIME`, `HSET` and `HINCRBY`; policy initialization/updates need `HGET`/`HSET`.
+Pause/resume needs `HGET`, `HSET`, `HDEL` on the control hash and `XADD` on the event stream;
+failed event appends restore the previous pause state. State inspection needs `HMGET`.
+Protect the control hash from eviction and do not expire it: losing it removes pause and rate
+policy. Upgrade all workers before relying on controls; older versions do not check admission.
 Use real Redis for queue tests;
 `RespireFakeServer` supports only its built-in stream-worker scripts, not the job queue scripts.
 

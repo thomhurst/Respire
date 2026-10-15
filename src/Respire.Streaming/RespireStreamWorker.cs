@@ -33,6 +33,13 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         }
         if (options.JobQueue is not null)
             JobQueueScheduling.ValidateKeys(client, JobQueueScheduling.Keys(stream));
+        if (options.JobEventsStream is not null)
+        {
+            JobQueueScheduling.ValidateKeys(client, [stream, JobQueueControls.Key(stream), options.JobEventsStream, options.DeadLetterStream!]);
+            if (options.JobQueue?.RateLimit is { } rate)
+                await client.Scripts.ExecuteIntegerAsync(JobQueueControls.Configure, [JobQueueControls.Key(stream)],
+                    [rate.PermitLimit, (long)Math.Ceiling(rate.Window.TotalMilliseconds), "initialize"], stoppingToken).ConfigureAwait(false);
+        }
         if (options.DeadLetterStream is { } deadLetter)
         {
             var sourceKey = client.ResolveKey(stream).ToBytes();
@@ -110,6 +117,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         var readOptions = new RespireStreamReadOptions { Count = options.BatchSize, WaitFor = options.ReadWait };
         RespireStreamId? cursor = options.ConsumerName is null ? (RespireStreamId?)null : RespireStreamId.Beginning;
         var recoveryCursor = RespireStreamId.Beginning;
+        var recoveryPagesRemaining = 0;
         var recoveryClock = Stopwatch.StartNew();
         var schedulingClock = new Stopwatch();
         try
@@ -125,7 +133,52 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 }
                 Delivery[] deliveries;
                 var recoveredBatch = false;
-                if (cursor.HasValue)
+                if (options.JobEventsStream is not null)
+                {
+                    var replay = cursor.HasValue;
+                    var recover = !replay && recoveryClock.Elapsed >= options.RecoveryPollInterval;
+                    var script = replay ? JobQueueControls.Replay : recover ? JobQueueControls.Claim : JobQueueControls.Read;
+                    RespireValue[] arguments = replay ? [group, consumer, 1, cursor!.Value.Value]
+                        : recover ? [group, consumer, (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds), recoveryCursor.Value, 1]
+                        : [group, consumer];
+                    var page = await ReadPageAsync(script, arguments, readers.Token, controls: true).ConfigureAwait(false);
+                    _telemetry.SetPaused(page.Paused);
+                    var poll = options.JobQueue?.SchedulingPollInterval ?? TimeSpan.FromSeconds(1);
+                    if (page.Paused || page.RetryAfter > 0)
+                    {
+                        if (page.RetryAfter > 0)
+                        {
+                            _telemetry.RateLimited();
+                            poll = TimeSpan.FromMilliseconds(Math.Min(poll.TotalMilliseconds, page.RetryAfter));
+                        }
+                        await Task.Delay(poll, readers.Token).ConfigureAwait(false);
+                        continue;
+                    }
+                    if (replay) cursor = page.Cursor.CompareTo(RespireStreamId.Beginning) == 0 ? (RespireStreamId?)null : page.Cursor;
+                    if (recover)
+                    {
+                        // Preserve a bounded batch's scan budget while checking admission per entry.
+                        // Denied admissions above neither advance the cursor nor spend this budget.
+                        if (recoveryPagesRemaining == 0) recoveryPagesRemaining = options.BatchSize;
+                        recoveryCursor = page.Cursor;
+                        recoveredBatch = --recoveryPagesRemaining == 0 || recoveryCursor == RespireStreamId.Beginning;
+                        if (recoveredBatch) recoveryPagesRemaining = 0;
+                    }
+                    deliveries = page.Deliveries;
+                    if (deliveries.Length == 0 && !replay && !recover)
+                    {
+                        var wait = poll < options.ReadWait ? poll : options.ReadWait;
+                        var recoveryRemaining = options.RecoveryPollInterval - recoveryClock.Elapsed;
+                        if (wait > recoveryRemaining) wait = recoveryRemaining;
+                        if (options.JobQueue is not null)
+                        {
+                            var schedulingRemaining = poll - schedulingClock.Elapsed;
+                            if (wait > schedulingRemaining) wait = schedulingRemaining;
+                        }
+                        if (wait > TimeSpan.Zero) await Task.Delay(wait, readers.Token).ConfigureAwait(false);
+                    }
+                }
+                else if (cursor.HasValue)
                 {
                     var page = await ReadPageAsync(StreamWorkerScripts.Replay,
                         [group, consumer, options.BatchSize, cursor.Value.Value], readers.Token).ConfigureAwait(false);
@@ -181,10 +234,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private readonly record struct Delivery(RespireStreamEntry Entry, long Attempt);
 
-    private async Task<(RespireStreamId Cursor, Delivery[] Deliveries)> ReadPageAsync(
-        RespireScript script, RespireValue[] arguments, CancellationToken token)
+    private async Task<(RespireStreamId Cursor, Delivery[] Deliveries, bool Paused, long RetryAfter)> ReadPageAsync(
+        RespireScript script, RespireValue[] arguments, CancellationToken token, bool controls = false)
     {
-        using var reply = await client.Scripts.ExecuteLeaseAsync(script, [stream], arguments, token).ConfigureAwait(false);
+        using var reply = await client.Scripts.ExecuteLeaseAsync(script,
+            controls ? [stream, JobQueueControls.Key(stream)] : [stream], arguments, token).ConfigureAwait(false);
         var rows = reply[1];
         var deliveries = new Delivery[rows.Count];
         for (var i = 0; i < deliveries.Length; i++)
@@ -198,7 +252,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             deliveries[i] = new(new RespireStreamEntry(new(row[0].AsString()), fields),
                 long.Parse(row[2].AsString(), System.Globalization.CultureInfo.InvariantCulture));
         }
-        return (new(reply[0].AsString()), deliveries);
+        return (new(reply[0].AsString()), deliveries, controls && reply[2].AsInteger() == 1,
+            controls ? reply[3].AsInteger() : 0);
     }
 
     private async Task ProcessAsync(Delivery delivery, string consumer)

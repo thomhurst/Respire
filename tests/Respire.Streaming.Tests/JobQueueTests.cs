@@ -41,6 +41,24 @@ public class JobQueueTests
     }
 
     [Test]
+    [Arguments(0, 1000L)]
+    [Arguments(-1, 1000L)]
+    [Arguments(1, 0L)]
+    [Arguments(1, -1L)]
+    [Arguments(1, 2147483648L)]
+    public async Task InvalidRatePolicyIsRejectedBeforeRegistrationOrRedis(int permits, long milliseconds)
+    {
+        var policy = new RespireJobRateLimit { PermitLimit = permits, Window = TimeSpan.FromMilliseconds(milliseconds) };
+        var services = new ServiceCollection();
+        await Assert.That(() => services.AddRespireJobQueue<Handler, string>("queue", Encoding.UTF8.GetBytes,
+            Encoding.UTF8.GetString, null, new() { RateLimit = policy })).Throws<ArgumentOutOfRangeException>();
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", Encoding.UTF8.GetBytes);
+        await Assert.That(async () => await queue.SetRateLimitAsync(policy)).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task OversizedFlowInputsAndResultsAreRejected()
     {
         await using var server = new RespireFakeServer();

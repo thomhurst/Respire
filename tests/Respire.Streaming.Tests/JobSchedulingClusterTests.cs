@@ -36,6 +36,17 @@ public class JobSchedulingClusterTests
             await Assert.That(second.GetString("_respire.job.attempts")).IsEqualTo("1");
             await Assert.That(second.GetString("_respire.job.id")).IsEqualTo("id{untrusted}");
             await Assert.That(second.GetString("_respire.job.group")).IsEqualTo("tenant:{other}:東京");
+            await queue.EnqueueAsync("controlled", "payload");
+            await queue.SetRateLimitAsync(new() { PermitLimit = 1, Window = TimeSpan.FromHours(1) });
+            await queue.PauseAsync();
+            using (var paused = await JobQueueControlTests.Admit(client, queue, "Read"))
+                await Assert.That(paused[2].AsInteger()).IsEqualTo(1);
+            await queue.ResumeAsync();
+            using (var admitted = await JobQueueControlTests.Admit(client, queue, "Read"))
+                await Assert.That(admitted[1].Count).IsEqualTo(1);
+            using (var denied = await JobQueueControlTests.Admit(client, queue, "Read"))
+                await Assert.That(denied[3].AsInteger()).IsGreaterThan(0);
+            await Assert.That((await queue.GetStateAsync()).RateLimitHits).IsEqualTo(1);
         }
     }
 }

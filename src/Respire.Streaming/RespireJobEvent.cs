@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace Respire.Streaming;
 
-/// <summary>A retained progress or terminal event. EntryId identifies an enqueue; Id is the observer cursor.</summary>
+/// <summary>A retained job or queue-control event. EntryId identifies an enqueue; Id is the observer cursor.</summary>
 public sealed class RespireJobEvent
 {
     internal RespireJobEvent(RespireStreamEntry entry)
@@ -20,13 +20,13 @@ public sealed class RespireJobEvent
 
     /// <summary>The event stream ID to persist after processing this event.</summary>
     public RespireStreamId Id { get; }
-    /// <summary>The application job ID; use EntryId to distinguish reuse after deduplication expiry.</summary>
+    /// <summary>The application job ID, or empty for queue-control events; use EntryId to distinguish reuse.</summary>
     public string JobId { get; }
-    /// <summary>The ready-stream entry ID, or 0-0 for a flow parent failed without execution.</summary>
+    /// <summary>The ready-stream entry ID, or 0-0 for queue controls or a flow parent failed without execution.</summary>
     public RespireStreamId EntryId { get; }
-    /// <summary>The fenced delivery count, or zero for a flow parent failed without execution.</summary>
+    /// <summary>The fenced delivery count, or zero for queue controls or a flow parent failed without execution.</summary>
     public long Attempt { get; }
-    /// <summary>One of progress, completed, or dead-letter.</summary>
+    /// <summary>One of progress, completed, dead-letter, paused, or resumed.</summary>
     public string Kind { get; }
     /// <summary>Progress from 0 through 100, or null for terminal events.</summary>
     public int? Percent { get; }
