@@ -4,14 +4,14 @@
     {
       "Name": "hedged-read-owner",
       "Role": "borrower",
-      "Member": "Respire.RespireClient.SendHedgedReadAsync`1(string,TCommand,HedgedReadBudget,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation,bool):ValueTask<RespValue>",
+      "Member": "Respire.RespireClient.SendHedgedReadAsync`1(string,TCommand,HedgedReadBudget,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation,bool,RespireConnection?,CommandDeadline):ValueTask<RespValue>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Retain the caller through selection and loser cleanup. Each leg owns independent failure-only storage; add only the completed result leg retries to the caller prefix, saturating at int.MaxValue, before releasing that leg. Never borrow the loser lifetime."
     },
     {
       "Name": "hedged-read-leg",
       "Role": "borrower",
-      "Member": "Respire.RespireClient.SendHedgedReadLegAsync`1(string,TCommand,RespireConnection,RespireCommandFlags,CancellationToken,HedgeOriginalRoute?,bool,RespireTelemetry.ErrorObservation):ValueTask<RespValue>",
+      "Member": "Respire.RespireClient.SendHedgedReadLegAsync`1(string,TCommand,RespireConnection,RespireCommandFlags,CancellationToken,HedgeOriginalRoute?,bool,RespireTelemetry.ErrorObservation,CommandDeadline):ValueTask<RespValue>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Borrow one independently owned leg through redirects and retirement; the race copies retry history before releasing its completed leg owner."
     }

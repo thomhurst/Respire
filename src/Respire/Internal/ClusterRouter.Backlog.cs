@@ -72,14 +72,18 @@ internal sealed partial class ClusterRouter
             ThrowIfBacklogUnavailable();
             try
             {
-                // Primary demand schedules socket recovery without clearing a temporarily
-                // unavailable owner. Replica policies retain their normal fallback selection.
-                if (readFrom == RespireReadFrom.Primary)
+                // A lone route waits for its replacement socket. A connected alternative
+                // keeps normal discovery/fallback available when the cached owner is lost.
+                if (readFrom == RespireReadFrom.Primary && TryGetConnectedNode() is null)
                     await WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
+                var selectedOwner = slot is { } selectedSlot ? RoutingSnapshot[selectedSlot].Primary : null;
                 var connection = await GetReadConnectionAsync(slot, readFrom, token, observation).ConfigureAwait(false);
                 connection.ThrowIfRetired();
+                // Reselect a concurrently replaced owner, but retain a legitimate seed
+                // fallback returned by discovery for the same unavailable cached owner.
                 if (readFrom == RespireReadFrom.Primary && slot is { } value
                     && RoutingSnapshot[value].Primary is { } owner
+                    && !ReferenceEquals(owner, selectedOwner)
                     && !ReferenceEquals(owner, connection.Multiplexer)) continue;
                 return connection;
             }
@@ -89,7 +93,7 @@ internal sealed partial class ClusterRouter
                 // still owns this unsent entry, so select its replacement on the next pass.
                 token.ThrowIfCancellationRequested();
                 ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                await Task.Delay(25, token).ConfigureAwait(false);
+                await Task.Delay(RouteReplacementPollInterval, token).ConfigureAwait(false);
             }
             catch (RespireException error) when (error is RespireConnectionRetiredException
                 || error is RespireConnectionException and not RespireReconnectLimitException)
@@ -101,8 +105,9 @@ internal sealed partial class ClusterRouter
                     { Endpoint = error.Endpoint };
                 if (attempts < int.MaxValue) attempts++;
                 ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint ?? error.Endpoint);
-                var delay = _options.ReconnectPolicy?.GetDelay(attempts) ?? TimeSpan.FromMilliseconds(25);
-                if (delay < TimeSpan.FromMilliseconds(25)) delay = TimeSpan.FromMilliseconds(25);
+                var minimumDelay = TimeSpan.FromMilliseconds(RouteReplacementPollInterval);
+                var delay = _options.ReconnectPolicy?.GetDelay(attempts) ?? minimumDelay;
+                if (delay < minimumDelay) delay = minimumDelay;
                 await Task.Delay(delay, token).ConfigureAwait(false);
             }
         }

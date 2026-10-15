@@ -1,3 +1,4 @@
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -12,7 +13,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
         return RunClusterBacklogAsync(operation, slot, readFrom, cancellationToken, deadline, observation,
             (ready, originalDeadline) => SendClusterBulkStreamAsync(operation, cluster, snapshot, cancellationToken,
                 observation, ready, originalDeadline));
@@ -24,7 +25,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
         await RunClusterBacklogAsync(operation, slot, RespireReadFrom.Primary, cancellationToken, deadline,
             observation, async (ready, originalDeadline) =>
             {
@@ -40,7 +41,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
         return RunClusterBacklogAsync(operation, slot, _readFrom, cancellationToken, deadline, observation,
             (ready, originalDeadline) => SendHedgedReadAsync(operation, snapshot, budget, flags, cancellationToken,
                 observation, observeErrors: false, initialConnection: ready, deadline: originalDeadline));
@@ -57,7 +58,7 @@ public sealed partial class RespireClient
         Action<Exception>? onRetry, RespireTelemetry.ErrorObservation observation, CommandDeadline retryDeadline)
         where TCommand : struct, IRespCommand
     {
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
         return RunClusterBacklogAsync(operation, slot, readFrom, cancellationToken, retryDeadline, observation,
             (ready, deadline) => SendClusterAsync(operation, cluster, snapshot, cancellationToken,
                 storedProcedureName, noRedirect, ready, firstAttempt, initialRetirement, initialRejection,
@@ -73,10 +74,34 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         deadline = CreateCircuitDeadline(deadline);
-        var snapshot = new BacklogCommand<TCommand>(command);
+        var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command));
         return RunClusterBacklogAsync(operation, slot, readFrom, cancellationToken, deadline, observation,
             (ready, originalDeadline) => SendTrackedClusterAsync(operation, cluster, snapshot, cancellationToken,
                 onRedirect, track, observation, originalDeadline, ready));
+    }
+
+    // Erase the snapshot's command type before re-entering routed dispatch. Otherwise
+    // Native AOT expands BacklogCommand<BacklogCommand<...>> without a finite bound.
+    // Boxing stays on the cold queue path and preserves all original admission callbacks.
+    private readonly struct ClusterBacklogCommand(IRespCommandWrapper command) : IRespCommandWrapper
+    {
+        public void Write(ref RespWriter writer) => command.Write(ref writer);
+        public int GetWriteSizeHint() => command.GetWriteSizeHint();
+        public bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+        public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
+        public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+        public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+            => command.TryGetClientCacheKey(operation, out key);
+        public ReadCommandKind ReadKind => command.ReadKind;
+        public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+        public int CursorArgumentIndex => command.CursorArgumentIndex;
+        public bool IsConnectionProtocol => command.IsConnectionProtocol;
+        public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
+        public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+        public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
+        public void ValidateAdmission() => command.ValidateAdmission();
+        public CancellationToken GetResponseCancellationToken(CancellationToken token) => command.GetResponseCancellationToken(token);
+        public void OnAccepted() => command.OnAccepted();
     }
 
     internal async ValueTask<T> RunClusterBacklogAsync<T>(string operation, int? slot,

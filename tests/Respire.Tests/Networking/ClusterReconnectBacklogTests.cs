@@ -488,6 +488,44 @@ public class ClusterReconnectBacklogTests
         await Assert.That(fixture.Server.ReceivedCommands.Contains("CLIENT CACHING YES")).IsTrue();
     }
 
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task QueuedKeylessFlushReselectsSlotOwningPrimary(bool transaction, bool retry, bool all)
+    {
+        await using var fixture = await Fixture.CreateAsync(retryPolicy: retry ? new RespireRetryPolicy() : null);
+        await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n");
+        primary.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => topology,
+            "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
+            "FLUSHDB" or "FLUSHALL" when transaction => "+QUEUED\r\n"u8.ToArray(),
+            _ => null,
+        };
+        fixture.Server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+        using var batch = fixture.Client.CreateBatch();
+        await using var tx = fixture.Client.CreateTransaction();
+        IRespireCommandQueue queue = transaction ? tx : batch;
+        var flush = all ? queue.Server.FlushAll() : queue.Server.FlushDatabase();
+        var pending = transaction ? CommitAsync(tx) : batch.ExecuteAsync().AsTask();
+        await fixture.Connecting.Task.WaitAsync(Limit);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await fixture.ReleaseAsync();
+        await pending.WaitAsync(Limit);
+        await Assert.That(flush.Result).IsTrue();
+        var command = all ? "FLUSHALL" : "FLUSHDB";
+        await Assert.That(primary.ReceivedCommands.Count(value => value == command)).IsEqualTo(1);
+        await Assert.That(fixture.Server.ReceivedCommands.Contains(command)).IsFalse();
+    }
+
     private static async Task<string> ExecuteAsync(RespireClient client, string surface, string key)
     {
         switch (surface)
@@ -545,7 +583,7 @@ public class ClusterReconnectBacklogTests
                 var gateReplacement = false;
                 var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
-                    UseCluster = true, Endpoints = rejectedSeed is null ? [new("127.0.0.1", server.Port)]
+                    UseCluster = true, AllowAdmin = true, Endpoints = rejectedSeed is null ? [new("127.0.0.1", server.Port)]
                         : [new("127.0.0.1", rejectedSeed.Port), new("127.0.0.1", server.Port)], Connections = 1,
                     Protocol = cache ? RespProtocol.Resp3 : RespProtocol.Resp2, Password = "test",
                     ConnectTimeout = Limit, CommandTimeout = commandTimeout ?? Limit, RetryPolicy = retryPolicy,

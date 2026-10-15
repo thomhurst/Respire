@@ -486,12 +486,16 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     if (core.Cluster is { } cluster)
                     {
                         if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                        {
                             slot = await cluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
+                            initialConnection = null;
+                        }
                         if (attempt > 1) await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
                         // Retry groups hold no continuations, but a fresh cursor page must still record
                         // the server that issues its cursor. Each attempt revalidates that pin, so the next
                         // page finds the server that answered the final attempt.
-                        (connection, _) = attempt == 1 && initialConnection is not null ? (initialConnection, null)
+                        (connection, _) = attempt == 1 && initialConnection is not null
+                            && !operations.Exists(static op => op.IsCursorContinuation.HasValue) ? (initialConnection, null)
                             : await AcquireGroupConnectionsAsync(slot, operations, readFrom, token,
                                 operations[0].Observation).ConfigureAwait(false);
                         DeferredOperation.SetAttempts(operations, operations[0].Observation.Attempts);
@@ -751,15 +755,24 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         // Read selection borrows the first pending's existing owner. Copy the completed
         // selection count to the other members before any command starts its own retries.
         var selectionObservation = operations[0].Observation;
+        var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _client.Core.Options.CommandTimeout);
         try
         {
-            if (slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
-                slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(cancellationToken).ConfigureAwait(false);
-            (connection, continuationConnection) = initialConnection is not null ? (initialConnection, null)
-                : await AcquireGroupConnectionsAsync(slot, operations, readFrom, cancellationToken, selectionObservation).ConfigureAwait(false);
+            var resolvePrimary = slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL");
+            if (resolvePrimary)
+                slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
+            // Unkeyed selection cannot establish a primary route or a cursor pin.
+            (connection, continuationConnection) = initialConnection is not null && !resolvePrimary
+                && !operations.Exists(static op => op.IsCursorContinuation.HasValue) ? (initialConnection, null)
+                : await AcquireGroupConnectionsAsync(slot, operations, readFrom, acquisition.Token, selectionObservation).ConfigureAwait(false);
+            acquisition.CheckDeadline("PIPELINE", _client.Core);
         }
         catch (Exception ex)
         {
+            if (ex is OperationCanceledException cancelled && acquisition.IsDeadlineCancellation(cancelled))
+                ex = acquisition.CreateTimeout("PIPELINE", _client.Core, cause: cancelled);
+            else if (ex is OperationCanceledException callerCancelled && acquisition.IsCallerCancellation(callerCancelled))
+                ex = new OperationCanceledException(callerCancelled.Message, callerCancelled, cancellationToken);
             DeferredOperation.SetAttempts(operations, selectionObservation.Attempts);
             foreach (var operation in operations)
             {
@@ -768,6 +781,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
             return;
         }
+        finally { acquisition.Dispose(); }
         var selectionAttempts = selectionObservation.Attempts;
         if (selectionAttempts != 0) DeferredOperation.SetAttempts(operations, selectionAttempts);
 

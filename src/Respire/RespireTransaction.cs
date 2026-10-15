@@ -557,7 +557,12 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 acquisition.CheckDeadline("MULTI/EXEC", core, ConnectionPolicy.ImportConnection);
                 if (slot is null && cluster is { } flushCluster
                     && _ops.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL"))
+                {
                     slot = await flushCluster.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
+                    // A queued keyless entry was selected before its primary slot was known.
+                    // Retain dedicated WATCH/import leases, but reselect ordinary queued work.
+                    if (_watchConnection is null && !ConnectionPolicy.IsImportSession) connection = null;
+                }
                 for (;;)
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, ref acquisition, observation).ConfigureAwait(false);
