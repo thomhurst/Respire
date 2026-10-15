@@ -34,6 +34,11 @@ on:
         required: false
         default: false
         type: boolean
+      server-latency-diagnostics:
+        description: 'Investigate #1744: 21 server-operation ties and two GET controls, plus separate CPU/topology diagnostics'
+        required: false
+        default: false
+        type: boolean
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -47,6 +52,7 @@ jobs:
   comparison-benchmarks:
     name: Benchmark (${{ matrix.framework }})
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.server-latency-diagnostics && 180 || 360 }}
     env:
       STACKEXCHANGE_REDIS_BENCHMARK_VERSION: ${{ inputs.stackexchange-version || 'repository' }}
 
@@ -127,9 +133,14 @@ jobs:
           BENCH_FILTER: ${{ github.event.inputs.filter || '*' }}
           # The scheduled/default manual run uses medium; dry validates setup only.
           BENCH_JOB: ${{ github.event.inputs.job || (github.event_name == 'schedule' && 'medium' || 'short') }}
+          SERVER_LATENCY_DIAGNOSTICS: ${{ inputs.server-latency-diagnostics || false }}
         run: |
+          filters=("$BENCH_FILTER")
+          if [ "$SERVER_LATENCY_DIAGNOSTICS" = true ]; then
+            filters=('*CommonOperationsBenchmarks.*' '*ClientSideCachingBenchmarks.*ServerRead')
+          fi
           dotnet run -c Release -f ${{ matrix.framework }} --no-build -- \
-            --filter "$BENCH_FILTER" \
+            --filter "${filters[@]}" \
             --job "$BENCH_JOB" \
             --launchCount 2 \
             --statisticalTest 5% \
@@ -154,6 +165,12 @@ jobs:
             --filter '*PubSubComparisonBenchmarks*' --job short --profiler EP --threading \
             --exporters json markdown --artifacts ./BenchmarkDotNet.Artifacts/pubsub-profile/eventpipe \
             > BenchmarkDotNet.Artifacts/pubsub-profile/eventpipe.log 2>&1
+
+      - name: Collect separate server latency diagnostics
+        if: inputs.server-latency-diagnostics
+        env:
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: python3 scripts/benchmarks/ServerLatencyDiagnostics.py
 
       - name: Publish results to job summary
         if: always()
@@ -231,6 +248,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.profile-pubsub != true &&
+      !inputs.server-latency-diagnostics &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' &&
         github.event.inputs.filter == '*' &&
