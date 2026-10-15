@@ -17,6 +17,8 @@ public class PublicApiLifecycleTests
         var names = reader.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var assemblies = LoadExpectedAssemblies(AppContext.BaseDirectory, names);
 
+        // The analyzer ships inside the core package rather than as a packable project.
+        await Assert.That(names.Contains("Respire.Analyzers", StringComparer.Ordinal)).IsTrue();
         await Assert.That(assemblies.SelectMany(FindInvalidDeprecations).ToArray()).IsEmpty();
     }
 

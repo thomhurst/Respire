@@ -34,7 +34,8 @@ Deprecations are allowed, including after 1.0. An `[Obsolete]` attribute must pr
 migration note. The note should explain the replacement and migration steps. CI runs
 `Respire.PublicApi.Tests` on net8.0 and net10.0 to check exported public types and members in every
 shipping assembly. Its project references and expected assembly manifest come from
-`RespirePackageProjects` in `Directory.Build.props`; a missing assembly fails validation.
+`RespirePackageProjects` in `Directory.Build.props`, plus `Respire.Analyzers`, which ships inside
+the core package rather than as its own package; a missing assembly fails validation.
 The compiler's required-member compatibility marker is excluded; authored deprecations on
 constructors with required members still need migration metadata.
 These checks make no network requests; reviewers verify that the migration note exists.

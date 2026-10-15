@@ -7,8 +7,13 @@
   <ItemGroup>
     <!-- Use the shipping inventory for both build references and runtime coverage. -->
     <ShippingProject Include="$(RespirePackageProjects)" />
+    <!-- Bundled in Respire's package by _PackRespireAnalyzers, not independently packable. -->
+    <ShippingProject Include="Respire.Analyzers" />
     <ProjectReference Include="@(ShippingProject->'../../src/%(Identity)/%(Identity).csproj')" />
     <PackageReference Include="TUnit" />
+    <!-- Analyzer dependencies are private to its project; reflection needs their runtime types. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <Target Name="EmbedShippingAssemblies" BeforeTargets="PrepareForBuild" Condition="'$(TargetFramework)' != ''">
