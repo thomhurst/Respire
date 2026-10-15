@@ -119,7 +119,7 @@ internal sealed class DispatchedWakeEventLog : EventListener
     public void WaitForDispatch() => Thread.Sleep(TimeSpan.FromSeconds(1.5));
 
     /// <summary>Lists runtime events between the boundaries, in order, with the boundaries inline.</summary>
-    public string Describe(long measuringThread, int maxEvents, params (string Name, DateTime Utc)[] boundaries)
+    public string Describe(long measuringThread, int maxOtherThreadEvents, params (string Name, DateTime Utc)[] boundaries)
     {
         var dispatcher = Interlocked.Read(ref _dispatcherThread);
         var entries = _entries.Where(e => e.OsThreadId != dispatcher && !IsNoise(e.Name))
@@ -146,26 +146,36 @@ internal sealed class DispatchedWakeEventLog : EventListener
         }
         var from = boundaries.Min(b => b.Utc) + offset - margin;
         var to = boundaries.Max(b => b.Utc) + offset + margin;
-        var lines = entries.Where(e => e.TimestampUtc >= from && e.TimestampUtc <= to)
+        var interval = entries.Where(e => e.TimestampUtc >= from && e.TimestampUtc <= to).ToList();
+        var lines = SelectReportedEvents(interval, measuringThread, maxOtherThreadEvents)
             .Select(e => (e.TimestampUtc, Line: $"os={e.OsThreadId}{(e.OsThreadId == measuringThread ? " (measuring)" : "")} {e.Name}{e.Payload}"))
             .ToList();
-        text.Append($"; {lines.Count} events in the interval widened by {margin.TotalMilliseconds:F3} ms each side.");
-        var events = 0;
+        text.Append($"; {interval.Count} events in the interval widened by {margin.TotalMilliseconds:F3} ms each side.");
         foreach (var (utc, line) in lines.Concat(boundaries.Select(b => (b.Utc + offset, Line: $"--- {b.Name}")))
                      .OrderBy(l => l.Item1))
         {
-            var isBoundary = line.StartsWith("---", StringComparison.Ordinal);
-            if (!isBoundary && events++ >= maxEvents) continue;
             text.Append($"{Environment.NewLine}    {utc:HH:mm:ss.ffffff} {(line.Length > 260 ? line[..260] : line)}");
         }
-        if (events > maxEvents) text.Append($"{Environment.NewLine}    ... {events - maxEvents} more events");
+        if (interval.Count > lines.Count)
+            text.Append($"{Environment.NewLine}    ... {interval.Count - lines.Count} more events from other threads");
         return text.ToString();
+    }
+
+    // Background tiered JIT activity can exhaust the display budget before the allocating wake.
+    // Keep all events on the measured thread, even late ones, and bound only other threads' events.
+    internal static IEnumerable<Entry> SelectReportedEvents(IEnumerable<Entry> entries,
+        long measuringThread, int maxOtherThreadEvents)
+    {
+        var otherThreadEvents = 0;
+        foreach (var entry in entries)
+            if (entry.OsThreadId == measuringThread || otherThreadEvents++ < maxOtherThreadEvents)
+                yield return entry;
     }
 
     // Code-heap bookkeeping repeats each JIT event without adding information.
     private static bool IsNoise(string name) => name is "MethodJitMemoryAllocatedForCode" or "MethodILToNativeMap";
 
-    private readonly record struct Entry(DateTime TimestampUtc, long OsThreadId, string Name, string Payload);
+    internal readonly record struct Entry(DateTime TimestampUtc, long OsThreadId, string Name, string Payload);
 
     [EventSource(Name = SourceName)]
     private sealed class ProbeMarkers : EventSource
