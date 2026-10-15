@@ -54,7 +54,7 @@ without waiting for expiration. Byte-array state exercises binary write/read;
 byte-list state exercises both clear modes because the upstream activator cannot
 create an empty byte array after clear.
 
-`SiloScenarios.cs`, `TopologyScenarios.cs` and `LifecycleGrain.cs` add nine original adapter-only integration
+`SiloScenarios.cs`, `TopologyScenarios.cs`, `RecoveryProcess.cs` and `LifecycleGrain.cs` add ten original adapter-only integration
 cases (not ports of upstream tests). They use real Orleans silo/client hosts and
 the existing `RespireContainerFixture` with Redis 7.0.15:
 
@@ -70,6 +70,10 @@ the existing `RespireContainerFixture` with Redis 7.0.15:
 - Sentinel: fence replication, stop the primary, observe connection to the promoted
   replica, continue provider operations, join a second silo, return the old primary
   as a replica, and read persisted state from a new activation.
+- Failed Sentinel election: stop the only replica after fencing writes, then stop
+  the primary. Require the recovery deadline to fail, retain server logs, and
+  verify the child process exits and its parent removes the owned container.
+  This regression does not disable TILT protection or count failed recovery as success.
 - Cluster migration (two cases): transfer the membership key, publish its new slot owner,
   and join a silo through the existing adapter. The ASK variant asserts that insertion
   during migration fails without inserting the row, then recovers after migration completes.
@@ -84,8 +88,19 @@ the existing `RespireContainerFixture` with Redis 7.0.15:
 
 Every deployment is owned by Testcontainers and disposed even on failure. The
 administrative fault/fence connection does not execute any provider operations.
-The suite now has **27 cases per framework/protocol combination**: 18 provider
-cases and nine real-host cases. CI runs all cases on net8.0/net10.0 and RESP2/RESP3.
+The suite now has **28 cases per framework/protocol combination**: 18 provider
+cases and ten real-host cases. CI runs all cases on net8.0/net10.0 and RESP2/RESP3.
+
+Recovery hosts run in a child process while the parent owns Redis. Each host stop
+and disposal has an enforced 30-second wait; logs identify the operation and role.
+The child has a four-minute total budget after fixture startup, covering startup,
+recovery, assertions and provider disposal. Failure diagnostics take at most ten
+seconds per capture, child termination and output drain ten seconds each, and
+container disposal thirty seconds. The parent returns within 310 seconds of
+starting the child even if host shutdown ignores cancellation. An unavailable
+Docker engine is reported as a cleanup failure; Testcontainers' resource reaper
+remains the fallback. The intentional failed-election recovery budget is 30 seconds;
+the healthy failover case retains its 90-second recovery budget and all assertions.
 
 This is selected upstream acceptance with additional adapter regressions, not the
 full upstream suite. Sustained parallel stress, large hash-ring distributions,

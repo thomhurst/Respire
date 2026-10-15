@@ -89,7 +89,7 @@ See the [adapter guide](stackexchange-interop.md) for script and flag limits.
 ## Tested scope
 
 `tests/Respire.Orleans.Acceptance.Tests` runs upstream provider scenarios against StackExchange.Redis and then
-the adapter, on .NET 8 and .NET 10 with RESP2 and RESP3. Nine additional adapter-only cases start real
+the adapter, on .NET 8 and .NET 10 with RESP2 and RESP3. Ten additional adapter-only cases start real
 Orleans silo and client hosts. All containers use Redis **7.0.15**. Its `NOTICE.md` records sources and exclusions.
 
 | Provider | Covered |
@@ -121,6 +121,12 @@ grain uses the Orleans binary serializer; test-only reminder settings lower the 
 The topology cases use `Respire.Testing.Containers`, which runs each deployment in an isolated disposable
 container. They model server processes and protocol routing, not independent host or network failures.
 The socket-loss and replication-fence setup uses a separate administrative control connection only.
+Recovery hosts run in a child process with a four-minute budget after Redis startup. The parent
+captures server logs and removes its container even if Orleans shutdown ignores cancellation.
+Diagnostics, process termination, output drain and container disposal extend the maximum wait to
+310 seconds after child startup; Docker cleanup failures are reported. A separate failed-election
+regression removes the only replica before stopping the primary and requires recovery to fail.
+It leaves Sentinel TILT protection enabled and retains the healthy failover assertions.
 The tests do not claim lossless writes during failover: Redis replication is asynchronous. The Sentinel
 scenario fences the writes it expects to retain before stopping the primary; the Cluster scenario uses
 coordinated promotion, which synchronizes the replica before switching roles. Unplanned Cluster primary
@@ -158,7 +164,7 @@ Run the suite from a repository checkout (requires Docker):
 
 ```powershell
 $env:RESPIRE_TEST_PROTOCOL = '2' # Repeat with '3'.
-dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release -f net10.0 -- --minimum-expected-tests 27
+dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release -f net10.0 -- --minimum-expected-tests 28
 # Repeat with -f net8.0 as well.
 ```
 
