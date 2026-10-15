@@ -68,6 +68,7 @@ internal sealed partial class RespireConnectionMultiplexer
         private readonly CancellationToken _lifetime;
         private readonly Action _throwIfUnavailable;
         private readonly Func<RespireEndpoint?> _getEndpoint;
+        private readonly bool _failAllOnTerminal;
         private readonly Func<CancellationToken, ValueTask<RespireConnection>> _waitForConnection;
         private readonly Lock _gate = new();
         private readonly LinkedList<Entry> _pending = new();
@@ -87,12 +88,14 @@ internal sealed partial class RespireConnectionMultiplexer
         }
 
         internal ReconnectBacklog(int capacity, CancellationToken lifetime, Action throwIfUnavailable,
-            Func<RespireEndpoint?> getEndpoint, Func<CancellationToken, ValueTask<RespireConnection>> waitForConnection)
+            Func<RespireEndpoint?> getEndpoint, Func<CancellationToken, ValueTask<RespireConnection>> waitForConnection,
+            bool failAllOnTerminal = true)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
             _lifetime = lifetime;
             _throwIfUnavailable = throwIfUnavailable;
             _getEndpoint = getEndpoint;
+            _failAllOnTerminal = failAllOnTerminal;
             _waitForConnection = waitForConnection;
             Capacity = capacity;
             // The source and queue share the dispatch owner's lifetime; cancellation removes
@@ -116,7 +119,9 @@ internal sealed partial class RespireConnectionMultiplexer
                 if (_pending.Count >= Capacity)
                 {
                     var endpoint = _getEndpoint();
-                    throw new RespireConnectionException($"Reconnect backlog capacity {Capacity} reached for {endpoint}.")
+                    throw new RespireConnectionException(endpoint is { } target
+                        ? $"Reconnect backlog capacity {Capacity} reached for {target}."
+                        : $"Read backlog capacity {Capacity} reached while waiting for an eligible read connection.")
                     { Endpoint = endpoint };
                 }
                 entry.Node = _pending.AddLast(entry);
@@ -197,7 +202,7 @@ internal sealed partial class RespireConnectionMultiplexer
                 {
                     Stop();
                 }
-                catch (RespireReconnectLimitException error)
+                catch (RespireReconnectLimitException error) when (_failAllOnTerminal)
                 {
                     lock (_gate) FailPendingLocked(error);
                 }

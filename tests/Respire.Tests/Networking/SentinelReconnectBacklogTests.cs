@@ -199,6 +199,34 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(RespireReadFrom.PrimaryPreferred)]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    [Arguments(RespireReadFrom.Nearest)]
+    [Arguments(RespireReadFrom.AzAffinity)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task SentinelReadBacklogBoundsDiscoveryWithoutCommandTimeout(RespireReadFrom policy)
+    {
+        await using var fixture = await SentinelBacklogFixture.CreateAsync(noCommandTimeout: true, reconnectPolicy: new()
+        {
+            MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0,
+        });
+        fixture.FailReplacement = true;
+        var router = fixture.Client.Core.ReadRouter;
+        // Enter the shared read queue directly: the fixture has already retired its warm
+        // primary, and the same queue handles all fallback policies once admitted.
+        var first = router.EnqueueAsync(policy, static (connection, _) => ValueTask.FromResult(connection.Port), default, default).AsTask();
+        await fixture.Selecting.Task.WaitAsync(Limit);
+        var second = router.EnqueueAsync(policy, static (connection, _) => ValueTask.FromResult(connection.Port), default, default).AsTask();
+        fixture.Resume.TrySetResult();
+        await Assert.That(async () => await first.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
+        await Assert.That(async () => await second.WaitAsync(Limit)).ThrowsExactly<RespireReconnectLimitException>();
+        // Each head owns one initial selection round and one configured retry. Nearest's
+        // connect cooldown suppresses the remaining physical discovery calls after failure.
+        await Assert.That(fixture.ReplacementAttempts).IsEqualTo(policy == RespireReadFrom.Nearest ? 1 : 4);
+        await Assert.That(fixture.Replacement.ReceivedCommands.Any(IsSentinelBacklogApplicationCommand)).IsFalse();
+    }
+
+    [Test]
     public async Task SentinelBacklogNeverReplaysAcceptedFailure()
     {
         await using var fixture = await SentinelBacklogFixture.CreateAsync();

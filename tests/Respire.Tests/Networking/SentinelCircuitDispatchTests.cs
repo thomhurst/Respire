@@ -147,6 +147,10 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => primary.Port, replica.Port);
         await using var client = await Connect(sentinel);
         await client.Core.ReadRouter.RefreshNowAsync(default);
+        // This test isolates circuit admission. Keep periodic discovery/ROLE freshness
+        // from invalidating its prepared route while a cold JIT or scheduler delays it.
+        client.Core.ReadRouter.SentinelRefreshInterval = TimeSpan.FromHours(1);
+        client.Core.ReadRouter.RoleRevalidationInterval = TimeSpan.FromHours(1);
         var view = (RespireClient)client.WithReadFrom(policy);
         await Send(view, shape, "warm");
         await Assert.That(client.Core.ReadRouter.TryAcquireReadyConnection(policy, default)!.Port).IsEqualTo(replica.Port);
@@ -277,9 +281,11 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
-    [Arguments("raw")]
-    [Arguments("typed")]
-    public async Task ReadPolicyFreshScanRetirementReselectsAndRepinsCursor(string shape)
+    [Arguments("raw", false)]
+    [Arguments("typed", false)]
+    [Arguments("raw", true)]
+    [Arguments("typed", true)]
+    public async Task ReadPolicyFreshScanRetirementReselectsAndRepinsCursor(string shape, bool queued)
     {
         // A non-primary read policy pins cursor pages to the selected server. A fresh scan
         // retired before dispatch must move with its pin, so its continuation reaches the new server.
@@ -290,6 +296,7 @@ public sealed class SentinelCircuitDispatchTests
         await using var client = await Connect(sentinel);
         var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
         await using var enumerator = view.Keys.ScanAsync().GetAsyncEnumerator();
+        await using var backlog = await HeldReadBacklog.CreateAsync(client, queued);
         var (circuit, _) = Prepare(client, first);
         using var clock = new AdmissionGateClock();
         CircuitClock(circuit) = clock;
@@ -301,6 +308,7 @@ public sealed class SentinelCircuitDispatchTests
         });
         try
         {
+            await backlog.ReleaseAfterScanQueuesAsync();
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Volatile.Write(ref port, second.Port);
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
@@ -323,7 +331,9 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
-    public async Task ReadPolicyFreshScanReselectionKeepsOneTelemetryScope()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadPolicyFreshScanReselectionKeepsOneTelemetryScope(bool queued)
     {
         await using var first = Primary();
         await using var second = Primary();
@@ -331,27 +341,26 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await Connect(sentinel);
         var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        await using var backlog = await HeldReadBacklog.CreateAsync(client, queued);
         var (circuit, _) = Prepare(client, first);
         using var clock = new AdmissionGateClock();
         CircuitClock(circuit) = clock;
-        var observed = new AsyncLocal<bool>();
         var stopped = new ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { if (observed.Value && activity.OperationName == "SCAN") stopped.Enqueue(activity); },
+            ActivityStopped = activity => { if (activity.OperationName == "SCAN") stopped.Enqueue(activity); },
         };
         ActivitySource.AddActivityListener(listener);
         clock.Arm();
         var pending = Task.Run(async () =>
         {
-            observed.Value = true;
             using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
-            observed.Value = false;
         });
         try
         {
+            await backlog.ReleaseAfterScanQueuesAsync();
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Volatile.Write(ref port, second.Port);
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
@@ -367,7 +376,9 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     [Test]
-    public async Task ReadPolicyFreshScanReselectionKeepsTheOriginalDeadline()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadPolicyFreshScanReselectionKeepsTheOriginalDeadline(bool queued)
     {
         await using var first = Primary();
         await using var second = Primary();
@@ -377,6 +388,7 @@ public sealed class SentinelCircuitDispatchTests
         var timeout = TimeSpan.FromSeconds(2);
         await using var client = await Connect(sentinel, timeout);
         var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
+        await using var backlog = await HeldReadBacklog.CreateAsync(client, queued);
         var (circuit, _) = Prepare(client, first);
         using var clock = new AdmissionGateClock();
         CircuitClock(circuit) = clock;
@@ -385,6 +397,7 @@ public sealed class SentinelCircuitDispatchTests
         var pending = Task.Run(async () => { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); });
         try
         {
+            await backlog.ReleaseAfterScanQueuesAsync();
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Volatile.Write(ref port, second.Port);
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
@@ -1153,6 +1166,45 @@ public sealed class SentinelCircuitDispatchTests
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
         internal void Advance() => Interlocked.Add(ref _timestamp, 60 * TimestampFrequency);
     }
+    private sealed class HeldReadBacklog(ReadEndpointRouter router) : IAsyncDisposable
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Task<int>? _head;
+
+        internal static async Task<HeldReadBacklog> CreateAsync(RespireClient client, bool queued)
+        {
+            var held = new HeldReadBacklog(client.Core.ReadRouter);
+            if (!queued) return held;
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            held._head = client.Core.ReadRouter.EnqueueAsync(RespireReadFrom.PrimaryPreferred, async (_, token) =>
+            {
+                entered.TrySetResult();
+                await held._release.Task.WaitAsync(token);
+                return 0;
+            }, default, default).AsTask();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            return held;
+        }
+
+        internal async Task ReleaseAfterScanQueuesAsync()
+        {
+            if (_head is null) return;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (ReadBacklog(router)!.Count == 0) await Task.Delay(1, timeout.Token);
+            _release.TrySetResult();
+            await _head.WaitAsync(timeout.Token);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _release.TrySetResult();
+            if (_head is not null) await _head.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_backlog")]
+        private static extern ref RespireConnectionMultiplexer.ReconnectBacklog? ReadBacklog(ReadEndpointRouter router);
+    }
+
     private sealed class AdmissionGateClock : TimeProvider, IDisposable
     {
         private readonly ManualResetEventSlim _release = new();

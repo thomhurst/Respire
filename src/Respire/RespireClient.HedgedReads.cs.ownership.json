@@ -9,6 +9,13 @@
       "Contract": "Retain the caller through selection and loser cleanup. Each leg owns independent failure-only storage; add only the completed result leg retries to the caller prefix, saturating at int.MaxValue, before releasing that leg. Never borrow the loser lifetime."
     },
     {
+      "Name": "selected-hedged-read",
+      "Role": "borrower",
+      "Member": "Respire.RespireClient.SendSelectedHedgedReadAsync`1(string,TCommand,HedgedReadBudget,RespireCommandFlags,CancellationToken,RespireTelemetry.ErrorObservation,RespireConnection,CommandDeadline):ValueTask<RespValue>",
+      "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+      "Contract": "Borrow the caller after route selection, including backlog dispatch. Each leg owns independent storage; copy only the completed result leg attempts before releasing its owner and retain loser cleanup."
+    },
+    {
       "Name": "hedged-read-leg",
       "Role": "borrower",
       "Member": "Respire.RespireClient.SendHedgedReadLegAsync`1(string,TCommand,RespireConnection,RespireCommandFlags,CancellationToken,HedgeOriginalRoute?,bool,RespireTelemetry.ErrorObservation,CommandDeadline):ValueTask<RespValue>",

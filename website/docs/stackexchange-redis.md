@@ -143,8 +143,9 @@ Review these before you switch; they can change application behavior.
   commands and does not require `RetryPolicy`. Sentinel waiting survives generation retirement
   and selects a ROLE-validated current primary. Cluster commands use independent slot queues,
   reselecting the current owner and read policy before sending; a batch slot group or unwatched
-  transaction counts as one entry. Standalone/Sentinel replica routing remains tracked
-  in [#1736](https://github.com/thomhurst/Respire/issues/1736).
+  transaction counts as one entry. Standalone and Sentinel replica reads use a separate FIFO
+  that reselects under the original read policy and current membership, including read-only
+  procedures, streams and hedged reads.
   See [connection recovery](./guides/reconnect-policy.md#standalone-command-backlog) for exclusions
   and the distinction between backlog, reconnect and command retry policies.
 - **Batch results throw before the batch runs.** Reading `RespirePending<T>.Result` before

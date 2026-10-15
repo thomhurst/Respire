@@ -35,23 +35,27 @@ internal sealed class ReadCursorAffinity
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity? affinity, bool isContinuation,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool readyOnly = false,
+        bool reselectSharedCursor = false)
     {
         if (affinity is not null)
         {
-            if (affinity.IsPinned) return await GetPinnedConnectionAsync(router, affinity, cancellationToken, observation).ConfigureAwait(false);
-            var first = await router.SelectAsync(readFrom, cancellationToken, observation).ConfigureAwait(false);
+            if (affinity.IsPinned) return await GetPinnedConnectionAsync(router, affinity, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+            var first = await router.SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
             affinity.Replica = first.Replica;
             affinity.Primary = first.Primary;
             affinity.ReadFrom = readFrom;
             return first.Connection;
         }
 
+        // Queue admission alone does not invalidate a raw scan's issuing server.
+        // Only a fresh queued cursor may bypass an unavailable pin to recover elsewhere.
+        var reselectUnavailablePin = reselectSharedCursor && !isContinuation;
         if (_shared.TryGetValue(readFrom, out var shared))
         {
-            if (await IsPinCurrentAsync(router, shared, cancellationToken, observation).ConfigureAwait(false))
-                return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation).ConfigureAwait(false);
-            _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+            var pinned = await TryReuseSharedPinAsync(router, readFrom, shared, cancellationToken, observation,
+                readyOnly, reselectUnavailablePin).ConfigureAwait(false);
+            if (pinned is not null) return pinned;
         }
 
         // The server that issued this cursor is gone, so no other server can continue it.
@@ -59,18 +63,24 @@ internal sealed class ReadCursorAffinity
         // A fresh cursor reselects; the stale pin's node must not name a later selection failure.
         observation.UseEndpoint(null);
 
-        await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (readyOnly)
+        {
+            if (!_sharedGate.Wait(0)) throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+        }
+        else await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // Another publisher may have replaced the rejected pin while we waited.
+            // Recheck the current pin under the gate before selecting and publishing.
             if (_shared.TryGetValue(readFrom, out shared))
             {
-                if (await IsPinCurrentAsync(router, shared, cancellationToken, observation).ConfigureAwait(false))
-                    return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation).ConfigureAwait(false);
-                _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+                var pinned = await TryReuseSharedPinAsync(router, readFrom, shared, cancellationToken, observation,
+                    readyOnly, reselectUnavailablePin).ConfigureAwait(false);
+                if (pinned is not null) return pinned;
                 observation.UseEndpoint(null);
             }
 
-            var selection = await router.SelectAsync(readFrom, cancellationToken, observation).ConfigureAwait(false);
+            var selection = await router.SelectAsync(readFrom, cancellationToken, observation, readyOnly: readyOnly).ConfigureAwait(false);
             _shared[readFrom] = new ReadAffinity { Replica = selection.Replica, Primary = selection.Primary, ReadFrom = readFrom };
             return selection.Connection;
         }
@@ -151,11 +161,38 @@ internal sealed class ReadCursorAffinity
     private static RespireConnectionException CursorLost()
         => new("The server that issued this cursor left the read topology or failed. Restart the scan with cursor 0.");
 
+    private async ValueTask<RespireConnection?> TryReuseSharedPinAsync(
+        ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity shared, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation, bool readyOnly, bool reselectUnavailablePin)
+    {
+        if (reselectUnavailablePin)
+        {
+            if (shared.Replica is { IsCoolingDown: true }) return null;
+            if (shared.Primary is { } primary)
+            {
+                // A fresh queued scan must not wait for primary discovery while a replica
+                // is usable. Select from this ready snapshot without entering EnsureConnectedAsync;
+                // a concurrent retirement/socket loss is handled by normal backlog admission.
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!router.Core.TryGetReadyPrimaryMultiplexer(out var current)
+                    || !ReferenceEquals(current, primary) || !primary.IsConnected) return null;
+                observation.UseEndpoint(primary.ActiveConnectionEndpoint, cancellationToken);
+                var zone = ReadFallbackPolicy.UsesAvailabilityZone(shared.ReadFrom)
+                    ? router.Core.Options.ClientAvailabilityZone : null;
+                return zone is null ? primary.GetConnection() : primary.GetConnectionForZone(zone);
+            }
+        }
+        if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
+            return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
+        _shared.TryRemove(new KeyValuePair<RespireReadFrom, ReadAffinity>(readFrom, shared));
+        return null;
+    }
+
     private async ValueTask<RespireConnection> GetSharedPinnedConnectionAsync(
         ReadEndpointRouter router, RespireReadFrom readFrom, ReadAffinity shared, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, bool readyOnly = false)
     {
-        try { return await GetPinnedConnectionAsync(router, shared, cancellationToken, observation).ConfigureAwait(false); }
+        try { return await GetPinnedConnectionAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false); }
         catch (Exception error) when (ReadEndpointRouter.IsUnavailable(error, cancellationToken))
         {
             // The issuing server failed, so its cursors are lost. A fresh cursor reselects.
@@ -166,7 +203,7 @@ internal sealed class ReadCursorAffinity
 
     private static async ValueTask<bool> IsPinCurrentAsync(
         ReadEndpointRouter router, ReadAffinity affinity, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, bool readyOnly = false)
     {
         if (affinity.Replica is { } replica)
         {
@@ -177,6 +214,11 @@ internal sealed class ReadCursorAffinity
         }
         // An unreachable or replaced primary invalidates the pin so the policy can reselect.
         var core = router.Core;
+        if (readyOnly)
+        {
+            if (!core.TryGetReadyPrimaryMultiplexer(out var ready)) throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+            return ReferenceEquals(ready, affinity.Primary);
+        }
         // Without Sentinel the pinned primary is the active endpoint. Sentinel records each
         // resolved primary before dialling it and clears the endpoint while querying Sentinels.
         var pinned = core.Sentinel is null ? core.Multiplexer.ActiveConnectionEndpoint : (RespireEndpoint?)null;
@@ -196,7 +238,7 @@ internal sealed class ReadCursorAffinity
     // The pinned node is known before any connection work, so its failure names it.
     private static async ValueTask<RespireConnection> GetPinnedConnectionAsync(
         ReadEndpointRouter router, ReadAffinity affinity, CancellationToken cancellationToken,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, bool readyOnly = false)
     {
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(affinity.ReadFrom)
             ? router.Core.Options.ClientAvailabilityZone : null;
@@ -208,13 +250,21 @@ internal sealed class ReadCursorAffinity
             if (!router.IsCurrent(replica))
                 throw new RespireConnectionException(
                     $"Read replica {replica.Endpoint} that issued the cursor was removed from the topology.");
-            return await replica.GetConnectionAsync(cancellationToken, preferredZone).ConfigureAwait(false);
+            return await replica.GetConnectionAsync(cancellationToken, preferredZone, readyOnly).ConfigureAwait(false);
         }
 
         var core = router.Core;
         if (affinity.Primary is { } pinnedPrimary) observation.UseEndpoint(pinnedPrimary.ActiveConnectionEndpoint, cancellationToken);
-        await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
-        var multiplexer = core.Multiplexer;
+        RespireConnectionMultiplexer multiplexer;
+        if (readyOnly)
+        {
+            if (!core.TryGetReadyPrimaryMultiplexer(out multiplexer)) throw new ReadEndpointRouter.BacklogSelectionRequiredException();
+        }
+        else
+        {
+            await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+            multiplexer = core.Multiplexer;
+        }
         if (!ReferenceEquals(multiplexer, affinity.Primary))
         {
             // Connecting recorded the replacement generation; the failure belongs to the cursor's owner.

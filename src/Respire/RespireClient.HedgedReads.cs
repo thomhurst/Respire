@@ -10,40 +10,92 @@ public sealed partial class RespireClient
     private async ValueTask<RespValue> SendHedgedReadAsync<TCommand>(string operation, TCommand command,
         HedgedReadBudget budget, RespireCommandFlags flags, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default, bool observeErrors = true,
-        RespireConnection? initialConnection = null, CommandDeadline deadline = default)
+        RespireConnection? initialConnection = null, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
     {
         var owner = observation.IsEmpty ? DispatchResponseSource<RespValue>.Start() : null;
         if (owner is not null) observation = owner.Observation;
-        var callerAttempts = observation.Attempts;
-        RespireConnection? connection = null;
         Exception? failure = null;
-        var sent = false;
-        var race = new HedgeRace();
-        if (_core.Cluster is not null && _core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
-            deadline = CreateCircuitDeadline(deadline);
-        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
+        if (_core.Cluster is null)
+            commandDeadline = CreateReplicaDispatchDeadline(commandDeadline);
+        else if (_core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+            commandDeadline = CreateCircuitDeadline(commandDeadline);
+        var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, commandDeadline, _core.Options.CommandTimeout);
         try
         {
             var cluster = _core.Cluster;
             var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
             if (initialConnection is null && cluster?.ShouldBacklog(slot, _readFrom) == true)
                 return await SendBackloggedHedgedClusterAsync(operation, command, budget, flags, cancellationToken,
-                    observation, slot, deadline).ConfigureAwait(false);
+                    observation, slot, commandDeadline).ConfigureAwait(false);
+            RespireConnection? connection;
             try
             {
                 connection = initialConnection ?? (cluster is null
-                    ? await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false)
+                    ? await SelectReplicaForDispatchAsync(operation, cancellationToken, commandDeadline, observation).ConfigureAwait(false)
                     : await cluster.GetReadConnectionAsync(slot, _readFrom, backlogAcquisition.Token, observation).ConfigureAwait(false));
             }
             catch (RespireConnectionException error) when (initialConnection is null
                 && error is not RespireReconnectLimitException && cluster?.ShouldBacklog(slot, _readFrom) == true)
             {
                 return await SendBackloggedHedgedClusterAsync(operation, command, budget, flags, cancellationToken,
-                    observation, slot, deadline).ConfigureAwait(false);
+                    observation, slot, commandDeadline).ConfigureAwait(false);
             }
             backlogAcquisition.CheckDeadline(operation, _core);
             backlogAcquisition.Dispose();
+            if (connection is null)
+            {
+                var queued = new BacklogCommand<TCommand>(command, operation);
+                return await RunReplicaBacklogAsync(operation, cancellationToken, commandDeadline,
+                    (ready, deadline) => SendSelectedHedgedReadAsync(operation, queued, budget, flags, cancellationToken,
+                        observation, ready, deadline), observation).ConfigureAwait(false);
+            }
+            return await SendSelectedHedgedReadAsync(operation, command, budget, flags, cancellationToken,
+                observation, connection, commandDeadline).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (backlogAcquisition.IsCallerCancellation(error))
+        {
+            failure = new OperationCanceledException(error.Message, error, cancellationToken);
+            throw failure;
+        }
+        catch (OperationCanceledException error) when (backlogAcquisition.IsDeadlineCancellation(error))
+        {
+            failure = backlogAcquisition.CreateTimeout(operation, _core, cause: error);
+            throw failure;
+        }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
+        finally
+        {
+            backlogAcquisition.Dispose();
+            if (owner is not null)
+            {
+                if (observeErrors && failure is not null) owner.Fail(failure);
+                else owner.CompleteInternal();
+            }
+        }
+    }
+
+    // Queue admission never recurses through this dispatcher. Keeping the selected path
+    // separate prevents NativeAOT from expanding BacklogCommand<BacklogCommand<...>>.
+    private async ValueTask<RespValue> SendSelectedHedgedReadAsync<TCommand>(string operation, TCommand command,
+        HedgedReadBudget budget, RespireCommandFlags flags, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation, RespireConnection connection, CommandDeadline commandDeadline)
+        where TCommand : struct, IRespCommand
+    {
+        // Cold acquisition keeps its connection budget, but both legs must share the
+        // command budget once selected. Preserve any deadline already spent in recovery.
+        if (_core.Cluster is null) commandDeadline = CreateCircuitDeadline(commandDeadline);
+        var callerAttempts = observation.Attempts;
+        var sent = false;
+        var race = new HedgeRace();
+        try
+        {
+            var cluster = _core.Cluster;
+            var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
             // Selection belongs to the caller, before either independently owned hedge leg starts.
             callerAttempts = observation.Attempts;
             budget.RecordRead();
@@ -59,7 +111,7 @@ public sealed partial class RespireClient
                 try
                 {
                     return await SendHedgedReadLegAsync(operation, command, connection, flags, cancellationToken,
-                        observation: race.OriginalObservation, deadline: deadline).ConfigureAwait(false);
+                        observation: race.OriginalObservation, commandDeadline: commandDeadline).ConfigureAwait(false);
                 }
                 finally { observation.CopyCompletedAttempts(callerAttempts, race.OriginalObservation); }
             }
@@ -69,7 +121,7 @@ public sealed partial class RespireClient
             var snapshot = SnapshotCommand.Create(in command, captureCacheMetadata: _core.ClientCache is not null);
             var originalRoute = cluster is null ? null : new HedgeOriginalRoute(connection);
             var pending = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken, originalRoute,
-                observation: race.OriginalObservation, deadline: deadline);
+                observation: race.OriginalObservation, commandDeadline: commandDeadline);
             if (pending.IsCompletedSuccessfully)
             {
                 observation.CopyCompletedAttempts(callerAttempts, race.OriginalObservation);
@@ -116,7 +168,7 @@ public sealed partial class RespireClient
                         try
                         {
                             race.Hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken,
-                                originalRoute, isHedge: true, observation: race.HedgeObservation, deadline: deadline).AsTask();
+                                originalRoute, isHedge: true, observation: race.HedgeObservation, commandDeadline: commandDeadline).AsTask();
                         }
                         catch (Exception error) when (!IsFatalHedgeFailure(error))
                         {
@@ -131,42 +183,24 @@ public sealed partial class RespireClient
             race.Returned = result.Winner;
             return result.Response;
         }
-        catch (Exception error)
-        {
-            if (error is OperationCanceledException canceled)
-            {
-                if (backlogAcquisition.IsCallerCancellation(canceled))
-                    error = new OperationCanceledException(canceled.Message, canceled, cancellationToken);
-                else if (backlogAcquisition.IsDeadlineCancellation(canceled))
-                    error = backlogAcquisition.CreateTimeout(operation, _core, cause: canceled);
-            }
-            failure = error;
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
-            throw;
-        }
         finally
         {
-            backlogAcquisition.Dispose();
             race.DisposeLosers();
-            if (connection is not null) RespireTelemetry.RecordHedgeExtraLoad(connection, sent);
-            if (owner is not null)
-            {
-                if (observeErrors && failure is not null) owner.Fail(failure);
-                else owner.CompleteInternal();
-            }
+            RespireTelemetry.RecordHedgeExtraLoad(connection, sent);
         }
     }
 
     private ValueTask<RespValue> SendHedgedReadLegAsync<TCommand>(string operation, TCommand command,
         RespireConnection connection, RespireCommandFlags flags, CancellationToken cancellationToken,
         HedgeOriginalRoute? originalRoute = null, bool isHedge = false,
-        RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
+        RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
         => _core.Cluster is { } cluster
             ? SendClusterAsync(operation, cluster, command, cancellationToken,
                 noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect), initialConnection: connection, allowReadFrom: true,
-                hedgeOriginalRoute: originalRoute, isHedge: isHedge, observation: observation, retryDeadline: deadline)
-            : SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);
+                hedgeOriginalRoute: originalRoute, isHedge: isHedge, observation: observation, retryDeadline: commandDeadline)
+            : SendOnConnectionAsync(operation, connection, command, cancellationToken,
+                commandDeadline: commandDeadline, observation: observation);
 
     private sealed class HedgeOriginalRoute(RespireConnection connection)
     {

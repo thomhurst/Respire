@@ -206,7 +206,8 @@ Public interface compatibility and the post-2.0 extension policy are described i
   are not replayed by the backlog. Sentinel primary recovery uses a router-owned FIFO that
   survives generation replacement and validates the elected primary before dispatch.
   Cluster queues are independent per slot and reselect owners and read policies during recovery.
-  Standalone/Sentinel replica routing remains tracked in [#1736](https://github.com/thomhurst/Respire/issues/1736).
+  Standalone and Sentinel replica reads have a shared router FIFO that reapplies the read policy,
+  membership and ROLE validation after recovery, including procedures, streams and hedged reads.
 - Opt-in [command retry policies](./guides/command-retries) through `RespireOptions.RetryPolicy`.
   Each command has a retry category that decides whether it may be resent after it might have run.
   Retries cover immediate commands, raw/script/function requests with a declared category,

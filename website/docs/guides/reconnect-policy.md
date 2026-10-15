@@ -118,13 +118,43 @@ work waiting on the retired generation. Strict replica reads remain on replicas;
 is allowed only by the configured read policy. Tracked reads retain their tracking prelude and
 mutations retain their cache fences. Circuits still govern acquisition and dispatch.
 
-Standalone/Sentinel replica routing is tracked in [#1736](https://github.com/thomhurst/Respire/issues/1736).
-Initial connection setup, dedicated
+Non-Cluster replica reads use the separate router backlog described below. Initial connection setup, dedicated
 connections, watched transactions, import sessions and server-local cursor continuations do not
 join this backlog. The specialized `Locks` expiry-update and release paths also retain their
 existing acquisition and recovery rules and have no ordering guarantee relative to queued
 commands. In particular, `Locks.ResetExpiryAsync` can fail during replacement even with `Queue`
 selected. Lock acquisition (`SET NX PX`) and owner-token reads use ordinary queued command dispatch.
+
+### Replica-read backlog
+
+After a non-Cluster read router has successfully selected a connection, definitely-unsent reads
+can wait in one bounded FIFO shared by its read-policy views. This applies to standalone and
+Sentinel replicas, typed/raw reads, read-only scripts and functions, bulk streams, fire-and-forget,
+fresh cursor reads and the initial selection for hedged reads. `BacklogPolicy` and `BacklogCapacity`
+have the same defaults, timeout, cancellation and overflow behavior as the primary backlog.
+
+Each head reselects using its original `ReadFrom` policy and current membership. Selection still
+validates `ROLE`, respects failed-replica cooldown, Nearest and availability-zone preferences, and
+uses primary fallback only when the policy permits it. Sentinel membership replacement does not
+discard the queue or pin work to an obsolete replica. New arrivals stay behind a draining head,
+even if a ready connection becomes available; primary-only operations use their own dispatch path.
+
+An exhausted candidate does not prevent another eligible candidate from serving the read. When
+all eligible candidates report terminal exhaustion, the read fails. Initial acquisition failures,
+server-local cursor continuations and dedicated/blocking rentals retain their existing behavior.
+Strict `Replica` reads fail immediately when no standalone replicas are configured; only Sentinel
+discovery can populate an empty replica set during recovery.
+
+Standalone reads wait for eligible connection recovery to succeed or become terminal. With no
+command timeout, that wait can be indefinite while a route remains nonterminal, for example with
+unlimited reconnect attempts or repeated ROLE failures. Later reads remain behind the FIFO head.
+Set a command timeout or cancel the caller to bound that wait. Sentinel heads also have a
+per-command discovery retry budget from `ReconnectPolicy`. Strict replica heads wait through
+cooldown without consuming attempts, while still allowing due Sentinel discovery. Policies that
+permit primary fallback continue to attempt that primary and count those selection rounds.
+
+The backlog never replays an accepted read or an optional hedge. A streamed read releases the
+drain when its stream is returned; the consumer still owns reading and disposing that stream.
 
 Other behavior, with or without a reconnect policy:
 

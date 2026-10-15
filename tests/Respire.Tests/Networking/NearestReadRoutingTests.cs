@@ -176,7 +176,11 @@ public class NearestReadRoutingTests
         await using var replica = Server("replica");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port) : Reply(command, "primary");
-        var options = Options(primary, replica) with { CommandTimeout = null, ConnectionIdleReadTimeout = null };
+        var options = Options(primary, replica) with
+        {
+            BacklogPolicy = RespireBacklogPolicy.FailFast, // Assert selection failure while every probe is occupied.
+            CommandTimeout = null, ConnectionIdleReadTimeout = null,
+        };
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
         await using var client = await RespireClient.ConnectAsync(options);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -327,7 +331,18 @@ public class NearestReadRoutingTests
         if (cluster) options = options with { UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null };
         await using var client = await RespireClient.ConnectAsync(options);
         // Connection handshakes and topology discovery are setup, not sampling wait time.
-        // Warm every transport through ordinary replica reads, leaving latency samples cold.
+        // Acquire every transport before dispatch: once one replica is ready, ordinary reads
+        // can keep using it while skipping cold alternatives. Leave latency samples cold.
+        var slot = ClusterHash.GetSlot("key");
+        var connections = new HashSet<int>();
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var connection = cluster
+                ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.Replica, default, observation: default)
+                : await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
+            connections.Add(connection.Port);
+        }
+        await Assert.That(connections).IsEquivalentTo(new[] { first.Port, second.Port, third.Port });
         await using var replicas = client.WithReadFrom(RespireReadFrom.Replica);
         var warmed = new HashSet<string?>();
         for (var attempt = 0; attempt < 30 && warmed.Count < 3; attempt++)
@@ -347,7 +362,6 @@ public class NearestReadRoutingTests
         }, static () => 0);
         if (cluster) client.Core.Cluster!.NearestLatency = sampler;
         else client.Core.ReadRouter.NearestLatency = sampler;
-        var slot = ClusterHash.GetSlot("key");
         var primaryConnection = cluster
             ? client.Core.Cluster!.GetKnownSlotOwner(slot)!.GetConnection(slot)
             : client.Core.Multiplexer.GetConnection();
@@ -483,7 +497,10 @@ public class NearestReadRoutingTests
         var wrongRole = false;
         replica.ReplyOverride = (_, command) => command == "ROLE" && Volatile.Read(ref wrongRole)
             ? "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray() : Reply(command, "replica");
-        await using var client = RespireClient.Create(Options(primary, replica) with { ReplicaRefreshInterval = TimeSpan.Zero });
+        await using var client = RespireClient.Create(Options(primary, replica) with
+        {
+            ReplicaRefreshInterval = TimeSpan.Zero, BacklogPolicy = RespireBacklogPolicy.FailFast,
+        });
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);

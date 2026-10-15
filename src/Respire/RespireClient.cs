@@ -2863,18 +2863,42 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         // server. A fresh circuit-admitted scan instead reselects below, so the pin follows the
         // server that answers.
         var pinned = CursorCommandMetadata.HasServerCursor(in command);
-        var connection = readKind == ReadCommandKind.CursorRead
+        var cursorRead = readKind == ReadCommandKind.CursorRead;
+        var acquirePinned = cursorRead && (continuation || affinity?.IsPinned == true);
+        // Continuations cannot enter the recovery FIFO. Their pinned acquisition keeps
+        // its existing caller cancellation, and transport admission starts the deadline.
+        var readDeadline = acquirePinned ? default : CreateReplicaDispatchDeadline();
+        var connection = acquirePinned
             ? await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity,
                 affinity is null && continuation, cancellationToken, observation).ConfigureAwait(false)
-            : await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+            : await SelectReplicaForDispatchAsync(operation, cancellationToken, readDeadline, observation, cursorRead, affinity).ConfigureAwait(false);
+        if (connection is null)
+        {
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
+            return await RunReplicaBacklogAsync(operation, cancellationToken, readDeadline,
+                (ready, deadline) => SendSelectedReadFromAsync(operation, ready, snapshot, cancellationToken,
+                    deadline, pinned, continuation, affinity, observation),
+                observation, cursorRead, affinity).ConfigureAwait(false);
+        }
+        return await SendSelectedReadFromAsync(operation, connection, command, cancellationToken,
+            readDeadline, pinned, continuation, affinity, observation).ConfigureAwait(false);
+    }
+
+    // Both direct selection and a dequeued fresh scan retain routing ownership until
+    // transport acceptance. Retirement must update the cursor pin on either path.
+    private ValueTask<RespValue> SendSelectedReadFromAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
+        CommandDeadline readDeadline, bool pinned, bool continuation, ReadAffinity? affinity,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
         if (pinned && !continuation && UsesCircuitResponsePath(operation, pinToConnection: false))
         {
             // One telemetry scope and one command deadline span the reselection.
             var telemetry = RespireTelemetry.IsOperationEnabled(operation)
                 ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database)
                 : default;
-            return await SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking: false,
-                commandDeadline: default, allowStreamingConnectionReroute: false, observation, telemetry,
+            return SendCircuitResponseAsync(operation, connection, command, cancellationToken, sendAsking: false,
+                commandDeadline: readDeadline, allowStreamingConnectionReroute: false, observation, telemetry,
                 reselect: token =>
                 {
                     // Retirement rejected the fresh scan before dispatch. No server issued its cursor
@@ -2886,10 +2910,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     }
                     return _core.ReadRouter.GetCursorConnectionAsync(_readFrom, affinity, isContinuation: false,
                         token, observation);
-                }).ConfigureAwait(false);
+                });
         }
-        return await SendOnConnectionAsync(operation, connection, command, cancellationToken,
-            allowStreamingConnectionReroute: !pinned, observation: observation).ConfigureAwait(false);
+        return SendOnConnectionAsync(operation, connection, command, cancellationToken,
+            commandDeadline: readDeadline, allowStreamingConnectionReroute: !pinned, observation: observation);
     }
 
     /// <summary>
@@ -3096,9 +3120,19 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 }
 
                 RespireConnection? connection;
+                var readDeadline = default(CommandDeadline);
                 if (allowReadFrom && command.ReadKind != ReadCommandKind.None && _readFrom != RespireReadFrom.Primary)
                 {
-                    connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+                    readDeadline = CreateReplicaDispatchDeadline();
+                    connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, readDeadline, observation).ConfigureAwait(false);
+                    if (connection is null)
+                    {
+                        var snapshot = new BacklogCommand<TCommand>(command, operation);
+                        return await RunReplicaBacklogAsync(operation, cancellationToken, readDeadline,
+                            (ready, deadline) => SendOnConnectionAsync(operation, ready,
+                                new MutationCommand<BacklogCommand<TCommand>>(snapshot, mutationFence), cancellationToken,
+                                storedProcedureName, commandDeadline: deadline, observation: observation), observation).ConfigureAwait(false);
+                    }
                 }
                 else
                 {
@@ -3118,7 +3152,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                             storedProcedureName, commandDeadline: originalDeadline, observation: observation), observation).ConfigureAwait(false);
                 }
                 return await SendMutationOnConnectionAsync(
-                        operation, connection, command, mutationFence, cancellationToken, storedProcedureName, observation: observation)
+                        operation, connection, command, mutationFence, cancellationToken, storedProcedureName,
+                        commandDeadline: readDeadline, observation: observation)
                     .ConfigureAwait(false);
             }
             finally
@@ -3699,9 +3734,33 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         string? storedProcedureName, RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+        if (CursorCommandMetadata.IsServerCursorContinuation(in command))
+        {
+            var pinned = await _core.ReadRouter.GetCursorConnectionAsync(_readFrom, null, true,
+                cancellationToken, observation).ConfigureAwait(false);
+            if (_core.Circuits is not null)
+                await SendFireAndForgetOnConnectionAsync(operation, pinned, command, cancellationToken,
+                    storedProcedureName, observation).ConfigureAwait(false);
+            else
+                await SendFireAndForgetOnConnectionUncheckedAsync(operation, pinned, command, cancellationToken,
+                    storedProcedureName, pinToConnection: true, observation: observation).ConfigureAwait(false);
+            return;
+        }
+        var deadline = CreateReplicaDispatchDeadline();
+        var connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, deadline, observation).ConfigureAwait(false);
+        if (connection is null)
+        {
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
+            await RunReplicaBacklogAsync(operation, cancellationToken, deadline, async (ready, originalDeadline) =>
+            {
+                await SendFireAndForgetOnConnectionAsync(operation, ready, snapshot, cancellationToken,
+                    storedProcedureName, observation, originalDeadline).ConfigureAwait(false);
+                return true;
+            }, observation).ConfigureAwait(false);
+            return;
+        }
         await SendFireAndForgetOnConnectionAsync(
-                operation, connection, command, cancellationToken, storedProcedureName, observation)
+                operation, connection, command, cancellationToken, storedProcedureName, observation, deadline)
             .ConfigureAwait(false);
     }
 
@@ -3989,9 +4048,17 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        var connection = await _core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+        var deadline = CreateReplicaDispatchDeadline();
+        var connection = await SelectReplicaForDispatchAsync(operation, cancellationToken, deadline, observation).ConfigureAwait(false);
+        if (connection is null)
+        {
+            var snapshot = new BacklogCommand<TCommand>(command, operation);
+            return await RunReplicaBacklogAsync(operation, cancellationToken, deadline,
+                (ready, originalDeadline) => SendBulkStreamOnConnectionAsync(operation, ready, snapshot,
+                    cancellationToken, observation: observation, commandDeadline: originalDeadline), observation).ConfigureAwait(false);
+        }
         return await SendBulkStreamOnConnectionAsync(operation, connection, command, cancellationToken,
-            observation: observation).ConfigureAwait(false);
+            observation: observation, commandDeadline: deadline).ConfigureAwait(false);
     }
 
 #if NET
@@ -4327,14 +4394,15 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         string operation, RespireConnection connection, in TCommand command,
         ClientSideCacheCoordinator.MutationFence mutationFence, CancellationToken cancellationToken,
         string? storedProcedureName = null, bool sendAsking = false,
-        bool allowStreamingConnectionReroute = true, RespireTelemetry.ErrorObservation observation = default)
+        bool allowStreamingConnectionReroute = true, RespireTelemetry.ErrorObservation observation = default,
+        CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
         => mutationFence.IsRequired
             ? SendOnConnectionAsync(operation, connection, new MutationCommand<TCommand>(command, mutationFence),
                 cancellationToken, storedProcedureName, sendAsking,
-                allowStreamingConnectionReroute: allowStreamingConnectionReroute, observation: observation)
+                commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute, observation: observation)
             : SendOnConnectionAsync(operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
-                allowStreamingConnectionReroute: allowStreamingConnectionReroute, observation: observation);
+                commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute, observation: observation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -5121,8 +5189,22 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireConnection? connection = null;
         try
         {
+            var readDeadline = default(CommandDeadline);
             if (script.IsReadOnly && _readFrom != RespireReadFrom.Primary)
-                connection = await core.ReadRouter.GetConnectionAsync(_readFrom, cancellationToken, observation).ConfigureAwait(false);
+            {
+                readDeadline = CreateReplicaDispatchDeadline();
+                connection = await SelectReplicaForDispatchAsync(script.EvalShaOperation, cancellationToken, readDeadline, observation).ConfigureAwait(false);
+                if (connection is null)
+                {
+                    for (var i = 0; i < tail.Length; i++) tail[i] = tail[i].Snapshot();
+                    return await RunReplicaBacklogAsync(script.EvalShaOperation, cancellationToken, readDeadline,
+                        (ready, originalDeadline) =>
+                        {
+                            connection = ready;
+                            return SendSelectedScriptAsync(originalDeadline);
+                        }, observation).ConfigureAwait(false);
+                }
+            }
             else
             {
                 if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
@@ -5142,7 +5224,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         return SendSelectedScriptAsync(originalDeadline);
                     }, observation).ConfigureAwait(false);
             }
-            return await SendSelectedScriptAsync(default).ConfigureAwait(false);
+            return await SendSelectedScriptAsync(readDeadline).ConfigureAwait(false);
 
             async ValueTask<RespireResult> SendSelectedScriptAsync(CommandDeadline deadline)
             {
