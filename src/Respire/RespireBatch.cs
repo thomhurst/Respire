@@ -332,15 +332,20 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
 
             RespireConnection? connection = null;
-            if (_client.UsesStandaloneBacklog && ConnectionPolicy.PinnedConnection is null
+            if (_client.UsesPrimaryBacklog && ConnectionPolicy.PinnedConnection is null
                 && !_ops.Exists(static op => op.IsCursorRead))
             {
                 try
                 {
-                    connection = _client.SelectStandaloneConnection(cancellationToken);
+                    connection = _client.SelectPrimaryBacklogConnection(cancellationToken);
                     if (connection is null)
                     {
+                        if (core.Sentinel is not null)
+                            telemetry = RespireTelemetry.StartBatchOperation("PIPELINE", _ops, static op => op.Operation,
+                                core.Options.Database, out telemetryOperation, sentinelStarted);
                         connection = await RunBackloggedBatchAsync(cancellationToken).ConfigureAwait(false);
+                        if (core.Sentinel is not null && connection is not null)
+                            telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                         var queuedFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
                         telemetry.Complete(core, telemetryOperation, error: queuedFailures is { Length: > 0 } ? queuedFailures[0].Error : null,
                             connection: connection, batchSize: _ops.Count == 1 ? null : _ops.Count);
@@ -431,7 +436,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         try
         {
             foreach (var op in _ops) op.Snapshot();
-            return await _client.RunStandaloneBacklogAsync<RespireConnection?>("PIPELINE", cancellationToken, deadline,
+            return await _client.RunPrimaryBacklogAsync<RespireConnection?>("PIPELINE", cancellationToken, deadline,
                 async (connection, originalDeadline) =>
                 {
                     if (_client.Core.CommandRetries is not null
@@ -439,7 +444,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         return await RunRetryableBatchAsync(cancellationToken, initialConnection: connection,
                             deadline: originalDeadline).ConfigureAwait(false);
                     return await RunStandaloneBatchAsync(connection, cancellationToken, originalDeadline).ConfigureAwait(false);
-                }).ConfigureAwait(false);
+                }, _ops[0].Observation).ConfigureAwait(false);
         }
         finally { foreach (var op in _ops) op.ReleaseSnapshot(); }
     }

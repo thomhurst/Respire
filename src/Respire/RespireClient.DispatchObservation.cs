@@ -122,7 +122,7 @@ public sealed partial class RespireClient
                 || !core.TryGetReadyPrimaryMultiplexer(out var multiplexer)) return false;
             ObjectDisposedException.ThrowIf(core.Disposed, this);
             endpoint = multiplexer.ActiveConnectionEndpoint;
-            connection = (UsesStandaloneBacklog ? SelectStandaloneConnection(default) : multiplexer.GetConnection())!;
+            connection = (UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(default) : multiplexer.GetConnection())!;
             return connection is not null;
         }
         catch (Exception error)

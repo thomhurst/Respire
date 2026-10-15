@@ -3282,7 +3282,9 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    public async Task AReplicaReplacementIsNeverPublishedForApplicationWrites()
+    [Arguments(RespireBacklogPolicy.Queue)]
+    [Arguments(RespireBacklogPolicy.FailFast)]
+    public async Task AReplicaReplacementIsNeverPublishedForApplicationWrites(RespireBacklogPolicy backlogPolicy)
     {
         var rejectWrites = false;
         await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
@@ -3292,14 +3294,21 @@ public partial class SentinelRoutingTests
         await using var promoted = Primary();
         var primaryPort = oldPrimary.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
-        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            BacklogPolicy = backlogPolicy,
+            // Bound this recovery episode so Queue reports exhaustion after invalid
+            // ROLE responses. Both policies must reject the replica before any write.
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
+        });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         Volatile.Write(ref primaryPort, replica.Port);
         Volatile.Write(ref rejectWrites, true);
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
         await Assert.That(async () => await client.SetAsync("never", "value").AsTask().WaitAsync(Limit))
             .Throws<RespireConnectionException>();
-        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["ROLE"]);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(
+            backlogPolicy == RespireBacklogPolicy.Queue ? new[] { "ROLE", "ROLE" } : new[] { "ROLE" });
         await Assert.That(client.IsConnected).IsFalse();
         Volatile.Write(ref primaryPort, promoted.Port);
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);

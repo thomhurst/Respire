@@ -43,9 +43,9 @@ public sealed partial class RespireClient
         RespireConnection? connection;
         try
         {
-            connection = UsesStandaloneBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+            connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
                 && !CursorCommandMetadata.IsServerCursorContinuation(in command)
-                ? SelectStandaloneConnection(cancellationToken)
+                ? SelectPrimaryBacklogConnection(cancellationToken)
                 : GetCircuitAwareConnection(multiplexer, cancellationToken);
         }
         catch (Exception error)
@@ -91,7 +91,7 @@ public sealed partial class RespireClient
         {
             var deadline = CreateCircuitDeadline();
             var snapshot = new BacklogCommand<TCommand>(command);
-            return await RunStandaloneBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
+            return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline, (connection, originalDeadline) =>
             {
                 dispatched = true;
                 if (sender.ObserveDuration && _core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
@@ -102,7 +102,7 @@ public sealed partial class RespireClient
                         cancellationToken, sender, cache!, mutationFence, durationStarted, observation, originalDeadline);
                 return sender.Send(connection, operation, snapshot, cancellationToken, durationStarted, originalDeadline,
                     errorObservation: observation);
-            }).ConfigureAwait(false);
+            }, observation).ConfigureAwait(false);
         }
         catch (Exception error)
         {

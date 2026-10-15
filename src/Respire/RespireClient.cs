@@ -2385,18 +2385,18 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         {
             if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                 observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
-            await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+            await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
             try
             {
-                var connection = UsesStandaloneBacklog ? SelectStandaloneConnection(cancellationToken)
+                var connection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken)
                     : GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
                 if (connection is null)
                 {
                     var deadline = CreateCircuitDeadline();
                     var snapshot = new BacklogCommand<TCommand>(command);
-                    response = await RunStandaloneBacklogAsync(operation, cancellationToken, deadline,
+                    response = await RunPrimaryBacklogAsync(operation, cancellationToken, deadline,
                         (ready, originalDeadline) => SendTrackedOnConnectionAsync(operation, ready, snapshot,
-                            cancellationToken, sendAsking: false, track, observation, originalDeadline)).ConfigureAwait(false);
+                            cancellationToken, sendAsking: false, track, observation, originalDeadline), observation).ConfigureAwait(false);
                 }
                 else response = await SendTrackedOnConnectionAsync(
                         operation, connection, command, cancellationToken, sendAsking: false, track, observation).ConfigureAwait(false);
@@ -2945,7 +2945,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var core = _core;
         if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
             observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
-        await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+        await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation,
+            !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+                && !CursorCommandMetadata.IsServerCursorContinuation(in command)).ConfigureAwait(false);
         return await SendOnReadyPrimaryAsync(operation, core.Multiplexer, command, cancellationToken, observation)
             .ConfigureAwait(false);
     }
@@ -2999,18 +3001,18 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 {
                     if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                         observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
-                    await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
-                    connection = UsesStandaloneBacklog ? SelectStandaloneConnection(cancellationToken)
+                    await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+                    connection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken)
                         : GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
                 }
                 if (connection is null)
                 {
                     var deadline = CreateCircuitDeadline();
                     var snapshot = new BacklogCommand<TCommand>(command);
-                    return await RunStandaloneBacklogAsync(operation, cancellationToken, deadline,
+                    return await RunPrimaryBacklogAsync(operation, cancellationToken, deadline,
                         (ready, originalDeadline) => SendOnConnectionAsync(operation, ready,
                             new MutationCommand<BacklogCommand<TCommand>>(snapshot, mutationFence), cancellationToken,
-                            storedProcedureName, commandDeadline: originalDeadline, observation: observation)).ConfigureAwait(false);
+                            storedProcedureName, commandDeadline: originalDeadline, observation: observation), observation).ConfigureAwait(false);
                 }
                 return await SendMutationOnConnectionAsync(
                         operation, connection, command, mutationFence, cancellationToken, storedProcedureName, observation: observation)
@@ -3459,7 +3461,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
             if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                 observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
-            await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+            await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation,
+                !CursorCommandMetadata.IsServerCursorContinuation(in command)).ConfigureAwait(false);
             await SendPrimaryFireAndForgetAsync(operation, new MutationCommand<TCommand>(command, mutationFence),
                 cancellationToken, storedProcedureName, observation, awaitReply: !RespireCommand.MayCloseWithoutReply(operation))
                 .ConfigureAwait(false);
@@ -3558,7 +3561,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         var core = _core;
         if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
             observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
-        await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+        await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation,
+            !CursorCommandMetadata.IsServerCursorContinuation(in command)).ConfigureAwait(false);
         await SendPrimaryFireAndForgetAsync(operation, command, cancellationToken, storedProcedureName, observation)
             .ConfigureAwait(false);
     }
@@ -3814,7 +3818,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
-        await _core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+        await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
         return await SendPrimaryBulkStreamAsync(operation, command, cancellationToken, observation).ConfigureAwait(false);
     }
 
@@ -4908,20 +4912,20 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             {
                 if (!cancellationToken.IsCancellationRequested && core.Sentinel is null)
                     observation.UseEndpoint(core.Multiplexer.ActiveConnectionEndpoint, cancellationToken);
-                await core.EnsureConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
-                connection = UsesStandaloneBacklog ? SelectStandaloneConnection(cancellationToken)
+                await EnsurePrimaryDispatchConnectedAsync(cancellationToken, observation).ConfigureAwait(false);
+                connection = UsesPrimaryBacklog ? SelectPrimaryBacklogConnection(cancellationToken)
                     : GetCircuitAwareConnection(core.Multiplexer, cancellationToken);
             }
             if (connection is null)
             {
                 var deadline = CreateCircuitDeadline();
                 for (var i = 0; i < tail.Length; i++) tail[i] = tail[i].Snapshot();
-                return await RunStandaloneBacklogAsync(script.EvalShaOperation, cancellationToken, deadline,
+                return await RunPrimaryBacklogAsync(script.EvalShaOperation, cancellationToken, deadline,
                     (ready, originalDeadline) =>
                     {
                         connection = ready;
                         return SendSelectedScriptAsync(originalDeadline);
-                    }).ConfigureAwait(false);
+                    }, observation).ConfigureAwait(false);
             }
             return await SendSelectedScriptAsync(default).ConfigureAwait(false);
 

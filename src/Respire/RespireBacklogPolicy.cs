@@ -1,6 +1,6 @@
 namespace Respire;
 
-/// <summary>Admission policy for definitely-unsent standalone commands during reconnect.</summary>
+/// <summary>Admission policy for definitely-unsent standalone and Sentinel primary commands during recovery.</summary>
 public enum RespireBacklogPolicy
 {
     /// <summary>Wait in a bounded FIFO, using the command's original timeout and cancellation.</summary>
