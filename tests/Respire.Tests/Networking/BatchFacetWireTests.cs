@@ -279,7 +279,7 @@ public class BatchFacetWireTests
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
         await client.Bitmaps.SetBitCountAsync("bits", 0, 8, BitIndexUnit.Bit);
         await client.HyperLogLog.AddAsync("hll", "one", "two");
-        await client.Geo.AddAsync("cities", new GeoEntry(-0.1276, 51.5072, "london"));
+        await client.Geo.AddAsync("cities", new RespireGeoEntry(-0.1276, 51.5072, "london"));
 
         var expected = server.ReceivedCommands;
 
@@ -300,7 +300,7 @@ public class BatchFacetWireTests
         _ = batch.SortedSets.CountByScore("z", 10, 50);
         _ = batch.Bitmaps.SetBitCount("bits", 0, 8, BitIndexUnit.Bit);
         _ = batch.HyperLogLog.Add("hll", "one", "two");
-        _ = batch.Geo.Add("cities", new GeoEntry(-0.1276, 51.5072, "london"));
+        _ = batch.Geo.Add("cities", new RespireGeoEntry(-0.1276, 51.5072, "london"));
         await batch.ExecuteAsync();
 
         var queued = server.ReceivedCommands.Skip(expected.Count).ToArray();
@@ -320,7 +320,7 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var instant = DateTimeOffset.FromUnixTimeMilliseconds(987654321);
 
-        await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
+        await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), RespireExpireWhen.GreaterThan);
         await client.Strings.GetAndExpireAsync("key", RespireExpiry.At(instant));
         await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "field");
         await client.Hashes.GetAndExpireAsync("hash", RespireExpiry.At(instant), "field");
@@ -328,7 +328,7 @@ public class BatchFacetWireTests
         var expected = server.ReceivedCommands.ToArray();
 
         var batch = client.CreateBatch();
-        _ = batch.Keys.Expire("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
+        _ = batch.Keys.Expire("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), RespireExpireWhen.GreaterThan);
         _ = batch.Strings.GetAndExpire("key", RespireExpiry.At(instant));
         _ = batch.Hashes.Expire("hash", RespireExpiry.Persist, "field");
         _ = batch.Hashes.GetAndExpire("hash", RespireExpiry.At(instant), "field");

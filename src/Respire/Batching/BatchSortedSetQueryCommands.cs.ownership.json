@@ -10,8 +10,8 @@
         "RandomMember(RespireKey):RespirePending<string?>",
         "RandomMember`1(RespireKey):RespirePending<T?>",
         "RandomMembers(RespireKey,long):RespirePending<string[]>",
-        "RandomMembersWithScores(RespireKey,long):RespirePending<SortedSetEntry[]>",
-        "RandomMembersWithScores`1(RespireKey,long):RespirePending<SortedSetEntry<T>[]>",
+        "RandomMembersWithScores(RespireKey,long):RespirePending<RespireSortedSetEntry[]>",
+        "RandomMembersWithScores`1(RespireKey,long):RespirePending<RespireSortedSetEntry<T>[]>",
         "RandomMembers`1(RespireKey,long):RespirePending<T[]>",
         "RemoveRangeByLex(RespireKey,RespireLexRange):RespirePending<long>"
       ],

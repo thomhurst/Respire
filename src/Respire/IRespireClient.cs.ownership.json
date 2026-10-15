@@ -26,7 +26,7 @@
         "ExecuteFireAndForgetAsync(RespireCommand,params RespireValue[]):ValueTask",
         "ExecuteFireAndForgetAsync(RespireCommandInterpolatedStringHandler,CancellationToken):ValueTask",
         "ExistsAsync(RespireKey,CancellationToken):ValueTask<bool>",
-        "ExpireAsync(RespireKey,RespireExpiry,ExpireWhen,CancellationToken):ValueTask<bool>",
+        "ExpireAsync(RespireKey,RespireExpiry,RespireExpireWhen,CancellationToken):ValueTask<bool>",
         "GetAsync`1(RespireKey,CancellationToken):ValueTask<T?>",
         "GetBytesAsync(RespireKey,CancellationToken):ValueTask<byte[]?>",
         "GetOrSetAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,RespireExpiry,CancellationToken):ValueTask<T?>",

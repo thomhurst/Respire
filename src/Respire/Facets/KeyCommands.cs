@@ -6,7 +6,7 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>Condition for key or hash field expiry updates. Redis: PEXPIRE/PEXPIREAT/HPEXPIRE/HPEXPIREAT.</summary>
-public enum ExpireWhen
+public enum RespireExpireWhen
 {
     /// <summary>Set or update the expiry unconditionally.</summary>
     Always,
@@ -92,7 +92,7 @@ public partial interface IKeyCommands
     ValueTask<bool> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when = ExpireWhen.Always,
+        RespireExpireWhen when = RespireExpireWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -249,7 +249,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     public ValueTask<bool> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when = ExpireWhen.Always,
+        RespireExpireWhen when = RespireExpireWhen.Always,
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
@@ -260,7 +260,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     private ValueTask<bool> ExpireBorrowedAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when,
+        RespireExpireWhen when,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var condition = ExpireWhenToken(when);
@@ -515,14 +515,14 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     private ValueTask<long> TouchBorrowedAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, cancellationToken, observation: observation);
 
-    internal static string? ExpireWhenToken(ExpireWhen when)
+    internal static string? ExpireWhenToken(RespireExpireWhen when)
         => when switch
         {
-            ExpireWhen.Always => null,
-            ExpireWhen.NotExists => "NX",
-            ExpireWhen.Exists => "XX",
-            ExpireWhen.GreaterThan => "GT",
-            ExpireWhen.LessThan => "LT",
+            RespireExpireWhen.Always => null,
+            RespireExpireWhen.NotExists => "NX",
+            RespireExpireWhen.Exists => "XX",
+            RespireExpireWhen.GreaterThan => "GT",
+            RespireExpireWhen.LessThan => "LT",
             _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
         };
 

@@ -249,7 +249,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             async () => _ = await resources.Client.Bitmaps.SetBitCountAsync(key, 0, 7, BitIndexUnit.Bit),
             async () => _ = await resources.Client.Bitmaps.PositionAsync(key, true),
             async () => _ = await resources.Client.Bitmaps.FieldReadOnlyAsync(
-                key, BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))));
+                key, RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))));
 
         await resources.Database.StringSetBitAsync(key, 4, false);
         await WaitForCacheEvictionAsync(resources.Client);
@@ -268,19 +268,19 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         await AssertAllAreCachedAsync(
             resources.Client,
             async () => _ = await resources.Client.Geo.DistanceAsync(
-                key, "london", "paris", Respire.GeoUnit.Kilometers),
+                key, "london", "paris", Respire.RespireGeoUnit.Kilometers),
             async () => _ = await resources.Client.Geo.HashAsync(key, "london", "missing"),
             async () => _ = await resources.Client.Geo.PositionAsync(key, "london", "missing"),
             async () => _ = await resources.Client.Geo.SearchAsync(
                 key,
                 GeoSearchOrigin.FromMember("london"),
-                GeoSearchShape.Circle(400, Respire.GeoUnit.Kilometers)));
+                RespireGeoSearchShape.Circle(400, Respire.RespireGeoUnit.Kilometers)));
 
         await resources.Database.GeoAddAsync(key, -3.1883, 55.9533, "london");
         await WaitForCacheEvictionAsync(resources.Client);
 
         var distance = await resources.Client.Geo.DistanceAsync(
-            key, "london", "paris", Respire.GeoUnit.Kilometers);
+            key, "london", "paris", Respire.RespireGeoUnit.Kilometers);
         await Assert.That(distance).IsNotNull();
         await Assert.That(distance!.Value).IsGreaterThan(800);
     }

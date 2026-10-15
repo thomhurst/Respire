@@ -6,7 +6,7 @@
       "Members": [
         "Count(RespireKey):RespirePending<long>",
         "Exists(RespireKey,string):RespirePending<bool>",
-        "Expire(RespireKey,RespireExpiry,ExpireWhen,params ReadOnlySpan<string>):RespirePending<HashFieldExpiryResult[]>",
+        "Expire(RespireKey,RespireExpiry,RespireExpireWhen,params ReadOnlySpan<string>):RespirePending<HashFieldExpiryResult[]>",
         "Expire(RespireKey,RespireExpiry,params ReadOnlySpan<string>):RespirePending<HashFieldExpiryResult[]>",
         "Expiry(RespireKey,RespireKey):RespirePending<RespireTtl>",
         "Expiry(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<RespireTtl[]>",

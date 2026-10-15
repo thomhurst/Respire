@@ -428,7 +428,7 @@ public partial class StreamWorkerTests
             TelemetryName = WorkerName, CreateGroup = false, MetricsPollInterval = TimeSpan.FromMilliseconds(20),
         });
         for (var i = 1; i <= 3; i++)
-            await fixture.View.Streams.AddAsync("events", new StreamAddOptions { Id = $"{i}-0" }, ("payload", "body"));
+            await fixture.View.Streams.AddAsync("events", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", "body"));
         await fixture.View.Streams.CreateGroupAsync("events", "workers", "2-0");
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("XREADGROUP", RespireFakeFault.Pause(gate));

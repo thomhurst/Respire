@@ -14,7 +14,7 @@
         "LeftPop`1(RespireKey):RespirePending<T?>",
         "LeftPush(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
         "LeftPushIfExists(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",
-        "Move(RespireKey,RespireKey,ListSide,ListSide):RespirePending<string?>",
+        "Move(RespireKey,RespireKey,RespireListSide,RespireListSide):RespirePending<string?>",
         "Position(RespireKey,RespireValue,long,long):RespirePending<long?>",
         "Positions(RespireKey,RespireValue,long,long,long):RespirePending<long[]>",
         "Range(RespireKey,long,long):RespirePending<string[]>",

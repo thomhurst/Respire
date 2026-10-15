@@ -4,8 +4,8 @@
       "Type": "Respire.IBatchBitmapCommands",
       "OwnerType": "Respire.BatchBitmapCommands",
       "Members": [
-        "Field(RespireKey,params ReadOnlySpan<BitFieldOperation>):RespirePending<long?[]>",
-        "FieldReadOnly(RespireKey,params ReadOnlySpan<BitFieldOperation>):RespirePending<long?[]>",
+        "Field(RespireKey,params ReadOnlySpan<RespireBitFieldOperation>):RespirePending<long?[]>",
+        "FieldReadOnly(RespireKey,params ReadOnlySpan<RespireBitFieldOperation>):RespirePending<long?[]>",
         "Get(RespireKey,long):RespirePending<bool>",
         "Operate(BitOperation,RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
         "Position(RespireKey,bool,long?,long?,BitIndexUnit):RespirePending<long?>",

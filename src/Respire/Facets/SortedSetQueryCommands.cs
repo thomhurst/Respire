@@ -31,12 +31,12 @@ public partial interface ISortedSetCommands
     ValueTask<T[]> RandomMembersAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>Random members with scores. Positive count returns distinct members; negative count permits duplicates; zero returns empty. Redis: ZRANDMEMBER (6.2+).</summary>
-    ValueTask<SortedSetEntry[]> RandomMembersWithScoresAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<RespireSortedSetEntry[]> RandomMembersWithScoresAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>Random deserialized members with scores. Negative count permits duplicates. Redis: ZRANDMEMBER (6.2+).</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<SortedSetEntry<T>[]> RandomMembersWithScoresAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<RespireSortedSetEntry<T>[]> RandomMembersWithScoresAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>Counts members within a lexicographical range. All members must have the same score. Redis: ZLEXCOUNT.</summary>
     ValueTask<long> CountByLexAsync(RespireKey key, RespireLexRange range, CancellationToken cancellationToken = default);
@@ -116,29 +116,29 @@ internal sealed partial class SortedSetCommands
     private ValueTask<T[]> RandomMembersBorrowedAsync<T>(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.DeserializeArrayAsync<T, Cmd2>("ZRANDMEMBER", RandomMembersCommand(client, key, count), cancellationToken, observation: observation);
 
-    public ValueTask<SortedSetEntry[]> RandomMembersWithScoresAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
+    public ValueTask<RespireSortedSetEntry[]> RandomMembersWithScoresAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
-        var owner = DispatchResponseSource<SortedSetEntry[]>.Start();
+        var owner = DispatchResponseSource<RespireSortedSetEntry[]>.Start();
         try { return owner.Attach(RandomMembersWithScoresBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private ValueTask<SortedSetEntry[]> RandomMembersWithScoresBorrowedAsync(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    private ValueTask<RespireSortedSetEntry[]> RandomMembersWithScoresBorrowedAsync(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync("ZRANDMEMBER", RandomScoredMembersCommand(client, key, count), cancellationToken, this,
             static (SortedSetCommands _, in RespValue reply) => ParseEntries(in reply), observation: observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<SortedSetEntry<T>[]> RandomMembersWithScoresAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default)
+    public ValueTask<RespireSortedSetEntry<T>[]> RandomMembersWithScoresAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default)
     {
-        var owner = DispatchResponseSource<SortedSetEntry<T>[]>.Start();
+        var owner = DispatchResponseSource<RespireSortedSetEntry<T>[]>.Start();
         try { return owner.Attach(RandomMembersWithScoresBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    private ValueTask<SortedSetEntry<T>[]> RandomMembersWithScoresBorrowedAsync<T>(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    private ValueTask<RespireSortedSetEntry<T>[]> RandomMembersWithScoresBorrowedAsync<T>(RespireKey key, long count, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync("ZRANDMEMBER", RandomScoredMembersCommand(client, key, count), cancellationToken, client,
             static (RespireClient c, in RespValue reply) => ParseEntries<T>(c, in reply), observation: observation);
 

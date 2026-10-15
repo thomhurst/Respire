@@ -8,10 +8,10 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>A sorted-set read result containing a UTF-8 member and its score.</summary>
-public readonly record struct SortedSetEntry(string Member, double Score);
+public readonly record struct RespireSortedSetEntry(string Member, double Score);
 
 /// <summary>A deserialized sorted-set member with its score.</summary>
-public readonly record struct SortedSetEntry<T>(T Member, double Score);
+public readonly record struct RespireSortedSetEntry<T>(T Member, double Score);
 
 /// <summary>An inclusive or exclusive score boundary used by sorted-set range commands.</summary>
 public readonly record struct RespireScoreBound
@@ -230,33 +230,33 @@ public partial interface ISortedSetCommands
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Iterates members and scores incrementally. Redis: ZSCAN.</summary>
-    IAsyncEnumerable<SortedSetEntry> ScanAsync(
+    IAsyncEnumerable<RespireSortedSetEntry> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
         CancellationToken cancellationToken = default);
 
     /// <summary>Removes the lowest-scored member, or the highest when descending; returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
     /// <remarks>For multiple members, use <c>PopManyAsync</c> (for example, <c>PopManyAsync(key, count: 1)</c> returns an array).</remarks>
-    ValueTask<SortedSetEntry?> PopAsync(
+    ValueTask<RespireSortedSetEntry?> PopAsync(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Removes and deserializes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<SortedSetEntry<T>?> PopAsync<T>(
+    ValueTask<RespireSortedSetEntry<T>?> PopAsync<T>(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
     /// </summary>
-    ValueTask<SortedSetEntry[]> PopManyAsync(
+    ValueTask<RespireSortedSetEntry[]> PopManyAsync(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>Removes members and deserializes them with their scores. Redis: ZPOPMIN / ZPOPMAX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<SortedSetEntry<T>[]> PopManyAsync<T>(
+    ValueTask<RespireSortedSetEntry<T>[]> PopManyAsync<T>(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default);
 
@@ -294,13 +294,13 @@ public partial interface ISortedSetCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Members with scores by rank range. Redis: ZRANGE WITHSCORES.</summary>
-    ValueTask<SortedSetEntry[]> RangeWithScoresAsync(
+    ValueTask<RespireSortedSetEntry[]> RangeWithScoresAsync(
         RespireKey key, long start = 0, long stop = -1, bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Members and scores by rank range, with members deserialized. Redis: ZRANGE WITHSCORES.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<SortedSetEntry<T>[]> RangeWithScoresAsync<T>(
+    ValueTask<RespireSortedSetEntry<T>[]> RangeWithScoresAsync<T>(
         RespireKey key, long start = 0, long stop = -1, bool descending = false,
         CancellationToken cancellationToken = default);
 
@@ -328,14 +328,14 @@ public partial interface ISortedSetCommands
         bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Members and scores within a score range, optionally paged. Redis: ZRANGE BYSCORE WITHSCORES.</summary>
-    ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
+    ValueTask<RespireSortedSetEntry[]> RangeByScoreWithScoresAsync(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Members and scores within a score range, with members deserialized. Redis: ZRANGE BYSCORE.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<SortedSetEntry<T>[]> RangeByScoreWithScoresAsync<T>(
+    ValueTask<RespireSortedSetEntry<T>[]> RangeByScoreWithScoresAsync<T>(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false, CancellationToken cancellationToken = default);
 
@@ -495,14 +495,14 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("ZCARD", new Cmd1(Verbs.ZCard, client.Key(in key)), cancellationToken);
 
-    public IAsyncEnumerable<SortedSetEntry> ScanAsync(
+    public IAsyncEnumerable<RespireSortedSetEntry> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
         CancellationToken cancellationToken = default)
         => CollectionScan.EnumerateAsync(
             client, "ZSCAN", RespireCommands.SortedSet.ZSCAN.Verb, key, match, countHint,
             ParseEntries, cancellationToken);
 
-    public ValueTask<SortedSetEntry?> PopAsync(
+    public ValueTask<RespireSortedSetEntry?> PopAsync(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default)
     {
         var command = PopCommand(descending);
@@ -513,7 +513,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<SortedSetEntry<T>?> PopAsync<T>(
+    public ValueTask<RespireSortedSetEntry<T>?> PopAsync<T>(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default)
     {
         var command = PopCommand(descending);
@@ -522,7 +522,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
             static (RespireClient state, in RespValue value) => ParseEntry<T>(state, in value));
     }
 
-    public ValueTask<SortedSetEntry[]> PopManyAsync(
+    public ValueTask<RespireSortedSetEntry[]> PopManyAsync(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default)
     {
@@ -535,7 +535,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<SortedSetEntry<T>[]> PopManyAsync<T>(
+    public ValueTask<RespireSortedSetEntry<T>[]> PopManyAsync<T>(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default)
     {
@@ -608,7 +608,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
             : client.DeserializeArrayAsync<T, Cmd3>(
                 "ZRANGE", new Cmd3(Verbs.ZRange, client.Key(in key), start, stop), cancellationToken);
 
-    public ValueTask<SortedSetEntry[]> RangeWithScoresAsync(
+    public ValueTask<RespireSortedSetEntry[]> RangeWithScoresAsync(
         RespireKey key, long start = 0, long stop = -1, bool descending = false, CancellationToken cancellationToken = default)
         => descending
             ? client.ConvertResponseAsync(
@@ -622,7 +622,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<SortedSetEntry<T>[]> RangeWithScoresAsync<T>(
+    public ValueTask<RespireSortedSetEntry<T>[]> RangeWithScoresAsync<T>(
         RespireKey key, long start = 0, long stop = -1, bool descending = false,
         CancellationToken cancellationToken = default)
         => RangeWithScoresCoreAsync<T>(
@@ -673,7 +673,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
                     "BYSCORE", offset, count, descending, withScores: false)),
             cancellationToken);
 
-    public ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
+    public ValueTask<RespireSortedSetEntry[]> RangeByScoreWithScoresAsync(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false, CancellationToken cancellationToken = default)
         => client.ConvertResponseAsync(
@@ -690,7 +690,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<SortedSetEntry<T>[]> RangeByScoreWithScoresAsync<T>(
+    public ValueTask<RespireSortedSetEntry<T>[]> RangeByScoreWithScoresAsync<T>(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false, CancellationToken cancellationToken = default)
         => RangeWithScoresCoreAsync<T>(
@@ -839,18 +839,18 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
     internal static RespireCommand PopCommand(bool descending)
         => descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
 
-    internal static SortedSetEntry? ParseEntry(in RespValue reply)
+    internal static RespireSortedSetEntry? ParseEntry(in RespValue reply)
     {
         var pair = SingleEntryPair(in reply);
-        return pair.IsEmpty ? null : new SortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
+        return pair.IsEmpty ? null : new RespireSortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal static SortedSetEntry<T>? ParseEntry<T>(RespireClient client, in RespValue reply)
+    internal static RespireSortedSetEntry<T>? ParseEntry<T>(RespireClient client, in RespValue reply)
     {
         var pair = SingleEntryPair(in reply);
-        return pair.IsEmpty ? null : new SortedSetEntry<T>(
+        return pair.IsEmpty ? null : new RespireSortedSetEntry<T>(
             client.DeserializeBorrowed<T>(in pair[0])!, ResponseReader.Double(in pair[1]));
     }
 
@@ -891,27 +891,27 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
     }
 
     /// <summary>WITHSCORES replies alternate member,score (RESP2 flat array; RESP3 pairs are flattened too).</summary>
-    internal static SortedSetEntry[] ParseEntries(in RespValue reply)
+    internal static RespireSortedSetEntry[] ParseEntries(in RespValue reply)
     {
         var elements = reply.AsArray();
 
         // RESP3 returns an array of [member, score] pairs.
         if (elements.Length > 0 && elements[0].Type == RespDataType.Array)
         {
-            var pairEntries = new SortedSetEntry[elements.Length];
+            var pairEntries = new RespireSortedSetEntry[elements.Length];
             for (var i = 0; i < elements.Length; i++)
             {
                 var pair = elements[i].AsArray();
-                pairEntries[i] = new SortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
+                pairEntries[i] = new RespireSortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
             }
 
             return pairEntries;
         }
 
-        var entries = new SortedSetEntry[elements.Length / 2];
+        var entries = new RespireSortedSetEntry[elements.Length / 2];
         for (var i = 0; i < entries.Length; i++)
         {
-            entries[i] = new SortedSetEntry(elements[i * 2].AsString(), ResponseReader.Double(in elements[i * 2 + 1]));
+            entries[i] = new RespireSortedSetEntry(elements[i * 2].AsString(), ResponseReader.Double(in elements[i * 2 + 1]));
         }
 
         return entries;
@@ -919,7 +919,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    private ValueTask<SortedSetEntry<T>[]> RangeWithScoresCoreAsync<T>(
+    private ValueTask<RespireSortedSetEntry<T>[]> RangeWithScoresCoreAsync<T>(
         Cmd1N command, CancellationToken cancellationToken)
         => client.ConvertResponseAsync(
             "ZRANGE", command, cancellationToken, client,
@@ -948,26 +948,26 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal static SortedSetEntry<T>[] ParseEntries<T>(RespireClient client, in RespValue reply)
+    internal static RespireSortedSetEntry<T>[] ParseEntries<T>(RespireClient client, in RespValue reply)
     {
         var elements = reply.AsArray();
         if (elements.Length > 0 && elements[0].Type == RespDataType.Array)
         {
-            var pairEntries = new SortedSetEntry<T>[elements.Length];
+            var pairEntries = new RespireSortedSetEntry<T>[elements.Length];
             for (var i = 0; i < elements.Length; i++)
             {
                 var pair = elements[i].AsArray();
-                pairEntries[i] = new SortedSetEntry<T>(
+                pairEntries[i] = new RespireSortedSetEntry<T>(
                     client.DeserializeBorrowed<T>(in pair[0])!, ResponseReader.Double(in pair[1]));
             }
 
             return pairEntries;
         }
 
-        var entries = new SortedSetEntry<T>[elements.Length / 2];
+        var entries = new RespireSortedSetEntry<T>[elements.Length / 2];
         for (var i = 0; i < entries.Length; i++)
         {
-            entries[i] = new SortedSetEntry<T>(
+            entries[i] = new RespireSortedSetEntry<T>(
                 client.DeserializeBorrowed<T>(in elements[i * 2])!,
                 ResponseReader.Double(in elements[i * 2 + 1]));
         }

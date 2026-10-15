@@ -32,7 +32,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             var key = "progress-" + count;
             foreach (var client in new IRespireClient[] { real, fake })
                 for (var i = 1; i <= count; i++)
-                    await client.Streams.AddAsync(key, new StreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
+                    await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
             foreach (var start in new[] { "0", "1-0", "2-0", "3-0", "4-0", "$" })
             {
                 foreach (var client in new IRespireClient[] { real, fake })
@@ -127,7 +127,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         for (var i = 1; i <= 3; i++)
-            await view.Streams.AddAsync("resume", new StreamAddOptions { Id = $"{i}-0" }, ("payload", "ack"));
+            await view.Streams.AddAsync("resume", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", "ack"));
         await view.Streams.CreateGroupAsync("resume", "workers", RespireStreamId.Beginning);
         await view.Streams.ReadGroupOnceAsync("resume", "workers", "stable-0", new() { Count = 1 });
         await view.Streams.ReadGroupOnceAsync("resume", "workers", "other-0", new() { Count = 1 });
@@ -180,7 +180,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             var first = unicodeConsumers ? "\U00010000" : "a";
             var second = unicodeConsumers ? "\uFFFF" : "b";
             for (var i = 1; i <= 3; i++)
-                await client.Streams.AddAsync("s", new StreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
+                await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
             await client.Streams.CreateGroupAsync("s", "g", start);
             await client.Streams.ReadGroupOnceAsync("s", "g", first, new() { Count = 2 });
             await client.Streams.ReadGroupOnceAsync("s", "g", first, new() { Count = 1 }, RespireStreamId.Beginning);

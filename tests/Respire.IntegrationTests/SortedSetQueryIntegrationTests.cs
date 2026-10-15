@@ -30,9 +30,9 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
         repeated.Should().HaveCount(5).And.OnlyContain(member => member == "a" || member == "b");
         repeated.Distinct().Count().Should().BeLessThan(repeated.Length);
         var scores = await Run(view, mode, s => s.RandomMembersWithScoresAsync("key", -5), s => s.RandomMembersWithScores("key", -5));
-        scores.Should().HaveCount(5).And.OnlyContain(entry => entry == new SortedSetEntry("a", 1) || entry == new SortedSetEntry("b", 2));
+        scores.Should().HaveCount(5).And.OnlyContain(entry => entry == new RespireSortedSetEntry("a", 1) || entry == new RespireSortedSetEntry("b", 2));
         (await Run(view, mode, s => s.RandomMembersWithScoresAsync("key", 20), s => s.RandomMembersWithScores("key", 20)))
-            .Should().BeEquivalentTo(new[] { new SortedSetEntry("a", 1), new SortedSetEntry("b", 2) });
+            .Should().BeEquivalentTo(new[] { new RespireSortedSetEntry("a", 1), new RespireSortedSetEntry("b", 2) });
         (await Run(view, mode, s => s.RandomMembersWithScoresAsync("missing", 2), s => s.RandomMembersWithScores("missing", 2))).Should().BeEmpty();
         (await view.SortedSets.CountAsync("key")).Should().Be(2);
     }

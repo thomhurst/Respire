@@ -183,7 +183,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
     /// <inheritdoc cref="IBatchKeyCommands.Expire"/>
     public RespirePending<bool> Expire(
-        RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always)
+        RespireKey key, RespireExpiry expiry, RespireExpireWhen when = RespireExpireWhen.Always)
         => Keys.Expire(key, expiry, when);
 
     /// <inheritdoc cref="IRespireCommandQueue.Execute"/>

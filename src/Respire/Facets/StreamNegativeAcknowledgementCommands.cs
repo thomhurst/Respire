@@ -4,7 +4,7 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>How XNACK adjusts the pending entry's delivery count. Redis 8.8+.</summary>
-public enum StreamNackMode
+public enum RespireStreamNackMode
 {
     /// <summary>Decrements the delivery count, stopping at zero (SILENT).</summary>
     Silent,
@@ -26,54 +26,54 @@ public readonly record struct StreamNackOptions
 public partial interface IStreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, RespireStreamId ids, CancellationToken cancellationToken);
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, StreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken);
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode, StreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Releases pending entries from their consumers. Returns Redis's aggregate count, not per-ID outcomes. Redis 8.8+: XNACK.</summary>
-    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Releases pending entries with cancellation. Redis 8.8+: XNACK.</summary>
-    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Releases pending entries with advanced counter/force options. Redis 8.8+: XNACK.</summary>
-    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         StreamNackOptions options, params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Releases pending entries with advanced counter/force options. Cancellation cannot undo a dispatched write. Redis 8.8+: XNACK.</summary>
-    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 }
 
 internal sealed partial class StreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, RespireStreamId ids, CancellationToken cancellationToken)
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode, RespireStreamId ids, CancellationToken cancellationToken)
         => NegativeAcknowledgeAsync(key, group, mode, [ids], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode, StreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken)
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode, StreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken)
         => NegativeAcknowledgeAsync(key, group, mode, options, [ids], cancellationToken);
 
 
     private static readonly Verb XNack = new("XNACK");
 
-    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         params ReadOnlySpan<RespireStreamId> ids)
         => NegativeAcknowledgeAsync(key, group, mode, default, ids, CancellationToken.None);
 
-    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
         => NegativeAcknowledgeAsync(key, group, mode, default, ids, cancellationToken);
 
-    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         StreamNackOptions options, params ReadOnlySpan<RespireStreamId> ids)
         => NegativeAcknowledgeAsync(key, group, mode, options, ids, CancellationToken.None);
 
-    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -82,16 +82,16 @@ internal sealed partial class StreamCommands
     }
 
     internal static Cmd1N BuildNackCommand(RespireClient client, RespireKey key, RespireValue group,
-        StreamNackMode mode, StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids)
+        RespireStreamNackMode mode, StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids)
     {
         RespireValue.ThrowIfNull(group, nameof(group));
         RequireIds(ids);
         if (options.RetryCount is < 0) throw new ArgumentOutOfRangeException(nameof(options));
         var token = mode switch
         {
-            StreamNackMode.Silent => "SILENT",
-            StreamNackMode.Fail => "FAIL",
-            StreamNackMode.Fatal => "FATAL",
+            RespireStreamNackMode.Silent => "SILENT",
+            RespireStreamNackMode.Fail => "FAIL",
+            RespireStreamNackMode.Fatal => "FATAL",
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
         };
         ValidateNumericIds(ids);

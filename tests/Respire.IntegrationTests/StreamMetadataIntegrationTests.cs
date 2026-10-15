@@ -41,7 +41,7 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
         var prefix = $"metadata:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         byte[] payload = [0xff, 0, 0x80];
-        await view.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("value", (RespireValue)payload));
+        await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", (RespireValue)payload));
         await view.Streams.CreateGroupAsync("events", "workers", "0-0");
         await view.Streams.SetLastIdAsync("events", "9-0", entriesAdded: 12, maxDeletedId: "2-0");
         var info = await view.Streams.InfoAsync("events");
@@ -64,7 +64,7 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
         (await client.Keys.ExistsAsync(prefix + "events")).Should().BeTrue();
         (await client.Keys.ExistsAsync(prefix + prefix + "events")).Should().BeFalse();
         // An explicit append below the new last-generated id must still be rejected.
-        Func<Task> appendOlder = async () => await view.Streams.AddAsync("events", new StreamAddOptions { Id = "11-0" }, ("value", "old"));
+        Func<Task> appendOlder = async () => await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "11-0" }, ("value", "old"));
         await appendOlder.Should().ThrowAsync<RespireServerException>();
         (await view.Streams.RangeAsync("events"))[0]["value"].Should().Equal(payload);
         await view.Keys.DeleteAsync("events");
@@ -78,7 +78,7 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"metadata:{Guid.NewGuid():N}:");
-        await view.Streams.AddAsync("events", new StreamAddOptions { Id = "2-0" }, ("value", "first"));
+        await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "2-0" }, ("value", "first"));
         Func<Task>[] invalid =
         [
             async () => await view.Streams.SetLastIdAsync("events", "1-0"),

@@ -10,39 +10,39 @@ namespace Respire;
 public interface IBatchGeoCommands
 {
     /// <summary>Adds members with coordinates; returns how many were new. Redis: GEOADD.</summary>
-    RespirePending<long> Add(RespireKey key, params ReadOnlySpan<GeoEntry> entries);
+    RespirePending<long> Add(RespireKey key, params ReadOnlySpan<RespireGeoEntry> entries);
 
     /// <summary>Adds members with options; returns new or changed count. Redis: GEOADD.</summary>
     RespirePending<long> Add(
-        RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries);
+        RespireKey key, GeoAddOptions options, params ReadOnlySpan<RespireGeoEntry> entries);
 
     /// <summary>The distance between two members, or null when either is absent. Redis: GEODIST.</summary>
     RespirePending<double?> Distance(
-        RespireKey key, RespireValue firstMember, RespireValue secondMember, GeoUnit unit = GeoUnit.Meters);
+        RespireKey key, RespireValue firstMember, RespireValue secondMember, RespireGeoUnit unit = RespireGeoUnit.Meters);
 
     /// <summary>Geohash strings for members; null for absent members. Redis: GEOHASH.</summary>
     RespirePending<string?[]> Hash(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
     /// <summary>Coordinates for members; null for absent members. Redis: GEOPOS.</summary>
-    RespirePending<GeoPosition?[]> Position(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    RespirePending<RespireGeoPosition?[]> Position(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
     /// <summary>Members within a shape around an origin. Redis: GEOSEARCH.</summary>
     RespirePending<GeoSearchResult[]> Search(
-        RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options = default);
+        RespireKey key, GeoSearchOrigin origin, RespireGeoSearchShape shape, GeoSearchOptions options = default);
 
     /// <summary>Stores a search into <paramref name="destination"/>; returns its size. Redis: GEOSEARCHSTORE.</summary>
     RespirePending<long> SearchStore(
-        RespireKey destination, RespireKey source, GeoSearchOrigin origin, GeoSearchShape shape,
+        RespireKey destination, RespireKey source, GeoSearchOrigin origin, RespireGeoSearchShape shape,
         GeoSearchOptions options = default, bool storeDistance = false);
 }
 
 internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
 {
-    public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<GeoEntry> entries)
+    public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<RespireGeoEntry> entries)
         => Add(key, default, entries);
 
     public RespirePending<long> Add(
-        RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries)
+        RespireKey key, GeoAddOptions options, params ReadOnlySpan<RespireGeoEntry> entries)
     {
         GeoCommands.ValidateAdd(options.When, entries);
         return sink.Add<GeoAddCommand, long>(
@@ -57,7 +57,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
     }
 
     public RespirePending<double?> Distance(
-        RespireKey key, RespireValue firstMember, RespireValue secondMember, GeoUnit unit = GeoUnit.Meters)
+        RespireKey key, RespireValue firstMember, RespireValue secondMember, RespireGeoUnit unit = RespireGeoUnit.Meters)
         => sink.Add<Cmd4, double?>(
             "GEODIST",
             new Cmd4(
@@ -74,17 +74,17 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
             static (c, v) => ResponseReader.NullableStringArray(in v));
     }
 
-    public RespirePending<GeoPosition?[]> Position(RespireKey key, params ReadOnlySpan<RespireValue> members)
+    public RespirePending<RespireGeoPosition?[]> Position(RespireKey key, params ReadOnlySpan<RespireValue> members)
     {
         GeoCommands.RequireMembers(members);
-        return sink.Add<Cmd1N, GeoPosition?[]>(
+        return sink.Add<Cmd1N, RespireGeoPosition?[]>(
             "GEOPOS",
             new Cmd1N(RespireCommands.Geo.GEOPOS.Verb, sink.Client.Key(in key), members.ToArray()),
             static (c, v) => GeoCommands.ParsePositions(in v));
     }
 
     public RespirePending<GeoSearchResult[]> Search(
-        RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options = default)
+        RespireKey key, GeoSearchOrigin origin, RespireGeoSearchShape shape, GeoSearchOptions options = default)
     {
         GeoCommands.Validate(origin, shape, options);
         return sink.Add<GeoSearchCommand, GeoSearchResult[]>(
@@ -98,7 +98,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
     }
 
     public RespirePending<long> SearchStore(
-        RespireKey destination, RespireKey source, GeoSearchOrigin origin, GeoSearchShape shape,
+        RespireKey destination, RespireKey source, GeoSearchOrigin origin, RespireGeoSearchShape shape,
         GeoSearchOptions options = default, bool storeDistance = false)
     {
         GeoCommands.Validate(origin, shape, options);

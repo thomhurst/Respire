@@ -21,7 +21,7 @@ public class SortedSetSinglePopTests
         var entry = await client.SortedSets.PopAsync("scores", descending);
         var missing = await client.SortedSets.PopAsync("missing", descending);
 
-        await Assert.That(entry).IsEqualTo(new SortedSetEntry("7", 1.5));
+        await Assert.That(entry).IsEqualTo(new RespireSortedSetEntry("7", 1.5));
         await Assert.That(missing).IsNull();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
@@ -38,7 +38,7 @@ public class SortedSetSinglePopTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.SortedSets.PopAsync<int>("scores", descending: true))
-            .IsEqualTo(new SortedSetEntry<int>(7, 1.5));
+            .IsEqualTo(new RespireSortedSetEntry<int>(7, 1.5));
         await Assert.That(await client.SortedSets.PopAsync<int>("missing")).IsNull();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "ZPOPMAX scores", "ZPOPMIN missing" });
     }
@@ -58,8 +58,8 @@ public class SortedSetSinglePopTests
         var missingTyped = batch.SortedSets.Pop<int>("missing-typed");
         await batch.ExecuteAsync();
 
-        await Assert.That(entry.Result).IsEqualTo(new SortedSetEntry("7", 1.5));
-        await Assert.That(typed.Result).IsEqualTo(new SortedSetEntry<int>(7, 1.5));
+        await Assert.That(entry.Result).IsEqualTo(new RespireSortedSetEntry("7", 1.5));
+        await Assert.That(typed.Result).IsEqualTo(new RespireSortedSetEntry<int>(7, 1.5));
         await Assert.That(missing.Result).IsNull();
         await Assert.That(missingTyped.Result).IsNull();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -81,7 +81,7 @@ public class SortedSetSinglePopTests
         var missing = transaction.SortedSets.Pop("missing");
         await transaction.CommitAsync();
 
-        await Assert.That(entry.Result).IsEqualTo(new SortedSetEntry<int>(7, 1.5));
+        await Assert.That(entry.Result).IsEqualTo(new RespireSortedSetEntry<int>(7, 1.5));
         await Assert.That(missing.Result).IsNull();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
@@ -125,9 +125,9 @@ public class SortedSetSinglePopTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.SortedSets.PopAsync("scores"))
-            .IsEqualTo(new SortedSetEntry("7", double.PositiveInfinity));
+            .IsEqualTo(new RespireSortedSetEntry("7", double.PositiveInfinity));
         await Assert.That(await client.SortedSets.PopAsync<int>("scores"))
-            .IsEqualTo(new SortedSetEntry<int>(7, double.NegativeInfinity));
+            .IsEqualTo(new RespireSortedSetEntry<int>(7, double.NegativeInfinity));
     }
 
     [Test]
@@ -169,7 +169,7 @@ public class SortedSetSinglePopTests
         await Assert.That(async () => await client.SortedSets.PopAsync("bad"))
             .Throws<RespireProtocolException>();
         await Assert.That(await client.SortedSets.PopAsync("good"))
-            .IsEqualTo(new SortedSetEntry("7", 1.5));
+            .IsEqualTo(new RespireSortedSetEntry("7", 1.5));
     }
 
     private static string Verb(bool descending) => descending ? "ZPOPMAX" : "ZPOPMIN";

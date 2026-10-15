@@ -10,7 +10,7 @@ public class StreamAddHookBenchmarks
     private RedisContainer _server = null!;
     private RespireClient _client = null!;
     private readonly RespireKey _key = "hooks:stream";
-    private readonly StreamAddOptions _options = new() { MaxLength = 100, ApproximateTrim = false };
+    private readonly RespireStreamAddOptions _options = new() { MaxLength = 100, ApproximateTrim = false };
     private readonly (string Field, RespireValue Value)[] _fields = [("field", "value")];
 
     [Params("Ordinary", "Idempotent", "Fallback")]

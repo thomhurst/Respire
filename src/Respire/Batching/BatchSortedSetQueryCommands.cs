@@ -24,12 +24,12 @@ public partial interface IBatchSortedSetCommands
     RespirePending<T[]> RandomMembers<T>(RespireKey key, long count);
 
     /// <summary>Random members with scores. Positive count returns distinct members; negative count permits duplicates; zero returns empty. Redis: ZRANDMEMBER (6.2+).</summary>
-    RespirePending<SortedSetEntry[]> RandomMembersWithScores(RespireKey key, long count);
+    RespirePending<RespireSortedSetEntry[]> RandomMembersWithScores(RespireKey key, long count);
 
     /// <summary>Random deserialized members with scores. Negative count permits duplicates. Redis: ZRANDMEMBER (6.2+).</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<SortedSetEntry<T>[]> RandomMembersWithScores<T>(RespireKey key, long count);
+    RespirePending<RespireSortedSetEntry<T>[]> RandomMembersWithScores<T>(RespireKey key, long count);
 
     /// <summary>Counts members within a lexicographical range. All members must have the same score. Redis: ZLEXCOUNT.</summary>
     RespirePending<long> CountByLex(RespireKey key, RespireLexRange range);
@@ -66,14 +66,14 @@ internal sealed partial class BatchSortedSetCommands
         => sink.Add<Cmd2, T[]>("ZRANDMEMBER", SortedSetCommands.RandomMembersCommand(sink.Client, key, count),
             static (c, reply) => c.DeserializeArray<T>(in reply));
 
-    public RespirePending<SortedSetEntry[]> RandomMembersWithScores(RespireKey key, long count)
-        => sink.Add<Cmd3, SortedSetEntry[]>("ZRANDMEMBER", SortedSetCommands.RandomScoredMembersCommand(sink.Client, key, count),
+    public RespirePending<RespireSortedSetEntry[]> RandomMembersWithScores(RespireKey key, long count)
+        => sink.Add<Cmd3, RespireSortedSetEntry[]>("ZRANDMEMBER", SortedSetCommands.RandomScoredMembersCommand(sink.Client, key, count),
             static (_, reply) => SortedSetCommands.ParseEntries(in reply));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<SortedSetEntry<T>[]> RandomMembersWithScores<T>(RespireKey key, long count)
-        => sink.Add<Cmd3, SortedSetEntry<T>[]>("ZRANDMEMBER", SortedSetCommands.RandomScoredMembersCommand(sink.Client, key, count),
+    public RespirePending<RespireSortedSetEntry<T>[]> RandomMembersWithScores<T>(RespireKey key, long count)
+        => sink.Add<Cmd3, RespireSortedSetEntry<T>[]>("ZRANDMEMBER", SortedSetCommands.RandomScoredMembersCommand(sink.Client, key, count),
             static (c, reply) => SortedSetCommands.ParseEntries<T>(c, in reply));
 
     public RespirePending<long> CountByLex(RespireKey key, RespireLexRange range)

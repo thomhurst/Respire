@@ -280,7 +280,7 @@ public readonly record struct RespireStreamConsumerInfo(
     TimeSpan? InactiveTime);
 
 /// <summary>Options controlling stream entry ids, trimming, and stream creation for Redis XADD.</summary>
-public readonly record struct StreamAddOptions
+public readonly record struct RespireStreamAddOptions
 {
     private readonly bool? _approximateTrim;
     private readonly bool? _createStream;
@@ -325,7 +325,7 @@ public readonly record struct StreamAddOptions
     };
 
     /// <inheritdoc/>
-    public bool Equals(StreamAddOptions other)
+    public bool Equals(RespireStreamAddOptions other)
         => Id == other.Id
            && MaxLength == other.MaxLength
            && MinId == other.MinId
@@ -350,7 +350,7 @@ public partial interface IStreamCommands
     ValueTask<RespireStreamId> AddAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireStreamId?> AddAsync(RespireKey key, StreamAddOptions options, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
+    ValueTask<RespireStreamId?> AddAsync(RespireKey key, RespireStreamAddOptions options, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> RemoveAsync(RespireKey key, RespireStreamId ids, CancellationToken cancellationToken);
@@ -376,7 +376,7 @@ public partial interface IStreamCommands
     /// </summary>
     ValueTask<RespireStreamId?> AddAsync(
         RespireKey key,
-        StreamAddOptions options,
+        RespireStreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
     /// <summary>
@@ -385,7 +385,7 @@ public partial interface IStreamCommands
     /// </summary>
     ValueTask<RespireStreamId?> AddAsync(
         RespireKey key,
-        StreamAddOptions options,
+        RespireStreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken);
 
@@ -565,7 +565,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         => AddAsync(key, [field], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireStreamId?> AddAsync(RespireKey key, StreamAddOptions options, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
+    public ValueTask<RespireStreamId?> AddAsync(RespireKey key, RespireStreamAddOptions options, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
         => AddAsync(key, options, [field], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -607,13 +607,13 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
 
     public ValueTask<RespireStreamId?> AddAsync(
         RespireKey key,
-        StreamAddOptions options,
+        RespireStreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => AddAsync(key, options, fields, CancellationToken.None);
 
     public ValueTask<RespireStreamId?> AddAsync(
         RespireKey key,
-        StreamAddOptions options,
+        RespireStreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
     {
@@ -654,7 +654,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
 
     // Retry-enabled clients attach a fresh message identity under the client's producer unless the
     // caller chose idempotency or an explicit entry ID.
-    private bool TryAttachIdempotency(in StreamAddOptions options, out StreamAddOptions attached)
+    private bool TryAttachIdempotency(in RespireStreamAddOptions options, out RespireStreamAddOptions attached)
     {
         attached = options;
         if (options.Idempotency is not null || options.Id is { } id && id.Value != "*"
@@ -748,14 +748,14 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
 
     internal static Cmd1N BuildAddCommand(
         RespireClient client, RespireKey key,
-        StreamAddOptions options,
+        RespireStreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         bool snapshotValues = false)
         => new(options.Idempotency is null ? Verbs.XAdd : Verbs.XAddIdempotent, client.Key(in key),
             BuildAddArguments(options, fields, snapshotValues, out _));
 
     private static RespireValue[] BuildAddArguments(
-        StreamAddOptions options,
+        RespireStreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         bool snapshotValues,
         out int idempotencyOffset)

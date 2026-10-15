@@ -15,11 +15,11 @@ public class SetPopManyTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         string? member = await client.Sets.PopAsync("missing", default);
-        SortedSetEntry? entry = await client.SortedSets.PopAsync("missing", default);
-        SortedSetEntry<int>? typed = await client.SortedSets.PopAsync<int>("missing", default);
+        RespireSortedSetEntry? entry = await client.SortedSets.PopAsync("missing", default);
+        RespireSortedSetEntry<int>? typed = await client.SortedSets.PopAsync<int>("missing", default);
         string[] members = await client.Sets.PopManyAsync("missing", default);
-        SortedSetEntry[] entries = await client.SortedSets.PopManyAsync("missing", default);
-        SortedSetEntry<int>[] typedEntries = await client.SortedSets.PopManyAsync<int>("missing", default);
+        RespireSortedSetEntry[] entries = await client.SortedSets.PopManyAsync("missing", default);
+        RespireSortedSetEntry<int>[] typedEntries = await client.SortedSets.PopManyAsync<int>("missing", default);
 
         await Assert.That(member).IsNull();
         await Assert.That(entry).IsNull();

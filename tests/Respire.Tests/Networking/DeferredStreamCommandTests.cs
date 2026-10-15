@@ -31,7 +31,7 @@ public class DeferredStreamCommandTests
         (string Field, RespireValue Value)[] fields = [("value", payload)];
         RespireStreamId[] ids = ["1-0"];
         var added = queue.Streams.Add(key, fields);
-        var absent = queue.Streams.Add("missing", new StreamAddOptions { CreateStream = false, MaxLength = 10, ApproximateTrim = true }, fields);
+        var absent = queue.Streams.Add("missing", new RespireStreamAddOptions { CreateStream = false, MaxLength = 10, ApproximateTrim = true }, fields);
         var count = queue.Streams.Count(key);
         var entries = queue.Streams.Range(key);
         var reverse = queue.Streams.Range(key, "1-0", "9-0", 2, descending: true);
@@ -134,7 +134,7 @@ public class DeferredStreamCommandTests
         {
             await Assert.That(() => streams.Remove("{a}:events", [])).Throws<ArgumentException>();
             await Assert.That(() => streams.TrimByMaxLength("{a}:events", -1)).Throws<ArgumentOutOfRangeException>();
-            await Assert.That(() => streams.Add("{a}:events", new StreamAddOptions { MaxLength = -1 }, ("field", "value")))
+            await Assert.That(() => streams.Add("{a}:events", new RespireStreamAddOptions { MaxLength = -1 }, ("field", "value")))
                 .Throws<ArgumentOutOfRangeException>();
         }
         await Assert.That(batch.Count).IsEqualTo(0);

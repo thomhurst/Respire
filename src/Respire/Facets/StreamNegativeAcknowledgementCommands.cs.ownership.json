@@ -4,12 +4,12 @@
       "Type": "Respire.IStreamCommands",
       "OwnerType": "Respire.StreamCommands",
       "Members": [
-        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
-        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,RespireStreamId,CancellationToken):ValueTask<long>",
-        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,StreamNackOptions,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
-        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,StreamNackOptions,RespireStreamId,CancellationToken):ValueTask<long>",
-        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,StreamNackOptions,params ReadOnlySpan<RespireStreamId>):ValueTask<long>",
-        "NegativeAcknowledgeAsync(RespireKey,RespireValue,StreamNackMode,params ReadOnlySpan<RespireStreamId>):ValueTask<long>"
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,RespireStreamNackMode,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,RespireStreamNackMode,RespireStreamId,CancellationToken):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,RespireStreamNackMode,StreamNackOptions,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,RespireStreamNackMode,StreamNackOptions,RespireStreamId,CancellationToken):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,RespireStreamNackMode,StreamNackOptions,params ReadOnlySpan<RespireStreamId>):ValueTask<long>",
+        "NegativeAcknowledgeAsync(RespireKey,RespireValue,RespireStreamNackMode,params ReadOnlySpan<RespireStreamId>):ValueTask<long>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

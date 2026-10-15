@@ -23,13 +23,13 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
         var key = "restricted-claim:" + user;
         try
         {
-            await admin.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("f", "pending"));
+            await admin.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "pending"));
             await admin.Streams.CreateGroupAsync(key, "g", RespireStreamId.Beginning);
             await admin.Streams.ReadGroupOnceAsync(key, "g", "old");
-            await admin.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("f", "deleted"));
+            await admin.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "deleted"));
             await admin.Streams.ReadGroupOnceAsync(key, "g", "old");
             using (await admin.ExecuteAsync("XDEL", [key, "2-0"])) { }
-            await admin.Streams.AddAsync(key, new StreamAddOptions { Id = "3-0" }, ("f", "unread"));
+            await admin.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "3-0" }, ("f", "unread"));
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-" + deniedCommand]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
                 with { Username = user, Password = "password" });
@@ -64,7 +64,7 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
             .WithCommand(["redis-server", "--rename-command", nack ? "XNACK" : "XACKDEL", ""])
             .Build(), [6379]);
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(disabled.GetConnectionString()));
-        await client.Streams.AddAsync("disabled", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+        await client.Streams.AddAsync("disabled", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("disabled", "g", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("disabled", "g", "owner");
         await client.Scripts.ExecuteIntegerAsync(nack ? StreamWorkerScripts.Nack : StreamWorkerScripts.AckAndDelete,
@@ -95,11 +95,11 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
                 with { Username = user, Password = "password", Connections = 1 });
             var view = client.WithKeyPrefix("tenant:");
             await view.Streams.CreateGroupAsync("reconnect", "g", RespireStreamId.Beginning);
-            await view.Streams.AddAsync("reconnect", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+            await view.Streams.AddAsync("reconnect", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             await view.Streams.ReadGroupOnceAsync("reconnect", "g", "owner");
             await view.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.AckAndDelete, ["reconnect"], ["g", "owner", "1-0", 1]);
             await Assert.That(await view.Streams.CountAsync("reconnect")).IsEqualTo(0);
-            await view.Streams.AddAsync("reconnect", new StreamAddOptions { Id = "2-0" }, ("f", "v"));
+            await view.Streams.AddAsync("reconnect", new RespireStreamAddOptions { Id = "2-0" }, ("f", "v"));
             await view.Streams.ReadGroupOnceAsync("reconnect", "g", "owner");
             var identity = await client.Server.GetClientConnectionAsync();
             var connection = client.Core.Multiplexer.GetConnection();
@@ -112,7 +112,7 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
             await Assert.That(await view.Streams.CountAsync("reconnect")).IsEqualTo(1);
             await Assert.That((await client.Server.GetClientConnectionAsync()).Id).IsNotEqualTo(identity.Id);
             await admin.Server.AclSetUserAsync(user, ["+info"]);
-            await view.Streams.AddAsync("reconnect", new StreamAddOptions { Id = "3-0" }, ("f", "v"));
+            await view.Streams.AddAsync("reconnect", new RespireStreamAddOptions { Id = "3-0" }, ("f", "v"));
             await view.Streams.ReadGroupOnceAsync("reconnect", "g", "owner");
             await view.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.AckAndDelete, ["reconnect"], ["g", "owner", "3-0", 1]);
             await Assert.That(await view.Streams.CountAsync("reconnect")).IsEqualTo(1);
@@ -155,7 +155,7 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", nack ? "-xnack" : "-xackdel"]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
                 with { Username = user, Password = "password" });
-            await client.Streams.AddAsync("denied", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+            await client.Streams.AddAsync("denied", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             await client.Streams.CreateGroupAsync("denied", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("denied", "g", "owner");
             await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(
@@ -178,7 +178,7 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
             await admin.Server.AclSetUserAsync(user, ["on", ">password", "~*", "+@all", "-info"]);
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
                 with { Username = user, Password = "password" });
-            await client.Streams.AddAsync("fallback", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+            await client.Streams.AddAsync("fallback", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             await client.Streams.CreateGroupAsync("fallback", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("fallback", "g", "old");
             using (var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["fallback"],

@@ -27,15 +27,15 @@ public class ListMoveManyTests
         string[]? result;
         if (mode is "immediate" or "blocking")
             result = await (mode == "blocking"
-                ? view.Lists.MoveManyAsync("source", "destination", TimeSpan.FromMilliseconds(250), 2, ListSide.Right, ListSide.Left, ListMoveCountMode.Exactly, ListMoveOrder.Bulk)
-                : view.Lists.MoveManyAsync("source", "destination", 2, ListSide.Right, ListSide.Left, ListMoveCountMode.Exactly, ListMoveOrder.Bulk));
+                ? view.Lists.MoveManyAsync("source", "destination", TimeSpan.FromMilliseconds(250), 2, RespireListSide.Right, RespireListSide.Left, ListMoveCountMode.Exactly, RespireListMoveOrder.Bulk)
+                : view.Lists.MoveManyAsync("source", "destination", 2, RespireListSide.Right, RespireListSide.Left, ListMoveCountMode.Exactly, RespireListMoveOrder.Bulk));
         else
         {
             using var batch = mode == "batch" ? view.CreateBatch() : null;
             await using var transaction = mode == "transaction" ? view.CreateTransaction() : null;
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
-            var pending = queue.Lists.MoveMany("source", "destination", 2, ListSide.Right, ListSide.Left,
-                ListMoveCountMode.Exactly, ListMoveOrder.Bulk);
+            var pending = queue.Lists.MoveMany("source", "destination", 2, RespireListSide.Right, RespireListSide.Left,
+                ListMoveCountMode.Exactly, RespireListMoveOrder.Bulk);
             if (transaction is not null) await transaction.CommitAsync();
             else await batch!.ExecuteAsync();
             result = pending.Result;
@@ -57,10 +57,10 @@ public class ListMoveManyTests
         [
             () => client.Lists.MoveManyAsync("s", "d", 0),
             () => client.Lists.MoveManyAsync("s", "d", -1),
-            () => client.Lists.MoveManyAsync("s", "d", from: (ListSide)99),
-            () => client.Lists.MoveManyAsync("s", "d", to: (ListSide)99),
+            () => client.Lists.MoveManyAsync("s", "d", from: (RespireListSide)99),
+            () => client.Lists.MoveManyAsync("s", "d", to: (RespireListSide)99),
             () => client.Lists.MoveManyAsync("s", "d", countMode: (ListMoveCountMode)99),
-            () => client.Lists.MoveManyAsync("s", "d", order: (ListMoveOrder)99),
+            () => client.Lists.MoveManyAsync("s", "d", order: (RespireListMoveOrder)99),
             () => client.Lists.MoveManyAsync("s", "d", waitFor: TimeSpan.FromSeconds(-2)),
         ];
         foreach (var call in invalid)
@@ -70,10 +70,10 @@ public class ListMoveManyTests
         foreach (var lists in new[] { batch.Lists, transaction.Lists })
         {
             await Assert.That(() => lists.MoveMany("s", "d", 0)).Throws<ArgumentOutOfRangeException>();
-            await Assert.That(() => lists.MoveMany("s", "d", from: (ListSide)99)).Throws<ArgumentOutOfRangeException>();
-            await Assert.That(() => lists.MoveMany("s", "d", to: (ListSide)99)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => lists.MoveMany("s", "d", from: (RespireListSide)99)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => lists.MoveMany("s", "d", to: (RespireListSide)99)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => lists.MoveMany("s", "d", countMode: (ListMoveCountMode)99)).Throws<ArgumentOutOfRangeException>();
-            await Assert.That(() => lists.MoveMany("s", "d", order: (ListMoveOrder)99)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => lists.MoveMany("s", "d", order: (RespireListMoveOrder)99)).Throws<ArgumentOutOfRangeException>();
         }
         using var cancel = new CancellationTokenSource();
         cancel.Cancel();
@@ -150,7 +150,7 @@ public class ListMoveManyTests
         foreach (var wait in new TimeSpan?[] { null, TimeSpan.Zero })
         {
             var (operation, command) = ListCommands.MoveManyCommand((RespireClient)client.WithKeyPrefix("p:"), "s", "d", 1,
-                ListSide.Left, ListSide.Right, ListMoveCountMode.UpTo, ListMoveOrder.OneByOne, wait);
+                RespireListSide.Left, RespireListSide.Right, ListMoveCountMode.UpTo, RespireListMoveOrder.OneByOne, wait);
             await Assert.That(command.TryGetClientCacheKey(operation, out var arguments)).IsTrue();
             await Assert.That(RawCommandKeyLayouts.TryGetMutationLayout(operation, in arguments, out var layout)).IsTrue();
             await Assert.That(layout.Count).IsEqualTo(2);

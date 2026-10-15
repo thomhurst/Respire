@@ -19,8 +19,8 @@ public class ClusterStreamReadIntegrationTests(ClusterTransactionTestContainer f
             Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Protocol = (RespProtocol)protocol,
         });
         var view = client.WithKeyPrefix($"stream-read:{Guid.NewGuid():N}:");
-        await view.Streams.AddAsync("{a}:one", new StreamAddOptions { Id = "1-0" }, ("value", "first"));
-        await view.Streams.AddAsync("{a}:two", new StreamAddOptions { Id = "2-0" }, ("value", "second"));
+        await view.Streams.AddAsync("{a}:one", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
+        await view.Streams.AddAsync("{a}:two", new RespireStreamAddOptions { Id = "2-0" }, ("value", "second"));
         var result = await (blocking
             ? view.Streams.ReadAsync([("{a}:one", "0"), ("{a}:two", "0")], waitFor: TimeSpan.FromSeconds(1))
             : view.Streams.ReadAsync([("{a}:one", "0"), ("{a}:two", "0")]));

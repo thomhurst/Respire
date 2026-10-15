@@ -143,7 +143,7 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<bool> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when = ExpireWhen.Always,
+        RespireExpireWhen when = RespireExpireWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>Measures a PING round trip.</summary>

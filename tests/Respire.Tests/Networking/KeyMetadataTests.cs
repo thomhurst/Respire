@@ -88,11 +88,11 @@ public class KeyMetadataTests
     }
 
     [Test]
-    [Arguments(ExpireWhen.NotExists, "NX")]
-    [Arguments(ExpireWhen.Exists, "XX")]
-    [Arguments(ExpireWhen.GreaterThan, "GT")]
-    [Arguments(ExpireWhen.LessThan, "LT")]
-    public async Task ConditionalExpiryUsesMillisecondCommands(ExpireWhen when, string token)
+    [Arguments(RespireExpireWhen.NotExists, "NX")]
+    [Arguments(RespireExpireWhen.Exists, "XX")]
+    [Arguments(RespireExpireWhen.GreaterThan, "GT")]
+    [Arguments(RespireExpireWhen.LessThan, "LT")]
+    public async Task ConditionalExpiryUsesMillisecondCommands(RespireExpireWhen when, string token)
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);

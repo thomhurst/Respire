@@ -14,7 +14,7 @@ public enum ListMoveCountMode
 }
 
 /// <summary>How a multi-element list move arranges the selected elements.</summary>
-public enum ListMoveOrder
+public enum RespireListMoveOrder
 {
     /// <summary>Insert in pop order, reversing that order when pushing at the head. Redis: OBO.</summary>
     OneByOne,
@@ -35,24 +35,24 @@ public partial interface IListCommands
     /// indefinitely. TimeSpan.Zero uses a one-millisecond wait. Cancellation discards the lease.
     /// Invalid options throw synchronously before I/O.
     /// </remarks>
-    ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default);
+    ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, long count = 1, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne, CancellationToken cancellationToken = default);
 
     /// <summary>Returns immediately without waiting for new data.</summary>
-    ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default);
+    ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, long count = 1, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne, CancellationToken cancellationToken = default);
 }
 
 internal sealed partial class ListCommands
 {
-    public ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default)
+    public ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, TimeSpan? waitFor, long count = 1, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne, CancellationToken cancellationToken = default)
         => MoveManyCoreAsync(source, destination, count, from, to, countMode, order, waitFor ?? Timeout.InfiniteTimeSpan, cancellationToken);
 
-    public ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, long count = 1, ListSide from = ListSide.Left, ListSide to = ListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne, CancellationToken cancellationToken = default)
+    public ValueTask<string[]?> MoveManyAsync(RespireKey source, RespireKey destination, long count = 1, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right, ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne, CancellationToken cancellationToken = default)
         => MoveManyCoreAsync(source, destination, count, from, to, countMode, order, null, cancellationToken);
 
     private ValueTask<string[]?> MoveManyCoreAsync(
         RespireKey source, RespireKey destination, long count = 1,
-        ListSide from = ListSide.Left, ListSide to = ListSide.Right,
-        ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne,
+        RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right,
+        ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]?>.Start();
@@ -80,7 +80,7 @@ internal sealed partial class ListCommands
 
     internal static (string Operation, CmdN Command) MoveManyCommand(
         RespireClient client, RespireKey source, RespireKey destination, long count,
-        ListSide from, ListSide to, ListMoveCountMode countMode, ListMoveOrder order, TimeSpan? waitFor)
+        RespireListSide from, RespireListSide to, ListMoveCountMode countMode, RespireListMoveOrder order, TimeSpan? waitFor)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
         var fromToken = SideToken(from);
@@ -93,8 +93,8 @@ internal sealed partial class ListCommands
         };
         var ordering = order switch
         {
-            ListMoveOrder.OneByOne => "OBO",
-            ListMoveOrder.Bulk => "BULK",
+            RespireListMoveOrder.OneByOne => "OBO",
+            RespireListMoveOrder.Bulk => "BULK",
             _ => throw new ArgumentOutOfRangeException(nameof(order), order, null),
         };
         if (waitFor is { } wait) MultiKeyPop.ValidateWait(wait);

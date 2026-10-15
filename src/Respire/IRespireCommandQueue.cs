@@ -117,5 +117,5 @@ public interface IRespireCommandQueue
     RespirePending<bool> Expire(
         RespireKey key,
         RespireExpiry expiry,
-        ExpireWhen when = ExpireWhen.Always);
+        RespireExpireWhen when = RespireExpireWhen.Always);
 }

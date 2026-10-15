@@ -9,7 +9,7 @@
         "Delete(params ReadOnlySpan<RespireKey>):RespirePending<long>",
         "Encoding(RespireKey):RespirePending<string?>",
         "Exists(RespireKey):RespirePending<bool>",
-        "Expire(RespireKey,RespireExpiry,ExpireWhen):RespirePending<bool>",
+        "Expire(RespireKey,RespireExpiry,RespireExpireWhen):RespirePending<bool>",
         "Expiry(RespireKey):RespirePending<RespireTtl>",
         "ExpiryTime(RespireKey):RespirePending<RespireExpiryTime>",
         "ExpiryTime(RespireKey,ExpiryTimePrecision):RespirePending<RespireExpiryTime>",

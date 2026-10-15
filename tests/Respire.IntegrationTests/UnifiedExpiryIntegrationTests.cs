@@ -16,9 +16,9 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
         await client.SetAsync("unified:key", "value", RespireExpiry.In(TimeSpan.FromSeconds(30)));
 
         (await client.Keys.ExpireAsync(
-            "unified:key", RespireExpiry.In(TimeSpan.FromSeconds(60)), ExpireWhen.NotExists)).Should().BeFalse();
+            "unified:key", RespireExpiry.In(TimeSpan.FromSeconds(60)), RespireExpireWhen.NotExists)).Should().BeFalse();
         (await client.Keys.ExpireAsync(
-            "unified:key", RespireExpiry.In(TimeSpan.FromSeconds(60)), ExpireWhen.GreaterThan)).Should().BeTrue();
+            "unified:key", RespireExpiry.In(TimeSpan.FromSeconds(60)), RespireExpireWhen.GreaterThan)).Should().BeTrue();
         (await client.Keys.ExpireAsync("unified:key", RespireExpiry.Persist)).Should().BeTrue();
 
         (await client.Keys.ExpiryAsync("unified:key")).HasExpiry.Should().BeFalse();

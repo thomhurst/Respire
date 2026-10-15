@@ -81,7 +81,7 @@ public partial interface IBatchListCommands
     /// Redis: LMOVE.
     /// </summary>
     RespirePending<string?> Move(
-        RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right);
+        RespireKey source, RespireKey destination, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right);
 
     /// <summary>Number of elements in the list (0 when missing). Redis: LLEN.</summary>
     RespirePending<long> Count(RespireKey key);
@@ -217,10 +217,10 @@ internal sealed partial class BatchListCommands(IPendingSink sink) : IBatchListC
     }
 
     public RespirePending<string?> Move(
-        RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right)
+        RespireKey source, RespireKey destination, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right)
     {
-        RespireValue fromSide = from == ListSide.Left ? "LEFT" : "RIGHT";
-        RespireValue toSide = to == ListSide.Left ? "LEFT" : "RIGHT";
+        RespireValue fromSide = from == RespireListSide.Left ? "LEFT" : "RIGHT";
+        RespireValue toSide = to == RespireListSide.Left ? "LEFT" : "RIGHT";
         return sink.Add<Cmd4, string?>(
             "LMOVE",
             new Cmd4(Verbs.LMove, sink.Client.Key(in source), sink.Client.Key(in destination), fromSide, toSide),

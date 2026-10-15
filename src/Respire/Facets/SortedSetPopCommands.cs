@@ -150,7 +150,7 @@ internal sealed partial class SortedSetCommands
         if (reply.IsNull) return null;
         var elements = PopReplyElements(in reply, 3);
         return new RespireSortedSetPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix),
-            new SortedSetEntry(elements[1].AsString(), ResponseReader.Double(in elements[2])));
+            new RespireSortedSetEntry(elements[1].AsString(), ResponseReader.Double(in elements[2])));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -235,7 +235,7 @@ internal sealed partial class SortedSetCommands
         if (reply.IsNull) return null;
         var elements = PopReplyElements(in reply, 3);
         return new RespireSortedSetPopResult<T>(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes),
-            new SortedSetEntry<T>(client.DeserializeBorrowed<T>(in elements[1])!, ResponseReader.Double(in elements[2])));
+            new RespireSortedSetEntry<T>(client.DeserializeBorrowed<T>(in elements[1])!, ResponseReader.Double(in elements[2])));
     }
 
     internal static (string Operation, CmdN Command) PopManyCommand(

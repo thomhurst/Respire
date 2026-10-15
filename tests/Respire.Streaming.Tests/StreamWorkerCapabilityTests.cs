@@ -110,7 +110,7 @@ public class StreamWorkerCapabilityScriptTests
 
     internal static async Task ReleasedPendingScenarioAsync(RespireClient client)
     {
-        await client.Streams.AddAsync("released", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+        await client.Streams.AddAsync("released", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("released", "g", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("released", "g", "owner");
         await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["released"], ["g", "owner", "1-0", 1, 0]);
@@ -147,8 +147,8 @@ public class StreamWorkerCapabilityScriptTests
 
     internal static async Task DeletedPendingScenarioAsync(RespireClient client)
     {
-        await client.Streams.AddAsync("deleted", new StreamAddOptions { Id = "1-0" }, ("f", "deleted"));
-        await client.Streams.AddAsync("deleted", new StreamAddOptions { Id = "2-0" }, ("f", "live"));
+        await client.Streams.AddAsync("deleted", new RespireStreamAddOptions { Id = "1-0" }, ("f", "deleted"));
+        await client.Streams.AddAsync("deleted", new RespireStreamAddOptions { Id = "2-0" }, ("f", "live"));
         await client.Streams.CreateGroupAsync("deleted", "g", RespireStreamId.Beginning);
         await client.Streams.CreateGroupAsync("deleted", "other", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("deleted", "g", "old", new StreamReadOptions { Count = 2 });
@@ -183,7 +183,7 @@ public class StreamWorkerCapabilityScriptTests
     internal static async Task CleanupCursorScenarioAsync(RespireClient client)
     {
         for (var i = 1; i <= 3; i++)
-            await client.Streams.AddAsync("cleanup-cursor", new StreamAddOptions { Id = $"{i}-0" }, ("f", "v"));
+            await client.Streams.AddAsync("cleanup-cursor", new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("cleanup-cursor", "g", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("cleanup-cursor", "g", "old", new StreamReadOptions { Count = 3 });
         await client.Streams.RemoveAsync("cleanup-cursor", new RespireStreamId("2-0"), new RespireStreamId("3-0"));
@@ -216,7 +216,7 @@ public class StreamWorkerCapabilityScriptTests
     internal static async Task CapabilityScenarioAsync(RespireClient root, RespireFakeClock? clock, int minor)
     {
         var client = root.WithKeyPrefix("tenant:");
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("f", "v"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("events", "g", RespireStreamId.Beginning);
         await client.Streams.CreateGroupAsync("events", "other", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("events", "g", "old");
@@ -266,10 +266,10 @@ public class StreamWorkerCapabilityScriptTests
 
     internal static async Task ClaimMixScenarioAsync(RespireClient client, int minor)
     {
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("f", "pending"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "pending"));
         await client.Streams.CreateGroupAsync("events", "g", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("events", "g", "old");
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "2-0" }, ("f", "new"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "2-0" }, ("f", "new"));
         using var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["events"],
             ["g", "new", 0, "0-0", 2]);
         await Assert.That(reply[1].Count).IsEqualTo(minor >= 4 ? 2 : 1);

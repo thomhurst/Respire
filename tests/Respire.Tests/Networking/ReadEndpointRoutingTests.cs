@@ -146,7 +146,7 @@ public class ReadEndpointRoutingTests
         var key = "key";
         using (await view.ExecuteAsync($"OBJECT ENCODING {key}")) { }
         using (await view.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key")) { }
-        await view.Geo.SearchAsync("geo", GeoSearchOrigin.FromCoordinates(0, 0), GeoSearchShape.Circle(1));
+        await view.Geo.SearchAsync("geo", GeoSearchOrigin.FromCoordinates(0, 0), RespireGeoSearchShape.Circle(1));
         await view.Streams.PendingSummaryAsync("stream", "group");
         await view.Streams.PendingAsync("stream", "group");
         await view.Streams.InfoAsync("stream");

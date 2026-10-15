@@ -26,7 +26,7 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
         var poisonIds = ids.Where((_, index) => index % 3 == 0).ToArray();
         byte[] payload = [0xff, 0, 13, 10];
         for (var index = 0; index < ids.Length; index++)
-            await client.Streams.AddAsync("events", new StreamAddOptions { Id = ids[index] },
+            await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = ids[index] },
                 ("kind", index % 3 == 0 ? "poison" : "normal"), ("payload", payload));
         await client.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         await client.Streams.CreateGroupAsync("events", "independent", RespireStreamId.Beginning);

@@ -19,9 +19,9 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("租户:");
         RespireKey key = new byte[] { 0xff, 0, 0x42 };
-        await view.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("字段", (RespireValue)new byte[] { 0xff, 0 }));
-        await view.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("字段", "second"));
-        await view.Streams.AddAsync("other", new StreamAddOptions { Id = "3-0" }, ("value", "third"));
+        await view.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("字段", (RespireValue)new byte[] { 0xff, 0 }));
+        await view.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("字段", "second"));
+        await view.Streams.AddAsync("other", new RespireStreamAddOptions { Id = "3-0" }, ("value", "third"));
         (RespireKey Key, RespireStreamId After)[] streams = [("missing", "0"), (key, "0"), ("other", "0")];
         RespireStreamReadResult[] result;
         if (surface == 0) result = await view.Streams.ReadAsync(streams, count: 1);
@@ -64,7 +64,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
         await WaitForBlockedAsync(observer, name, timeout.Token);
         (await client.SetAsync("ordinary", "responsive", cancellationToken: timeout.Token)).Should().BeTrue();
         read.IsCompleted.Should().BeFalse();
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("value", "first"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
         (await read).Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"1-0");
         var canceled = client.Streams.ReadAsync("events", after: "1-0", waitFor: null, cancellationToken: cancel.Token).AsTask();
         await WaitForBlockedAsync(observer, name, timeout.Token);
@@ -85,7 +85,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
         { Protocol = (RespProtocol)protocol, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("value", "first"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
         await using (var reader = client.Streams.ReadAllAsync("events", cancellationToken: timeout.Token).GetAsyncEnumerator())
         {
             (await reader.MoveNextAsync()).Should().BeTrue();
@@ -94,8 +94,8 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
             var blocked = await WaitForBlockedAsync(observer, name, timeout.Token);
             (await observer.Server.KillClientAsync(blocked.Id, cancellationToken: timeout.Token)).Should().BeTrue();
             // Entries persist while the reader has no active connection, then are delivered from its saved cursor.
-            await observer.Streams.AddAsync("events", new StreamAddOptions { Id = "2-0" }, ("value", "second"));
-            await observer.Streams.AddAsync("events", new StreamAddOptions { Id = "3-0" }, ("value", "third"));
+            await observer.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "2-0" }, ("value", "second"));
+            await observer.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "3-0" }, ("value", "third"));
             (await next).Should().BeTrue();
             reader.Current.Id.Should().Be((RespireStreamId)"2-0");
             (await reader.MoveNextAsync()).Should().BeTrue();

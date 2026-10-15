@@ -34,7 +34,7 @@ public class MultiKeySortedSetPopTests
         else
             await batch!.ExecuteAsync();
         await Assert.That(pending.Result!.Value.Key).IsEqualTo((RespireKey)"key");
-        await Assert.That(pending.Result.Value.Entries).IsEquivalentTo([new SortedSetEntry("a", 1), new SortedSetEntry("b", 2)], CollectionOrdering.Matching);
+        await Assert.That(pending.Result.Value.Entries).IsEquivalentTo([new RespireSortedSetEntry("a", 1), new RespireSortedSetEntry("b", 2)], CollectionOrdering.Matching);
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(["ZMPOP 2 missing key MAX COUNT 2"]);
     }
@@ -47,7 +47,7 @@ public class MultiKeySortedSetPopTests
         var result = SortedSetCommands.ParsePopMany(in reply, "p:"u8)!.Value;
         key[2] = 1;
         await Assert.That(result.Key).IsEqualTo((RespireKey)new byte[] { 0xff, 0 });
-        await Assert.That(result.Entries).IsEquivalentTo([new SortedSetEntry("a", 1)]);
+        await Assert.That(result.Entries).IsEquivalentTo([new RespireSortedSetEntry("a", 1)]);
         await Assert.That(() => SortedSetCommands.ParsePopMany(in reply, "other:"u8))
             .Throws<RespireProtocolException>();
         using var malformed = RespValue.Array(RespValue.BulkString("key"));
@@ -133,14 +133,14 @@ public class MultiKeySortedSetPopTests
             await Assert.That(async () => await client.SortedSets.PopManyAsync<int>(["key"]))
                 .Throws<RespireProtocolException>();
             var result = await client.SortedSets.PopManyAsync<int>(["key"]);
-            await Assert.That(result!.Value.Entries).IsEquivalentTo([new SortedSetEntry<int>(7, 1.5)]);
+            await Assert.That(result!.Value.Entries).IsEquivalentTo([new RespireSortedSetEntry<int>(7, 1.5)]);
         }
         else
         {
             await Assert.That(async () => await client.SortedSets.PopAsync<int>(["key"], TimeSpan.Zero))
                 .Throws<RespireProtocolException>();
             var result = await client.SortedSets.PopAsync<int>(["key"], TimeSpan.Zero);
-            await Assert.That(result!.Value.Entry).IsEqualTo(new SortedSetEntry<int>(7, 1.5));
+            await Assert.That(result!.Value.Entry).IsEqualTo(new RespireSortedSetEntry<int>(7, 1.5));
         }
     }
 

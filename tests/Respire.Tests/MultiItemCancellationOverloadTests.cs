@@ -192,8 +192,8 @@ public class MultiItemCancellationOverloadTests
         (RespireKey Key, RespireValue Value)[] pairs = [("a", "x")];
         (string Field, RespireValue Value)[] fieldValues = [("f1", "x")];
         (RespireValue Member, double Score)[] entries = [("m", 1)];
-        GeoEntry[] geoEntries = [new GeoEntry(0, 0, "m")];
-        BitFieldOperation[] operations = [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))];
+        RespireGeoEntry[] geoEntries = [new RespireGeoEntry(0, 0, "m")];
+        RespireBitFieldOperation[] operations = [RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))];
         RespireStreamId[] ids = [new RespireStreamId("1-1")];
         var expiry = TimeSpan.FromMinutes(1);
         var expireAt = DateTimeOffset.UtcNow;
@@ -217,9 +217,9 @@ public class MultiItemCancellationOverloadTests
         _ = client.Hashes.RemoveAsync("h", fields, token);
         _ = client.Hashes.ExpiryAsync("h", fields, token);
         _ = client.Hashes.ExpireAsync("h", expiry, fields, token);
-        _ = client.Hashes.ExpireAsync("h", expiry, ExpireWhen.Exists, fields, token);
+        _ = client.Hashes.ExpireAsync("h", expiry, RespireExpireWhen.Exists, fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
-        _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), ExpireWhen.Exists, fields, token);
+        _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), RespireExpireWhen.Exists, fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.Persist, fields, token);
         _ = client.Hashes.GetAndRemoveAsync("h", fields, token);
         _ = client.Hashes.GetAndExpireAsync("h", expiry, fields, token);
@@ -265,10 +265,10 @@ public class MultiItemCancellationOverloadTests
             "g", new GeoAddOptions { When = SetWhen.NotExists, Changed = true }, geoEntries, token);
 
         _ = client.Strings.SetManyExpireAsync(expiry, ("a", "x"), ("b", "y"));
-        _ = client.Geo.AddAsync("g", new GeoEntry(0, 0, "a"), new GeoEntry(1, 1, "b"));
+        _ = client.Geo.AddAsync("g", new RespireGeoEntry(0, 0, "a"), new RespireGeoEntry(1, 1, "b"));
         _ = client.Geo.AddAsync(
             "g", new GeoAddOptions { When = SetWhen.NotExists },
-            new GeoEntry(0, 0, "a"), new GeoEntry(1, 1, "b"));
+            new RespireGeoEntry(0, 0, "a"), new RespireGeoEntry(1, 1, "b"));
 
         RespireChannel[] channels = ["a", "b"];
         _ = client.SubscribeAsync(["a", "b"]);
@@ -449,7 +449,7 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<bool> ExpireAsync(
             RespireKey key,
             RespireExpiry expiry,
-            ExpireWhen when = ExpireWhen.Always,
+            RespireExpireWhen when = RespireExpireWhen.Always,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 

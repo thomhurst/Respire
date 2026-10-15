@@ -44,7 +44,7 @@ public enum BitOperation
 }
 
 /// <summary>Overflow behavior for subsequent Redis BITFIELD writes.</summary>
-public enum BitFieldOverflow
+public enum RespireBitFieldOverflow
 {
     /// <summary>Wrap overflowing values modulo the field width.</summary>
     Wrap,
@@ -57,9 +57,9 @@ public enum BitFieldOverflow
 }
 
 /// <summary>A signed or unsigned integer encoding used by Redis BITFIELD.</summary>
-public readonly record struct BitFieldEncoding
+public readonly record struct RespireBitFieldEncoding
 {
-    private BitFieldEncoding(bool isSigned, int width)
+    private RespireBitFieldEncoding(bool isSigned, int width)
     {
         IsSigned = isSigned;
         Width = width;
@@ -72,7 +72,7 @@ public readonly record struct BitFieldEncoding
     public int Width { get; }
 
     /// <summary>Creates a signed encoding from 1 through 64 bits.</summary>
-    public static BitFieldEncoding Signed(int width)
+    public static RespireBitFieldEncoding Signed(int width)
     {
         if (width is < 1 or > 64)
         {
@@ -83,7 +83,7 @@ public readonly record struct BitFieldEncoding
     }
 
     /// <summary>Creates an unsigned encoding from 1 through 63 bits.</summary>
-    public static BitFieldEncoding Unsigned(int width)
+    public static RespireBitFieldEncoding Unsigned(int width)
     {
         if (width is < 1 or > 63)
         {
@@ -97,9 +97,9 @@ public readonly record struct BitFieldEncoding
 }
 
 /// <summary>An absolute bit offset or an index multiplied by the BITFIELD encoding width. The default is bit offset zero.</summary>
-public readonly record struct BitFieldOffset
+public readonly record struct RespireBitFieldOffset
 {
-    private BitFieldOffset(long value, bool isFieldIndex)
+    private RespireBitFieldOffset(long value, bool isFieldIndex)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(value);
         Value = value;
@@ -113,17 +113,17 @@ public readonly record struct BitFieldOffset
     public bool IsFieldIndex { get; }
 
     /// <summary>Creates an absolute offset measured in bits.</summary>
-    public static BitFieldOffset Bits(long offset) => new(offset, false);
+    public static RespireBitFieldOffset Bits(long offset) => new(offset, false);
 
     /// <summary>Creates a zero-based field index, multiplied by the operation's encoding width.</summary>
-    public static BitFieldOffset Fields(long index) => new(index, true);
+    public static RespireBitFieldOffset Fields(long index) => new(index, true);
 }
 
 /// <summary>One GET, SET, INCRBY, or OVERFLOW operation inside Redis BITFIELD.</summary>
-public readonly struct BitFieldOperation
+public readonly struct RespireBitFieldOperation
 {
-    private BitFieldOperation(
-        string command, BitFieldEncoding encoding, BitFieldOffset offset, long value, BitFieldOverflow? overflow = null)
+    private RespireBitFieldOperation(
+        string command, RespireBitFieldEncoding encoding, RespireBitFieldOffset offset, long value, RespireBitFieldOverflow? overflow = null)
     {
         Command = command;
         Encoding = encoding;
@@ -133,26 +133,26 @@ public readonly struct BitFieldOperation
     }
 
     internal string Command { get; }
-    internal BitFieldEncoding Encoding { get; }
-    internal BitFieldOffset Offset { get; }
+    internal RespireBitFieldEncoding Encoding { get; }
+    internal RespireBitFieldOffset Offset { get; }
     internal long Value { get; }
-    internal BitFieldOverflow? Overflow { get; }
+    internal RespireBitFieldOverflow? Overflow { get; }
     internal int TokenCount => Command == "OVERFLOW" ? 2 : Command == "GET" ? 3 : 4;
 
     /// <summary>Reads a signed or unsigned field. Redis: BITFIELD GET.</summary>
-    public static BitFieldOperation Get(BitFieldEncoding encoding, BitFieldOffset offset)
+    public static RespireBitFieldOperation Get(RespireBitFieldEncoding encoding, RespireBitFieldOffset offset)
         => ValueOperation("GET", encoding, offset, 0);
 
     /// <summary>Writes a field and returns its previous value. Redis: BITFIELD SET.</summary>
-    public static BitFieldOperation Set(BitFieldEncoding encoding, BitFieldOffset offset, long value)
+    public static RespireBitFieldOperation Set(RespireBitFieldEncoding encoding, RespireBitFieldOffset offset, long value)
         => ValueOperation("SET", encoding, offset, value);
 
     /// <summary>Increments a field and returns its new value. Redis: BITFIELD INCRBY.</summary>
-    public static BitFieldOperation Increment(BitFieldEncoding encoding, BitFieldOffset offset, long by)
+    public static RespireBitFieldOperation Increment(RespireBitFieldEncoding encoding, RespireBitFieldOffset offset, long by)
         => ValueOperation("INCRBY", encoding, offset, by);
 
     /// <summary>Changes overflow behavior for later writes. Redis: BITFIELD OVERFLOW.</summary>
-    public static BitFieldOperation SetOverflow(BitFieldOverflow overflow)
+    public static RespireBitFieldOperation SetOverflow(RespireBitFieldOverflow overflow)
     {
         if (!Enum.IsDefined(overflow))
         {
@@ -162,12 +162,12 @@ public readonly struct BitFieldOperation
         return new("OVERFLOW", default, default, 0, overflow);
     }
 
-    private static BitFieldOperation ValueOperation(
-        string command, BitFieldEncoding encoding, BitFieldOffset offset, long value)
+    private static RespireBitFieldOperation ValueOperation(
+        string command, RespireBitFieldEncoding encoding, RespireBitFieldOffset offset, long value)
     {
         if (!encoding.IsValid)
         {
-            throw new ArgumentException("Use BitFieldEncoding.Signed or Unsigned.", nameof(encoding));
+            throw new ArgumentException("Use RespireBitFieldEncoding.Signed or Unsigned.", nameof(encoding));
         }
 
         return new(command, encoding, offset, value);
@@ -181,10 +181,10 @@ public interface IBitmapCommands
     ValueTask<long> OperateAsync(BitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<long?[]> FieldAsync(RespireKey key, BitFieldOperation operation, CancellationToken cancellationToken);
+    ValueTask<long?[]> FieldAsync(RespireKey key, RespireBitFieldOperation operation, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, BitFieldOperation get, CancellationToken cancellationToken);
+    ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, RespireBitFieldOperation get, CancellationToken cancellationToken);
 
     /// <summary>Returns the bit stored at an offset. Redis: GETBIT.</summary>
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
@@ -218,18 +218,18 @@ public interface IBitmapCommands
         CancellationToken cancellationToken);
 
     /// <summary>Executes bit-field reads and writes. Redis: BITFIELD.</summary>
-    ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations);
+    ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> operations);
 
     /// <summary>Executes bit-field reads and writes. Redis: BITFIELD.</summary>
     ValueTask<long?[]> FieldAsync(
-        RespireKey key, ReadOnlySpan<BitFieldOperation> operations, CancellationToken cancellationToken);
+        RespireKey key, ReadOnlySpan<RespireBitFieldOperation> operations, CancellationToken cancellationToken);
 
     /// <summary>Executes read-only bit-field GET operations. Redis: BITFIELD_RO.</summary>
-    ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets);
+    ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> gets);
 
     /// <summary>Executes read-only bit-field GET operations. Redis: BITFIELD_RO.</summary>
     ValueTask<long?[]> FieldReadOnlyAsync(
-        RespireKey key, ReadOnlySpan<BitFieldOperation> gets, CancellationToken cancellationToken);
+        RespireKey key, ReadOnlySpan<RespireBitFieldOperation> gets, CancellationToken cancellationToken);
 }
 
 internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
@@ -239,11 +239,11 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         => OperateAsync(operation, destination, [sourceKey], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<long?[]> FieldAsync(RespireKey key, BitFieldOperation operation, CancellationToken cancellationToken)
+    public ValueTask<long?[]> FieldAsync(RespireKey key, RespireBitFieldOperation operation, CancellationToken cancellationToken)
         => FieldAsync(key, [operation], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, BitFieldOperation get, CancellationToken cancellationToken)
+    public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, RespireBitFieldOperation get, CancellationToken cancellationToken)
         => FieldReadOnlyAsync(key, [get], cancellationToken);
 
 
@@ -313,19 +313,19 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             cancellationToken);
     }
 
-    public ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations)
+    public ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> operations)
         => FieldAsync(key, operations, CancellationToken.None);
 
     public ValueTask<long?[]> FieldAsync(
-        RespireKey key, ReadOnlySpan<BitFieldOperation> operations, CancellationToken cancellationToken)
+        RespireKey key, ReadOnlySpan<RespireBitFieldOperation> operations, CancellationToken cancellationToken)
         => FieldCoreAsync(
             "BITFIELD", RespireCommands.Bitmap.BITFIELD, key, operations, readOnly: false, cancellationToken);
 
-    public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets)
+    public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> gets)
         => FieldReadOnlyAsync(key, gets, CancellationToken.None);
 
     public ValueTask<long?[]> FieldReadOnlyAsync(
-        RespireKey key, ReadOnlySpan<BitFieldOperation> gets, CancellationToken cancellationToken)
+        RespireKey key, ReadOnlySpan<RespireBitFieldOperation> gets, CancellationToken cancellationToken)
         => FieldCoreAsync(
             "BITFIELD_RO", RespireCommands.Bitmap.BITFIELD_RO, key, gets, readOnly: true, cancellationToken);
 
@@ -333,7 +333,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         string name,
         RespireCommand command,
         RespireKey key,
-        ReadOnlySpan<BitFieldOperation> operations,
+        ReadOnlySpan<RespireBitFieldOperation> operations,
         bool readOnly,
         CancellationToken cancellationToken)
     {
@@ -343,7 +343,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
     }
 
     /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidateFieldOperations(ReadOnlySpan<BitFieldOperation> operations, bool readOnly)
+    internal static void ValidateFieldOperations(ReadOnlySpan<RespireBitFieldOperation> operations, bool readOnly)
     {
         if (operations.IsEmpty)
         {
@@ -354,7 +354,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         {
             if (string.IsNullOrEmpty(operation.Command))
             {
-                throw new ArgumentException("Operations must be created with BitFieldOperation factory methods.", nameof(operations));
+                throw new ArgumentException("Operations must be created with RespireBitFieldOperation factory methods.", nameof(operations));
             }
 
             if (readOnly && operation.Command != "GET")
@@ -444,7 +444,7 @@ internal readonly struct BitOpCommand(
     }
 }
 
-internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOperation[] operations) : IRespCommand
+internal readonly struct BitFieldCommand(Verb verb, RespireValue key, RespireBitFieldOperation[] operations) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
@@ -491,11 +491,11 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOp
         writer.WriteArrayHeader(verb.Tokens + tokenCount);
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
-        // stackalloc-audit[bdc2c663bd4c186f]: init: each use writes byte 0 and TryFormat writes the width digits after it;
+        // stackalloc-audit[f29f3696bb954a6d]: init: each use writes byte 0 and TryFormat writes the width digits after it;
         // read: only encodingBuffer[..(encodingLength + 1)], the bytes just written; failure: a failed TryFormat
         // reports zero digits, so only the written prefix byte is read; an overflow-mode throw happens before any read.
         Span<byte> encodingBuffer = stackalloc byte[3];
-        // stackalloc-audit[bdc2c663bd4c186f]: init: each "#" use writes byte 0 and TryFormat writes the index digits after it;
+        // stackalloc-audit[f29f3696bb954a6d]: init: each "#" use writes byte 0 and TryFormat writes the index digits after it;
         // read: only offsetBuffer[..(offsetLength + 1)], the bytes just written; failure: a failed TryFormat
         // reports zero digits, so only the written prefix byte is read.
         Span<byte> offsetBuffer = stackalloc byte[21];
@@ -506,9 +506,9 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOp
             {
                 writer.WriteBulkString(operation.Overflow switch
                 {
-                    BitFieldOverflow.Wrap => "WRAP",
-                    BitFieldOverflow.Saturate => "SAT",
-                    BitFieldOverflow.Fail => "FAIL",
+                    RespireBitFieldOverflow.Wrap => "WRAP",
+                    RespireBitFieldOverflow.Saturate => "SAT",
+                    RespireBitFieldOverflow.Fail => "FAIL",
                     _ => throw new InvalidOperationException("Missing overflow mode."),
                 });
                 continue;

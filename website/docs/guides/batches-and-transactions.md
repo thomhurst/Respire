@@ -249,7 +249,7 @@ Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or
 | `Read`, `ReadGroup` | XREAD, XREADGROUP (nonblocking) |
 
 - Parameters match the immediate methods, without cancellation tokens.
-- `Add` with `StreamAddOptions` returns a nullable ID, null when NOMKSTREAM skips an absent stream.
+- `Add` with `RespireStreamAddOptions` returns a nullable ID, null when NOMKSTREAM skips an absent stream.
 - `Range` supports inclusive bounds, count, and descending order.
 - `Trim` accepts `StreamTrimOptions`; see [stream trimming](../commands/collections.md#trimming).
 

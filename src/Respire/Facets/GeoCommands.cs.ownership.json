@@ -4,21 +4,21 @@
       "Type": "Respire.IGeoCommands",
       "OwnerType": "Respire.GeoCommands",
       "Members": [
-        "AddAsync(RespireKey,GeoAddOptions,GeoEntry,CancellationToken):ValueTask<long>",
-        "AddAsync(RespireKey,GeoAddOptions,ReadOnlySpan<GeoEntry>,CancellationToken):ValueTask<long>",
-        "AddAsync(RespireKey,GeoAddOptions,params ReadOnlySpan<GeoEntry>):ValueTask<long>",
-        "AddAsync(RespireKey,GeoEntry,CancellationToken):ValueTask<long>",
-        "AddAsync(RespireKey,ReadOnlySpan<GeoEntry>,CancellationToken):ValueTask<long>",
-        "AddAsync(RespireKey,params ReadOnlySpan<GeoEntry>):ValueTask<long>",
-        "DistanceAsync(RespireKey,RespireValue,RespireValue,GeoUnit,CancellationToken):ValueTask<double?>",
+        "AddAsync(RespireKey,GeoAddOptions,RespireGeoEntry,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,GeoAddOptions,ReadOnlySpan<RespireGeoEntry>,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,GeoAddOptions,params ReadOnlySpan<RespireGeoEntry>):ValueTask<long>",
+        "AddAsync(RespireKey,RespireGeoEntry,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,ReadOnlySpan<RespireGeoEntry>,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,params ReadOnlySpan<RespireGeoEntry>):ValueTask<long>",
+        "DistanceAsync(RespireKey,RespireValue,RespireValue,RespireGeoUnit,CancellationToken):ValueTask<double?>",
         "HashAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<string?[]>",
         "HashAsync(RespireKey,RespireValue,CancellationToken):ValueTask<string?[]>",
         "HashAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<string?[]>",
-        "PositionAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<GeoPosition?[]>",
-        "PositionAsync(RespireKey,RespireValue,CancellationToken):ValueTask<GeoPosition?[]>",
-        "PositionAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<GeoPosition?[]>",
-        "SearchAsync(RespireKey,GeoSearchOrigin,GeoSearchShape,GeoSearchOptions,CancellationToken):ValueTask<GeoSearchResult[]>",
-        "SearchStoreAsync(RespireKey,RespireKey,GeoSearchOrigin,GeoSearchShape,GeoSearchOptions,bool,CancellationToken):ValueTask<long>"
+        "PositionAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireGeoPosition?[]>",
+        "PositionAsync(RespireKey,RespireValue,CancellationToken):ValueTask<RespireGeoPosition?[]>",
+        "PositionAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<RespireGeoPosition?[]>",
+        "SearchAsync(RespireKey,GeoSearchOrigin,RespireGeoSearchShape,GeoSearchOptions,CancellationToken):ValueTask<GeoSearchResult[]>",
+        "SearchStoreAsync(RespireKey,RespireKey,GeoSearchOrigin,RespireGeoSearchShape,GeoSearchOptions,bool,CancellationToken):ValueTask<long>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
@@ -34,7 +34,7 @@
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchResult.Deconstruct(out string,out double?,out long?,out GeoPosition?):void",
+      "Member": "Respire.GeoSearchResult.Deconstruct(out string,out double?,out long?,out RespireGeoPosition?):void",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
@@ -46,11 +46,11 @@
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchShape.Box(double,double,GeoUnit):GeoSearchShape",
+      "Member": "Respire.RespireGeoSearchShape.Box(double,double,RespireGeoUnit):RespireGeoSearchShape",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchShape.Circle(double,GeoUnit):GeoSearchShape",
+      "Member": "Respire.RespireGeoSearchShape.Circle(double,RespireGeoUnit):RespireGeoSearchShape",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     }
   ]

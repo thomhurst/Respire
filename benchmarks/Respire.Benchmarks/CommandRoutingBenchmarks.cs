@@ -18,7 +18,7 @@ public class CommandRoutingBenchmarks
     private readonly BitFieldCommand _bitFieldCommand = new(
         RespireCommands.Bitmap.BITFIELD.Verb,
         "benchmark-key",
-        [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))]);
+        [RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))]);
     private readonly BitOpCommand _bitOpCommand = new(
         RespireCommands.Bitmap.BITOP.Verb,
         "AND",
@@ -34,7 +34,7 @@ public class CommandRoutingBenchmarks
         RespireCommands.Geo.GEOSEARCH.Verb,
         "benchmark-key",
         GeoSearchOrigin.FromCoordinates(0, 0),
-        GeoSearchShape.Circle(1),
+        RespireGeoSearchShape.Circle(1),
         default,
         destination: null,
         storeDistance: false);

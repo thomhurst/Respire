@@ -106,11 +106,11 @@ public class SingleItemCancellationTests
 
     private static void CompileSortedSetPopCalls(ISortedSetCommands commands, CancellationToken token)
     {
-        ValueTask<SortedSetEntry?> scalar = commands.PopAsync("key", default);
-        ValueTask<SortedSetEntry<int>?> typedScalar = commands.PopAsync<int>("key", default);
+        ValueTask<RespireSortedSetEntry?> scalar = commands.PopAsync("key", default);
+        ValueTask<RespireSortedSetEntry<int>?> typedScalar = commands.PopAsync<int>("key", default);
         // Existing single-key calls must keep choosing ZPOPMIN/ZPOPMAX and their array result.
-        ValueTask<SortedSetEntry[]> existing = commands.PopManyAsync("key", count: 2);
-        ValueTask<SortedSetEntry<int>[]> typed = commands.PopManyAsync<int>("key", count: 2, cancellationToken: token);
+        ValueTask<RespireSortedSetEntry[]> existing = commands.PopManyAsync("key", count: 2);
+        ValueTask<RespireSortedSetEntry<int>[]> typed = commands.PopManyAsync<int>("key", count: 2, cancellationToken: token);
         // ZMPOP/BZMPOP retain the key-bearing result and require their extra options explicitly.
         ValueTask<RespireSortedSetPopManyResult?> multi = commands.PopManyAsync("key", 2, false, null, token);
         ValueTask<RespireSortedSetPopManyResult<int>?> typedMulti = commands.PopManyAsync<int>("key", 2, false, TimeSpan.FromSeconds(1), token);

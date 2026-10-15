@@ -8,16 +8,16 @@ public partial interface IBatchListCommands
     /// <remarks>Both keys must share a Cluster slot. Queued moves never wait; BLMOVEM has no deferred form.</remarks>
     RespirePending<string[]?> MoveMany(
         RespireKey source, RespireKey destination, long count = 1,
-        ListSide from = ListSide.Left, ListSide to = ListSide.Right,
-        ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne);
+        RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right,
+        ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne);
 }
 
 internal sealed partial class BatchListCommands
 {
     public RespirePending<string[]?> MoveMany(
         RespireKey source, RespireKey destination, long count = 1,
-        ListSide from = ListSide.Left, ListSide to = ListSide.Right,
-        ListMoveCountMode countMode = ListMoveCountMode.UpTo, ListMoveOrder order = ListMoveOrder.OneByOne)
+        RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right,
+        ListMoveCountMode countMode = ListMoveCountMode.UpTo, RespireListMoveOrder order = RespireListMoveOrder.OneByOne)
     {
         var (operation, command) = ListCommands.MoveManyCommand(sink.Client, source, destination, count, from, to, countMode, order, null);
         return sink.Add<CmdN, string[]?>(operation, command, source, destination,

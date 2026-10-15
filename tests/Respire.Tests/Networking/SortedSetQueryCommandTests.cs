@@ -41,7 +41,7 @@ public class SortedSetQueryCommandTests
         if (transaction is not null) await transaction.CommitAsync(); else await batch!.ExecuteAsync();
         await Assert.That(scalar.Result).IsEqualTo("a");
         await Assert.That(members.Result).IsEquivalentTo(["a", "a"], CollectionOrdering.Matching);
-        await Assert.That(scored.Result).IsEquivalentTo([new SortedSetEntry("a", 1.5), new SortedSetEntry("a", 1.5)], CollectionOrdering.Matching);
+        await Assert.That(scored.Result).IsEquivalentTo([new RespireSortedSetEntry("a", 1.5), new RespireSortedSetEntry("a", 1.5)], CollectionOrdering.Matching);
         await Assert.That(count.Result).IsEqualTo(2);
         await Assert.That(removed.Result).IsEqualTo(1);
         await Assert.That(intersection.Result).IsEqualTo(3);

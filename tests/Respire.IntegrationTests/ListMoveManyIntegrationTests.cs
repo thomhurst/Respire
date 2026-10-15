@@ -23,16 +23,16 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"moves:{Guid.NewGuid():N}:");
-        (ListSide From, ListSide To, ListMoveOrder Order, string[] Values)[] cases =
+        (RespireListSide From, RespireListSide To, RespireListMoveOrder Order, string[] Values)[] cases =
         [
-            (ListSide.Left, ListSide.Left, ListMoveOrder.OneByOne, ["b", "a"]),
-            (ListSide.Left, ListSide.Right, ListMoveOrder.OneByOne, ["a", "b"]),
-            (ListSide.Right, ListSide.Left, ListMoveOrder.OneByOne, ["c", "d"]),
-            (ListSide.Right, ListSide.Right, ListMoveOrder.OneByOne, ["d", "c"]),
-            (ListSide.Left, ListSide.Left, ListMoveOrder.Bulk, ["a", "b"]),
-            (ListSide.Left, ListSide.Right, ListMoveOrder.Bulk, ["a", "b"]),
-            (ListSide.Right, ListSide.Left, ListMoveOrder.Bulk, ["c", "d"]),
-            (ListSide.Right, ListSide.Right, ListMoveOrder.Bulk, ["c", "d"]),
+            (RespireListSide.Left, RespireListSide.Left, RespireListMoveOrder.OneByOne, ["b", "a"]),
+            (RespireListSide.Left, RespireListSide.Right, RespireListMoveOrder.OneByOne, ["a", "b"]),
+            (RespireListSide.Right, RespireListSide.Left, RespireListMoveOrder.OneByOne, ["c", "d"]),
+            (RespireListSide.Right, RespireListSide.Right, RespireListMoveOrder.OneByOne, ["d", "c"]),
+            (RespireListSide.Left, RespireListSide.Left, RespireListMoveOrder.Bulk, ["a", "b"]),
+            (RespireListSide.Left, RespireListSide.Right, RespireListMoveOrder.Bulk, ["a", "b"]),
+            (RespireListSide.Right, RespireListSide.Left, RespireListMoveOrder.Bulk, ["c", "d"]),
+            (RespireListSide.Right, RespireListSide.Right, RespireListMoveOrder.Bulk, ["c", "d"]),
         ];
         foreach (var mode in new[] { "immediate", "blocking", "batch", "transaction" })
         foreach (var same in new[] { false, true })
@@ -44,9 +44,9 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
             var destination = same ? "s" : "d";
             var result = await Move(view, mode, destination, test.From, test.To, test.Order);
             result.Should().Equal(test.Values);
-            string[] remainder = test.From == ListSide.Left ? ["c", "d"] : ["a", "b"];
+            string[] remainder = test.From == RespireListSide.Left ? ["c", "d"] : ["a", "b"];
             var originalDestination = same ? remainder : ["x"];
-            var expected = test.To == ListSide.Left
+            var expected = test.To == RespireListSide.Left
                 ? test.Values.Concat(originalDestination) : originalDestination.Concat(test.Values);
             (await view.Lists.RangeAsync(destination)).Should().Equal(expected);
             if (!same) (await view.Lists.RangeAsync("s")).Should().Equal(remainder);
@@ -125,7 +125,7 @@ public class ListMoveManyIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     private static async Task<string[]?> Move(IRespireClient client, string mode, string destination,
-        ListSide from, ListSide to, ListMoveOrder order)
+        RespireListSide from, RespireListSide to, RespireListMoveOrder order)
     {
         if (mode is "immediate" or "blocking")
             return await (mode == "blocking"

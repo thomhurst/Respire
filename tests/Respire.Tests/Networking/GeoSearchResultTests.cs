@@ -53,7 +53,7 @@ public class GeoSearchResultTests
     public async Task RawMember_OwnsBytesAndPreservesDetailsAndDeconstruction()
     {
         byte[] member = [0xff, 0x00];
-        var position = new GeoPosition(2.5, 3.5);
+        var position = new RespireGeoPosition(2.5, 3.5);
         var result = new GeoSearchResult(member.AsSpan(), 1.5, 123, position);
         member[0] = 0;
         var (text, distance, hash, coordinates) = result;

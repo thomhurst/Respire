@@ -11,7 +11,7 @@
         "Execute(RespireCommand,params RespireValue[]):RespirePending<RespireResult>",
         "ExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
         "Exists(RespireKey):RespirePending<bool>",
-        "Expire(RespireKey,RespireExpiry,ExpireWhen):RespirePending<bool>",
+        "Expire(RespireKey,RespireExpiry,RespireExpireWhen):RespirePending<bool>",
         "GetBytes(RespireKey):RespirePending<byte[]?>",
         "GetString(RespireKey):RespirePending<string?>",
         "Get`1(RespireKey):RespirePending<T?>",

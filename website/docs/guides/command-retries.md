@@ -175,7 +175,7 @@ await using var client = await RespireClient.ConnectAsync(new RespireOptions
 RespireStreamId id = await client.Streams.AddAsync("orders", ("status", "paid"));
 ```
 
-- Calls that set `StreamAddOptions.Idempotency` or an explicit entry ID keep the caller's choice. Explicit `IDMP` and `IDMPAUTO` are also `WriteChecked`.
+- Calls that set `RespireStreamAddOptions.Idempotency` or an explicit entry ID keep the caller's choice. Explicit `IDMP` and `IDMPAUTO` are also `WriteChecked`.
 - Batch and transaction `Streams.Add` members get no automatic identity. Without explicit idempotency they stay `WriteAccumulating` and do not retry after possible execution at a `WriteChecked` maximum.
 - Generated `RespireCommands.Stream.XADD` stays `WriteAccumulating` for every argument list.
 

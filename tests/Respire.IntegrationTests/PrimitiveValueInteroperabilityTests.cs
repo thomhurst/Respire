@@ -384,9 +384,9 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
 
         var readByRespire = await _respireClient.SortedSets.RangeWithScoresAsync(key);
         readByRespire.Should().Equal(
-            new Respire.SortedSetEntry("negative", -10.5),
-            new Respire.SortedSetEntry("zero", 0),
-            new Respire.SortedSetEntry("positive", 1.25e100));
+            new Respire.RespireSortedSetEntry("negative", -10.5),
+            new Respire.RespireSortedSetEntry("zero", 0),
+            new Respire.RespireSortedSetEntry("positive", 1.25e100));
 
         await _respireClient.SortedSets.AddAsync(key, "respire", 3.75);
 

@@ -156,16 +156,16 @@ public class StreamManagementCommandTests
             Resp(Arr("9-0", Arr("type", "latest")), Arr("8-0", Arr("type", "previous"))));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var defaults = default(StreamAddOptions);
+        var defaults = default(RespireStreamAddOptions);
         await Assert.That(defaults.ApproximateTrim).IsTrue();
         await Assert.That(defaults.CreateStream).IsTrue();
-        var explicitDefaults = new StreamAddOptions { ApproximateTrim = true, CreateStream = true };
+        var explicitDefaults = new RespireStreamAddOptions { ApproximateTrim = true, CreateStream = true };
         await Assert.That(defaults).IsEqualTo(explicitDefaults);
         await Assert.That(defaults.GetHashCode()).IsEqualTo(explicitDefaults.GetHashCode());
 
         var chosenId = await client.Streams.AddAsync(
             "events",
-            new StreamAddOptions
+            new RespireStreamAddOptions
             {
                 Id = "42-0",
                 MaxLength = 100,
@@ -174,7 +174,7 @@ public class StreamManagementCommandTests
             ("type", "click"));
         var exactId = await client.Streams.AddAsync(
             "events",
-            new StreamAddOptions { MaxLength = 10, ApproximateTrim = false },
+            new RespireStreamAddOptions { MaxLength = 10, ApproximateTrim = false },
             ("type", "view"));
         var latest = await client.Streams.RangeAsync(
             "events", descending: true, start: "1-0", end: "9-0", count: 2);
@@ -197,7 +197,7 @@ public class StreamManagementCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(async () => await client.Streams.AddAsync(
-            "events", new StreamAddOptions { MaxLength = -1 }, ("type", "click")))
+            "events", new RespireStreamAddOptions { MaxLength = -1 }, ("type", "click")))
             .Throws<ArgumentOutOfRangeException>();
     }
 

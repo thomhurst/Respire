@@ -25,7 +25,7 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
         foreach (var client in new[] { real, fake })
         {
             for (var i = 1; i <= 2; i++)
-                await client.Streams.AddAsync("deleted-claim", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+                await client.Streams.AddAsync("deleted-claim", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
             await client.Streams.CreateGroupAsync("deleted-claim", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("deleted-claim", "g", "abandoned", new() { Count = 2 });
             await client.Streams.RemoveAsync("deleted-claim", ["1-0"]);
@@ -56,7 +56,7 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
         {
             var client = root.WithKeyPrefix("tenant:");
             for (var i = 1; i <= 23; i++)
-                await client.Streams.AddAsync("s", new StreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+                await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
             await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
             await client.Streams.ReadGroupOnceAsync("s", "g", "abandoned", new() { Count = 23 });
             using (var fresh = await client.Scripts.ExecuteAsync(StreamWorkerScripts.Claim, ["s"],
@@ -164,7 +164,7 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
             with { Protocol = (RespProtocol)protocol });
         var client = root.WithKeyPrefix("tenant:");
-        await client.Streams.AddAsync("stale", new StreamAddOptions { Id = "1-0" }, ("payload", "body"));
+        await client.Streams.AddAsync("stale", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
         await client.Streams.CreateGroupAsync("stale", "workers", RespireStreamId.Beginning);
         if (replay) await client.Streams.ReadGroupOnceAsync("stale", "workers", "stable-0");
         var state = new ParkedDelivery();

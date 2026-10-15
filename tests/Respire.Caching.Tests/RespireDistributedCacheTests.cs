@@ -1634,7 +1634,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<bool> ExpireAsync(
             RespireKey key,
             RespireExpiry expiry,
-            ExpireWhen when = ExpireWhen.Always,
+            RespireExpireWhen when = RespireExpireWhen.Always,
             CancellationToken cancellationToken = default)
             => inner.ExpireAsync(key, expiry, when, cancellationToken);
 
@@ -1779,7 +1779,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<bool> ExpireAsync(
             RespireKey key,
             RespireExpiry expiry,
-            ExpireWhen when = ExpireWhen.Always,
+            RespireExpireWhen when = RespireExpireWhen.Always,
             CancellationToken cancellationToken = default)
             => inner.ExpireAsync(key, expiry, when, cancellationToken);
 

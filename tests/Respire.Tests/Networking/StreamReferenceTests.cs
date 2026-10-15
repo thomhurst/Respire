@@ -35,7 +35,7 @@ public class StreamReferenceTests
         RespireStreamId[] ids = ["1-0", "2-0", "3-0"];
         foreach (var policy in Enum.GetValues<StreamReferencePolicy>())
         {
-            var add = new StreamAddOptions { Id = "9-0", MaxLength = 0, ApproximateTrim = false, ReferencePolicy = policy };
+            var add = new RespireStreamAddOptions { Id = "9-0", MaxLength = 0, ApproximateTrim = false, ReferencePolicy = policy };
             var trim = new StreamTrimOptions { MinId = "9-0", Approximate = true, Limit = 0, ReferencePolicy = policy };
             if (queue is null)
             {
@@ -94,14 +94,14 @@ public class StreamReferenceTests
         await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", null!, StreamReferencePolicy.KeepReferences, "1-0"))
             .Throws<ArgumentNullException>();
         await Assert.That(async () => await client.Streams.TrimAsync("events", new() { MaxLength = 0, ReferencePolicy = unknown })).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => batch.Streams.Add("events", new StreamAddOptions { ReferencePolicy = unknown }, ("f", "v")))
+        await Assert.That(() => batch.Streams.Add("events", new RespireStreamAddOptions { ReferencePolicy = unknown }, ("f", "v")))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => transaction.Streams.Trim("events", new() { MaxLength = 0, ReferencePolicy = unknown }))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands).IsEmpty();
-        var options = new StreamAddOptions { ReferencePolicy = StreamReferencePolicy.KeepReferences };
+        var options = new RespireStreamAddOptions { ReferencePolicy = StreamReferencePolicy.KeepReferences };
         await Assert.That(options == default).IsFalse();
         await Assert.That(options == options with { ReferencePolicy = StreamReferencePolicy.DeleteReferences }).IsFalse();
     }
@@ -127,7 +127,7 @@ public class StreamReferenceTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () => await client.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0")).Throws<RespireServerException>();
         await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", StreamReferencePolicy.DeleteReferences, "1-0")).Throws<RespireServerException>();
-        await Assert.That(async () => await client.Streams.AddAsync("events", new StreamAddOptions { ReferencePolicy = StreamReferencePolicy.Acknowledged }, ("f", "v"))).Throws<RespireServerException>();
+        await Assert.That(async () => await client.Streams.AddAsync("events", new RespireStreamAddOptions { ReferencePolicy = StreamReferencePolicy.Acknowledged }, ("f", "v"))).Throws<RespireServerException>();
         await Assert.That(async () => await client.Streams.TrimAsync("events", new() { MaxLength = 0, ReferencePolicy = StreamReferencePolicy.Acknowledged })).Throws<RespireServerException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(4);
     }

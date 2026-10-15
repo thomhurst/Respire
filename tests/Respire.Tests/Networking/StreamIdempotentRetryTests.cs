@@ -58,7 +58,7 @@ public class StreamIdempotentRetryTests
         });
 
         await client.Streams.AddAsync("s", ("f", "v"));
-        await client.Streams.AddAsync("s", new StreamAddOptions { MaxLength = 10, Id = "*" }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { MaxLength = 10, Id = "*" }, ("f", "v"));
         await client.WithKeyPrefix("tenant:").Streams.AddAsync("s", ("f", "v"));
 
         var adds = XAdds(server);
@@ -137,9 +137,9 @@ public class StreamIdempotentRetryTests
         await using var server = XAddServer(supportsIdempotency: true);
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
 
-        await client.Streams.AddAsync("s", new StreamAddOptions { Id = "5-0" }, ("f", "v"));
-        await client.Streams.AddAsync("s", new StreamAddOptions { Idempotency = StreamIdempotency.Manual("mine", "m-1") }, ("f", "v"));
-        await client.Streams.AddAsync("s", new StreamAddOptions { Idempotency = StreamIdempotency.Automatic("mine") }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "5-0" }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("mine", "m-1") }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = StreamIdempotency.Automatic("mine") }, ("f", "v"));
 
         var adds = XAdds(server).Select(add => add.Select(Encoding.ASCII.GetString).ToArray()).ToArray();
         await Assert.That(adds[0]).IsEquivalentTo(new[] { "XADD", "s", "5-0", "f", "v" });
@@ -154,7 +154,7 @@ public class StreamIdempotentRetryTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
 
         await Assert.That(await client.Streams.AddAsync("s", ("f", "v"))).IsEqualTo((RespireStreamId)"1-0");
-        await Assert.That(await client.Streams.AddAsync("s", new StreamAddOptions { MaxLength = 5 }, ("f", "v")))
+        await Assert.That(await client.Streams.AddAsync("s", new RespireStreamAddOptions { MaxLength = 5 }, ("f", "v")))
             .IsEqualTo((RespireStreamId?)"1-0");
 
         var adds = XAdds(server).Select(add => string.Join(' ', add.Take(3).Select(Encoding.ASCII.GetString))).ToArray();
@@ -258,7 +258,7 @@ public class StreamIdempotentRetryTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
 
         var minimumId = new string('0', length - 2) + "-0";
-        await Assert.That(async () => await client.Streams.AddAsync("s", new StreamAddOptions { MinId = minimumId }, ("f", "v")))
+        await Assert.That(async () => await client.Streams.AddAsync("s", new RespireStreamAddOptions { MinId = minimumId }, ("f", "v")))
             .ThrowsExactly<ArgumentException>();
         await Assert.That(XAdds(server).Length).IsEqualTo(0);
     }
@@ -270,7 +270,7 @@ public class StreamIdempotentRetryTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
         var minimumId = new string('0', 125) + "-0";
 
-        await client.Streams.AddAsync("s", new StreamAddOptions { MinId = minimumId }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { MinId = minimumId }, ("f", "v"));
         await Assert.That(XAdds(server).Length).IsEqualTo(1);
     }
 
