@@ -799,7 +799,7 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
     private ValueTask<bool> SetManyIfNotExistsBorrowedAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        if (cancellationToken.IsCancellationRequested)
+        if (client.Core.Options.CommandHook is null && cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled<bool>(cancellationToken);
         return client.FlagAsync(
             "MSETNX", new CmdN(RespireCommands.String.MSETNX.Verb, SetManyIfNotExistsArgs(client, pairs)), cancellationToken, observation: observation);

@@ -59,7 +59,11 @@ public sealed class RespireHashImportSession : IAsyncDisposable
                 throw new ArgumentException("The routing key must identify a Cluster slot.", nameof(routingKey));
             slot = value;
         }
-        return RentAsync(client, slot, cancellationToken);
+        return client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "HIMPORT OPEN", cancellationToken,
+                (Client: client, Slot: slot, Token: cancellationToken),
+                static s => RentAsync(s.Client, s.Slot, s.Token))
+            : RentAsync(client, slot, cancellationToken);
     }
 
     private static async ValueTask<RespireHashImportSession> RentAsync(RespireClient client,
@@ -237,7 +241,19 @@ public sealed class RespireHashImportSession : IAsyncDisposable
             throw new NotSupportedException("Hash import session queues accept only HIMPORT commands.");
     }
 
-    private async ValueTask<T> SendAsync<T>(string operation, CmdN command,
+    // Admission stays outside the expiration boundary: a rejected operation has not
+    // touched the connection or its fieldsets. Completion follows usage and fence cleanup.
+    private ValueTask<T> SendAsync<T>(string operation, CmdN command,
+        Func<RespValue, T> convert, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation)
+        => _client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Session: this, Operation: operation, Command: command, Convert: convert,
+                    Token: cancellationToken, Observation: observation),
+                static s => s.Session.SendUnhookedAsync(s.Operation, s.Command, s.Convert, s.Token, s.Observation))
+            : SendUnhookedAsync(operation, command, convert, cancellationToken, observation);
+
+    private async ValueTask<T> SendUnhookedAsync<T>(string operation, CmdN command,
         Func<RespValue, T> convert, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
@@ -295,6 +311,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
     }
 
     /// <summary>Closes the dedicated connection, discarding every connection-local fieldset. Repeated disposal is safe.</summary>
+    /// <remarks>Mandatory cleanup is not subject to command-hook admission, including cleanup after an uncertain send.</remarks>
     public ValueTask DisposeAsync()
     {
         Volatile.Write(ref _disposed, 1);

@@ -14,7 +14,8 @@ Supported routes include ordinary converted-response commands, interpolated and 
 APIs, function calls and mutations, script execution, dedicated blocking converted replies, ordinary cursor pages,
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
-explicit pipeline/transaction members and WATCH setup.
+explicit pipeline/transaction members, WATCH setup, immediate hash imports,
+import-session acquisition and explicit health-probe rounds.
 Managed locks, semaphores and the tracked coordination leases described below are also covered.
 This is **not a client-wide command-blocking policy**. Remaining composite coverage and
 the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
@@ -174,6 +175,44 @@ run-ID and capability probes do not generate separate callbacks. Direct
 `ScanValkeyClusterPageAsync` uses a `CLUSTERSCAN` scope. A completed cursor still receives
 admission and completion when asked for another page, even though it sends no command.
 
+### Imports, bulk writes and health probes
+
+`Hashes.CreateImportSessionAsync`, with or without a routing key, admits the logical
+operation `HIMPORT OPEN` after routing validation and before pool discovery or connection
+setup. Completion transfers ownership of the dedicated session to the caller; it does not
+span the session's lifetime. Rejecting acquisition opens no connection.
+
+Immediate session `PrepareAsync`, `SetAsync`, `DiscardAsync` and `DiscardAllAsync` admit
+`HIMPORT PREPARE`, `HIMPORT SET`, `HIMPORT DISCARD` and `HIMPORT DISCARDALL` respectively.
+Arguments are validated and snapshotted before admission. Completion includes reply
+conversion, mutation-fence release, sequential-usage release and any required session expiry.
+Hook rejection and cancellation before dispatch keep existing fieldsets usable. Ordinary
+server errors retain the session; uncertain sends still expire it without replay.
+
+Session `DisposeAsync` is unconditional ownership cleanup, with no hook admission or
+completion. It closes the dedicated connection and destroys its fieldsets even if a hook
+would reject commands. Internal expiry uses that same cleanup. `CreateBatch` and
+`CreateTransaction` only construct queues: their member dispatch belongs to the separate
+aggregate contract, not these immediate-operation scopes.
+
+Bulk writes already use ordinary converted-response scopes: `Strings.SetManyAsync`,
+`SetManyIfNotExistsAsync` and `SetManyExpireAsync` expose `MSET`, `MSETNX` and `MSETEX`;
+multi-field hash writes expose `HSET`/`HSETEX`, array multi-set exposes `ARMSET`, and key
+restore exposes `RESTORE`. Each includes conversion and preserves existing atomicity and
+expiry semantics. `Functions.RestoreAsync` uses the function-mutation boundary; explicit
+server-node migration and cluster import use the server-node boundary. There is no separate
+multi-command bulk-import helper. Application calls made from callbacks retain independent
+scopes; internal import transport and cleanup do not create duplicate scopes.
+
+`ProbeHealthAsync` admits one logical `PROBE HEALTH` operation after options validation
+and before capturing existing connections or sending any probe. Completion includes all
+started probes and publishing the owned result array. Per-node errors, unavailable nodes,
+and probe-deadline failures are **data**: returning that array is `Succeeded`, even for mixed
+or entirely failed results. Inspect each result's `Error` to determine health. Caller
+cancellation is `Canceled`; snapshot/discovery failures that escape are `Failed`.
+The round's internal PINGs, sampled health PINGs, topology and capability probes do not
+produce additional command hooks. Explicit application PING calls keep their normal scope.
+
 ### Stream appends
 
 `Streams.AddAsync` admits one `XADD` and completes after publishing its stream ID or
@@ -258,17 +297,14 @@ the [#1708 audit](https://github.com/thomhurst/Respire/issues/1708). Their lower
 not establish a once-only outer operation contract.
 
 The following paths also do not yet have a complete hook contract:
-remaining custom facet conversions, imports, and composite helpers.
+remaining custom facet conversions and composite helpers.
 Some invoke covered helpers internally;
-that does not make their entire public operation covered. Imports and diagnostics are tracked
-in [#1756](https://github.com/thomhurst/Respire/issues/1756), followed by the final cross-route
-audit in [#1708](https://github.com/thomhurst/Respire/issues/1708).
-
+that does not make their entire public operation covered. The final cross-route audit is
+tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 
 Tracked scripts and correction sends belong to the surrounding lock, cache or coordination
 operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
-transport leg would miss earlier setup and finish before correction cleanup. Imports and
-diagnostic aggregates such as `ProbeHealthAsync` also require the remaining composite audit.
+transport leg would miss earlier setup and finish before correction cleanup.
 This coverage does not establish a client-wide blocking policy.
 
 ### Explicit aggregate members and WATCH

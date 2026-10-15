@@ -8,7 +8,8 @@ namespace Respire;
 /// transfer, not later payload consumption. Uploads retain borrowed buffers through completion.
 /// Also covers specialized server dispatch, cluster scan pages and stream appends including
 /// automatic IDMP retries and capability fallback, explicit aggregate members (including
-/// WAIT/WAITAOF), WATCH setup, managed locks and tracked coordination leases.
+/// WAIT/WAITAOF), WATCH setup, managed locks, tracked coordination leases, immediate hash imports
+/// and session acquisition, and explicit health-probe rounds.
 /// Composite lock/coordination APIs use logical operation names (for example LOCK ACQUIRE),
 /// independent of their native-command or script implementation. Other composite owners
 /// remain outside this contract; this is not a
@@ -39,7 +40,8 @@ public sealed class RespireCommandContext
         CancellationToken = cancellationToken;
     }
 
-    /// <summary>The normalized command name, excluding keys and values.</summary>
+    /// <summary>The normalized command or logical operation name, excluding keys and values.</summary>
+    /// <remarks>HIMPORT OPEN denotes import-session acquisition; PROBE HEALTH denotes an explicit health-probe round.</remarks>
     public string Command { get; }
 
     /// <summary>The caller's cancellation token.</summary>

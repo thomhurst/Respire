@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 
@@ -8,7 +9,16 @@ namespace Respire;
 public sealed partial class RespireClient : IRespireHealthProbe
 {
     /// <inheritdoc/>
-    public async ValueTask<RespireHealthProbeResult[]> ProbeHealthAsync(
+    public ValueTask<RespireHealthProbeResult[]> ProbeHealthAsync(
+        RespireHealthProbeOptions? options = null, CancellationToken cancellationToken = default)
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "PROBE HEALTH", cancellationToken,
+                (Client: this, Options: options, Token: cancellationToken),
+                static s => s.Client.ProbeHealthUnhookedAsync(s.Options, s.Token),
+                static s => { s.Options?.Validate(); return "PROBE HEALTH"; })
+            : ProbeHealthUnhookedAsync(options, cancellationToken);
+
+    private async ValueTask<RespireHealthProbeResult[]> ProbeHealthUnhookedAsync(
         RespireHealthProbeOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

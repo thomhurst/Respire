@@ -173,6 +173,13 @@ For `RespireClient`, each round has fixed membership and connection identities, 
 global topology snapshot or stable roles. Key prefixes and read preferences do not affect
 selection, and primary-only mode never sends PING to replicas.
 
+A configured [command hook](../guides/command-hooks.md#imports-bulk-writes-and-health-probes)
+admits each explicit `RespireClient.ProbeHealthAsync` round as `PROBE HEALTH` before
+capturing connections or sending PING. Returning the result array completes the hook with
+`Succeeded`, including when nodes failed; inspect each node's `Error` for health status.
+Caller cancellation completes with `Canceled`. Internal sampled health checks and the
+round's per-node PINGs do not create additional command-hook scopes.
+
 How the health check uses a provider:
 
 - It passes its timeout and concurrency settings, and waits up to 250 milliseconds beyond
