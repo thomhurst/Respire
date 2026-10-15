@@ -87,6 +87,28 @@ All 17 ordinary-operation ties against 3.4.5 are tracked in
 The older [10KB SET investigation](https://github.com/thomhurst/Respire/issues/1553) concerned
 a different, noisy run; these measurements do not establish a continuing 15% regression.
 
+The comparison workflow has an opt-in `server-latency-diagnostics` dispatch input for
+that investigation. It runs the unchanged CommonOperationsBenchmarks methods and the
+four uncached ClientSideCachingBenchmarks pairs, including concurrent/pipelined GET
+controls, with the selected BenchmarkDotNet job and the existing 5% statistical test.
+Use the `3.4.5` dependency and `medium` job when reproducing these ties.
+
+Separate diagnostic processes call those same methods after warmup, recording process
+CPU time, wall time, process-wide allocations, assembly hashes and endpoint identity.
+On one runner, a host-network Redis control is bracketed by two Docker port-mapped
+passes using the same image ID. A fourth pass captures managed CPU stacks, runtime
+threading/contention events and raw EventPipe traces. Artifacts retain all 46 cases
+(21 pairs plus two control pairs); missing cases or unusable CPU traces fail the run.
+
+These async-loop diagnostics are not BenchmarkDotNet measurements. Their process totals
+include fixture background clients and harness work, and the traced pass includes profiler
+overhead. Summed CPU time across threads cannot be subtracted from elapsed time to infer
+waiting; managed samples cannot attribute kernel scheduling or Redis server CPU. The
+host-network comparison changes the network path and port together and can suggest where
+to investigate, but cannot alone prove a scheduler cause. No optimization or new latency
+win is established by adding this collection path. The 21 ties remain open until the
+hosted evidence is analyzed and any candidate change receives a before/after comparison.
+
 ### Concurrent throughput and pipelines
 
 Both methods issue overlapping GETs through the normal multiplexed API, then await every
