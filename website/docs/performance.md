@@ -120,6 +120,20 @@ classifies Respire as `Slower` (reported ratio 1.13).
 of both comparisons. The original full-run pub/sub reports are retained for audit only;
 they lack the timed delivery-gap check and are superseded by these results.
 
+The follow-up investigation separates time to the PUBLISH acknowledgement from the
+remaining wait through consumer completion and UTF-8 decoding, and records how often
+the subscriber read is already complete. Delivery can overlap acknowledgement, so
+the remaining phase is not an independent measure of delivery latency. Both phases
+retain real message consumption and the delivery-gap guard.
+
+Manual comparison runs can enable `profile-pubsub` to retain these raw phase samples,
+percentiles and separate EventPipe CPU/threading diagnostics with the rig metadata.
+Instrumentation affects the diagnostic timings; only the unprofiled BenchmarkDotNet
+reports support latency and allocation comparisons. CPU samples cannot by themselves
+explain off-CPU scheduling delays. These diagnostics do not establish an improvement:
+the 3.4 tie and 4.0 slower result above remain the published findings until the
+follow-up measurements are reviewed.
+
 ### Client-side cache hits and server reads
 
 With [client-side caching](./fundamentals/client-side-caching), a repeated read can return
