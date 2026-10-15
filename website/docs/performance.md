@@ -7,9 +7,10 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Performance
 
-In these Linux Redis-container measurements, Respire is faster for concurrent and pipelined
-GETs against both StackExchange.Redis versions. Most single-operation timings against 3.4.5
-show no established latency advantage. Against 4.0.127-alpha, the ordinary-operation and
+In the original Linux Redis-container measurements, Respire is faster for concurrent and
+pipelined GETs against both StackExchange.Redis versions. A second 3.4.5 run retains the
+concurrent advantage but classifies pipelined GET as `Same`. Most single-operation timings
+against 3.4.5 show no established latency advantage. Against 4.0.127-alpha, the ordinary-operation and
 local GET cache-hit comparisons favor Respire. Publish-to-consume pub/sub shows no established
 latency advantage: the latest runs tie both versions, and an earlier 4.0 run was slower.
 These results describe the measured commits and rigs, not a guarantee for every workload.
@@ -83,8 +84,8 @@ ASCII bytes. This suite does not measure large-value GET or arbitrary payload si
 The 4.0 run warns that Respire HGET and HSET have multimodal distributions. Their reported
 means favor Respire, but that variability limits interpretation; inspect the preserved samples
 and standard deviations (3.169 μs for HGET, 4.479 μs for HSET) before extrapolating.
-All 17 ordinary-operation ties against 3.4.5 are tracked in
-[#1744](https://github.com/thomhurst/Respire/issues/1744), including SET 10KB.
+All 17 original ordinary-operation ties against 3.4.5, including SET 10KB, are dispositioned
+in the [server-latency investigation below](#server-latency-investigation-outcome).
 The older [10KB SET investigation](https://github.com/thomhurst/Respire/issues/1553) concerned
 a different, noisy run; these measurements do not establish a continuing 15% regression.
 
@@ -106,9 +107,161 @@ include fixture background clients and harness work, and the traced pass include
 overhead. Summed CPU time across threads cannot be subtracted from elapsed time to infer
 waiting; managed samples cannot attribute kernel scheduling or Redis server CPU. The
 host-network comparison changes the network path and port together and can suggest where
-to investigate, but cannot alone prove a scheduler cause. No optimization or new latency
-win is established by adding this collection path. The 21 ties remain open until the
-hosted evidence is analyzed and any candidate change receives a before/after comparison.
+to investigate, but cannot alone prove a scheduler cause. The completed analysis follows.
+
+### Server-latency investigation outcome
+
+[#1744](https://github.com/thomhurst/Respire/issues/1744) concludes with **no production
+optimization justified by this profile**. The repeat contains 16 remaining ties and five
+`Faster` results among the original 21 ties. Runtime scheduling paths dominate the managed
+sample counts, and the separate topology control has a much larger effect than the
+between-client differences. This supports a substantial environment/runtime contribution;
+it does not prove that client overhead is zero or identify a removable critical-path cost.
+The remaining ties are a documented limitation, not deferred validation or claimed wins.
+
+The hosted [repeat run 38695907419](https://github.com/thomhurst/Respire/actions/runs/38695907419)
+measured source commit
+[`8fd9ea63b49b6e13981c674f2f4d6414dc248fa0`](https://github.com/thomhurst/Respire/tree/8fd9ea63b49b6e13981c674f2f4d6414dc248fa0)
+against **StackExchange.Redis 3.4.5**, on an **AMD EPYC 9V74**, four logical/two physical cores,
+Ubuntu **24.04.5**, kernel **6.17.0-1022-azure**, runner image **ubuntu24 20261004.327.1**.
+It used **net10.0**, SDK **10.0.402**, runtime **10.0.13**, BenchmarkDotNet **0.15.8**,
+X64 RyuJIT x86-64-v4, Medium/**two launches**, **10 warmups** and **15 measurement iterations**
+per launch. The benchmark filter selected `*CommonOperationsBenchmarks.*` and
+`*ClientSideCachingBenchmarks.*ServerRead`; neither workload nor `MannWhitney(5%)` changed.
+Redis was **8.10.2**, with the same image ID recorded in the original provenance below.
+The original run used an Intel Xeon Platinum 8573C and a different Respire commit. Thus these
+are **original/repeat observations, not a controlled before/after optimization experiment**.
+No source speedup is inferred from a change in absolute timing or classification.
+
+All 21 original ties and both regression controls appear below. Times are **mean ± Error
+in μs**, and allocations are **bytes per operation** (Respire / StackExchange). The original
+means and allocations remain in the preceding and following historical tables. Each
+classification compares clients only within its own run. Sequential and overlapping GET
+normalization is unchanged; overlapping GET times are amortized per completed command.
+
+| Scenario | Respire μs | StackExchange μs | Allocated R / SE | Original → repeat |
+| --- | ---: | ---: | ---: | --- |
+| EXISTS | 95.861 ± 3.9044 | 102.744 ± 0.6235 | 0 / 295 B | Same → Same |
+| GET | 99.934 ± 1.8565 | 110.771 ± 1.2219 | 48 / 502 B | Same → Faster |
+| GET long | 100.312 ± 2.3864 | 109.751 ± 0.8271 | 0 / 415 B | Same → Faster |
+| GET x100 sequential | 80.970 ± 0.3863 | 85.980 ± 0.6770 | 50 / 338 B | Same → Same |
+| GET x200 pipelined | 1.407 ± 0.0072 | 1.514 ± 0.0385 | 49 / 289 B | Faster → Same |
+| GET x50 concurrent | 3.055 ± 0.0191 | 3.324 ± 0.0523 | 52 / 291 B | Faster → Faster |
+| HGET | 99.962 ± 1.8843 | 109.106 ± 1.4243 | 48 / 520 B | Same → Faster |
+| HSET | 104.186 ± 1.6189 | 104.983 ± 1.0589 | 0 / 328 B | Same → Same |
+| INCR | 98.713 ± 2.4484 | 100.479 ± 2.0274 | 0 / 296 B | Same → Same |
+| LPUSH+LPOP | 200.581 ± 1.3785 | 207.913 ± 3.7299 | 256 / 760 B | Same → Same |
+| PING | 93.805 ± 3.4263 | 97.065 ± 2.1578 | 0 / 303 B | Same → Same |
+| PING x100 sequential | 78.143 ± 0.6845 | 82.237 ± 0.9688 | 2 / 242 B | Same → Same |
+| SADD | 100.800 ± 1.8099 | 96.493 ± 4.1928 | 0 / 312 B | Same → Same |
+| SET 10KB | 120.382 ± 1.1587 | 117.864 ± 0.7227 | 0 / 312 B | Same → Same |
+| SET 13B | 103.051 ± 1.3332 | 103.948 ± 0.8217 | 0 / 311 B | Same → Same |
+| SET 1KB | 101.637 ± 2.1314 | 105.679 ± 1.0368 | 0 / 312 B | Same → Same |
+| SET x100 sequential | 83.516 ± 0.5746 | 86.249 ± 0.5078 | 2 / 250 B | Same → Same |
+| SET+DEL | 192.682 ± 1.2953 | 207.056 ± 1.5008 | 200 / 648 B | Same → Faster |
+| SISMEMBER | 101.225 ± 1.6174 | 98.654 ± 1.6609 | 0 / 312 B | Same → Same |
+| Uncached / EXISTS hot | 100.552 ± 1.510 | 99.756 ± 1.884 | 0 / 296 B | Same → Same |
+| Uncached / GET hot | 101.595 ± 1.200 | 107.830 ± 2.711 | 64 / 527 B | Same → Same |
+| Uncached / GET missing hot | 101.998 ± 1.730 | 109.350 ± 1.306 | 0 / 416 B | Same → Same |
+| Uncached / HGET hot | 103.874 ± 0.757 | 111.563 ± 0.974 | 64 / 543 B | Same → Faster |
+
+Every `Same → Same` row retains the limitation: no latency advantage was established.
+The five `Same → Faster` rows establish an advantage only in this repeat, without attributing
+it to a code change. No row is `Slower`. The pipelined control **loses its established
+advantage**, despite a lower point estimate; this must not be hidden by the concurrent
+control's `Faster` result. Neither control establishes a historical regression across rigs.
+Respire's reported allocations match the original run in all 23 scenarios, and remain below
+StackExchange's; that does not override any latency tie. The repeat warns of bimodality for
+Respire EXISTS and StackExchange SADD; the archived logs and samples retain that variation.
+
+#### Separating process work from topology effects
+
+The diagnostics use fresh processes, two seconds of warmup and three seconds of measurement
+per case, separately from BDN. The same Redis image runs first through Docker port mapping
+on `127.0.0.1:6379`, then host networking on `127.0.0.1:6380`, then the original mapped endpoint.
+**All 46 client/method cases have lower host-network wall time than both bridge passes.**
+For Respire's 21 investigated cases, host wall time is **46.5–49.3%** of bridge-a wall time.
+This is a descriptive range across cases, not a confidence interval. Fixed phase order,
+different Redis instances/ports, and the short diagnostic window limit causal attribution.
+
+Selected observations below are **wall μs / process CPU μs per operation**. CPU is summed
+across all process threads and can exceed wall time. It includes fixture background clients,
+runtime scheduling and the diagnostic adapter, and excludes the separate Redis process.
+Subtracting it from wall time would not measure network waiting.
+
+| Case | Bridge-a wall / CPU | Host wall / CPU | Bridge-b wall / CPU |
+| --- | ---: | ---: | ---: |
+| Respire PING | 80.24 / 155.56 | 38.32 / 81.95 | 80.09 / 157.82 |
+| StackExchange PING | 82.38 / 160.01 | 36.75 / 103.51 | 82.66 / 158.65 |
+| Respire GET | 81.78 / 159.23 | 39.12 / 83.17 | 80.96 / 158.12 |
+| StackExchange GET | 89.20 / 170.68 | 37.92 / 106.24 | 85.74 / 169.10 |
+| Respire SET 10KB | 93.74 / 173.07 | 43.59 / 92.46 | 97.95 / 174.50 |
+| StackExchange SET 10KB | 107.47 / 183.54 | 43.32 / 122.12 | 100.88 / 183.31 |
+
+Process allocation totals also include the adapter: for example Respire GET is about
+**168 B/op** in each plain diagnostic phase, versus **48 B/op** in BDN. Diagnostic totals
+must not be published as library allocation regressions. The machine-readable analysis
+retains all 184 observations, including the separate, instrumented bridge-profile pass.
+
+The 46 trace summaries contain **1,299,655 samples**: **246,352 Managed** and
+**1,053,303 External**, with no missing stacks or lost events and one measurement boundary
+pair per trace. External samples include waiting threads; they are not CPU attribution.
+For the 21 Respire cases, **73.9–77.4% of Managed samples** contain
+`System.Threading.LowLevelLifoSemaphore` frames. This counts inclusive stacks, not a
+percentage of request latency. In the GET pair:
+
+| Managed sample count | Respire GET | StackExchange GET |
+| --- | ---: | ---: |
+| All Managed samples | 5,261 | 5,452 |
+| With thread-pool semaphore frames | 3,992 | 4,124 |
+| With socket event-loop frames | 602 | 595 |
+| With the measured client's networking frames | 411 | 104 |
+| With diagnostic adapter frames | 403 | 94 |
+
+The last client row matches `Respire.Networking.` and `StackExchange.Redis.` respectively.
+Inclusive counts can overlap; a client frame deep in an adapter continuation does not make
+the whole stack client overhead. Native frames can be unresolved even when a stack is
+present. The largest Respire GET client stack (284 samples) is in the socket send path,
+with completion, the adapter and the next request on the same stack. The sampled source
+already batches FIFO completions and delivers drained replies on the receive thread through
+`DeliverThenReceiveCore`; the profile does not expose a redundant per-reply dispatch to remove.
+
+The decision is to retain production behavior. Changing global thread-pool spinning,
+reordering response delivery, or removing cancellation/ownership checks would not follow
+from these samples. Managed sampling does not resolve kernel off-CPU time, packet transit,
+or Redis server execution, so it cannot establish an exact CPU/network split. A controlled
+same-rig intervention with kernel/server attribution would be needed to justify such a
+change. No optimization was made, so there is no claimed before/after speedup requiring a
+new run. This completes the issue's documented-limitation outcome while preserving FIFO,
+cancellation and ownership semantics.
+
+#### Reproduce and retain this analysis
+
+The <a href={useBaseUrl('benchmarks/2026-10-server-latency/measurements.zip')}>measurement archive</a>
+contains raw BDN samples, reports and logs, rig and container metadata, resolved dependencies,
+case manifests, observations, assembly hashes and all stack summaries.
+The <a href={useBaseUrl('benchmarks/2026-10-server-latency/traces.zip')}>trace archive</a>
+retains all 46 original `cpu.nettrace` files. Only the 46 derived `.etlx` indexes are omitted;
+the diagnostic tool's `--summarize TRACE REPORT` command regenerates them from the raw traces.
+The <a href={useBaseUrl('benchmarks/2026-10-server-latency/manifest.json')}>SHA-256 manifest</a>
+records both archives, every retained artifact file, the omitted indexes and analysis files.
+Archived bytes were verified against the downloaded artifact; these copies survive Actions
+artifact expiry.
+
+Extract both archives into one directory, then use the downloadable
+<a href={useBaseUrl('benchmarks/2026-10-server-latency/analyze.py')}>analysis script</a>
+with the original 3.4.5 archive linked in the provenance table:
+
+```bash
+python analyze.py extracted 38484247008.zip > analysis.json
+```
+
+The script checks case coverage, operation normalization, unchanged diagnostic assemblies,
+measurement boundaries and trace completeness. It copies BDN's classifications without
+changing its statistical test. The checked-in
+<a href={useBaseUrl('benchmarks/2026-10-server-latency/analysis.json')}>analysis output</a>
+contains all original/repeat means and allocations, diagnostic totals, sample-type counts
+and explicitly named inclusive stack markers.
 
 ### Concurrent throughput and pipelines
 
@@ -268,7 +421,7 @@ All Respire local-hit rows in this controls suite are classified `Faster` than i
 StackExchange baseline, an expected benefit of avoiding network work. They are not the 4.0
 cache-versus-cache results above. Respire local hits reported 0 B in these cases. Full
 server-read allocations and variation are retained in the archives. The four 3.4.5 server-read
-ties are also explicitly covered by [#1744](https://github.com/thomhurst/Respire/issues/1744).
+ties are dispositioned in the [server-latency investigation](#server-latency-investigation-outcome).
 
 ### Provenance and preserved evidence
 
@@ -337,8 +490,8 @@ rig/source provenance as well as the diagnostic evidence.
 This completes the measured publication scope of
 [#1625](https://github.com/thomhurst/Respire/issues/1625) and the pub/sub investigation
 [#1745](https://github.com/thomhurst/Respire/issues/1745). The server-operation latency
-follow-up is tracked separately in [#1744](https://github.com/thomhurst/Respire/issues/1744).
-It does not establish a universal performance advantage.
+investigation [#1744](https://github.com/thomhurst/Respire/issues/1744) is dispositioned above.
+Publication does not establish a universal performance advantage.
 
 ## Automatic pipelining
 

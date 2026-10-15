@@ -1,0 +1,2691 @@
+{
+  "run": "https://github.com/thomhurst/Respire/actions/runs/38695907419",
+  "artifactId": 11956547659,
+  "artifactName": "comparison-benchmarks-net10.0-seredis-3.4.5",
+  "respireCommit": "8fd9ea63b49b6e13981c674f2f4d6414dc248fa0",
+  "stackExchangeRedis": "3.4.5",
+  "archives": [
+    {
+      "archive": "measurements.zip",
+      "size": 627122,
+      "sha256": "b7f9c38942611765f2472c415ee140a25d30803437c2a8c7f9f7fd9f615611a3",
+      "files": [
+        {
+          "path": "BenchmarkRun-20261015-070143.log",
+          "size": 623928,
+          "sha256": "d7c19ecce82a044c6b235c2652c622cac84cadbe983cd7e975b649dc9b2e0355"
+        },
+        {
+          "path": "project.assets.json",
+          "size": 225271,
+          "sha256": "c87e125391232fb42076b9a3e3b96f9093bd2e7ce1f79e709480ea40efbe202d"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-default.md",
+          "size": 2508,
+          "sha256": "7e922c31bcf2cda64c2711b122a0216a67c64808f5b8ccd7498bbe1857d0d36d"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-full-compressed.json",
+          "size": 191666,
+          "sha256": "e57ed25afa40b33e708c1a653b3e71db5dbe34789f4a97ce3fd332db30d6506b"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report-github.md",
+          "size": 2529,
+          "sha256": "1b17d007ca9fca292032b2a1518dd13d3c59fb3380d03440eea89b171ffe723a"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report.csv",
+          "size": 4185,
+          "sha256": "580e34fea0b0146d0c27e9806859d76783f68ddc5d82f3370f60519f7ef84e42"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.ClientSideCachingBenchmarks-report.html",
+          "size": 2821,
+          "sha256": "da97b4ce458c11c7ffc1b94de68f2ba435fafd0624f4a28d9fd4808ad5d6c629"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-default.md",
+          "size": 10036,
+          "sha256": "c6dd511ddebbdca4e9991464dfd4f2cf23a2ec6b60442b59cd142df56933bc78"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-full-compressed.json",
+          "size": 885430,
+          "sha256": "96e1da636a13f9af99042b95f7aced9e4a858fec85f6f5df85b2c9b3b2a7922c"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report-github.md",
+          "size": 10102,
+          "sha256": "62cc37aab69e108fba791683a8ff882e9da3fde8423dbf6a17cccd02233e01ce"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report.csv",
+          "size": 16940,
+          "sha256": "f5c7b4ac5163566ccb859cde109db4120c938eb1fbdbc9fa05f30e0c6eee8b21"
+        },
+        {
+          "path": "results/Respire.ComparisonBenchmarks.CommonOperationsBenchmarks-report.html",
+          "size": 8649,
+          "sha256": "52f24237c1b76b935fc899fa04a544389fc03694d066aed2c431c54ec71cb65e"
+        },
+        {
+          "path": "rig.txt",
+          "size": 8447,
+          "sha256": "dd65868f77a820a976a1c06abc1b2f84ba9706bdf6efad6deb157abd7e45bc1a"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/observation.json",
+          "size": 1475,
+          "sha256": "ea802e5066e527e9ed8111acd4985afaabe4f9c06db959705b8feb5cbdb27798"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_Get_ServerRead/observation.json",
+          "size": 1473,
+          "sha256": "638e070fa3114170c899a4341648a5c36bc0ef43791ab87b30c0caa956916333"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/observation.json",
+          "size": 1481,
+          "sha256": "021f55103883ed7852d59fbb757dde52508bac2089cd39c28953ff71d3d221d8"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/observation.json",
+          "size": 1475,
+          "sha256": "83129477bf2d8c7796ac7a19024846ea60b8d5fdde27be2c0aaa3294c68c0247"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/observation.json",
+          "size": 1482,
+          "sha256": "25fece35ffbe773185c43020272ae774337bdc7157e31ffe96da6da23aeb6e84"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/observation.json",
+          "size": 1478,
+          "sha256": "90e0d92629c7e17fb5ef8a11eb2aeb3a5605cd70d2db4e9c3466d55ad5f83d41"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/observation.json",
+          "size": 1487,
+          "sha256": "b8764b6ddd28fa4ab2f93fc5b168ee63f19fedc5d7fdeba689ed55775af483ee"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/observation.json",
+          "size": 1479,
+          "sha256": "c48ec6e68f1551108a106f2bb2d32a40df682fbc11262b17ce02c95bd704fce1"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Exists/observation.json",
+          "size": 1463,
+          "sha256": "a7fa873fd6f983fa6d9d1d2381409246a657b436560ef6cef5ca841c8ec6e6fc"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get/observation.json",
+          "size": 1460,
+          "sha256": "2ae1688869021b5bf31173206b3b0417e55a016cb790202fde49a215c5b06816"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get_Concurrent/observation.json",
+          "size": 1474,
+          "sha256": "a5a52cb56f938145ce824a4affe839bffc31e480f38acbd8219a1336fa611025"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get_Pipelined/observation.json",
+          "size": 1477,
+          "sha256": "81c7b321b7ca4715d7e7e72e5bda63f512302bf4bbbc10388fb621aebf6cede1"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Get_SteadyState/observation.json",
+          "size": 1473,
+          "sha256": "d1b715ad34c59e58f92de37ce3fa0f76bbbc40a7c2106a9bb8f9e110f808fe42"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_GetLong/observation.json",
+          "size": 1466,
+          "sha256": "372dbed1640a8f066e63d424bc37eb900b3ac8db696c2f0330b270b64e058fe6"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_HGet/observation.json",
+          "size": 1461,
+          "sha256": "c8c5596ba988ed5ee9d4641c9695d4d9f95a0619b40e8f560ffef0d2147d12c3"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_HSet/observation.json",
+          "size": 1462,
+          "sha256": "45402107041eb5da765946af6c7d4d1ff18ac8a5cbdaf9676b057e1f318e4c12"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Incr/observation.json",
+          "size": 1463,
+          "sha256": "3014c2de2dceb2d630f3af7221865f10cf052be6b1dd8d3e2897e3e5f04f75c2"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_LPushLPop/observation.json",
+          "size": 1468,
+          "sha256": "1f9dca922d88dc4120d744b3a568781f7c0b1dd74a45cfecf0459975c8439794"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Ping/observation.json",
+          "size": 1462,
+          "sha256": "4f79fd7e228d7b1a7095891b2975fa08ff24583d464e5e7e101062a8bd680c25"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Ping_SteadyState/observation.json",
+          "size": 1474,
+          "sha256": "7edea1143f773b6187d48665f89c4d2400865ea20e86b2787ec94afa2b4d0559"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_SAdd/observation.json",
+          "size": 1462,
+          "sha256": "4b4d8ff77d99d3c89836e4e94ce8f2e4061c4f72f3d99611e765b1d564037261"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_10KB/observation.json",
+          "size": 1467,
+          "sha256": "394fbd6fc8cb85be8a0555ff6abbe8f8b24fd5886418c3976e6a75bb6f0193ce"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_1KB/observation.json",
+          "size": 1464,
+          "sha256": "cef71c18ea694fba9e785a22fc993114292b3ff1b7780ce2f4bcd01b236a9082"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_Small/observation.json",
+          "size": 1467,
+          "sha256": "0e02e9bf77f30099ba6f5e469989ee4c4aabbe16e026eb0cfb7b3c44e74a4b4b"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_Set_SteadyState/observation.json",
+          "size": 1473,
+          "sha256": "74bac9436031f4073c3a08999a0244c6780038b6b8e44a4c60b651ed5935069e"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_SetDel/observation.json",
+          "size": 1465,
+          "sha256": "ef0ef93acc842c9d203b902fcced179a48dd6fff59a96dcb8c98dd24114e008e"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.Respire_SIsMember/observation.json",
+          "size": 1468,
+          "sha256": "bc308f31793fd73c27c03ee97334aceafb2f271190d8864c2f4670c3db794915"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Exists/observation.json",
+          "size": 1467,
+          "sha256": "c2c1b2b330277fc22838dbe619ca88ea4cf4dc93f5746a092e1f2b945dba7f08"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get/observation.json",
+          "size": 1465,
+          "sha256": "d9cb271f4c40aba6f5350397ad40bcdcf6e9799b716f3f02458dacbefed438b5"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/observation.json",
+          "size": 1477,
+          "sha256": "48c67dc58d005de83a5a57cf29ac8209e4b77bb52b27bdb8b66f82373e9c67e3"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/observation.json",
+          "size": 1482,
+          "sha256": "ed9611d17b48f749fca02314fd6413fba2ecde5c60de69059b94c864b6c6c4f7"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/observation.json",
+          "size": 1480,
+          "sha256": "5b0e6676fa2b78816e9ae3d9b2ecace15c28427a45eefdcf146de453721de6d2"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_GetLong/observation.json",
+          "size": 1472,
+          "sha256": "9cb4e73b85ee179b6029fabf85368f2d84b6b3d1d603b9e7682ee0587a30a438"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_HGet/observation.json",
+          "size": 1468,
+          "sha256": "a496e37f14525343cdea19b5ac98bc0d1368ee9055ff4142fca2a4ac14eb462d"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_HSet/observation.json",
+          "size": 1467,
+          "sha256": "b736872948e7bdd2d9e5bd367f204da46a577dde21c76f548d3d6b65e92f436a"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Incr/observation.json",
+          "size": 1468,
+          "sha256": "1ff19a746b992af4219b357c88506ec00ab9b91fdb7ab3051107916f021334bf"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_LPushLPop/observation.json",
+          "size": 1473,
+          "sha256": "5f96a5680857ea580d18329ee23dddaad249c4c63b88e6b201e68b48b4bc13d7"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Ping/observation.json",
+          "size": 1467,
+          "sha256": "a34decee76d7da682609b65e3fb9a04b35482b6a5503b40fdba12b1586c0e9a4"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/observation.json",
+          "size": 1481,
+          "sha256": "3731d50093f991659a4071b3ca219c354661bc3c22d1cbe7405ff6d8b9c84d61"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_SAdd/observation.json",
+          "size": 1468,
+          "sha256": "f01ecf5af2585663372e9ca29b07d1c11bb4adc8ab6ad21f92baa00d41eb37a7"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_10KB/observation.json",
+          "size": 1471,
+          "sha256": "c7ec9abf3a65b69f4c424257888e31b54b7ed0e407991a83ce09672496f09552"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_1KB/observation.json",
+          "size": 1470,
+          "sha256": "8b2d2636a44a8b5332f19f80636369bfeee8656acea56a88311b1c085a051c68"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_Small/observation.json",
+          "size": 1473,
+          "sha256": "e1e290613916f51f058628fb454df2cccac818d94ac5007b2f804182e9ac5bd9"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/observation.json",
+          "size": 1480,
+          "sha256": "6d2ffe0ea97ea5178a73a30c371d3778586fdd287f9db89554ae8058b3512bd0"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_SetDel/observation.json",
+          "size": 1468,
+          "sha256": "ccde1c56325a093389fdb738a2822d5f2aafae70763488ed8b0de68ec9147a1a"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-a/CommonOperationsBenchmarks.StackExchange_SIsMember/observation.json",
+          "size": 1474,
+          "sha256": "92c93691de9ade0d31a7fdadd92c81d08b7402f834c11ca3a107f04b39be81fb"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/observation.json",
+          "size": 1477,
+          "sha256": "f1f18b93c26cdb3ffc7d199c2259b0cd366f443618be64cf7715d4f5b40e67c1"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_Get_ServerRead/observation.json",
+          "size": 1474,
+          "sha256": "dc7d7f8c9379ffd2795192200052202a4e618335bf3fcf2d4a563d42566db16e"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/observation.json",
+          "size": 1481,
+          "sha256": "c1b70954d4caf07271e1f2702453323f0e42b885bac029ea5097e8cacbfcdac6"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/observation.json",
+          "size": 1475,
+          "sha256": "4dc1b57a194b118d32b90f92257195de02d231c70a73752ae55a67599e3c0ac8"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/observation.json",
+          "size": 1482,
+          "sha256": "57330b777767ff4f944148d3cd1b0f33bc39be0113583bb81857186324e9bd76"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/observation.json",
+          "size": 1478,
+          "sha256": "556ad48e688faaa6da04674b9348182efd0748806a4cc1d16aaabd1b23a8a21e"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/observation.json",
+          "size": 1486,
+          "sha256": "512a6c218980cdd5e0462e1b68846eea2b668b32ba91dc8b2b79cbb1f2bd2ed1"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/observation.json",
+          "size": 1480,
+          "sha256": "7a79ce9a87d2da937e7f3b37e6962777a8038a63b68a2301119ed37325802380"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Exists/observation.json",
+          "size": 1465,
+          "sha256": "aece2e996a79feffd3e18592122cdb75416d845109ca8281002e6a2ecd9be493"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get/observation.json",
+          "size": 1461,
+          "sha256": "3e4626a9b11adf6f69fd14e66a0d59800f3f196e0edd5124f1dd5a5caf1fb0dc"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get_Concurrent/observation.json",
+          "size": 1476,
+          "sha256": "0afea82cf3d5ab7c55336707f69ef4e8b9c2307d99bb603b6a5778bd7f8841d0"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get_Pipelined/observation.json",
+          "size": 1475,
+          "sha256": "ece81d737d9f13a67a6fce531bd7759be41ed6ccea9a622245ebf52f2c5df333"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Get_SteadyState/observation.json",
+          "size": 1474,
+          "sha256": "b3771a93d7cde68a81ed52087479c4fad625dddfe0847705568f0bf2a4c09a2d"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_GetLong/observation.json",
+          "size": 1465,
+          "sha256": "57af53eec6d969601e72153c99ef6129c3681a590d4fe0acb4070742b72fe677"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_HGet/observation.json",
+          "size": 1462,
+          "sha256": "2facce590de2b546b03b44a30b56748dbb51fd2802d991407a8c58d3e2eaa380"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_HSet/observation.json",
+          "size": 1463,
+          "sha256": "374126e77cfdafe290524f92209ef53ffe1331735c6a0358378bdbc61b975322"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Incr/observation.json",
+          "size": 1461,
+          "sha256": "7616146c32aa79aa9fdc4493f8bd3b782afeeee1f8aaf3d589f418800344e9ab"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_LPushLPop/observation.json",
+          "size": 1467,
+          "sha256": "8fcb82f9552e2813ad8bc496680a6b7c224033505bb5ee333cd736d8e59dca6d"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Ping/observation.json",
+          "size": 1463,
+          "sha256": "20e1fe965779410d4a9ca4a9c9f5f97c92a54c9538c806d9bc98af465489a4c9"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Ping_SteadyState/observation.json",
+          "size": 1466,
+          "sha256": "4aac62a29d985cfc5632447a2e0ca2e5f86885cfb2a639c4097082065cb81336"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_SAdd/observation.json",
+          "size": 1463,
+          "sha256": "c01468ca9137e7f964d5560ee0bec56b0c20f239f85764868f3644f4d65390a4"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_10KB/observation.json",
+          "size": 1467,
+          "sha256": "11f38754915b49c555e259fc6e7913a278f93a79ebb9a73411bc9998cb0d0ff4"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_1KB/observation.json",
+          "size": 1464,
+          "sha256": "922f7ad148ad3f4b7ec74dd6ed4cf5c260158195774c7b51ae0d941e3a53de8e"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_Small/observation.json",
+          "size": 1467,
+          "sha256": "5b4faf143253ea2271aa9fed778b151682531313ed8813d8101a3691598243eb"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_Set_SteadyState/observation.json",
+          "size": 1473,
+          "sha256": "0d2ca9ae091d64be51d78c96f62ca86b9a1a687b23bfd25c8cfa2b2316ebb3e3"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_SetDel/observation.json",
+          "size": 1464,
+          "sha256": "9f3ce3228ca08e76cc85cc0622aa99c5705cf5f7ee64d9aff3b53ae55e2892f2"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.Respire_SIsMember/observation.json",
+          "size": 1466,
+          "sha256": "2e54a8cf2c2e54f96f615caa4d6344fa7547627f5cc5e6f4eef04f1f0be553b1"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Exists/observation.json",
+          "size": 1469,
+          "sha256": "aae6f099ee697cb1f09632be1bed95b328bfb8f97c6c6d3380e9c1ed0dada0ac"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get/observation.json",
+          "size": 1467,
+          "sha256": "115c755bed25be06a5179cff7ddbaa101719adde594fdc6c7015021a34de0b7f"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/observation.json",
+          "size": 1480,
+          "sha256": "932478b011ffb95d64aca8ab50bdad2f56f882ddd8141855ee03a4a476e35ca7"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/observation.json",
+          "size": 1481,
+          "sha256": "e4b848a8aa3f03d0e1e0e313887d0786c543bfc6acdaf4de84a5f229368fef9e"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/observation.json",
+          "size": 1472,
+          "sha256": "8d60a5b6ea57b22d1198ea3b101d34d12b15892f8a0536fd8bf5c3fc3c08e998"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_GetLong/observation.json",
+          "size": 1470,
+          "sha256": "aa4b07f80fc42caee0d74880e7d3bea46fe869262764076145cd8ba6bfb5b2fd"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_HGet/observation.json",
+          "size": 1467,
+          "sha256": "d257abef2c8e9eec7bd7f80b4670f01e9257534b2b5eec9b1a3fd43231d578a8"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_HSet/observation.json",
+          "size": 1467,
+          "sha256": "c9fc8dcabe9ebbd94f7078340dec2bc2903fdb360a554857763e5188df40f501"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Incr/observation.json",
+          "size": 1469,
+          "sha256": "01616f965c8fc43546df96d4daefbced16526050546ea703643d992cb6715189"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_LPushLPop/observation.json",
+          "size": 1474,
+          "sha256": "dd669d489db147342deb461fc26b0f8245d30db4b1dc6fc8ce0b276bc75fd8dc"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Ping/observation.json",
+          "size": 1468,
+          "sha256": "9343a46a6ba9c921ebcda1552d4bea87c62562b3b0691d2997fffde2bef86783"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/observation.json",
+          "size": 1479,
+          "sha256": "2b38780fa4dd4cd725ce59339ce833a96ec3ec0264558bd0226694d6da8e46f9"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_SAdd/observation.json",
+          "size": 1466,
+          "sha256": "205b7b08cce5db3a35d981e7a09112683bc6397ce81d1565b81d890b0e83cae4"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_10KB/observation.json",
+          "size": 1473,
+          "sha256": "8a44528cab04b8bd56898dff5db24fcb803f825d9127904783e2e60aeb85cc90"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_1KB/observation.json",
+          "size": 1472,
+          "sha256": "7012015362bcf47d53467392b1935ddc44f56412a511a8d4d4ed88127324a247"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_Small/observation.json",
+          "size": 1473,
+          "sha256": "2c69095bc7d773683e31bb571a8110e8476f39837ad507a028e6c470b9559289"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/observation.json",
+          "size": 1480,
+          "sha256": "132269bde5a3be4bb3362d695624f2b69609b9a5615020053a4ac5b86b52f214"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_SetDel/observation.json",
+          "size": 1470,
+          "sha256": "23053482f07d3c1f8a8af74a00ba275d36cb738017c9ad749d66d552950673c8"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-b/CommonOperationsBenchmarks.StackExchange_SIsMember/observation.json",
+          "size": 1472,
+          "sha256": "4ff8b6db50df3396e7d62fc256794141e9f2367c8baface4180f31ae8cb5ba9c"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/observation.json",
+          "size": 1481,
+          "sha256": "cf7310d2028226e8245b068d2292199c7207812ba32c09917fd4ef6e628e2f99"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/stacks.json",
+          "size": 42753,
+          "sha256": "86326fc812143a84c461f6bbee91abd534c9aa90c6d8900227446c9f07a7e1ce"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Get_ServerRead/observation.json",
+          "size": 1479,
+          "sha256": "16194a8f4af626b820c391d1146f63471380bb6e4952f51f4d6ad2432d379684"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Get_ServerRead/stacks.json",
+          "size": 46439,
+          "sha256": "1ba91eebd1981e330a0b97104163415caa079f2076d7324569bd84ac2655d569"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/observation.json",
+          "size": 1487,
+          "sha256": "e2160606008c9b7176251dee3cc5da0acda14080ffbe9ffdbecd570aaa2ccbff"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/stacks.json",
+          "size": 55404,
+          "sha256": "b1e121da03c2cd2fa6996b3d1fec7ee763c599d4634d82f9ec0f5886a3a8a112"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/observation.json",
+          "size": 1480,
+          "sha256": "f9b3c4b7129125a31cf05c38c0418629f033d2e4b5e266e50fe17f35b0830e61"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/stacks.json",
+          "size": 58549,
+          "sha256": "23c1478e09e303b8d10e5b12d22787a95d296209816d7892e73286b57909f51d"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/observation.json",
+          "size": 1489,
+          "sha256": "8f77362d3e0d71a1903db8b74bc30d33c0b84ef61e9de29eac67fe9b8eafe99c"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/stacks.json",
+          "size": 60579,
+          "sha256": "35e43e701258223a3c21d9436e7174d4e7287207bc0ae0f79a8d3a74e39d4c16"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/observation.json",
+          "size": 1485,
+          "sha256": "472938d38563cfc64f7769dc739e578f8dfb614adb9f32ed413d6e6144c494cf"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/stacks.json",
+          "size": 78739,
+          "sha256": "65c1c256ece152b6427e5ba3ba8910ae18092f33ea1df36fcb8b73bee009bb7d"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/observation.json",
+          "size": 1492,
+          "sha256": "8f0b262a5b8df7272b0d6ca0a6325bfb27bf44e124ee33f0edb974ecb4cfb487"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/stacks.json",
+          "size": 67163,
+          "sha256": "61c0eeba0205268ea51eee026c0841425a2f476794c40e2c134d30db1d2cf3b9"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/observation.json",
+          "size": 1486,
+          "sha256": "ee0135468656d50158f716c4cb24d5deb4810a6ca3f2e5d31f5219fa7447b7ff"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/stacks.json",
+          "size": 78587,
+          "sha256": "2e0b8c2cf707fe8b1c9d2f0204b9cf03d76baac43a77f8566fa2c6bc9db99477"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Exists/observation.json",
+          "size": 1470,
+          "sha256": "940b2a5e1b018a212df8f7bdaf5ba0381d9f54195ddad42a261af636c2d0d762"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Exists/stacks.json",
+          "size": 43468,
+          "sha256": "57e3f58cc89b659363d1cd08267e7bee177a4398b4d6fc392ffb43d38ffb0a89"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get/observation.json",
+          "size": 1468,
+          "sha256": "5c45ab9d925102a10eba10844955b033f161729747cda731f878b2dbb46e3a8a"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get/stacks.json",
+          "size": 47764,
+          "sha256": "dda76086c471f45f72c32606b60cc76c18f71b576868709e3d82e7a6c1e711a4"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Concurrent/observation.json",
+          "size": 1477,
+          "sha256": "827adb506907d808896ca87984e90c85d7e303808f31700e736caedd3cd4828b"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Concurrent/stacks.json",
+          "size": 111220,
+          "sha256": "e1a260ceae57882fb38bcbfad2f20cc42d4e17ca8ead5d1e2891f4a6de94c6f4"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Pipelined/observation.json",
+          "size": 1482,
+          "sha256": "dedfee2ae5ab73b470a8f45dd31b13c4b86daf95cd1954fb6629900ac281d25d"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Pipelined/stacks.json",
+          "size": 113578,
+          "sha256": "9ca25cc51d5d968bf989bd61e7f4d84faa45a4759dba983ad4eacdb797239213"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_SteadyState/observation.json",
+          "size": 1479,
+          "sha256": "c5e1a64a9552b8cd4a6cecf4003e176065b643208d6f835f6357c007f82be23f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_SteadyState/stacks.json",
+          "size": 58007,
+          "sha256": "3ad85d56f558fed60ad52099e75d64b31d552287ea7fe42605853f59ac5c76fd"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_GetLong/observation.json",
+          "size": 1471,
+          "sha256": "c558c8a91b79aea1856bbc2d101ab21b25f1ca2fb8bac73ffecece416340959b"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_GetLong/stacks.json",
+          "size": 45177,
+          "sha256": "ff8328da4b15bf2b7daae81bc9913a4486777248a0dede92fc7bd14b20f0fe3c"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HGet/observation.json",
+          "size": 1467,
+          "sha256": "ce20038ed22fd65ac0c4667312c44fc0e422994da3daaaabab39772d15dc93c7"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HGet/stacks.json",
+          "size": 47341,
+          "sha256": "b071de6ff240291de67734ebae68e6b08806c0d1f77e8fc3ea4c5d637ebf9faf"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HSet/observation.json",
+          "size": 1469,
+          "sha256": "a8559df62032ed835b0dabba3367420cf1ced95bf87d3b323dd1358f5d972848"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HSet/stacks.json",
+          "size": 61756,
+          "sha256": "ead1cde53440b53a5c486cdaf5b965fa8e85b0b5e0e670c1ad3b411104cb805f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Incr/observation.json",
+          "size": 1469,
+          "sha256": "71b83a8fb3deb25c2adc1a04e475a098897824c8164368054fd20ac6bb503c40"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Incr/stacks.json",
+          "size": 49144,
+          "sha256": "a6c6ab2f596680c406e54a2f23a7a55e02f327115b1cc17a5dfedfa2c90888f4"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_LPushLPop/observation.json",
+          "size": 1471,
+          "sha256": "43be1c271bd7ab1b22a49d278d6e6005b193441ea840ab142d393bf37e717df8"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_LPushLPop/stacks.json",
+          "size": 96294,
+          "sha256": "fb2c520fe9eebc08f15fb245e9d09e6c49ff5bd38b34bcd8a1f17579d75132cb"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping/observation.json",
+          "size": 1469,
+          "sha256": "5eda2e9629cff33691195992af511bf5275b3097d846ca75948b3d50182e6f63"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping/stacks.json",
+          "size": 59744,
+          "sha256": "1f893be57ca2818186459f3daef78eb2aba9ed326e9a2733631ba492d020450d"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping_SteadyState/observation.json",
+          "size": 1481,
+          "sha256": "952d52256c0ee2ca4ed121d14b6dab69c7ef2fa68d30f50eecc4259a5288f8a4"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping_SteadyState/stacks.json",
+          "size": 43888,
+          "sha256": "cf7f041d54f9458ca2b254a8f84ab3ac71dcdb368373dc12e9a9257f468ecfb4"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SAdd/observation.json",
+          "size": 1468,
+          "sha256": "72a2414d1c68560747c7bbd20a281c74696c78f4414a8d1f0eb6f7afdf787996"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SAdd/stacks.json",
+          "size": 48275,
+          "sha256": "f021fda83ca987ab82c0d9ce80ad73a521e272dd81c25568cd6411c9d892b4c2"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_10KB/observation.json",
+          "size": 1473,
+          "sha256": "519a9645176c7a30e48e4115e771f63af4df35882c581acf1feb2838914c1cfc"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_10KB/stacks.json",
+          "size": 49965,
+          "sha256": "232ecb4fedf6198235632934534aa58eedcc3062ce67fe0e328f00232dc44ade"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_1KB/observation.json",
+          "size": 1471,
+          "sha256": "1a5e58e7d5dc175f8a4adc00aa52fbf6e8560f931ca1936bdae87be2cd9f5e72"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_1KB/stacks.json",
+          "size": 43980,
+          "sha256": "74d5eecace7e9ae9b51d1740efa0666a0405b3500d2a9604dd7b77d53f49d4cb"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_Small/observation.json",
+          "size": 1473,
+          "sha256": "1b683494640b8ceabca5775ddd8fee709122da33f5c36da00eb9151c59739d06"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_Small/stacks.json",
+          "size": 38257,
+          "sha256": "d1cf610aa4bf404ed82068d05555d4265d6b40274d165ba2fc21807cbb093ecb"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_SteadyState/observation.json",
+          "size": 1479,
+          "sha256": "37f8dcaf3fc5b13c2e3eb6f0cdc0b55fa831e87ac5ec966410155e6f3da6d625"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_SteadyState/stacks.json",
+          "size": 53811,
+          "sha256": "2f7de388c836ccd439900ba28d372b2167f9ddd046ffe2752c52f63ab400f841"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SetDel/observation.json",
+          "size": 1470,
+          "sha256": "d57fb0ca0df81de0e1569c1a9ce841f78459b403c1b3975514cb7da99c744134"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SetDel/stacks.json",
+          "size": 82928,
+          "sha256": "09e0428512e6d6429dfc14ca5f33025dc9024c3439b8507d54b1d53d918749ef"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SIsMember/observation.json",
+          "size": 1474,
+          "sha256": "16ad54d2add8d5e4ea1c851712e0a8a42aa3afd9ae0aa00afa5629c8944ff710"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SIsMember/stacks.json",
+          "size": 43234,
+          "sha256": "150d77640d31ffb583ed805b5b9ba5b83782ee174de04bb9c8bdd1be489674b1"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Exists/observation.json",
+          "size": 1476,
+          "sha256": "861a75805bb3da51b42ec031e45a3d6fa7427deb28d848387f3feaa99cb79a4f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Exists/stacks.json",
+          "size": 57483,
+          "sha256": "9cd804dd23e1d1d29049f396227101b41a291b7f9e737e624107e9c6e9e9c25e"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get/observation.json",
+          "size": 1472,
+          "sha256": "dc250f44f7826be7eb0e67bf7a68760434ba26691b71a971908c02d95572ecb0"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get/stacks.json",
+          "size": 65109,
+          "sha256": "09a4b82fc8f06c87eae58b11c6bfd3a0d868bd1d278a5e1e2f99c9f0690bf868"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/observation.json",
+          "size": 1486,
+          "sha256": "51d7462da1e40eeea5b8e6c8985222f7c29c1f90771f10d201109ad9d70d798e"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/stacks.json",
+          "size": 74510,
+          "sha256": "ca7adfd3ddc4cd4c81c518760f13e2f93d73b5a50d7f816e6d9c15e3068aca00"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/observation.json",
+          "size": 1487,
+          "sha256": "9140cc3ab2bb88d6069ba0736434d4dceaa10d246ef83eef8749fc1325c435f0"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/stacks.json",
+          "size": 157291,
+          "sha256": "d0e674a352276a66d231296d78dd2288da1c6bbf1ec91ec0e5eb90f2a7f8917e"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/observation.json",
+          "size": 1485,
+          "sha256": "16cf85c461636237f5c99f826381ea0c78de237ff86eeb51f41a0a88e8f219cc"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/stacks.json",
+          "size": 54637,
+          "sha256": "08044dd22f15f37adae780463f706c9db5428bbc1f93e8f94ae9d3010b15ed92"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_GetLong/observation.json",
+          "size": 1474,
+          "sha256": "57fa8c36aa4af7bb524a27c9d20d26b2ba34918407f2dd11f6fea3b0730d38d1"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_GetLong/stacks.json",
+          "size": 68357,
+          "sha256": "b7fe96132f1ab629cbd2aa77b16acb99008feac8190775a517b1c946102c79f0"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HGet/observation.json",
+          "size": 1474,
+          "sha256": "4a3c9760febc1389f8f70bfeaef36075abfa1527f322afb5524dd44e82f027fd"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HGet/stacks.json",
+          "size": 69450,
+          "sha256": "3efb98f6c976b31664ac9f675eb4385e2fd3fd55be44ef47dc6b61cff5733209"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HSet/observation.json",
+          "size": 1473,
+          "sha256": "ea5174ab9fb93dcded296265c321c0ae5fd9651c84b60d1ea879f09afe44657f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HSet/stacks.json",
+          "size": 58760,
+          "sha256": "581b5939d12d54b50ada30ec0724c58e86c1d5a73cec4e426ff3d79db6efe836"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Incr/observation.json",
+          "size": 1473,
+          "sha256": "a89e3e7a18641fcd5fe3a59d3edb21dc9bb673494c8e12f6eed642185bbb4c7e"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Incr/stacks.json",
+          "size": 58644,
+          "sha256": "036c94659ece7cb9c687751b038a2bcdd7880568281a150417c29a71c7108f09"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_LPushLPop/observation.json",
+          "size": 1479,
+          "sha256": "72cd93fee7e40d1b0f777096ac0e9bc0bcb808cb5fbf45a3a4443ca8cc2b7be4"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_LPushLPop/stacks.json",
+          "size": 90446,
+          "sha256": "da63fe5c0c4bbf4bfab258ed57c247350c53013f5c2ad65016a1e0be5e4d9ec8"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping/observation.json",
+          "size": 1474,
+          "sha256": "de18e0de81d64a29fe06545916d95117926f1bcef9e72b2299a45cae46f6ffd0"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping/stacks.json",
+          "size": 52846,
+          "sha256": "6f12241727aec0bba042ebee22c20c5c3806fe4e99760caf3f2baab1ca3667c9"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/observation.json",
+          "size": 1486,
+          "sha256": "6b30b0f4d7f45b7c59fc198fe64d87ba43bed17f018ca8ec9d1e85013ef705b1"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/stacks.json",
+          "size": 47107,
+          "sha256": "56004dc5714e44c1f2fede52f287e0382a9037749d005c8f62d74ed054c32d88"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SAdd/observation.json",
+          "size": 1473,
+          "sha256": "8b0e2aa35e25e59e93ba379b4c91ef09a4d5a79be602bd8fd92bfff228e6ec8e"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SAdd/stacks.json",
+          "size": 55870,
+          "sha256": "c9c55149ea648c347166588aaf6824158d4fa3eba7cf887f263ebea576ae2636"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_10KB/observation.json",
+          "size": 1479,
+          "sha256": "2e7cf149e69275ef9b38255ef39749dde1ca86c0a14f8cf47f8e6b086c0113a8"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_10KB/stacks.json",
+          "size": 67404,
+          "sha256": "c81353dc083c395947a354a220eae80d534f6420ec85c8a0298a53108f674dc7"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_1KB/observation.json",
+          "size": 1477,
+          "sha256": "3f9412bff3cfb268eedbaecad50a4d62dbaca581c003777a74315d959a898d9f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_1KB/stacks.json",
+          "size": 59450,
+          "sha256": "c16b6b22e3b2b7eb41454be1cff8c115578024e76ee9dc96866d3e123f713df1"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_Small/observation.json",
+          "size": 1480,
+          "sha256": "cf747f1323d3ba69a77c78391077573e4b3f01ee6153a44d8b7b1df3e96f141b"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_Small/stacks.json",
+          "size": 60813,
+          "sha256": "39926a7d33fa47e669e76bc57d2188e5ca18e06215af5f1951ee05d6e039de9d"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/observation.json",
+          "size": 1486,
+          "sha256": "e3d03caaaca1ff9632e18609cfbdfa7d0639dda7869dfdf45dadbfad107f099f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/stacks.json",
+          "size": 44536,
+          "sha256": "177ff4d8f2cee994b12795e8bf7051510aa55c00db9d67784918fe4f98e11221"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SetDel/observation.json",
+          "size": 1476,
+          "sha256": "4eb1edc77a08d4725df86e29d8b8a005620a8673e469a0c061e4942db8f5c1fd"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SetDel/stacks.json",
+          "size": 93502,
+          "sha256": "efe3461f91060fb4e19fa66212fa143c02c71ccd596eb1b6e438d393849e191f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SIsMember/observation.json",
+          "size": 1479,
+          "sha256": "40747ae8dbe11c104708091e9b1c05124c8f9fc66b68b72fbabf7ebce83379cf"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SIsMember/stacks.json",
+          "size": 58603,
+          "sha256": "8e390230815914ca3df8a55b18c10a3ddb2aef3d9112d0d68f771e05cf0ba446"
+        },
+        {
+          "path": "server-latency/cases.json",
+          "size": 6066,
+          "sha256": "7ba3fea51256d8e77e1698aa8308aa61299b8011e9745be8ee91187bc4755a3d"
+        },
+        {
+          "path": "server-latency/containers.json",
+          "size": 19189,
+          "sha256": "33227ac7a49f142287b6497e313dbbabc2931a869fd25742335c1cac3445d089"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/observation.json",
+          "size": 1472,
+          "sha256": "b6fd7d7ee289a24e53c94f88ff14f2e40d7dea7b3c40304ad8b9943ee3614509"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_Get_ServerRead/observation.json",
+          "size": 1456,
+          "sha256": "23715ad8ac3af839292930c82f10d3bb1184c39220477687b61576a505537931"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/observation.json",
+          "size": 1476,
+          "sha256": "0e77b3145ae2b4a7a7363ac220e31d056668371686df5805733b5799f008900f"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/observation.json",
+          "size": 1468,
+          "sha256": "21eac680d435347eb442d67dc1e8cc038817b14f20ca0946b46837662303735d"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/observation.json",
+          "size": 1477,
+          "sha256": "2f64bad9882c22bee2eb9b59e5608e83ed1ecdd2454adda83330dc95e700b1fb"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/observation.json",
+          "size": 1475,
+          "sha256": "9901a216174ca5e7515ffa921242886529a8886e4d270b72ead3b76aaa90aa26"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/observation.json",
+          "size": 1482,
+          "sha256": "a268f5f3cc0020adf7d7a7c3f1c59c2238508a982f380bb1d97f470e69f9c871"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/observation.json",
+          "size": 1476,
+          "sha256": "e54a4369ee24de8c6f8eac25ecbf7ced25f7fe5aed303dcc02de250444962d86"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Exists/observation.json",
+          "size": 1458,
+          "sha256": "6c01e731c5cdd6eb2195c669cdf097d9cf91fcec47ef763eedd66f022f67d979"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get/observation.json",
+          "size": 1457,
+          "sha256": "b0b048373a4f178af22c99fa869bd7522d3642c2b1b99a952a2d2440b4bc4326"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get_Concurrent/observation.json",
+          "size": 1471,
+          "sha256": "9f3d3cc7521099666713367b762d484cb9e9d0957411216b0d4ed3c30b1788f7"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get_Pipelined/observation.json",
+          "size": 1470,
+          "sha256": "ef93325ab909f4f79fff1a6dc0e51c7590d9eebad156734e1cd07d91089304ce"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Get_SteadyState/observation.json",
+          "size": 1469,
+          "sha256": "cf217663a00427bac6c33dfcd56d3af6b6bdb53cccac18f8191d4d9080d5a5bd"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_GetLong/observation.json",
+          "size": 1461,
+          "sha256": "8b11887f6b3810de71f632ebf5a8c2e54815159b4d9fe57f8d1cf0ec6525a65b"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_HGet/observation.json",
+          "size": 1458,
+          "sha256": "f958618d822743bf5600d791c482175da6b0d037474bbde093910526c64dde20"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_HSet/observation.json",
+          "size": 1458,
+          "sha256": "6caafdea0ce2c7317b7b320b44ccfba14f7de64d043c31687b9d058fceddcdf6"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Incr/observation.json",
+          "size": 1459,
+          "sha256": "f374d963f3081b59fcac175cf88d19ab1bfedc5aab4ec0a0aae5bc04cb1ae8d3"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_LPushLPop/observation.json",
+          "size": 1463,
+          "sha256": "4cba1c8945d4dff04c75cbc7fe475398bf72e306e35856c1a95d7abfbb8f0467"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Ping/observation.json",
+          "size": 1458,
+          "sha256": "e5b09dbb1fc508ee516527d6504125b5a44f4cdc1eeb74849a16bc34f6409be1"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Ping_SteadyState/observation.json",
+          "size": 1470,
+          "sha256": "6a0fa8fbafbe1ef28580fc7760f110462491865671ee7cad82cb112f83796ddd"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_SAdd/observation.json",
+          "size": 1456,
+          "sha256": "64b24e97461d7039813c6ece5ff043d27287ea1c542de25e51316499022b2340"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_10KB/observation.json",
+          "size": 1461,
+          "sha256": "f9551e3249cf7220ec4aab28397253e259cc01c8a0d53ea355283cfccfb48904"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_1KB/observation.json",
+          "size": 1461,
+          "sha256": "23e429a03fa886859bac136f57195239f5f52138b9066049e2af468d7afb5670"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_Small/observation.json",
+          "size": 1464,
+          "sha256": "1725660b975383ec2496e0483da71e3f9ffe2d532adf96546fa245fef4395b64"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_Set_SteadyState/observation.json",
+          "size": 1469,
+          "sha256": "ca85a9140d3aa695e180511d20bfab7d188d172ff5eb151355532ab75f1cefe8"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_SetDel/observation.json",
+          "size": 1461,
+          "sha256": "39aeecbfbd4a93e5c8d32a62c42b6c2bb69bac1d5d742a69d3d11a531948c45b"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.Respire_SIsMember/observation.json",
+          "size": 1461,
+          "sha256": "068fdaf273c712f06add512b28b27304bd9b5b9ee09546294e454f8178137af5"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Exists/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Exists/observation.json",
+          "size": 1465,
+          "sha256": "df9b087af1672d362593b9566990ec64e99a508cf174ed0155a0b0201b03fae6"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get/observation.json",
+          "size": 1463,
+          "sha256": "5fdf2d19738e283e46a475962fae6df93f068690bbd3269e249139dfbe1227f6"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/observation.json",
+          "size": 1477,
+          "sha256": "4ced793cb87761db7cfe4cf7fa32d107aafe31a40c0b9b59bfb8002ecc724547"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/observation.json",
+          "size": 1477,
+          "sha256": "d563401a716d4daf979de2cc39f3f8db98b53c1ba47ef136883f2bf1963b0d19"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/observation.json",
+          "size": 1477,
+          "sha256": "fe00549ea3acc5fe2ef82d6f51b25d90a20b7225be63a3c9dfcec2a8140bba8c"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_GetLong/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_GetLong/observation.json",
+          "size": 1467,
+          "sha256": "b9e06b6757311d8a2bdb997d27b2daf2bfbb88ac661f658a6e4ab379c567cd37"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_HGet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_HGet/observation.json",
+          "size": 1462,
+          "sha256": "9422d9758449067f83e1641f2427337504c1b4b9a7b1ce3521ceaed371b3b60b"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_HSet/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_HSet/observation.json",
+          "size": 1463,
+          "sha256": "5352d29e501ebf7148d5688aa16e00badc49ab22d3c0bc70b9992fb18a2dba5c"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Incr/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Incr/observation.json",
+          "size": 1465,
+          "sha256": "68c7e33dcabbcbae72c9f05fbc80b2f0a55c649e799cb53664c91005ae2dd8ed"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_LPushLPop/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_LPushLPop/observation.json",
+          "size": 1468,
+          "sha256": "ee32a90fd4eb72e7dcc46406ca964e8e650051dd5310f1e191f57e44e70fba02"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Ping/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Ping/observation.json",
+          "size": 1465,
+          "sha256": "184c846a057308170b6641e880a2191f97017f3dd22edccead2f865abb362654"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/observation.json",
+          "size": 1477,
+          "sha256": "22798a28d39a76c28de6ed001fd98bb93189546fa86ace40a40ed7d7b2daa7bd"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_SAdd/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_SAdd/observation.json",
+          "size": 1464,
+          "sha256": "1785350688e785e4c5131a9a761102510b899bb5cda4505727d93e51fb1bf87b"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_10KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_10KB/observation.json",
+          "size": 1468,
+          "sha256": "18c174c5112a4a41cdb48cdc09d5daa5063e1fe8d19b130be04451c40202fc6e"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_1KB/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_1KB/observation.json",
+          "size": 1469,
+          "sha256": "70b07fdb1caf620f242c3603c07de761a0bf7142605bfcb9745043db3bcd4a1c"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_Small/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_Small/observation.json",
+          "size": 1471,
+          "sha256": "82f1c2b0749fffe1669f65508d8cc5b3cf86189ec8cd3a16ab6ba3d1931e9a62"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/observation.json",
+          "size": 1476,
+          "sha256": "fd3e65a28ec42bf00a987b17ab4c6c75331ccd4723cf12a9d9e9363aad135b44"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_SetDel/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_SetDel/observation.json",
+          "size": 1466,
+          "sha256": "ff412ea2541b4e09a12815c6446fd9c77bd2e68a3a05cb51a50bbfeae64ab180"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_SIsMember/console.log",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "server-latency/host/CommonOperationsBenchmarks.StackExchange_SIsMember/observation.json",
+          "size": 1469,
+          "sha256": "910dcff0de11cf09fd8d2e69f47e6987a784f124ed92019a73b06e29673ab514"
+        },
+        {
+          "path": "server-latency/observations.json",
+          "size": 322649,
+          "sha256": "7dddae3df29cf5b40c7d2a7998332b87d94bf7217046ab003d0746c61213abb1"
+        }
+      ]
+    },
+    {
+      "archive": "traces.zip",
+      "size": 30685852,
+      "sha256": "c275dcdfd10eb43c5d427b2bca4c11658b4c3c96068bf56cfa108154098d6537",
+      "files": [
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/cpu.nettrace",
+          "size": 3830494,
+          "sha256": "1a92ab6ee4c35a4017c3d0f40e8ce11dc8ccd96e4df7e95a0a74045ad05bb973"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Get_ServerRead/cpu.nettrace",
+          "size": 3766046,
+          "sha256": "f433b27306f9f196f28f4b379268e8d341ecf13461156cbaaf5aa71dcaa085bd"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/cpu.nettrace",
+          "size": 3820946,
+          "sha256": "5889566b8ee9afb756ebe3e41338d14317ed5f58acfe90f2754b674b6ac92f65"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/cpu.nettrace",
+          "size": 3819562,
+          "sha256": "d6e7f5988531e2817798bd4be63029aa3532974bd472626f13d6df7fdff36d69"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/cpu.nettrace",
+          "size": 3758718,
+          "sha256": "5cd28406a94ab585f0be5b0767f6d221e096feac014e0d9e754e3d66eef70857"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/cpu.nettrace",
+          "size": 3940566,
+          "sha256": "68c7ced2318c97fd3ba0de2032f72ab561039daf2705b8702aee937ac4714bb9"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/cpu.nettrace",
+          "size": 3849494,
+          "sha256": "56b06999652b3e5feb76375a7fa705a232ce1c9435ef819b57048e42879e4aba"
+        },
+        {
+          "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/cpu.nettrace",
+          "size": 3973726,
+          "sha256": "b9cd7cc9414c0fc7be3e30d92f6aa53ffd8be01ebea94b00f177ee45ca1558af"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Exists/cpu.nettrace",
+          "size": 3482182,
+          "sha256": "b746c5236c4dda9225d07a5ae1f1bca4f7af40fe8fa3df63b16e8bfb4decd5b5"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get/cpu.nettrace",
+          "size": 3489894,
+          "sha256": "76403fd5aed8c0e4c105036aed953da927ba847154a8fc7609ab210479216903"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Concurrent/cpu.nettrace",
+          "size": 3677010,
+          "sha256": "42fe7771e3dbf678eb1aad48a5c657f0614794939eef419197674c9c510ee179"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Pipelined/cpu.nettrace",
+          "size": 3612850,
+          "sha256": "a7f28bea0209d8b602249a682c44a85ac57541c3f14f5336fe027fd0fb75f4d2"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_SteadyState/cpu.nettrace",
+          "size": 3479278,
+          "sha256": "37da3735a0598277821dfeee9a218c6e900d53b49a688d7364c0d25dd48b82db"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_GetLong/cpu.nettrace",
+          "size": 3557506,
+          "sha256": "aae7c3d0f36a6746203714a025e39fe3b90e24fa67352008b7330a707873c8ac"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HGet/cpu.nettrace",
+          "size": 3486106,
+          "sha256": "5e746882b46c9ea201dc7832aaa9e981d4e10f65e385cc3c83c6de36a0f4e12f"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HSet/cpu.nettrace",
+          "size": 3557934,
+          "sha256": "b89e984d735881144aaaf0f3cbbad4d04d1425c51c8eb3ad7ef9edf10b792438"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Incr/cpu.nettrace",
+          "size": 3481134,
+          "sha256": "4bb7602adb98c63f8065707a6746186eb18ea4c9f71689b6410df59394c6e582"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_LPushLPop/cpu.nettrace",
+          "size": 3772838,
+          "sha256": "a461959cfc52289f73cb9ea00eddd38078528934c5fcc4c15c1d7e77f28de372"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping/cpu.nettrace",
+          "size": 3443750,
+          "sha256": "38b57eb2bbdef01b55f1382ffd14d2e3ecc55d2efec9f189dc61565bab1a6b82"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping_SteadyState/cpu.nettrace",
+          "size": 3516230,
+          "sha256": "fa2e159ce41eee0898ed68553b2006e9d87a8ca381728e4b75e423afb681ddc3"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SAdd/cpu.nettrace",
+          "size": 3508470,
+          "sha256": "79c99c4583377de42542a9db088eebba8e3fa76942a03c33092739d7540e9eff"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_10KB/cpu.nettrace",
+          "size": 3627482,
+          "sha256": "cfae0008fc8225997f1b8bf6e26fd4f5cfc03a9aa1b7bf66a0137aad2a71ed23"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_1KB/cpu.nettrace",
+          "size": 3515658,
+          "sha256": "861e6903bd845ab288a86ebf9dd2ce0ec762bddc9e6c4af724bb1ebcf24081bb"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_Small/cpu.nettrace",
+          "size": 3488410,
+          "sha256": "0013215e7a1e2689bd2867692d996d5751c5563b618b4b4ae6ad7cbbbc7dd97d"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_SteadyState/cpu.nettrace",
+          "size": 3563202,
+          "sha256": "8754febb5f79222c728e48c251c9c697dbebff51247b949cbc290e469487fa92"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SetDel/cpu.nettrace",
+          "size": 3674550,
+          "sha256": "e14cb7547c76983055f5d9bfdf9a803734af93ce0ae70006379e6fb8adc90640"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SIsMember/cpu.nettrace",
+          "size": 3509206,
+          "sha256": "4bd918785b2945b35b0165285396f59141b421c999a39588d5ce78ed05000bc7"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Exists/cpu.nettrace",
+          "size": 3526826,
+          "sha256": "65146570fc6d1eb2ae53df3a83601e7b9cee6da6dd4d4457341c576ff5a29c31"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get/cpu.nettrace",
+          "size": 3642526,
+          "sha256": "edfc3b9990592327552e22647ded38c137565f6c479a68cc9cd9e689aa9be623"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/cpu.nettrace",
+          "size": 3746546,
+          "sha256": "6c69f00482fa5a712349b38d32ad4c9989be4835d30e22dc2b22712f127085ee"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/cpu.nettrace",
+          "size": 3611622,
+          "sha256": "24c2e6c2899b4c8e150c1d6d9282d375d328ee251e978896a23685d7378fc952"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/cpu.nettrace",
+          "size": 3571394,
+          "sha256": "a3a40e0b59f4f2142bb1ecc945db18282c71ea6778a07ec1f7f4ff317ddde96a"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_GetLong/cpu.nettrace",
+          "size": 3620042,
+          "sha256": "f8577a39e15ea5542ba7ed191eea2f0db3ffa5c1d2814cec2a55caf9199d1d73"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HGet/cpu.nettrace",
+          "size": 3660966,
+          "sha256": "6985fab40d250c536c671b315011f897a22e528ddffd0909b595fbd8f43f7543"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HSet/cpu.nettrace",
+          "size": 3486018,
+          "sha256": "c9e749e5c0bc81af67683e3110ea84ef50f83fa7dc6af82debe41f12ba313509"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Incr/cpu.nettrace",
+          "size": 3502470,
+          "sha256": "1db49cf498d263892f6017fef207d3d8a3cd30115efb6d52cc9bcb7916b98d6c"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_LPushLPop/cpu.nettrace",
+          "size": 3700414,
+          "sha256": "19f5a80183246b048b23c12f6e34091665f1a64b6357b8a7e89f22acb7e2951d"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping/cpu.nettrace",
+          "size": 3446402,
+          "sha256": "99d793c4b5a1903f82591b003fe5a1fc36684d7a15af8e081c1528fd80ef18af"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/cpu.nettrace",
+          "size": 3518766,
+          "sha256": "99434c1e042c2bbf5eff721d7241f53066980897c2cece23ed512155b833b9eb"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SAdd/cpu.nettrace",
+          "size": 3530034,
+          "sha256": "dfc80ba9eab321cd3c86b3d0845ba02cbf116d0814b326a86a1f4d1035cdcfa5"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_10KB/cpu.nettrace",
+          "size": 3686578,
+          "sha256": "78588fa298c0ac5e623cde5348a4e39f26a07067d0cdd4509dd2df6aa0bd3e96"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_1KB/cpu.nettrace",
+          "size": 3549386,
+          "sha256": "0bb3e25b05f09c8677a413c88a3f0ec410ec02913761934f210463bf6dd19574"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_Small/cpu.nettrace",
+          "size": 3601894,
+          "sha256": "7eb7b5d2701a989742f6049225769c9d6e8fbd8b7d36adbc9575364fe13e98c7"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/cpu.nettrace",
+          "size": 3567718,
+          "sha256": "ab001a3b122c8959dcfeb960bcff0f7d404d2650065eb9c741738fcc9562044c"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SetDel/cpu.nettrace",
+          "size": 3681370,
+          "sha256": "e3caf499fc63fb87b89e9d0f88f853ce336ce445e19eee6db4daa7167ca5b175"
+        },
+        {
+          "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SIsMember/cpu.nettrace",
+          "size": 3493646,
+          "sha256": "37ab035991fa07f5fe502acacccdf684924eef79532451070bb0da7b65393092"
+        }
+      ]
+    }
+  ],
+  "omitted": [
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Exists_ServerRead/cpu.nettrace.etlx",
+      "size": 8030526,
+      "sha256": "45c0471f2fa645368e102452a3abf1cb8d16e574fa438ac78482a51a37d512fb",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_Get_ServerRead/cpu.nettrace.etlx",
+      "size": 7532404,
+      "sha256": "a6117027d8d68a893918fc92e08c056c2dd9c7884217176d51d7182a2be5305f",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_GetMissing_ServerRead/cpu.nettrace.etlx",
+      "size": 7945736,
+      "sha256": "567d6dfe0af2765389353a96fabe8ef1bbb89bab7455256aebf0aba9a263de3c",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.Respire_HGet_ServerRead/cpu.nettrace.etlx",
+      "size": 8000654,
+      "sha256": "5117bc913af4c2b708359cfbe1ae0d403bf676f3cb931e178717625571efacd3",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Exists_ServerRead/cpu.nettrace.etlx",
+      "size": 7483758,
+      "sha256": "30c72279dee34f6d267b0a6ee74561706a7042ec1e85c9b4753f50bb9940b819",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_Get_ServerRead/cpu.nettrace.etlx",
+      "size": 8417043,
+      "sha256": "15e76534fc9f189752c260dcd46dde84f0035121482eb1b803f0541de74d9f7a",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_GetMissing_ServerRead/cpu.nettrace.etlx",
+      "size": 7744411,
+      "sha256": "9a16eceeb5c661a94478f813c1608012cd6f82da5ca0eba605d804220ca93428",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/ClientSideCachingBenchmarks.StackExchange_HGet_ServerRead/cpu.nettrace.etlx",
+      "size": 8615378,
+      "sha256": "a925d5f28758b2b1e0e2c0d06d8f527293506395ff223a6610426baea60d70cc",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Exists/cpu.nettrace.etlx",
+      "size": 7313787,
+      "sha256": "f869d852f116cdbcd164bc7fca71fe2ffdf71f2cd301537f3352b5f36867fcd6",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get/cpu.nettrace.etlx",
+      "size": 7382590,
+      "sha256": "7a5d2e36e72fae5c147bea084cfa1448757fc809a58f64e6253b0be25c2ebcf2",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Concurrent/cpu.nettrace.etlx",
+      "size": 8533014,
+      "sha256": "46a842d3b75d09abf7a26b4dc30e084a2d50cb6ab8fa1df6565ceca88d20e045",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_Pipelined/cpu.nettrace.etlx",
+      "size": 7977934,
+      "sha256": "6713e72174a6d8d79fd1d11cd06749c3412bf5feee586c0d3ecacc54a99df3c7",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Get_SteadyState/cpu.nettrace.etlx",
+      "size": 6964864,
+      "sha256": "1948be24a542edd3932ff7186367c04d35083d7ad86755acda8db1590faaac9f",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_GetLong/cpu.nettrace.etlx",
+      "size": 7698726,
+      "sha256": "2f5f5af9e14bca7116e4292d6f5516b620f2cd2504719f8da6ba39ac449b5eb2",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HGet/cpu.nettrace.etlx",
+      "size": 7407289,
+      "sha256": "9f0b1228e760ac2d4b4c4f0c1cbcf197e8b4d523a1b43b210814a97ed9939bda",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_HSet/cpu.nettrace.etlx",
+      "size": 7726343,
+      "sha256": "2430daee066449031f72987e299c6186a7030cfbdd2588f99dc43f25bfb54628",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Incr/cpu.nettrace.etlx",
+      "size": 7225718,
+      "sha256": "1eebe1ba6a997fee84e7d60784a89f628f8de2de09b9224106235720d9610205",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_LPushLPop/cpu.nettrace.etlx",
+      "size": 8029965,
+      "sha256": "42b632b80586d269d2bf4461fe71080ed8122c780245ba6f5b33f7fbb23b55ea",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping/cpu.nettrace.etlx",
+      "size": 7105498,
+      "sha256": "5b7064279cec842dc0c7487dcb3ac70ba6f661d55b955494360c113394e2b678",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Ping_SteadyState/cpu.nettrace.etlx",
+      "size": 7542492,
+      "sha256": "aae003019a3a90afc7e9feeba4a9300c048e546bff69babbda4bd498e3232180",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SAdd/cpu.nettrace.etlx",
+      "size": 7473051,
+      "sha256": "fe4eaac49f125ec4d189063b3db32c5da7694f708f8335975c19dcb4c6d88ec9",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_10KB/cpu.nettrace.etlx",
+      "size": 8303956,
+      "sha256": "efef26b807aaf46ba87c4e2717ca8e2c1f64b2ea4d2a3fbd2cf95581f074dcfd",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_1KB/cpu.nettrace.etlx",
+      "size": 7434440,
+      "sha256": "deb49d584aef5780f82844a61cfac97b4aa477e14ad64bd88b5c5c64cc706cab",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_Small/cpu.nettrace.etlx",
+      "size": 7240729,
+      "sha256": "8cdf13311f8ea04e32ad54fcceea7b7507efd6696b596eb2da0f0312ec867888",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_Set_SteadyState/cpu.nettrace.etlx",
+      "size": 7700853,
+      "sha256": "b14e5ea23870adf199cc3ad0db2de733b89b768261d9454051be7a2e24e9f5ff",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SetDel/cpu.nettrace.etlx",
+      "size": 8079987,
+      "sha256": "0003fe47157863dfb3c018660cf317ea39647e81fa7c6039f1422b0abbb77d56",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.Respire_SIsMember/cpu.nettrace.etlx",
+      "size": 7638370,
+      "sha256": "ebeab37375e1d25043627f19df5793b7917ad44429dc31b63443703fbb53d70e",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Exists/cpu.nettrace.etlx",
+      "size": 7620743,
+      "sha256": "82785f6f874eedebaaa9e140a62fc1f5e90e23b955641cef0f9111d80062831c",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get/cpu.nettrace.etlx",
+      "size": 8120565,
+      "sha256": "b36a318c506531ca7dc6b078db30136462e2cd89e3f9c023bde7793ba4035159",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Concurrent/cpu.nettrace.etlx",
+      "size": 9141567,
+      "sha256": "fed12274236abafe0e7124f2ac3fa8d6b54fb1388866bc74b1db0d5dc46dc51a",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_Pipelined/cpu.nettrace.etlx",
+      "size": 7866365,
+      "sha256": "dd34725502ad983868a150d9df986a7072650c20350f179132ce5fe9a06da195",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Get_SteadyState/cpu.nettrace.etlx",
+      "size": 7615094,
+      "sha256": "f55b32953a88ccac1c4a55380dd47e531c5ce6f268c1d0a17ac33f82508a4e31",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_GetLong/cpu.nettrace.etlx",
+      "size": 7916902,
+      "sha256": "b5994f8a1665eac1eda37567396440ce03c672cebd0ca46b15882d97e81a152d",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HGet/cpu.nettrace.etlx",
+      "size": 8141926,
+      "sha256": "cc2526966137367e60850f8ff0ac2e1ea11a233425d6779bf7eca31bf76493e0",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_HSet/cpu.nettrace.etlx",
+      "size": 7167818,
+      "sha256": "9d69bb2ebfc9d0815d8a6ea19bee1b43919c086b8f7cfc1325b4b66751589d8b",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Incr/cpu.nettrace.etlx",
+      "size": 7284602,
+      "sha256": "93d4742ce79f6ee272171af25c136b873638131d0e12838a9f7a258b7ae3d342",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_LPushLPop/cpu.nettrace.etlx",
+      "size": 8075747,
+      "sha256": "1252b101b80a414fbe134fc998d7feef817fbecda059c89c37345200109d5a3e",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping/cpu.nettrace.etlx",
+      "size": 7052135,
+      "sha256": "d25814d4caf428dd904391a4a00febdc10d83792e9fc734da5dacaea1f9d315f",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Ping_SteadyState/cpu.nettrace.etlx",
+      "size": 7441142,
+      "sha256": "9f0ad250cb3ec3f6e5a7e7cc64709f41299c4728c7cbcae338db328455e3efdb",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SAdd/cpu.nettrace.etlx",
+      "size": 7547309,
+      "sha256": "611348c78608f206e0912ef0aac97918ebdb9608d0efac1613f9e1170b8babb8",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_10KB/cpu.nettrace.etlx",
+      "size": 8516730,
+      "sha256": "355f342d2a47b68889aed345ba7a12814ab43cdac37ca3f1e84d08b1f0d5ec8e",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_1KB/cpu.nettrace.etlx",
+      "size": 7527432,
+      "sha256": "3812cb71cc5f12d13b9ca511910404a112dd2f50272c09fd75ac9f37fc6b1a39",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_Small/cpu.nettrace.etlx",
+      "size": 8018922,
+      "sha256": "2cdc6be09715169cbfc00c6cd0414ad7e65df8bebdecd84754b33bd6a62e7287",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_Set_SteadyState/cpu.nettrace.etlx",
+      "size": 7532010,
+      "sha256": "b4c892bea03ac7130924d056e02df2b2ebc229b55b04307f7285cdcec8efaccd",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SetDel/cpu.nettrace.etlx",
+      "size": 8228341,
+      "sha256": "fd977a99d5a9ac439b03adc301b0196bcce6e9c66a825bd945d61d82e6d01aae",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    },
+    {
+      "path": "server-latency/bridge-profile/CommonOperationsBenchmarks.StackExchange_SIsMember/cpu.nettrace.etlx",
+      "size": 7265647,
+      "sha256": "f6703bbecc51ab552568beea60f6b09eb491705f594aa951f531a55a7dea8d38",
+      "reason": "Derived TraceEvent index; regenerate from the retained cpu.nettrace with --summarize."
+    }
+  ],
+  "derivedFiles": [
+    {
+      "path": "analyze.py",
+      "sha256": "e40defbfcacc909ce0f5ea026152a548ac52c58ace2ebec3f5db54815ab02113"
+    },
+    {
+      "path": "analysis.json",
+      "sha256": "528e0d245c8d4be66523ebc0db24db2f301a09418f661dfc4fff2f702a6ddcd7"
+    }
+  ]
+}

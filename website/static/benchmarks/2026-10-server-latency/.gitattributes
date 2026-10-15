@@ -1,0 +1,3 @@
+# Keep the published analysis-file hashes stable on Windows checkouts.
+*.py text eol=lf
+*.json text eol=lf
