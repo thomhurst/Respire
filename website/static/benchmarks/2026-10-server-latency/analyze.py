@@ -42,8 +42,18 @@ def reports(read_text):
     return result
 
 
-def validate_traces(root, names):
-    manifest = json.loads(Path(__file__).with_name("manifest.json").read_text())
+def read_verified(path, entry):
+    if not path.is_file():
+        raise ValueError(f"Missing evidence file: {path}")
+    data = path.read_bytes()
+    if "size" in entry and len(data) != entry["size"]:
+        raise ValueError(f"Evidence file has incorrect size: {path}")
+    if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+        raise ValueError(f"Evidence file SHA-256 mismatch: {path}")
+    return data
+
+
+def validate_traces(root, names, manifest):
     entries = [entry for archive in manifest["archives"] for entry in archive["files"]
                if entry["path"].endswith("/cpu.nettrace")]
     expected = {f"server-latency/bridge-profile/{name}/cpu.nettrace" for name in names}
@@ -62,15 +72,24 @@ def validate_traces(root, names):
 
 
 def analyze(root, baseline):
-    current = reports(lambda name: (root / name).read_text(encoding="utf-8-sig"))
-    with zipfile.ZipFile(baseline) as archive:
+    manifest = json.loads(Path(__file__).with_name("manifest.json").read_text())
+    entries = {entry["path"]: entry for archive in manifest["archives"]
+               if archive["archive"] == "measurements.zip" for entry in archive["files"]}
+
+    def read_measurement(name):
+        if name not in entries:
+            raise ValueError(f"Measurement missing from manifest: {name}")
+        return read_verified(root / name, entries[name]).decode("utf-8-sig")
+
+    current = reports(read_measurement)
+    with zipfile.ZipFile(io.BytesIO(read_verified(baseline, manifest["baselineArchive"]))) as archive:
         previous = reports(lambda name: archive.read(name).decode("utf-8-sig"))
     assert set(previous) == set(current)
-    cases = json.loads((root / "server-latency/cases.json").read_text())
+    cases = json.loads(read_measurement("server-latency/cases.json"))
     names = {c["name"] for c in cases}
     assert len(cases) == len(names) == 46 and names == set(current)
-    validate_traces(root, names)
-    observations = json.loads((root / "server-latency/observations.json").read_text())
+    validate_traces(root, names, manifest)
+    observations = json.loads(read_measurement("server-latency/observations.json"))
     phases = ("bridge-a", "host", "bridge-b", "bridge-profile")
     indexed = {(o["caseName"], o["phase"]): o for o in observations}
     assert len(indexed) == len(observations) == 184
@@ -101,7 +120,7 @@ def analyze(root, baseline):
                 "processCpuUs": o["processCpuNanosecondsPerOperation"] / 1000,
                 "processAllocatedBytes": o["processAllocatedBytesPerOperation"],
             }
-        stacks = json.loads((root / "server-latency/bridge-profile" / name / "stacks.json").read_text())
+        stacks = json.loads(read_measurement(f"server-latency/bridge-profile/{name}/stacks.json"))
         assert stacks["starts"] == stacks["stops"] == 1
         assert stacks["missingStacks"] == stacks["eventsLost"] == 0
         counts = collections.Counter()

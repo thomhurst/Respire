@@ -4,6 +4,10 @@
   "artifactName": "comparison-benchmarks-net10.0-seredis-3.4.5",
   "respireCommit": "8fd9ea63b49b6e13981c674f2f4d6414dc248fa0",
   "stackExchangeRedis": "3.4.5",
+  "baselineArchive": {
+    "archive": "38484247008.zip",
+    "sha256": "c9bf5d6bd16f719bf4e2ce051752b682920f23e83ba4febbcd36b511e415ff5d"
+  },
   "archives": [
     {
       "archive": "measurements.zip",
@@ -2681,7 +2685,7 @@
   "derivedFiles": [
     {
       "path": "analyze.py",
-      "sha256": "316032c1733d5d830b8136ee83c3107c0fa7fb3d5630f6e857ab1181f92b584b"
+      "sha256": "23435ae717be04cc198d1059bb44e24ce0820a7721fd9637da196d49e8f1b686"
     },
     {
       "path": "analysis.json",
