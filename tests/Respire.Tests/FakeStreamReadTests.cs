@@ -13,13 +13,13 @@ public class FakeStreamReadTests
     public async Task ExplicitMaximumCountIsNotTreatedAsUnspecified(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         await Assert.That(async () =>
         {
             using var reply = await client.ExecuteAsync("XREAD", "COUNT", long.MaxValue, "MAXCOUNT", 1, "STREAMS", "events", "0");
         }).ThrowsExactly<RespireServerException>();
-        var entries = await client.Streams.ReadAsync(new StreamReadOptions { MaxCount = 1 }, "events");
+        var entries = await client.Streams.ReadAsync(new RespireStreamReadOptions { MaxCount = 1 }, "events");
         await Assert.That(entries.Length).IsEqualTo(1);
     }
 
@@ -29,18 +29,18 @@ public class FakeStreamReadTests
     public async Task LimitsPreservePendingEntriesAndQueuedReads(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         foreach (var key in new[] { "one", "two" })
         {
             for (var i = 1; i <= 3; i++) await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 100)));
             await client.Streams.CreateGroupAsync(key, "g", "0");
         }
-        var options = new StreamReadOptions { Count = 2, MaxCount = 3 };
+        var options = new RespireStreamReadOptions { Count = 2, MaxCount = 3 };
         await using var transaction = client.CreateTransaction();
         var pending = transaction.Streams.ReadGroup([("one", ">"), ("two", ">")], "g", "c", options);
         await transaction.CommitAsync();
         await Assert.That(pending.Result.SelectMany(x => x.Entries).Count()).IsEqualTo(3);
-        var history = await client.Streams.ReadGroupAsync([("one", "0"), ("two", "0")], "g", "c", new StreamReadOptions { MaxSize = 1 });
+        var history = await client.Streams.ReadGroupAsync([("one", "0"), ("two", "0")], "g", "c", new RespireStreamReadOptions { MaxSize = 1 });
         await Assert.That(history.SelectMany(x => x.Entries).Count()).IsEqualTo(1);
         await history[0].Entries[0].AckAsync();
         var afterAck = await client.Streams.ReadGroupAsync([("one", "0"), ("two", "0")], "g", "c");
@@ -55,9 +55,9 @@ public class FakeStreamReadTests
     public async Task BlockingReadWakesAndCancellationDoesNotStallOtherTraffic(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol, Connections = 1 });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var options = new StreamReadOptions { MaxCount = 1, MaxSize = 1, WaitFor = Timeout.InfiniteTimeSpan };
+        var options = new RespireStreamReadOptions { MaxCount = 1, MaxSize = 1, WaitFor = Timeout.InfiniteTimeSpan };
         var read = client.Streams.ReadAsync(options, "events", cancellationToken: timeout.Token).AsTask();
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "first"));
         await Assert.That((await read)[0].Id).IsEqualTo((RespireStreamId)"1-0");

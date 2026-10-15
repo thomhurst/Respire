@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchListCommands",
+      "Type": "Respire.IRespireBatchListCommands",
       "OwnerType": "Respire.BatchListCommands",
       "Members": [
         "PopMany(ReadOnlySpan<RespireKey>,long,RespireListSide):RespirePending<RespireListPopManyResult?>"

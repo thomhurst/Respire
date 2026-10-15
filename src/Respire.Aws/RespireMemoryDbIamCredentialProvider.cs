@@ -9,7 +9,7 @@ namespace Respire.Aws;
 /// MemoryDB IAM authentication requires an IAM-enabled user. The AWS credentials provider
 /// remains owned by the caller.
 /// </remarks>
-public sealed class MemoryDbIamCredentialProvider : IRespireCredentialProvider
+public sealed class RespireMemoryDbIamCredentialProvider : IRespireCredentialProvider
 {
     private readonly AWSCredentials _awsCredentials;
     private readonly RegionEndpoint _region;
@@ -20,7 +20,7 @@ public sealed class MemoryDbIamCredentialProvider : IRespireCredentialProvider
     /// <param name="region">AWS region containing the cluster.</param>
     /// <param name="clusterName">MemoryDB cluster name.</param>
     /// <param name="username">IAM-enabled MemoryDB username.</param>
-    public MemoryDbIamCredentialProvider(
+    public RespireMemoryDbIamCredentialProvider(
         AWSCredentials awsCredentials,
         RegionEndpoint region,
         string clusterName,

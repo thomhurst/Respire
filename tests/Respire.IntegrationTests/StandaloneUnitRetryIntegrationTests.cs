@@ -21,7 +21,7 @@ public class StandaloneUnitRetryIntegrationTests(RedisTestContainer fixture)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var options = RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(10) };
+        { Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(10) };
         await using var observer = await RespireClient.ConnectAsync(options, deadline.Token);
         var key = "unit-retry-effects:" + Guid.NewGuid().ToString("N");
         var fault = new LostReply(UnitVerb(unit))

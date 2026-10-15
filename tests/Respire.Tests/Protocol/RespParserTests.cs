@@ -30,7 +30,7 @@ public class RespParserTests
         var (status, value, consumed) = Parse("+OK\r\n"u8);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.Done);
-        await Assert.That(value.Type).IsEqualTo(RespDataType.SimpleString);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.SimpleString);
         await Assert.That(value.AsString()).IsEqualTo("OK");
         await Assert.That(consumed).IsEqualTo(5);
         value.Dispose();
@@ -62,7 +62,7 @@ public class RespParserTests
         var (status, value, consumed) = Parse("$11\r\nHello World\r\n"u8);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.Done);
-        await Assert.That(value.Type).IsEqualTo(RespDataType.BulkString);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.BulkString);
         await Assert.That(value.AsString()).IsEqualTo("Hello World");
         await Assert.That(consumed).IsEqualTo(18);
         value.Dispose();
@@ -133,7 +133,7 @@ public class RespParserTests
         var (status, value, _) = Parse("*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n:42\r\n"u8);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.Done);
-        await Assert.That(value.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.Array);
         var count = value.AsArray().Length;
         var first = value.AsArray()[0].AsString();
         var second = value.AsArray()[1].AsString();
@@ -168,7 +168,7 @@ public class RespParserTests
         var (status, value, _) = Parse("%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n"u8);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.Done);
-        await Assert.That(value.Type).IsEqualTo(RespDataType.Map);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.Map);
         var count = value.AsArray().Length;
         var firstKey = value.AsArray()[0].AsString();
         var lastValue = value.AsArray()[3].AsInteger();
@@ -276,7 +276,7 @@ public class RespParserTests
         var (status, value, _) = Parse("=15\r\ntxt:Some string\r\n"u8);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.Done);
-        await Assert.That(value.Type).IsEqualTo(RespDataType.VerbatimString);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.VerbatimString);
         await Assert.That(value.AsString()).IsEqualTo("Some string");
         value.Dispose();
     }
@@ -296,7 +296,7 @@ public class RespParserTests
         var (status, value, _) = Parse("(3492890328409238509324850943850943825024385\r\n"u8);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.Done);
-        await Assert.That(value.Type).IsEqualTo(RespDataType.BigNumber);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.BigNumber);
         await Assert.That(value.AsString()).IsEqualTo("3492890328409238509324850943850943825024385");
         value.Dispose();
     }
@@ -309,7 +309,7 @@ public class RespParserTests
         var found = RespParser.TryPeekBulkHeader(data, 0, out var type, out var length, out var headerEnd);
 
         await Assert.That(found).IsTrue();
-        await Assert.That(type).IsEqualTo(RespDataType.BulkString);
+        await Assert.That(type).IsEqualTo(RespireDataType.BulkString);
         await Assert.That(length).IsEqualTo(100);
         await Assert.That(headerEnd).IsEqualTo(6);
     }

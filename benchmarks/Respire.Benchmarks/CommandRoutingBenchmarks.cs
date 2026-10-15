@@ -27,13 +27,13 @@ public class CommandRoutingBenchmarks
     private readonly GeoAddCommand _geoAddCommand = new(
         RespireCommands.Geo.GEOADD.Verb,
         "benchmark-key",
-        SetWhen.Always,
+        RespireSetWhen.Always,
         changed: false,
         []);
     private readonly GeoSearchCommand _geoSearchCommand = new(
         RespireCommands.Geo.GEOSEARCH.Verb,
         "benchmark-key",
-        GeoSearchOrigin.FromCoordinates(0, 0),
+        RespireGeoSearchOrigin.FromCoordinates(0, 0),
         RespireGeoSearchShape.Circle(1),
         default,
         destination: null,

@@ -5,9 +5,9 @@ namespace Respire;
 
 /// <summary>
 /// HyperLogLog commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="IHyperLogLogCommands"/>.
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IRespireHyperLogLogCommands"/>.
 /// </summary>
-public interface IBatchHyperLogLogCommands
+public interface IRespireBatchHyperLogLogCommands
 {
     /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
     RespirePending<bool> Add(RespireKey key, params ReadOnlySpan<RespireValue> values);
@@ -19,7 +19,7 @@ public interface IBatchHyperLogLogCommands
     RespirePending<bool> Merge(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
 }
 
-internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IBatchHyperLogLogCommands
+internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IRespireBatchHyperLogLogCommands
 {
     public RespirePending<bool> Add(RespireKey key, params ReadOnlySpan<RespireValue> values)
         => sink.Add<Cmd1N, bool>(

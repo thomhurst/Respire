@@ -5,11 +5,11 @@ namespace Respire;
 
 /// <summary>
 /// Generic key management commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="IKeyCommands"/>, minus
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IRespireKeyCommands"/>, minus
 /// <c>ScanAsync</c> and <c>ScanClusterPageAsync</c>: cursor walks and validated Cluster pages
 /// require multiple round trips and cannot be deferred.
 /// </summary>
-public partial interface IBatchKeyCommands
+public partial interface IRespireBatchKeyCommands
 {
     /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
     RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys);
@@ -27,13 +27,13 @@ public partial interface IBatchKeyCommands
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
     /// </summary>
-    RespirePending<RespireTtl> Expiry(RespireKey key);
+    RespirePending<RespireTtlResult> Expiry(RespireKey key);
 
     /// <summary>Absolute expiration, distinguishing missing and persistent keys. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
-    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key);
+    RespirePending<RespireExpiryTimeResult> ExpiryTime(RespireKey key);
 
     /// <summary>Absolute expiration at the requested server precision. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
-    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision);
+    RespirePending<RespireExpiryTimeResult> ExpiryTime(RespireKey key, RespireExpiryTimePrecision precision);
 
     /// <summary>The server's internal value encoding, or null for a missing key. Redis: OBJECT ENCODING.</summary>
     RespirePending<string?> Encoding(RespireKey key);
@@ -75,7 +75,7 @@ public partial interface IBatchKeyCommands
         string? match = null, RespireKeyType? type = null, int countHint = 250, int? slot = null);
 }
 
-internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
+internal sealed partial class BatchKeyCommands(IPendingSink sink) : IRespireBatchKeyCommands
 {
     public RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys)
         => IntegerKeys("DEL", Verbs.Del, keys);
@@ -130,21 +130,21 @@ internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCom
             "Key expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
 
-    public RespirePending<RespireTtl> Expiry(RespireKey key)
-        => sink.Add<Cmd1, RespireTtl>(
+    public RespirePending<RespireTtlResult> Expiry(RespireKey key)
+        => sink.Add<Cmd1, RespireTtlResult>(
             "PTTL", new Cmd1(Verbs.Pttl, sink.Client.Key(in key)),
-            static (c, v) => RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in v)));
+            static (c, v) => RespireTtlResult.FromRedisMilliseconds(ResponseReader.Integer(in v)));
 
-    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key)
-        => ExpiryTime(key, ExpiryTimePrecision.Milliseconds);
+    public RespirePending<RespireExpiryTimeResult> ExpiryTime(RespireKey key)
+        => ExpiryTime(key, RespireExpiryTimePrecision.Milliseconds);
 
-    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision)
+    public RespirePending<RespireExpiryTimeResult> ExpiryTime(RespireKey key, RespireExpiryTimePrecision precision)
     {
         var (operation, verb) = KeyCommands.ExpiryTimeCommand(precision);
-        return sink.Add<Cmd1, RespireExpiryTime>(operation, new Cmd1(verb, sink.Client.Key(in key)),
-            precision == ExpiryTimePrecision.Seconds
-                ? static (c, v) => RespireExpiryTime.FromRedis(ResponseReader.Integer(in v), ExpiryTimePrecision.Seconds)
-                : static (c, v) => RespireExpiryTime.FromRedis(ResponseReader.Integer(in v), ExpiryTimePrecision.Milliseconds));
+        return sink.Add<Cmd1, RespireExpiryTimeResult>(operation, new Cmd1(verb, sink.Client.Key(in key)),
+            precision == RespireExpiryTimePrecision.Seconds
+                ? static (c, v) => RespireExpiryTimeResult.FromRedis(ResponseReader.Integer(in v), RespireExpiryTimePrecision.Seconds)
+                : static (c, v) => RespireExpiryTimeResult.FromRedis(ResponseReader.Integer(in v), RespireExpiryTimePrecision.Milliseconds));
     }
 
     public RespirePending<string?> Encoding(RespireKey key)

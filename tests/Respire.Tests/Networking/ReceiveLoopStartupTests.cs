@@ -21,7 +21,7 @@ public class ReceiveLoopStartupTests
         var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchVectorSetCommands",
+      "Type": "Respire.IRespireBatchVectorSetCommands",
       "OwnerType": "Respire.BatchVectorSetCommands",
       "Members": [
         "Add(RespireKey,ReadOnlyMemory<float>,RespireValue,RespireVectorAddOptions,RespireVectorEncoding):RespirePending<bool>",

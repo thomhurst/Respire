@@ -328,7 +328,7 @@ public class ClientCacheCommandMetadataTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static (long Bytes, int Total) MeasureClassification(bool allocate)
     {
-        var set = new SetCommand("key", "value", default, SetWhen.Always, false);
+        var set = new SetCommand("key", "value", default, RespireSetWhen.Always, false);
         var get = new Cmd1(Verbs.Get, "key");
         // Keep command argument allocation outside the measured interval.
         var del = new CmdN(Verbs.Del, ["a", "b"]);

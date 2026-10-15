@@ -12,7 +12,7 @@ public class AuthenticationTests(SecuredRedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
             Password = SecuredRedisTestContainer.Password,
             Connections = 1,
@@ -33,7 +33,7 @@ public class AuthenticationTests(SecuredRedisTestContainer fixture)
         {
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
             Password = SecuredRedisTestContainer.Password,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Connections = 1,
         });
 
@@ -76,7 +76,7 @@ public class AuthenticationTests(SecuredRedisTestContainer fixture)
         // succeeds; the NOAUTH error surfaces on the first command.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
             Connections = 1,
         });

@@ -34,7 +34,7 @@ public class TlsTests
         {
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 Endpoints = [new("127.0.0.1", seedPort)], SentinelPrimaryName = "mymaster",
                 UseTls = false, SentinelUseTls = true,
                 SentinelTlsOptions = new SslClientAuthenticationOptions
@@ -161,7 +161,7 @@ public class TlsTests
             };
             var options = new RespireOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 UseCluster = true,
                 UseTls = true,
                 TlsOptions = tlsOptions,
@@ -216,7 +216,7 @@ public class TlsTests
             };
             var options = new RespireOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 UseCluster = true, UseTls = true, TlsOptions = tlsOptions, Connections = 1,
                 Endpoints = { new RespireEndpoint("localhost", port) },
             };

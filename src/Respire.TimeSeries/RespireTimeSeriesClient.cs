@@ -18,13 +18,13 @@ public sealed partial class RespireTimeSeriesClient
     private static readonly string[] LatestOption = ["LATEST"];
     private static readonly string[] DebugOption = ["DEBUG"];
 
-    private readonly IRespireTimeSeriesCommandsImplementation _commands;
+    private readonly RespireTimeSeriesCommandsImplementation _commands;
 
     /// <summary>Creates TimeSeries operations over an existing client.</summary>
     public RespireTimeSeriesClient(IRespireClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
-        _commands = new IRespireTimeSeriesCommandsImplementation(client);
+        _commands = new RespireTimeSeriesCommandsImplementation(client);
     }
 
     /// <summary>Creates an empty time series.</summary>
@@ -137,7 +137,7 @@ public sealed partial class RespireTimeSeriesClient
                 cancellationToken.ThrowIfCancellationRequested();
                 uncertainCount = count;
                 using var result = await _commands.MultiAddAsync(arguments, cancellationToken).ConfigureAwait(false);
-                if (result.Type != RespDataType.Array || result.Count != count)
+                if (result.Type != RespireDataType.Array || result.Count != count)
                     throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
 
                 for (var index = 0; index < count; index++)
@@ -149,7 +149,7 @@ public sealed partial class RespireTimeSeriesClient
                         errors[start + index] = reply.ErrorMessage;
                         continue;
                     }
-                    if (reply.Type != RespDataType.Integer)
+                    if (reply.Type != RespireDataType.Integer)
                         throw malformedReply = TimeSeriesReplyParser.UnexpectedReply();
                     timestamps[start + index] = reply.AsInteger();
                 }

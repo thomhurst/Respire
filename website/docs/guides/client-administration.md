@@ -190,7 +190,7 @@ Sources: [Redis CLIENT LIST](https://redis.io/docs/latest/commands/client-list/)
 
 - Creating a handle needs CLIENT ID (Redis 5.0), even if the command you plan to send exists on older Redis.
 - Unsupported operations return the server error; there is no fallback.
-- `GetClientConnectionAsync`, both `ClientsOnAllNodesAsync` overloads, the filtered `ClientsAsync`, and `KillClientsAsync` are `IServerCommands` members. Mocks, decorators, and custom implementations must implement or forward them.
+- `GetClientConnectionAsync`, both `ClientsOnAllNodesAsync` overloads, the filtered `ClientsAsync`, and `KillClientsAsync` are `IRespireServerCommands` members. Mocks, decorators, and custom implementations must implement or forward them.
 
 References: [CLIENT INFO](https://redis.io/docs/latest/commands/client-info/),
 [SETINFO](https://redis.io/docs/latest/commands/client-setinfo/),

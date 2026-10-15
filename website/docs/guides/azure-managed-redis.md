@@ -20,13 +20,13 @@ using Respire.Azure;
 
 var credential = new DefaultAzureCredential();
 var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
-var provider = new AzureManagedRedisCredentialProvider(credential, redisUserObjectId);
+var provider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId);
 
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = { new RespireEndpoint("my-cache.eastus.redis.azure.net", 10000) },
     UseTls = true,
-    Protocol = RespProtocol.Resp3,
+    Protocol = RespireProtocol.Resp3,
     CredentialProvider = provider,
 });
 ```
@@ -37,7 +37,7 @@ Setup:
 2. Use that identity's **object ID** as the Redis username.
 3. Connect to `<cache-name>.<region>.redis.azure.net` on TLS port 10000.
 
-`AzureManagedRedisCredentialProvider` requests the `https://redis.azure.com/.default` scope and
+`RespireAzureManagedRedisCredentialProvider` requests the `https://redis.azure.com/.default` scope and
 passes the token's `ExpiresOn` to Respire's [credential renewal](renewable-credentials.md). The
 provider and `TokenCredential` stay caller-owned.
 
@@ -60,14 +60,14 @@ using Respire.DependencyInjection;
 
 var credential = new DefaultAzureCredential();
 var redisUserObjectId = "<managed-identity-or-service-principal-object-id>";
-var provider = new AzureManagedRedisCredentialProvider(credential, redisUserObjectId);
+var provider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId);
 var services = new ServiceCollection();
 
 services.AddRespire(options =>
 {
     options.Endpoints.Add(new RespireEndpoint("my-cache.eastus.redis.azure.net", 10000));
     options.UseTls = true;
-    options.Protocol = RespProtocol.Resp3;
+    options.Protocol = RespireProtocol.Resp3;
     options.CredentialProvider = provider;
 });
 ```

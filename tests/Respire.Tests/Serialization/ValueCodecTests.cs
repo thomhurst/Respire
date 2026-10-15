@@ -60,8 +60,8 @@ public class ValueCodecTests
     {
         byte[] expected = [0x52, 0x56, 0x43, 0, 2, 0, 3, 0, 0, 0,
             0x50, 0x39, 0x2f, 0x89, 0x94, 0x5f, 0xaf, 0x78, 0x61, 0x62, 0x63];
-        await Assert.That(new BrotliValueCodec().Encode("abc"u8)).IsEquivalentTo(expected);
-        await Assert.That(new DeflateValueCodec(new() { FrameVersion = 1 }).Decode(expected))
+        await Assert.That(new RespireBrotliValueCodec().Encode("abc"u8)).IsEquivalentTo(expected);
+        await Assert.That(new RespireDeflateValueCodec(new() { FrameVersion = 1 }).Decode(expected))
             .IsEquivalentTo("abc"u8.ToArray());
     }
 
@@ -98,9 +98,9 @@ public class ValueCodecTests
     {
         byte[] expected = [0x52, 0x56, 0x43, 0, 1, 0, 3, 0, 0, 0,
             0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x61, 0x62, 0x63];
-        var frame = new BrotliValueCodec(new() { FrameVersion = 1 }).Encode("abc"u8);
+        var frame = new RespireBrotliValueCodec(new() { FrameVersion = 1 }).Encode("abc"u8);
         await Assert.That(frame).IsEquivalentTo(expected);
-        await Assert.That(new DeflateValueCodec().Decode(frame)).IsEquivalentTo("abc"u8.ToArray());
+        await Assert.That(new RespireDeflateValueCodec().Decode(frame)).IsEquivalentTo("abc"u8.ToArray());
     }
 
     [Test]
@@ -173,14 +173,14 @@ public class ValueCodecTests
             await Assert.That(() => new CustomCodec(algorithm)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(new CustomCodec(16).AlgorithmId).IsEqualTo((byte)16);
         await Assert.That(new CustomCodec(255).AlgorithmId).IsEqualTo((byte)255);
-        await Assert.That(() => new BrotliValueCodec(quality: -1)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => new BrotliValueCodec(quality: 12)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => new DeflateValueCodec(level: (CompressionLevel)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => new RespireBrotliValueCodec(quality: -1)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => new RespireBrotliValueCodec(quality: 12)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => new RespireDeflateValueCodec(level: (CompressionLevel)99)).Throws<ArgumentOutOfRangeException>();
         foreach (var options in new RespireValueCodecOptions[]
                  { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue },
                    new() { FrameVersion = 0 }, new() { FrameVersion = 3 } })
-            await Assert.That(() => new BrotliValueCodec(options)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => new RespireValueCodecSerializer(null!, new BrotliValueCodec())).Throws<ArgumentNullException>();
+            await Assert.That(() => new RespireBrotliValueCodec(options)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => new RespireValueCodecSerializer(null!, new RespireBrotliValueCodec())).Throws<ArgumentNullException>();
         await Assert.That(() => new RespireValueCodecSerializer(RespireSerializer.Default, null!)).Throws<ArgumentNullException>();
     }
 
@@ -309,10 +309,10 @@ public class ValueCodecTests
     internal static RespireValueCodec Create(string algorithm, RespireValueCodecOptions? options = null)
         => algorithm switch
         {
-            "brotli" => new BrotliValueCodec(options),
-            "deflate" => new DeflateValueCodec(options),
-            "lz4" => new Lz4ValueCodec(options),
-            "zstd" => new ZstdValueCodec(options),
+            "brotli" => new RespireBrotliValueCodec(options),
+            "deflate" => new RespireDeflateValueCodec(options),
+            "lz4" => new RespireLz4ValueCodec(options),
+            "zstd" => new RespireZstdValueCodec(options),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
         };
 
@@ -320,7 +320,7 @@ public class ValueCodecTests
     public async Task SourceGeneratedSerializerStillUsesItsConfiguredTypeMetadata()
     {
         var serializer = new RespireValueCodecSerializer(
-            SystemTextJsonSerializer.FromContext(TestJsonContext.Default), new BrotliValueCodec());
+            RespireSystemTextJsonSerializer.FromContext(TestJsonContext.Default), new RespireBrotliValueCodec());
         var value = new SystemTextJsonSerializerTests.Payload("name", 42);
         var buffer = new ArrayBufferWriter<byte>();
         serializer.Serialize(buffer, value);

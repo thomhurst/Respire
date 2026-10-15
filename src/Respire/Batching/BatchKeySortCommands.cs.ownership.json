@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchKeyCommands",
+      "Type": "Respire.IRespireBatchKeyCommands",
       "OwnerType": "Respire.BatchKeyCommands",
       "Members": [
         "Move(RespireKey,int):RespirePending<bool>",

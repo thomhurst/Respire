@@ -27,16 +27,16 @@ public sealed class RespireJsonClient
 {
     private const int MaxStackAllocatedOffsets = 128;
 
-    private readonly IRespireJsonCommandsImplementation _commands;
-    private readonly IRespireJsonModifierCommandsImplementation _modifiers;
+    private readonly RespireJsonCommandsImplementation _commands;
+    private readonly RespireJsonModifierCommandsImplementation _modifiers;
     private SerializationBuffer? _availableBuffer;
 
     /// <summary>Creates RedisJSON operations over an existing Respire client.</summary>
     public RespireJsonClient(IRespireClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
-        _commands = new IRespireJsonCommandsImplementation(client);
-        _modifiers = new IRespireJsonModifierCommandsImplementation(client);
+        _commands = new RespireJsonCommandsImplementation(client);
+        _modifiers = new RespireJsonModifierCommandsImplementation(client);
     }
 
     /// <summary>Low-level source-generated commands for the documented RedisJSON command set.</summary>
@@ -66,9 +66,9 @@ public sealed class RespireJsonClient
     /// <summary>Gets one typed JSON value.</summary>
     /// <remarks>
     /// <para>
-    /// <see cref="RespireJsonValue{T}.Found"/> is false when the key does not exist or when a JSONPath
+    /// <see cref="RespireJsonGetResult{T}.Found"/> is false when the key does not exist or when a JSONPath
     /// matches nothing; the two cases are not distinguished. A stored JSON <c>null</c> returns
-    /// <c>Found = true</c> with a default <see cref="RespireJsonValue{T}.Value"/>, even when
+    /// <c>Found = true</c> with a default <see cref="RespireJsonGetResult{T}.Value"/>, even when
     /// <typeparamref name="T"/> is a non-nullable reference type.
     /// </para>
     /// <para>
@@ -81,7 +81,7 @@ public sealed class RespireJsonClient
     /// A JSONPath (<c>$</c>) path matched more than one value. Use <see cref="GetManyAsync{T}"/> for paths
     /// that can match several values, such as wildcards.
     /// </exception>
-    public async ValueTask<RespireJsonValue<T>> GetAsync<T>(
+    public async ValueTask<RespireJsonGetResult<T>> GetAsync<T>(
         RespireKey key,
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path = default,
@@ -100,7 +100,7 @@ public sealed class RespireJsonClient
     /// Returns an empty array when the key does not exist or a JSONPath matches nothing. A legacy path
     /// returns at most one value.
     /// </remarks>
-    public async ValueTask<RespireJsonValue<T>[]> GetManyAsync<T>(
+    public async ValueTask<RespireJsonGetResult<T>[]> GetManyAsync<T>(
         RespireKey key,
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path,
@@ -186,7 +186,7 @@ public sealed class RespireJsonClient
     }
 
     /// <summary>Gets one path from one key, preserving the multi-key result shape.</summary>
-    public ValueTask<RespireJsonValue<T>[]?[]> MultiGetAsync<T>(
+    public ValueTask<RespireJsonGetResult<T>[]?[]> MultiGetAsync<T>(
         RespireKey key, JsonTypeInfo<T> jsonTypeInfo, RespireJsonPath path = default,
         CancellationToken cancellationToken = default)
         => MultiGetAsync([key], jsonTypeInfo, path, cancellationToken);
@@ -197,7 +197,7 @@ public sealed class RespireJsonClient
     /// values matched by <paramref name="path"/>: one value for a legacy path, and every match (possibly
     /// none) for a JSONPath.
     /// </returns>
-    public async ValueTask<RespireJsonValue<T>[]?[]> MultiGetAsync<T>(
+    public async ValueTask<RespireJsonGetResult<T>[]?[]> MultiGetAsync<T>(
         IReadOnlyList<RespireKey> keys,
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path = default,
@@ -214,7 +214,7 @@ public sealed class RespireJsonClient
         }
 
         using var result = await _commands.MultiGetAsync(keyArray, path.Value, cancellationToken).ConfigureAwait(false);
-        var values = new RespireJsonValue<T>[]?[result.Count];
+        var values = new RespireJsonGetResult<T>[]?[result.Count];
         for (var index = 0; index < values.Length; index++)
         {
             var item = result[index];
@@ -359,7 +359,7 @@ public sealed class RespireJsonClient
     {
         using var result = await _modifiers.DebugAsync("MEMORY", key, path.Value, cancellationToken).ConfigureAwait(false);
         if (result.IsNull) return [];
-        if (result.Type is not (RespDataType.Array or RespDataType.Set))
+        if (result.Type is not (RespireDataType.Array or RespireDataType.Set))
             return [result.AsInteger()];
         var sizes = new long[result.Count];
         for (var index = 0; index < sizes.Length; index++) sizes[index] = result[index].AsInteger();
@@ -384,7 +384,7 @@ public sealed class RespireJsonClient
         _ => throw new ArgumentOutOfRangeException(nameof(condition)),
     };
 
-    private static RespireJsonValue<T>[] DeserializeValues<T>(
+    private static RespireJsonGetResult<T>[] DeserializeValues<T>(
         RespireResult result, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
         => result.IsNull ? [] : DeserializeJsonText(result.AsSpan(), path, jsonTypeInfo);
 
@@ -392,11 +392,11 @@ public sealed class RespireJsonClient
     private const int DefaultMaxDepth = 64;
 
     // Reads the borrowed reply bytes in one pass: no byte[] copy and no intermediate JsonDocument.
-    private static RespireJsonValue<T>[] DeserializeJsonText<T>(
+    private static RespireJsonGetResult<T>[] DeserializeJsonText<T>(
         ReadOnlySpan<byte> json, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
     {
         if (!path.UsesJsonPath)
-            return [new RespireJsonValue<T>(true, JsonSerializer.Deserialize(json, jsonTypeInfo))];
+            return [new RespireJsonGetResult<T>(true, JsonSerializer.Deserialize(json, jsonTypeInfo))];
 
         // The reply wraps the matches in an array, which uses one depth level on top of the caller's limit.
         var maxDepth = jsonTypeInfo.Options.MaxDepth;
@@ -409,7 +409,7 @@ public sealed class RespireJsonClient
 
         // The match count is unknown until the end of the array, so matches are collected in a pooled buffer
         // and copied once into an exactly sized result.
-        var pool = ArrayPool<RespireJsonValue<T>>.Shared;
+        var pool = ArrayPool<RespireJsonGetResult<T>>.Shared;
         var buffer = pool.Rent(4);
         var count = 0;
         try
@@ -423,7 +423,7 @@ public sealed class RespireJsonClient
                     ReturnBuffer(pool, buffer);
                     buffer = larger;
                 }
-                buffer[count++] = new RespireJsonValue<T>(true, JsonSerializer.Deserialize(ref reader, jsonTypeInfo));
+                buffer[count++] = new RespireJsonGetResult<T>(true, JsonSerializer.Deserialize(ref reader, jsonTypeInfo));
             }
             if (reader.TokenType != JsonTokenType.EndArray)
                 throw new JsonException("RedisJSON returned an incomplete JSONPath array.");
@@ -435,6 +435,6 @@ public sealed class RespireJsonClient
         }
     }
 
-    private static void ReturnBuffer<T>(ArrayPool<RespireJsonValue<T>> pool, RespireJsonValue<T>[] buffer)
+    private static void ReturnBuffer<T>(ArrayPool<RespireJsonGetResult<T>> pool, RespireJsonGetResult<T>[] buffer)
         => pool.Return(buffer, clearArray: RuntimeHelpers.IsReferenceOrContainsReferences<T>());
 }

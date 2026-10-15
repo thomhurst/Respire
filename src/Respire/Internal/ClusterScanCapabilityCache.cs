@@ -54,11 +54,11 @@ internal sealed class ClusterScanCapabilityCache
 
     internal static bool? ReadSupport(in RespValue reply)
     {
-        if (reply.Type != RespDataType.Array || reply.AsArray().Length != 1) return null;
+        if (reply.Type != RespireDataType.Array || reply.AsArray().Length != 1) return null;
         var entry = reply.AsArray()[0];
         if (entry.IsNull) return false;
-        if (entry.Type == RespDataType.Array && entry.AsArray().Length > 0
-            && entry.AsArray()[0].Type is RespDataType.BulkString or RespDataType.SimpleString
+        if (entry.Type == RespireDataType.Array && entry.AsArray().Length > 0
+            && entry.AsArray()[0].Type is RespireDataType.BulkString or RespireDataType.SimpleString
             && ClusterInspectionParser.Text(in entry.AsArray()[0]).Equals("clusterscan", StringComparison.OrdinalIgnoreCase))
             return true;
         return null;

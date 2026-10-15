@@ -1,12 +1,12 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IGeoCommands",
+      "Type": "Respire.IRespireGeoCommands",
       "OwnerType": "Respire.GeoCommands",
       "Members": [
-        "AddAsync(RespireKey,GeoAddOptions,RespireGeoEntry,CancellationToken):ValueTask<long>",
-        "AddAsync(RespireKey,GeoAddOptions,ReadOnlySpan<RespireGeoEntry>,CancellationToken):ValueTask<long>",
-        "AddAsync(RespireKey,GeoAddOptions,params ReadOnlySpan<RespireGeoEntry>):ValueTask<long>",
+        "AddAsync(RespireKey,RespireGeoAddOptions,RespireGeoEntry,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,RespireGeoAddOptions,ReadOnlySpan<RespireGeoEntry>,CancellationToken):ValueTask<long>",
+        "AddAsync(RespireKey,RespireGeoAddOptions,params ReadOnlySpan<RespireGeoEntry>):ValueTask<long>",
         "AddAsync(RespireKey,RespireGeoEntry,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,ReadOnlySpan<RespireGeoEntry>,CancellationToken):ValueTask<long>",
         "AddAsync(RespireKey,params ReadOnlySpan<RespireGeoEntry>):ValueTask<long>",
@@ -17,8 +17,8 @@
         "PositionAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireGeoPosition?[]>",
         "PositionAsync(RespireKey,RespireValue,CancellationToken):ValueTask<RespireGeoPosition?[]>",
         "PositionAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<RespireGeoPosition?[]>",
-        "SearchAsync(RespireKey,GeoSearchOrigin,RespireGeoSearchShape,GeoSearchOptions,CancellationToken):ValueTask<GeoSearchResult[]>",
-        "SearchStoreAsync(RespireKey,RespireKey,GeoSearchOrigin,RespireGeoSearchShape,GeoSearchOptions,bool,CancellationToken):ValueTask<long>"
+        "SearchAsync(RespireKey,RespireGeoSearchOrigin,RespireGeoSearchShape,RespireGeoSearchOptions,CancellationToken):ValueTask<RespireGeoSearchResult[]>",
+        "SearchStoreAsync(RespireKey,RespireKey,RespireGeoSearchOrigin,RespireGeoSearchShape,RespireGeoSearchOptions,bool,CancellationToken):ValueTask<long>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }
@@ -26,23 +26,23 @@
   "Boundaries": [],
   "NonRoutes": [
     {
-      "Member": "Respire.GeoSearchOrigin.FromCoordinates(double,double):GeoSearchOrigin",
+      "Member": "Respire.RespireGeoSearchOrigin.FromCoordinates(double,double):RespireGeoSearchOrigin",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchOrigin.FromMember(RespireValue):GeoSearchOrigin",
+      "Member": "Respire.RespireGeoSearchOrigin.FromMember(RespireValue):RespireGeoSearchOrigin",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchResult.Deconstruct(out string,out double?,out long?,out RespireGeoPosition?):void",
+      "Member": "Respire.RespireGeoSearchResult.Deconstruct(out string,out double?,out long?,out RespireGeoPosition?):void",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchResult.Equals(GeoSearchResult):bool",
+      "Member": "Respire.RespireGeoSearchResult.Equals(RespireGeoSearchResult):bool",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.GeoSearchResult.GetHashCode():int",
+      "Member": "Respire.RespireGeoSearchResult.GetHashCode():int",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {

@@ -46,7 +46,7 @@ public class LifetimeWireTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
             Connections = 1,
         });
@@ -95,7 +95,7 @@ public class LifetimeWireTests
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromDays(days),
         });
         Assert.Equal(int.MaxValue, connection.TimeoutMilliseconds);
@@ -158,7 +158,7 @@ public class LifetimeWireTests
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             MaxInflightCommands = 1,
         });
         try
@@ -193,7 +193,7 @@ public class LifetimeWireTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 2,
         });
         await using var connection = RespireConnectionMultiplexer.Wrap(client);
@@ -222,7 +222,7 @@ public class LifetimeWireTests
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var first = connection.GetDatabase().HashSetAsync("key", [new HashEntry("field", "value")]);
         var second = connection.GetDatabase().KeyExpireAsync("key", TimeSpan.FromSeconds(30));

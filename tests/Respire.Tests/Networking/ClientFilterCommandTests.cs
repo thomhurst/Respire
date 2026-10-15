@@ -33,7 +33,7 @@ public class ClientFilterCommandTests
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var handle = await client.Server.GetClientConnectionAsync();
@@ -75,7 +75,7 @@ public class ClientFilterCommandTests
         await using var server = new FakeRespServer(4, ":0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         foreach (var filter in new RespireClientFilterOptions[]
@@ -110,7 +110,7 @@ public class ClientFilterCommandTests
         await using var server = new FakeRespServer(replies);
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var client = owner.WithKeyPrefix("tenant:");
@@ -169,7 +169,7 @@ public class ClientFilterCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var batch = client.CreateBatch();
@@ -214,7 +214,7 @@ public class ClientFilterCommandTests
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var options = new RespireClientFilterOptions { Ids = [42] };
         if (grouped) options = ClientFilterTestOptions.Group(options);

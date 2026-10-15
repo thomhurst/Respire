@@ -19,7 +19,7 @@ await using var client = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = { new RespireEndpoint("redis.internal", 6380) },
     UseTls = true,
-    Protocol = RespProtocol.Resp3,
+    Protocol = RespireProtocol.Resp3,
     CredentialProvider = new ConfigurationCredentials(configuration),
     CredentialRefreshBeforeExpiry = TimeSpan.FromMinutes(5),
     CredentialRefreshRetryDelay = TimeSpan.FromSeconds(5),
@@ -90,7 +90,7 @@ command is not replayed.
 
 ## Pub/Sub and Sentinel
 
-Use `Protocol = RespProtocol.Resp3` for provider-backed subscriptions. RESP3 allows `AUTH` while
+Use `Protocol = RespireProtocol.Resp3` for provider-backed subscriptions. RESP3 allows `AUTH` while
 subscribed, keeping the socket and subscriptions. Respire rejects provider-backed subscriptions on
 `Resp2` or `Auto`, because RESP2 [forbids AUTH while subscribed](https://redis.io/docs/latest/commands/subscribe/).
 

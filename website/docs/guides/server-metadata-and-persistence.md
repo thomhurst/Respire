@@ -79,4 +79,4 @@ All-node calls:
 - Cluster discovery needs CLUSTER NODES permission.
 - All-node SAVE can block several servers at once.
 
-These 18 methods (nine single-node methods and their all-node counterparts) are `IServerCommands` members. Custom implementations, decorators, and mocks must implement or forward them. They are immediate Server operations, not available in batches or transactions.
+These 18 methods (nine single-node methods and their all-node counterparts) are `IRespireServerCommands` members. Custom implementations, decorators, and mocks must implement or forward them. They are immediate Server operations, not available in batches or transactions.

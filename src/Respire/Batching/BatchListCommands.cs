@@ -7,7 +7,7 @@ namespace Respire;
 
 /// <summary>
 /// List commands queued on a <see cref="RespireBatch"/> or <see cref="RespireTransaction"/>.
-/// Mirrors <see cref="IListCommands"/> without its <c>waitFor</c> parameters: the blocking
+/// Mirrors <see cref="IRespireListCommands"/> without its <c>waitFor</c> parameters: the blocking
 /// variants (BLPOP, BLMOVE, …) have no deferred form because a batch cannot block. Collection
 /// cardinality uses <see cref="Count"/>.
 /// </summary>
@@ -15,7 +15,7 @@ namespace Respire;
 /// Batches copy argument spans when queued, but referenced byte buffers must remain unchanged
 /// until execution completes. Transactions serialize arguments into their owned buffer when queued.
 /// </remarks>
-public partial interface IBatchListCommands
+public partial interface IRespireBatchListCommands
 {
     /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
     RespirePending<long?> Position(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0);
@@ -107,7 +107,7 @@ public partial interface IBatchListCommands
     RespirePending<bool> Trim(RespireKey key, long start, long stop);
 }
 
-internal sealed partial class BatchListCommands(IPendingSink sink) : IBatchListCommands
+internal sealed partial class BatchListCommands(IPendingSink sink) : IRespireBatchListCommands
 {
     public RespirePending<long?> Position(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0)
         => sink.Add<Cmd1N, long?>("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, sink.Client.Key(in key), ListCommands.PositionArguments(value, rank, null, maxLength)),

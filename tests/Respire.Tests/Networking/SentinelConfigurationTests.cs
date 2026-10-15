@@ -31,7 +31,7 @@ public class SentinelConfigurationTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var state = new SentinelDiscoveryState(options.Endpoints);
@@ -72,7 +72,7 @@ public class SentinelConfigurationTests
         var target = new RespireEndpoint("2001:db8::1", 6379);
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var hint = SentinelHintBuilder.Create("confirmation", target, target);
@@ -101,7 +101,7 @@ public class SentinelConfigurationTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", stale.Port), new("127.0.0.1", reporter.Port)],
         };
         var hint = SentinelNotificationCoalescer.Merge(SentinelHintBuilder.Create("a-b", second, first),
@@ -144,7 +144,7 @@ public class SentinelConfigurationTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", stale.Port), new("127.0.0.1", fresh.Port)],
         };

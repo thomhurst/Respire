@@ -59,7 +59,7 @@ public enum RespireKeyType
 }
 
 /// <summary>Generic key management commands.</summary>
-public partial interface IKeyCommands
+public partial interface IRespireKeyCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken);
@@ -98,14 +98,14 @@ public partial interface IKeyCommands
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
     /// </summary>
-    ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<RespireTtlResult> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Absolute expiration, distinguishing missing and persistent keys. Redis 7+: PEXPIRETIME.</summary>
-    ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Absolute expiration at the requested server precision. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
-    ValueTask<RespireExpiryTime> ExpiryTimeAsync(
-        RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default);
+    ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(
+        RespireKey key, RespireExpiryTimePrecision precision, CancellationToken cancellationToken = default);
 
     /// <summary>The server's internal value encoding, or null for a missing key. Redis: OBJECT ENCODING.</summary>
     ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -178,7 +178,7 @@ public partial interface IKeyCommands
         CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class KeyCommands(RespireClient client, TimeProvider? scanTimeProvider = null) : IKeyCommands
+internal sealed partial class KeyCommands(RespireClient client, TimeProvider? scanTimeProvider = null) : IRespireKeyCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
@@ -296,43 +296,43 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             "Key expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
 
-    public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<RespireTtlResult> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
-        var owner = DispatchResponseSource<RespireTtl>.Start();
+        var owner = DispatchResponseSource<RespireTtlResult>.Start();
         try { return owner.Attach(ExpiryBorrowedAsync(key, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private ValueTask<RespireTtl> ExpiryBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    private ValueTask<RespireTtlResult> ExpiryBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.ConvertResponseAsync(
             "PTTL", new Cmd1(Verbs.Pttl, client.Key(in key)), cancellationToken, this,
             static (KeyCommands _, in RespValue value) =>
-                RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in value)), observation: observation);
+                RespireTtlResult.FromRedisMilliseconds(ResponseReader.Integer(in value)), observation: observation);
 
-    public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
-        var owner = DispatchResponseSource<RespireExpiryTime>.Start();
+        var owner = DispatchResponseSource<RespireExpiryTimeResult>.Start();
         try { return owner.Attach(ExpiryTimeBorrowedAsync(key, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private ValueTask<RespireExpiryTime> ExpiryTimeBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => ExpiryTimeBorrowedAsync(key, ExpiryTimePrecision.Milliseconds, cancellationToken, observation);
+    private ValueTask<RespireExpiryTimeResult> ExpiryTimeBorrowedAsync(RespireKey key, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => ExpiryTimeBorrowedAsync(key, RespireExpiryTimePrecision.Milliseconds, cancellationToken, observation);
 
-    public ValueTask<RespireExpiryTime> ExpiryTimeAsync(
-        RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default)
+    public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(
+        RespireKey key, RespireExpiryTimePrecision precision, CancellationToken cancellationToken = default)
     {
-        var owner = DispatchResponseSource<RespireExpiryTime>.Start();
+        var owner = DispatchResponseSource<RespireExpiryTimeResult>.Start();
         try { return owner.Attach(ExpiryTimeBorrowedAsync(key, precision, cancellationToken, owner.Observation)); }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private ValueTask<RespireExpiryTime> ExpiryTimeBorrowedAsync(
-        RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    private ValueTask<RespireExpiryTimeResult> ExpiryTimeBorrowedAsync(
+        RespireKey key, RespireExpiryTimePrecision precision, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var (operation, verb) = ExpiryTimeCommand(precision);
         return client.ConvertResponseAsync(operation, new Cmd1(verb, client.Key(in key)), cancellationToken, precision,
-            static (ExpiryTimePrecision p, in RespValue value) => RespireExpiryTime.FromRedis(ResponseReader.Integer(in value), p), observation: observation);
+            static (RespireExpiryTimePrecision p, in RespValue value) => RespireExpiryTimeResult.FromRedis(ResponseReader.Integer(in value), p), observation: observation);
     }
 
     public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -379,11 +379,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     internal static TimeSpan? ParseIdleTime(in RespValue value)
         => value.IsNull ? null : TimeSpan.FromSeconds(ResponseReader.Integer(in value));
 
-    internal static (string Operation, Verb Verb) ExpiryTimeCommand(ExpiryTimePrecision precision)
+    internal static (string Operation, Verb Verb) ExpiryTimeCommand(RespireExpiryTimePrecision precision)
         => precision switch
         {
-            ExpiryTimePrecision.Milliseconds => ("PEXPIRETIME", RespireCommands.Key.PEXPIRETIME.Verb),
-            ExpiryTimePrecision.Seconds => ("EXPIRETIME", RespireCommands.Key.EXPIRETIME.Verb),
+            RespireExpiryTimePrecision.Milliseconds => ("PEXPIRETIME", RespireCommands.Key.PEXPIRETIME.Verb),
+            RespireExpiryTimePrecision.Seconds => ("EXPIRETIME", RespireCommands.Key.EXPIRETIME.Verb),
             _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
         };
 

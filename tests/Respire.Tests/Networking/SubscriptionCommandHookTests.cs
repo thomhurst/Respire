@@ -9,10 +9,10 @@ namespace Respire.Tests.Networking;
 public class SubscriptionCommandHookTests
 {
     [Test]
-    [Arguments(SubscriptionKind.Channel)]
-    [Arguments(SubscriptionKind.Pattern)]
-    [Arguments(SubscriptionKind.Sharded)]
-    public async Task RejectedSetupDoesNotConnect(SubscriptionKind kind)
+    [Arguments(RespireSubscriptionKind.Channel)]
+    [Arguments(RespireSubscriptionKind.Pattern)]
+    [Arguments(RespireSubscriptionKind.Sharded)]
+    public async Task RejectedSetupDoesNotConnect(RespireSubscriptionKind kind)
     {
         await using var server = Server();
         var rejected = new InvalidOperationException("Admission denied");
@@ -30,10 +30,10 @@ public class SubscriptionCommandHookTests
     }
 
     [Test]
-    [Arguments(SubscriptionKind.Channel)]
-    [Arguments(SubscriptionKind.Pattern)]
-    [Arguments(SubscriptionKind.Sharded)]
-    public async Task SetupAndTeardownCompleteAtTheirResourceBoundaries(SubscriptionKind kind)
+    [Arguments(RespireSubscriptionKind.Channel)]
+    [Arguments(RespireSubscriptionKind.Pattern)]
+    [Arguments(RespireSubscriptionKind.Sharded)]
+    public async Task SetupAndTeardownCompleteAtTheirResourceBoundaries(RespireSubscriptionKind kind)
     {
         await using var server = Server();
         var setupReceived = Signal();
@@ -222,22 +222,22 @@ public class SubscriptionCommandHookTests
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
-    private static ValueTask<RespireSubscription> Subscribe(RespireClient client, SubscriptionKind kind)
+    private static ValueTask<RespireSubscription> Subscribe(RespireClient client, RespireSubscriptionKind kind)
         => client.SubscribeAsync(kind switch
         {
-            SubscriptionKind.Pattern => RespireChannel.Pattern("ch"),
-            SubscriptionKind.Sharded => RespireChannel.Sharded("ch"),
+            RespireSubscriptionKind.Pattern => RespireChannel.Pattern("ch"),
+            RespireSubscriptionKind.Sharded => RespireChannel.Sharded("ch"),
             _ => (RespireChannel)"ch",
         });
 
-    private static string SubscribeName(SubscriptionKind kind) => kind switch
+    private static string SubscribeName(RespireSubscriptionKind kind) => kind switch
     {
-        SubscriptionKind.Pattern => "PSUBSCRIBE", SubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE",
+        RespireSubscriptionKind.Pattern => "PSUBSCRIBE", RespireSubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE",
     };
 
-    private static string UnsubscribeName(SubscriptionKind kind) => kind switch
+    private static string UnsubscribeName(RespireSubscriptionKind kind) => kind switch
     {
-        SubscriptionKind.Pattern => "PUNSUBSCRIBE", SubscriptionKind.Sharded => "SUNSUBSCRIBE", _ => "UNSUBSCRIBE",
+        RespireSubscriptionKind.Pattern => "PUNSUBSCRIBE", RespireSubscriptionKind.Sharded => "SUNSUBSCRIBE", _ => "UNSUBSCRIBE",
     };
 
     private static byte[] Confirmation(string operation)
@@ -251,7 +251,7 @@ public class SubscriptionCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
         ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(20), JitterRatio = 0, MaxAttempts = 2 },
     };

@@ -136,7 +136,7 @@ public class CorrectionDispatchTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var execution = new Execution
         {

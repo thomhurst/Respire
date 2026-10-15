@@ -1,10 +1,10 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IArrayCommands",
+      "Type": "Respire.IRespireArrayCommands",
       "OwnerType": "Respire.ArrayCommands",
       "Members": [
-        "AggregateAsync(RespireKey,ulong,ulong,RespireArrayOperation,RespireValue?,CancellationToken):ValueTask<RespireArrayAggregate>",
+        "AggregateAsync(RespireKey,ulong,ulong,RespireArrayOperation,RespireValue?,CancellationToken):ValueTask<RespireArrayAggregateResult>",
         "CountAsync(RespireKey,CancellationToken):ValueTask<ulong>",
         "DeleteAsync(RespireKey,ReadOnlySpan<ulong>,CancellationToken):ValueTask<ulong>",
         "DeleteAsync(RespireKey,params ReadOnlySpan<ulong>):ValueTask<ulong>",
@@ -58,7 +58,7 @@
         "SetManyAsync(RespireKey,ReadOnlySpan<RespireArrayItem>,CancellationToken):ValueTask<ulong>",
         "SetManyAsync(RespireKey,RespireArrayItem,CancellationToken):ValueTask<ulong>",
         "SetManyAsync(RespireKey,params ReadOnlySpan<RespireArrayItem>):ValueTask<ulong>",
-        "TryGetAsync`1(RespireKey,ulong,CancellationToken):ValueTask<RespireGet<T>>"
+        "TryGetAsync`1(RespireKey,ulong,CancellationToken):ValueTask<RespireGetResult<T>>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

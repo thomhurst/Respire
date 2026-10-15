@@ -29,7 +29,7 @@ internal static class ResponseReader
 
     /// <summary>An affirmative reply: RESP3 boolean true or integer &gt;= 1.</summary>
     public static bool Flag(in RespValue value)
-        => value.Type == RespDataType.Boolean ? value.AsBoolean() : value.AsInteger() >= 1;
+        => value.Type == RespireDataType.Boolean ? value.AsBoolean() : value.AsInteger() >= 1;
 
     /// <summary>+OK → true, null → false (conditional writes like SET NX).</summary>
     public static bool OkOrNull(in RespValue value) => !value.IsNull;
@@ -43,7 +43,7 @@ internal static class ResponseReader
 
     public static void ExpectOk(in RespValue value)
     {
-        if (value.Type != RespDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
         {
             throw new RespireException($"Expected 'OK' but got: {value}");
         }
@@ -61,12 +61,12 @@ internal static class ResponseReader
     /// </summary>
     public static double Double(in RespValue value)
     {
-        if (value.Type == RespDataType.Double)
+        if (value.Type == RespireDataType.Double)
         {
             return value.AsDouble();
         }
 
-        if (value.Type == RespDataType.Integer)
+        if (value.Type == RespireDataType.Integer)
         {
             return value.AsInteger();
         }
@@ -190,7 +190,7 @@ internal static class ResponseReader
         return result;
     }
 
-    public static RespireTtl[] TtlArray(in RespValue value)
+    public static RespireTtlResult[] TtlArray(in RespValue value)
     {
         var elements = value.AsArray();
         if (elements.Length == 0)
@@ -198,16 +198,16 @@ internal static class ResponseReader
             return [];
         }
 
-        var result = new RespireTtl[elements.Length];
+        var result = new RespireTtlResult[elements.Length];
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = RespireTtl.FromRedisMilliseconds(elements[i].AsInteger());
+            result[i] = RespireTtlResult.FromRedisMilliseconds(elements[i].AsInteger());
         }
 
         return result;
     }
 
-    public static HashFieldExpiryResult[] HashFieldExpiryResultArray(in RespValue value)
+    public static RespireHashFieldExpiryResult[] HashFieldExpiryResultArray(in RespValue value)
     {
         var elements = value.AsArray();
         if (elements.Length == 0)
@@ -215,10 +215,10 @@ internal static class ResponseReader
             return [];
         }
 
-        var result = new HashFieldExpiryResult[elements.Length];
+        var result = new RespireHashFieldExpiryResult[elements.Length];
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = (HashFieldExpiryResult)elements[i].AsInteger();
+            result[i] = (RespireHashFieldExpiryResult)elements[i].AsInteger();
         }
 
         return result;

@@ -1,10 +1,10 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchArrayCommands",
+      "Type": "Respire.IRespireBatchArrayCommands",
       "OwnerType": "Respire.BatchArrayCommands",
       "Members": [
-        "Aggregate(RespireKey,ulong,ulong,RespireArrayOperation,RespireValue?):RespirePending<RespireArrayAggregate>",
+        "Aggregate(RespireKey,ulong,ulong,RespireArrayOperation,RespireValue?):RespirePending<RespireArrayAggregateResult>",
         "Count(RespireKey):RespirePending<ulong>",
         "Delete(RespireKey,params ReadOnlySpan<ulong>):RespirePending<ulong>",
         "DeleteRange(RespireKey,params ReadOnlySpan<RespireArrayRange>):RespirePending<ulong>",
@@ -34,7 +34,7 @@
         "Set(RespireKey,ulong,params ReadOnlySpan<RespireValue>):RespirePending<ulong>",
         "SetMany(RespireKey,params ReadOnlySpan<RespireArrayItem>):RespirePending<ulong>",
         "Set`1(RespireKey,ulong,T):RespirePending<ulong>",
-        "TryGet`1(RespireKey,ulong):RespirePending<RespireGet<T>>"
+        "TryGet`1(RespireKey,ulong):RespirePending<RespireGetResult<T>>"
       ],
       "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
     }

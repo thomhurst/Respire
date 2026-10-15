@@ -130,7 +130,7 @@ Transactions expose the same `Keys.Copy` overload.
 
 ## Custom implementations
 
-Classes that implement `IKeyCommands` or `IBatchKeyCommands` must implement the sort, random, move, and database-copy members.
+Classes that implement `IRespireKeyCommands` or `IRespireBatchKeyCommands` must implement the sort, random, move, and database-copy members.
 
 ## Redis references
 

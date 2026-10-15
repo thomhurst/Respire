@@ -36,7 +36,7 @@ public class HashFieldLeaseWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var lease = await new RespireCoordination(client)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(30))
@@ -53,7 +53,7 @@ public class HashFieldLeaseWireTests
             await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 41");
             missingEngine = false;
             if (renew) await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromMinutes(1))).IsTrue();
-            else await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+            else await Assert.That(await lease.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         }
         finally { missingEngine = false; }
     }
@@ -66,7 +66,7 @@ public class HashFieldLeaseWireTests
         server.DelayReply(0, 1500);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 2,
             CommandTimeout = TimeSpan.FromSeconds(5),
@@ -150,7 +150,7 @@ public class HashFieldLeaseWireTests
 
         await Assert.That(async () => await first).Throws<OperationCanceledException>();
         await Assert.That(second.IsCompleted).IsFalse();
-        await Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(2);
     }
@@ -206,7 +206,7 @@ public class HashFieldLeaseWireTests
         await Assert.That(lease.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsFalse();
         await Assert.That(lease.IsReleased).IsTrue();
-        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(lease.IsReleased).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(4);
@@ -235,7 +235,7 @@ public class HashFieldLeaseWireTests
         while (server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)) < 3)
             await Task.Delay(5, releaseDeadline.Token);
         var outcome = await lease.ReleaseAsync();
-        await Assert.That(outcome is LockReleaseOutcome.Released or LockReleaseOutcome.AlreadyReleased).IsTrue();
+        await Assert.That(outcome is RespireLockReleaseOutcome.Released or RespireLockReleaseOutcome.AlreadyReleased).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
             .IsEqualTo(3);
     }
@@ -246,7 +246,7 @@ public class HashFieldLeaseWireTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -272,7 +272,7 @@ public class HashFieldLeaseWireTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -332,7 +332,7 @@ public class HashFieldLeaseWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -359,7 +359,7 @@ public class HashFieldLeaseWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 2,
         });
@@ -407,7 +407,7 @@ public class HashFieldLeaseWireTests
         await using var sentinel = SentinelServer(() => primaryPort);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             SentinelPrimaryName = "mymaster",
             CommandTimeout = TimeSpan.FromSeconds(2),
@@ -469,7 +469,7 @@ public class HashFieldLeaseWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = [new("127.0.0.1", oldOwner.Port)],
             CommandTimeout = TimeSpan.FromSeconds(2),
@@ -519,7 +519,7 @@ public class HashFieldLeaseWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = [new("127.0.0.1", oldOwner.Port)],
             CommandTimeout = null,
@@ -577,7 +577,7 @@ public class HashFieldLeaseWireTests
         await using var sentinel = SentinelServer(() => Volatile.Read(ref primaryPort));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             SentinelPrimaryName = "mymaster",
             // A stalled release to one promoted primary must not hide a later promotion.

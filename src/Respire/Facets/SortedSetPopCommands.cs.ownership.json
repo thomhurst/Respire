@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.ISortedSetCommands",
+      "Type": "Respire.IRespireSortedSetCommands",
       "OwnerType": "Respire.SortedSetCommands",
       "Members": [
         "PopAsync(ReadOnlySpan<RespireKey>,TimeSpan?,bool,CancellationToken):ValueTask<RespireSortedSetPopResult?>",

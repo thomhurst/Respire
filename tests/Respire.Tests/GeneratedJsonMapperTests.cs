@@ -158,7 +158,7 @@ public class GeneratedJsonMapperTests
         await AssertFoundDefault(await JsonMapperModelJsonMapper.GetTokenAsync(json, "document"));
         await AssertFoundDefault(await JsonMapperModelJsonMapper.GetCreatedAsync(json, "document"));
 
-        static async Task AssertFoundDefault<T>(RespireJsonValue<T> result)
+        static async Task AssertFoundDefault<T>(RespireJsonGetResult<T> result)
         {
             await Assert.That(result.Found).IsTrue();
             await Assert.That(result.Value).IsEqualTo(default(T));

@@ -17,7 +17,7 @@ public class DistributedLockerClusterTests
         {
             Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
         });
-        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var first = new RespireFusionCacheDistributedLocker(client.WithKeyPrefix("cluster-test:"),
             new() { LeaseDuration = TimeSpan.FromSeconds(2) });
         await using var second = new RespireFusionCacheDistributedLocker(client.WithKeyPrefix("cluster-test:"));

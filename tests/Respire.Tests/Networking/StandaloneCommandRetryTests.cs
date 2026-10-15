@@ -76,7 +76,7 @@ public class StandaloneCommandRetryTests
             : Setup(command);
         await using var client = await RespireClient.ConnectAsync(Options(server));
         if (name == "GEOSEARCH")
-            await Assert.That((await client.Geo.SearchAsync("places", GeoSearchOrigin.FromMember("origin"),
+            await Assert.That((await client.Geo.SearchAsync("places", RespireGeoSearchOrigin.FromMember("origin"),
                 RespireGeoSearchShape.Circle(1)))[0].Member).IsEqualTo("one");
         else
             await Assert.That((await client.Bitmaps.FieldReadOnlyAsync("bits",
@@ -94,7 +94,7 @@ public class StandaloneCommandRetryTests
             .IsEqualTo(RespireCommands.Bitmap.BITFIELD.Verb.RetryCategory);
         await Assert.That(new BitOpCommand(RespireCommands.Bitmap.BITOP.Verb, "AND", "destination", ["source"]).RetryCategory)
             .IsEqualTo(RespireCommands.Bitmap.BITOP.Verb.RetryCategory);
-        await Assert.That(new GeoAddCommand(RespireCommands.Geo.GEOADD.Verb, "places", SetWhen.Always, false, []).RetryCategory)
+        await Assert.That(new GeoAddCommand(RespireCommands.Geo.GEOADD.Verb, "places", RespireSetWhen.Always, false, []).RetryCategory)
             .IsEqualTo(RespireCommands.Geo.GEOADD.Verb.RetryCategory);
     }
 
@@ -177,7 +177,7 @@ public class StandaloneCommandRetryTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             RetryPolicy = new() { MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins,
                 InitialBackoff = TimeSpan.FromMilliseconds(100), Jitter = 0 },
         });
@@ -335,7 +335,7 @@ public class StandaloneCommandRetryTests
             return Interlocked.Increment(ref reads) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray();
         };
         await using var client = await RespireClient.ConnectAsync(Options(server) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true } });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true } });
         var calls = Enumerable.Range(0, 10).Select(_ => client.GetStringAsync("key").AsTask()).ToArray();
         // Release the first reply only after all waiters have joined the same producer.
         release.TrySetResult();
@@ -359,7 +359,7 @@ public class StandaloneCommandRetryTests
             received.TrySetResult(); return true;
         };
         await using var client = await RespireClient.ConnectAsync(Options(server) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         using var cancellation = new CancellationTokenSource();
         var pending = client.SetAsync("key", "value", cancellationToken: cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -387,7 +387,7 @@ public class StandaloneCommandRetryTests
             return false;
         };
         await using var client = await RespireClient.ConnectAsync(Options(server) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         using var cancellation = new CancellationTokenSource();
         var first = client.SetAsync("key", "first", cancellationToken: cancellation.Token).AsTask();
         await firstSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -610,7 +610,7 @@ public class StandaloneCommandRetryTests
     };
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespProtocol.Resp2,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };

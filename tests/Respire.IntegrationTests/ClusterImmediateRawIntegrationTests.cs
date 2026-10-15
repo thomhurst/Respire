@@ -15,7 +15,7 @@ public class ClusterImmediateRawIntegrationTests(ClusterTransactionTestContainer
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Connections = 1,
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
         });
         var suffix = System.Text.Encoding.ASCII.GetBytes(Guid.NewGuid().ToString("N"));
         byte[] first = [255, .. "{raw}:first:"u8, .. suffix];

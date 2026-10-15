@@ -36,7 +36,7 @@ public partial class PubSubComparisonBenchmarks
 
         // Use RESP3 on both clients so the 3.4 dedicated pub/sub connection is exercised.
         _respire = await RespireClient.ConnectAsync(
-            RespireOptions.Parse($"{host}:{port}") with { Protocol = RespProtocol.Resp3 });
+            RespireOptions.Parse($"{host}:{port}") with { Protocol = RespireProtocol.Resp3 });
         var options = ConfigurationOptions.Parse($"{host}:{port}");
         options.Protocol = RedisProtocol.Resp3;
         _stackExchange = await ConnectionMultiplexer.ConnectAsync(options);

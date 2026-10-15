@@ -11,7 +11,7 @@ namespace Respire.Serialization;
 /// The default serializer. Call <see cref="FromContext(JsonSerializerContext)"/> for
 /// source-generated, reflection-free serialization.
 /// </summary>
-public sealed class SystemTextJsonSerializer : IRespireSerializer
+public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
 {
     private readonly JsonSerializerOptions? _options;
     private readonly JsonSerializerContext? _context;
@@ -22,14 +22,14 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
     /// Creates a reflection-capable serializer with the supplied options, or default options.
     /// Use <see cref="FromContext(JsonSerializerContext)"/> for trimmed or NativeAOT applications.
     /// </summary>
-    public SystemTextJsonSerializer(JsonSerializerOptions? options = null)
+    public RespireSystemTextJsonSerializer(JsonSerializerOptions? options = null)
         => _options = options ?? new JsonSerializerOptions();
 
     /// <summary>Creates a reflection-free serializer from a source-generated context.</summary>
-    public static SystemTextJsonSerializer FromContext(JsonSerializerContext context)
+    public static RespireSystemTextJsonSerializer FromContext(JsonSerializerContext context)
         => new(options: null, context: context ?? throw new ArgumentNullException(nameof(context)));
 
-    private SystemTextJsonSerializer(JsonSerializerOptions? options, JsonSerializerContext context)
+    private RespireSystemTextJsonSerializer(JsonSerializerOptions? options, JsonSerializerContext context)
     {
         _options = options;
         _context = context;
@@ -104,7 +104,7 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
 
         [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
         [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-        static JsonTypeInfo<T> Resolve(SystemTextJsonSerializer serializer) => serializer.ResolveTypeInfo<T>();
+        static JsonTypeInfo<T> Resolve(RespireSystemTextJsonSerializer serializer) => serializer.ResolveTypeInfo<T>();
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -123,7 +123,7 @@ public sealed class SystemTextJsonSerializer : IRespireSerializer
     private static class TypeInfoCache<T>
     {
         // A generic cache must not root short-lived serializers and their contexts indefinitely.
-        internal static readonly ConditionalWeakTable<SystemTextJsonSerializer, JsonTypeInfo<T>> Values = new();
+        internal static readonly ConditionalWeakTable<RespireSystemTextJsonSerializer, JsonTypeInfo<T>> Values = new();
     }
 
     private static Utf8JsonWriter RentWriter(IBufferWriter<byte> destination)

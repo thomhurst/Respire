@@ -13,9 +13,9 @@ namespace Respire.IntegrationTests;
 public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task CommandsAndBlockingPoolUseSocket(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task CommandsAndBlockingPoolUseSocket(RespireProtocol protocol)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.Options(protocol));
         await using var control = await RespireClient.ConnectAsync(fixture.TcpOptions);
@@ -31,9 +31,9 @@ public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task SubscriptionUsesSocket(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task SubscriptionUsesSocket(RespireProtocol protocol)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.Options(protocol));
         var channel = $"uds:channel:{Guid.NewGuid():N}";
@@ -48,7 +48,7 @@ public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
     [Test]
     public async Task TrackingInvalidatesCachedReadsOverSocket()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.Options(RespProtocol.Resp3) with
+        await using var client = await RespireClient.ConnectAsync(fixture.Options(RespireProtocol.Resp3) with
         {
             ClientSideCache = new(),
         });
@@ -67,7 +67,7 @@ public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
     [Test]
     public async Task ReconnectRetainsSocketPath()
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.Options(RespProtocol.Resp3));
+        await using var client = await RespireClient.ConnectAsync(fixture.Options(RespireProtocol.Resp3));
         await using var control = await RespireClient.ConnectAsync(fixture.TcpOptions);
         using var initial = await client.ExecuteAsync("CLIENT", "ID");
         var oldId = initial.AsInteger();
@@ -96,7 +96,7 @@ public sealed class UnixSocketRedisFixture : IAsyncInitializer, IAsyncDisposable
     private RedisContainer? _container;
     private string? _directory;
 
-    public RespireOptions Options(RespProtocol protocol) => new()
+    public RespireOptions Options(RespireProtocol protocol) => new()
     {
         Endpoints = [RespireEndpoint.UnixSocket(Path.Combine(_directory!, "redis.sock"))],
         Protocol = protocol,

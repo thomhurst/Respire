@@ -29,7 +29,7 @@ public class CommandConversionBenchmarks
         }
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespireProtocol.Resp2, Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         if (!await _client.SetAsync(_key, _value)) throw new InvalidOperationException("Seed SET failed.");

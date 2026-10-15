@@ -37,7 +37,7 @@ public class RepositoryTests(RedisTestContainer fixture)
         {
             Endpoints = [new(fixture.Host, fixture.Port)],
             Database = fixture.Database,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
         var view = useKeyPrefix ? client.WithKeyPrefix("app:") : client;

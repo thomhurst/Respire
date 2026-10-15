@@ -308,7 +308,7 @@ public class ValkeyClusterScanCommandTests
 
     private static RespireOptions Options(int port, int protocol) => new()
     {
-        UseCluster = true, Connections = 1, Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        UseCluster = true, Connections = 1, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         Endpoints = [new("127.0.0.1", port)], MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     };
     private static IEnumerable<string> Scans(FakeRespServer server)

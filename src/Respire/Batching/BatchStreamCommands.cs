@@ -5,8 +5,8 @@ namespace Respire;
 
 /// <summary>Non-blocking stream commands queued by batches and transactions.</summary>
 /// <remarks>Mirrors append, count, range, remove, trim, and acknowledge operations from
-/// IStreamCommands. Blocking reads, consumer loops, and group administration remain client-only.</remarks>
-public partial interface IBatchStreamCommands
+/// IRespireStreamCommands. Blocking reads, consumer loops, and group administration remain client-only.</remarks>
+public partial interface IRespireBatchStreamCommands
 {
     /// <summary>Appends fields with an auto-generated id. Redis: XADD.</summary>
     RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -23,13 +23,13 @@ public partial interface IBatchStreamCommands
     /// <summary>Trims by maximum length; returns the number removed. Redis: XTRIM MAXLEN.</summary>
     RespirePending<long> TrimByMaxLength(RespireKey key, long maxLength, bool approximate = false);
     /// <summary>Trims by MAXLEN or MINID with optional approximate work limit. Redis: XTRIM.</summary>
-    RespirePending<long> Trim(RespireKey key, StreamTrimOptions options);
+    RespirePending<long> Trim(RespireKey key, RespireStreamTrimOptions options);
     /// <summary>Acknowledges pending group entries; returns the number newly acknowledged. Redis: XACK.</summary>
     /// <remarks>An empty id list is sent to Redis and surfaces as a server error on the pending result.</remarks>
     RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids);
 }
 
-internal sealed partial class BatchStreamCommands(IPendingSink sink) : IBatchStreamCommands
+internal sealed partial class BatchStreamCommands(IPendingSink sink) : IRespireBatchStreamCommands
 {
     public RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, RespireStreamId>("XADD",
@@ -76,7 +76,7 @@ internal sealed partial class BatchStreamCommands(IPendingSink sink) : IBatchStr
                 static (_, value) => ResponseReader.Integer(in value));
     }
 
-    public RespirePending<long> Trim(RespireKey key, StreamTrimOptions options)
+    public RespirePending<long> Trim(RespireKey key, RespireStreamTrimOptions options)
         => sink.Add<Cmd1N, long>("XTRIM", StreamCommands.BuildTrimCommand(sink.Client, SnapshotKey(key), options),
             static (_, value) => ResponseReader.Integer(in value));
 

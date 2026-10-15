@@ -33,7 +33,7 @@ public class CommandDurationBenchmarks
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6379;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Database = 7, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Database = 7, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = { new RespireEndpoint(host, port) },
         });
         await _client.Keys.DeleteAsync(Key);

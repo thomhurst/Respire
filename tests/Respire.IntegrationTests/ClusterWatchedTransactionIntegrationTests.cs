@@ -15,7 +15,7 @@ public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestCon
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true,
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
         });
         var client = root.WithKeyPrefix($"safe-watch:{Guid.NewGuid():N}:");
         await client.SetAsync("{a}:balance", "1");
@@ -45,7 +45,7 @@ public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestCon
         var options = new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Connections = 2,
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
         };
         await using var client = await RespireClient.ConnectAsync(options);
         await using var other = await RespireClient.ConnectAsync(options);

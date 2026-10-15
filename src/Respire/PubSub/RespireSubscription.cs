@@ -3,7 +3,7 @@ using Respire.Internal;
 namespace Respire;
 
 /// <summary>The Redis pub/sub command family used by a subscription.</summary>
-public enum SubscriptionKind
+public enum RespireSubscriptionKind
 {
     /// <summary>A regular channel subscription created with SUBSCRIBE.</summary>
     Channel,
@@ -36,13 +36,13 @@ public enum RespireSubscriptionEndReason
 /// <param name="Overflow">Policy used when the subscription consumer falls behind.</param>
 public readonly record struct RespireSubscriptionOptions(
     int? BufferSize = null,
-    SubscriptionOverflow? Overflow = null)
+    RespireSubscriptionOverflow? Overflow = null)
 {
     /// <summary>Maximum retained payload bytes per message; null leaves payload size unrestricted.</summary>
     /// <remarks>Oversized messages are discarded before copying into the subscription buffer and produce a delivery gap.</remarks>
     public int? MaxPayloadBytes { get; init; }
 
-    internal (int BufferSize, SubscriptionOverflow Overflow) Resolve(RespireOptions defaults)
+    internal (int BufferSize, RespireSubscriptionOverflow Overflow) Resolve(RespireOptions defaults)
     {
         if (MaxPayloadBytes is < 1)
             throw new ArgumentOutOfRangeException(nameof(MaxPayloadBytes), MaxPayloadBytes, "Must be at least one.");
@@ -80,7 +80,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     private readonly SubscriptionHub _hub;
     private readonly TaskCompletionSource<RespireSubscriptionEndReason> _completion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly SubscriptionOverflow _overflow;
+    private readonly RespireSubscriptionOverflow _overflow;
     private long _droppedMessages;
     private int _disposed;
     private int _disposeHookActive;
@@ -88,10 +88,10 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal RespireSubscription(
         SubscriptionHub hub,
-        SubscriptionKind kind,
+        RespireSubscriptionKind kind,
         RespireChannel[] names,
         int bufferSize,
-        SubscriptionOverflow overflow,
+        RespireSubscriptionOverflow overflow,
         int? maxPayloadBytes = null)
     {
         _hub = hub;
@@ -104,7 +104,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     }
 
     /// <summary>The Redis pub/sub command family used by this subscription.</summary>
-    public SubscriptionKind Kind { get; }
+    public RespireSubscriptionKind Kind { get; }
 
     /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
     /// <remarks>Contains physical targets, including explicit pub/sub prefixes; notification descriptors retain their routing metadata.</remarks>

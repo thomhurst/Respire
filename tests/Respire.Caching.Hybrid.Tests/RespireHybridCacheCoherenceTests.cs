@@ -633,7 +633,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
         {
             if (client is null) options.ClientOptions = _ => RespireOptions.Parse(fixture.ConnectionString) with { KeyPrefix = clientPrefix ?? "" };
             options.InstanceName = InstanceName;
-            if (codec) options.ValueCodec = new BrotliValueCodec();
+            if (codec) options.ValueCodec = new RespireBrotliValueCodec();
             if (valueCodec is not null) options.ValueCodec = valueCodec;
         });
         if (serializer is not null) builder.AddSerializer<TestValue>(serializer);

@@ -25,7 +25,7 @@ public class ValkeyClusterScanIntegrationTests
             var options = new RespireOptions
             {
                 UseCluster = true, Database = 1, Connections = 1, Endpoints = [cluster.Endpoint(0)],
-                Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+                Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
                 ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
@@ -104,7 +104,7 @@ public class ValkeyClusterScanIntegrationTests
         var options = new RespireOptions
         {
             UseCluster = true, Database = 1, Connections = 1, Endpoints = [cluster.Endpoint(0)],
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
@@ -200,7 +200,7 @@ public class ValkeyClusterScanIntegrationTests
         var options = new RespireOptions
         {
             UseCluster = true, Database = 1, Connections = 1, Endpoints = [cluster.Endpoint(0)],
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         };
         await using var client = await RespireClient.ConnectAsync(options, token);
         var prefix = $"{{{Tag(0)}}}:tenant*\uD83D";

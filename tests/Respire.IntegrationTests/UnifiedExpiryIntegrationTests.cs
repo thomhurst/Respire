@@ -49,7 +49,7 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
 
         (await client.Hashes.ExpireAsync(
             "unified:hash", RespireExpiry.In(TimeSpan.FromSeconds(30)), "field"))
-            .Should().Equal(HashFieldExpiryResult.Applied);
+            .Should().Equal(RespireHashFieldExpiryResult.Applied);
         (await client.Hashes.GetAndExpireAsync(
             "unified:hash", RespireExpiry.At(DateTimeOffset.UtcNow.AddSeconds(60)), "field"))
             .Should().Equal("value");
@@ -72,7 +72,7 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
             "conditional:hash", RespireExpiry.In(TimeSpan.FromSeconds(30)), "field");
 
         (await client.Hashes.SetAsync(
-            "conditional:hash", "field", "updated", SetWhen.Exists)).Should().BeTrue();
+            "conditional:hash", "field", "updated", RespireSetWhen.Exists)).Should().BeTrue();
 
         (await client.Hashes.ExpiryAsync("conditional:hash", "field"))[0].HasExpiry.Should().BeFalse();
     }

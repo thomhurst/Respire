@@ -223,7 +223,7 @@ public class ClusterCircuitDispatchTests
         await using var replacement = Server();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaxInflightCommands = tracked ? 4 : 2, CommandTimeout = TimeSpan.FromSeconds(10),
             ClientSideCache = tracked ? new() : null,
         });
@@ -624,7 +624,7 @@ public class ClusterCircuitDispatchTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [Endpoint(server)], UseCluster = true, Connections = 1, Protocol = RespProtocol.Resp2,
+        Endpoints = [Endpoint(server)], UseCluster = true, Connections = 1, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(5),
         CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.01,
             HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },

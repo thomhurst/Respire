@@ -8,11 +8,11 @@ namespace Respire;
 
 /// <summary>
 /// Sorted set (score-ordered members) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="ISortedSetCommands"/>; collection
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IRespireSortedSetCommands"/>; collection
 /// cardinality uses <see cref="Count"/> and score-range cardinality uses
 /// <see cref="CountByScore(RespireKey, double, double)"/>.
 /// </summary>
-public partial interface IBatchSortedSetCommands
+public partial interface IRespireBatchSortedSetCommands
 {
     /// <summary>Adds or updates one member. True when the member was new. Redis: ZADD.</summary>
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
@@ -177,7 +177,7 @@ public partial interface IBatchSortedSetCommands
         long offset = 0, long? count = null, bool descending = false);
 }
 
-internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSetCommands
+internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IRespireBatchSortedSetCommands
 {
     public RespirePending<bool> Add(RespireKey key, RespireValue member, double score)
         => sink.Add<Cmd3, bool>(

@@ -7,12 +7,12 @@ namespace Respire;
 
 /// <summary>
 /// String (plain value) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="IStringCommands"/>: same names and
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IRespireStringCommands"/>: same names and
 /// parameter shapes, but each call returns a <see cref="RespirePending{T}"/> instead of awaiting,
 /// and cancellation belongs to the execute/commit call. <c>GetLeaseAsync</c> has no deferred form —
 /// a lease borrows the reply's pooled memory, which is released once the batch completes.
 /// </summary>
-public partial interface IBatchStringCommands
+public partial interface IRespireBatchStringCommands
 {
     /// <summary>Gets a key's value as a string, or null when missing. Redis: GET.</summary>
     RespirePending<string?> GetString(RespireKey key);
@@ -25,7 +25,7 @@ public partial interface IBatchStringCommands
     /// <summary>Gets a typed value while reporting whether the key existed. Redis: GET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key);
+    RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key);
 
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
     RespirePending<byte[]?> GetBytes(RespireKey key);
@@ -37,7 +37,7 @@ public partial interface IBatchStringCommands
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always);
+        RespireSetWhen when = RespireSetWhen.Always);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -46,11 +46,11 @@ public partial interface IBatchStringCommands
         RespireKey key,
         T value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always);
+        RespireSetWhen when = RespireSetWhen.Always);
 
     /// <summary>Sets a key and returns its previous value. Redis: SET … GET.</summary>
     RespirePending<string?> GetAndSet(
-        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always);
 
     /// <summary>
     /// Sets a serialized <typeparamref name="T"/> and deserializes the previous value.
@@ -59,7 +59,7 @@ public partial interface IBatchStringCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> GetAndSet<T>(
-        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
+        RespireKey key, T value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
     RespirePending<string?> GetAndDelete(RespireKey key);
@@ -121,7 +121,7 @@ public partial interface IBatchStringCommands
     /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
     RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Returns the longest common subsequence. Redis: LCS.</summary>
@@ -131,7 +131,7 @@ public partial interface IBatchStringCommands
     RespirePending<long> LcsLength(RespireKey firstKey, RespireKey secondKey);
 }
 
-internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStringCommands
+internal sealed partial class BatchStringCommands(IPendingSink sink) : IRespireBatchStringCommands
 {
     public RespirePending<string?> GetString(RespireKey key)
         => sink.Add<Cmd1, string?>(
@@ -147,8 +147,8 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key)
-        => sink.Add<Cmd1, RespireGet<T>>(
+    public RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key)
+        => sink.Add<Cmd1, RespireGetResult<T>>(
             "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
             static (c, v) => c.TryDeserializeBorrowed<T>(in v));
 
@@ -158,7 +158,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
             static (c, v) => ResponseReader.BytesOrNull(in v));
 
     public RespirePending<bool> Set(
-        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always)
     {
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
@@ -172,7 +172,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<bool> Set<T>(
-        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, T value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always)
     {
         SetCommand.ValidateExpiry(expiry);
         SetCommand.ValidateWhen(when);
@@ -183,7 +183,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
     }
 
     public RespirePending<string?> GetAndSet(
-        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always)
     {
         RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
@@ -197,7 +197,7 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> GetAndSet<T>(
-        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, T value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always)
     {
         SetCommand.ValidateExpiry(expiry);
         SetCommand.ValidateWhen(when);
@@ -316,11 +316,11 @@ internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStr
     public RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpire(expiry, SetWhen.Always, pairs);
+        => SetManyExpire(expiry, RespireSetWhen.Always, pairs);
 
     public RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         return sink.Add<MSetExCommand, bool>(

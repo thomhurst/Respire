@@ -14,8 +14,8 @@ public class ValueCodecChecksumBenchmarks
     [Params(64, 16384)]
     public int Length { get; set; }
 
-    private readonly BrotliValueCodec _versionOne = new(new() { FrameVersion = 1, MinimumLength = int.MaxValue });
-    private readonly BrotliValueCodec _versionTwo = new(new() { MinimumLength = int.MaxValue });
+    private readonly RespireBrotliValueCodec _versionOne = new(new() { FrameVersion = 1, MinimumLength = int.MaxValue });
+    private readonly RespireBrotliValueCodec _versionTwo = new(new() { MinimumLength = int.MaxValue });
     private byte[] _payload = null!;
     private byte[] _frameOne = null!;
     private byte[] _frameTwo = null!;

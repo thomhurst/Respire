@@ -11,11 +11,11 @@ namespace Respire.VectorData.Conformance.Tests;
 public sealed class EmbeddingErrorTests(RedisServerFixture server)
 {
     [Theory]
-    [InlineData(RespProtocol.Resp2, false)]
-    [InlineData(RespProtocol.Resp3, false)]
-    [InlineData(RespProtocol.Resp2, true)]
-    [InlineData(RespProtocol.Resp3, true)]
-    public async Task SearchAsync_string_without_generator_throws(RespProtocol protocol, bool json)
+    [InlineData(RespireProtocol.Resp2, false)]
+    [InlineData(RespireProtocol.Resp3, false)]
+    [InlineData(RespireProtocol.Resp2, true)]
+    [InlineData(RespireProtocol.Resp3, true)]
+    public async Task SearchAsync_string_without_generator_throws(RespireProtocol protocol, bool json)
     {
         var fixture = new NoGeneratorFixture(server, protocol, json);
         await fixture.InitializeAsync();
@@ -34,7 +34,7 @@ public sealed class EmbeddingErrorTests(RedisServerFixture server)
     [Trait("Unsupported", "FixtureAdapter")]
     private sealed class OfficialErrorContract(NoGeneratorFixture fixture) : EmbeddingGenerationTests<string>(fixture, null!);
 
-    private sealed class NoGeneratorFixture(RedisServerFixture server, RespProtocol protocol, bool json) : EmbeddingGenerationTests<string>.StringVectorFixture
+    private sealed class NoGeneratorFixture(RedisServerFixture server, RespireProtocol protocol, bool json) : EmbeddingGenerationTests<string>.StringVectorFixture
     {
         public override TestStore TestStore { get; } = json ? new JsonTestStore(server, protocol) : new HashTestStore(server, protocol);
 

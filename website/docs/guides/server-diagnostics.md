@@ -93,7 +93,7 @@ foreach (var node in nodes)
 - Tested on Redis 6.2, Redis 7.0, and Valkey 8.1 with RESP2 and RESP3.
 - Unsupported commands and ACL denials return the server error; there is no fallback.
 - The minimum versions apply to the commands only; not every Respire connection or fan-out feature works on old servers.
-- The six methods and their six `OnAllNodesAsync` counterparts are `IServerCommands` members. Custom implementations, decorators, and mocks must implement or forward them.
+- The six methods and their six `OnAllNodesAsync` counterparts are `IRespireServerCommands` members. Custom implementations, decorators, and mocks must implement or forward them.
 
 References: Redis [LATENCY DOCTOR](https://redis.io/docs/latest/commands/latency-doctor/),
 [LATENCY HISTORY](https://redis.io/docs/latest/commands/latency-history/),

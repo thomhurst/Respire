@@ -95,4 +95,4 @@ foreach (var result in results)
 - Check every result. Views can overlap or disagree during failover; nothing is merged.
 - Cancellation during discovery throws. After discovery it is recorded per node, and completed results stay available.
 
-These 20 methods are `IServerCommands` members; external implementations, decorators, and mocks must implement or forward them. They are immediate, with no batch or transaction versions.
+These 20 methods are `IRespireServerCommands` members; external implementations, decorators, and mocks must implement or forward them. They are immediate, with no batch or transaction versions.

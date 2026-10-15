@@ -191,14 +191,14 @@ internal sealed partial class SubscriptionHub
 
     private async Task ResubscribeRoutesAsync(RespireConnection replacement, CancellationToken cancellationToken)
     {
-        (SubscriptionKind Kind, RespireChannel Name)[] routes;
+        (RespireSubscriptionKind Kind, RespireChannel Name)[] routes;
         lock (_gate)
         {
-            var snapshot = new List<(SubscriptionKind, RespireChannel)>();
+            var snapshot = new List<(RespireSubscriptionKind, RespireChannel)>();
             for (var i = 0; i < _routes.Length; i++)
             {
-                if (IsClusterSharded((SubscriptionKind)i)) continue;
-                foreach (var name in _routes[i].Names) snapshot.Add(((SubscriptionKind)i, name));
+                if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
+                foreach (var name in _routes[i].Names) snapshot.Add(((RespireSubscriptionKind)i, name));
             }
             routes = [.. snapshot];
         }
@@ -224,7 +224,7 @@ internal sealed partial class SubscriptionHub
             {
                 for (var i = 0; i < _routes.Length; i++)
                 {
-                    if (IsClusterSharded((SubscriptionKind)i)) continue;
+                    if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
                     foreach (var list in _routes[i].Values) subscriptions.UnionWith(list);
                     _routes[i].Clear();
                 }

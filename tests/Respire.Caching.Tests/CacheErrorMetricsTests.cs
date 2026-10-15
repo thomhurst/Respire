@@ -44,7 +44,7 @@ public partial class CacheErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+                Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
                 ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             });
             await client.EnsureReliableCorrectionOrderingAsync();
@@ -124,7 +124,7 @@ public partial class CacheErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, Connections = 1,
+                Protocol = RespireProtocol.Resp2, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
             });
             IRespireClient cacheClient = decorated
@@ -222,7 +222,7 @@ public partial class CacheErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, Connections = 1,
+                Protocol = RespireProtocol.Resp2, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await using var cache = client.AsDistributedCache();
@@ -311,7 +311,7 @@ public partial class CacheErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, CommandTimeout = null, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2, CommandTimeout = null, Endpoints = [new("127.0.0.1", server.Port)],
             });
             await using var cache = client.AsDistributedCache();
             var finals = new ConcurrentQueue<Dictionary<string, object?>>();
@@ -355,7 +355,7 @@ public partial class CacheErrorMetricsTests
             await using var server = new FakeRespServer(FakeRespServer.OkReply);
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
             });
             await using var cache = client.AsDistributedCache();
             await client.DisposeAsync();
@@ -414,7 +414,7 @@ public partial class CacheErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+                Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
                 CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await client.EnsureReliableCorrectionOrderingAsync();
@@ -566,7 +566,7 @@ public partial class CacheErrorMetricsTests
             await using var seed = new FakeRespServer(topology);
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, UseCluster = cluster, ClusterTopologyRefreshInterval = null,
+                Protocol = RespireProtocol.Resp2, UseCluster = cluster, ClusterTopologyRefreshInterval = null,
                 Endpoints = [new("127.0.0.1", cluster ? seed.Port : target.Port)],
             });
             await using var cache = client.AsDistributedCache();

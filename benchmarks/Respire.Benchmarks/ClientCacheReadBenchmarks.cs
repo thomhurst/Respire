@@ -37,7 +37,7 @@ public class ClientCacheReadBenchmarks
             _key = UnicodeKey ? "cache:read:tenant-é😀:product:0123456789" : "cache:read:tenant-ascii:product:0123456789";
             _client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespProtocol.Resp3,
+                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled, ClientSideCache = new(),
             });
             if (!await _client.SetAsync(_key, _value) || await EvictAndReadMiss() != _value

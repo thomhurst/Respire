@@ -3,7 +3,7 @@ using Respire.Internal;
 
 namespace Respire;
 
-public partial interface IBatchStringCommands
+public partial interface IRespireBatchStringCommands
 {
     /// <summary>Queues inclusive byte ranges and total subsequence length. Redis: LCS IDX (7.0+).</summary>
     /// <remarks>Both keys must share a Cluster slot after prefixing. Filtering does not change the total length.</remarks>

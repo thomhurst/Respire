@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IHashCommands",
+      "Type": "Respire.IRespireHashCommands",
       "OwnerType": "Respire.HashCommands",
       "Members": [
         "ScanFieldsAsync(RespireKey,string?,int,CancellationToken):IAsyncEnumerable<string>",

@@ -67,7 +67,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = attempts },
         });
@@ -114,13 +114,13 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         });
         await using var hub = new SubscriptionHub(client.Core);
         await using var subscription = await hub.SubscribeAsync(
-            SubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            RespireSubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var owners = typeof(SubscriptionHub).GetField("_shardedOwners", flags)!.GetValue(hub)!;
         owners.GetType().GetMethod("Clear")!.Invoke(owners, null);
@@ -176,13 +176,13 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = null,
         });
         await using var hub = new SubscriptionHub(client.Core);
         await using var subscription = await hub.SubscribeAsync(
-            SubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            RespireSubscriptionKind.Sharded, ["one"], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var primaries = (System.Collections.IDictionary)typeof(SubscriptionHub).GetField("_primaryConnections", flags)!.GetValue(hub)!;
         var primary = primaries.Values.Cast<object>().Single();
@@ -203,7 +203,7 @@ public partial class ErrorMetricsTests
             // Exercise the internal owner directly; activation has a separate final owner.
             var pending = replay
                 ? (ValueTask)typeof(SubscriptionHub).GetMethod("SendRecoveryControlAsync", flags)!
-                    .Invoke(hub, [connection, SubscriptionKind.Sharded, (RespireChannel)"one", cancellation.Token])!
+                    .Invoke(hub, [connection, RespireSubscriptionKind.Sharded, (RespireChannel)"one", cancellation.Token])!
                 : (ValueTask)typeof(SubscriptionHub).GetMethod("UnsubscribePrimaryAsync", flags)!
                     .Invoke(hub, [primary, (RespireChannel)"one", cancellation.Token])!;
             if (cancelInFlight)
@@ -241,7 +241,7 @@ public partial class ErrorMetricsTests
         server.SuppressReply = command => command == $"PUNSUBSCRIBE {channel}";
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(1),
         });

@@ -154,7 +154,7 @@ public readonly record struct RespireLexRange(RespireLexBound Minimum, RespireLe
 /// <see cref="CountAsync"/>; score-range cardinality uses
 /// <see cref="CountByScoreAsync(RespireKey, double, double, CancellationToken)"/>.
 /// </summary>
-public partial interface ISortedSetCommands
+public partial interface IRespireSortedSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> AddAsync(RespireKey key, (RespireValue Member, double Score) entry, CancellationToken cancellationToken);
@@ -401,7 +401,7 @@ public partial interface ISortedSetCommands
         CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class SortedSetCommands(RespireClient client) : ISortedSetCommands
+internal sealed partial class SortedSetCommands(RespireClient client) : IRespireSortedSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> AddAsync(RespireKey key, (RespireValue Member, double Score) entry, CancellationToken cancellationToken)
@@ -861,7 +861,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
             return default;
         }
 
-        if (reply.Type != RespDataType.Array)
+        if (reply.Type != RespireDataType.Array)
         {
             throw new RespireProtocolException("A single sorted-set pop must return an array.");
         }
@@ -872,7 +872,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
             return default;
         }
 
-        if (elements[0].Type == RespDataType.Array)
+        if (elements[0].Type == RespireDataType.Array)
         {
             if (elements.Length != 1)
             {
@@ -896,7 +896,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
         var elements = reply.AsArray();
 
         // RESP3 returns an array of [member, score] pairs.
-        if (elements.Length > 0 && elements[0].Type == RespDataType.Array)
+        if (elements.Length > 0 && elements[0].Type == RespireDataType.Array)
         {
             var pairEntries = new RespireSortedSetEntry[elements.Length];
             for (var i = 0; i < elements.Length; i++)
@@ -951,7 +951,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : ISortedS
     internal static RespireSortedSetEntry<T>[] ParseEntries<T>(RespireClient client, in RespValue reply)
     {
         var elements = reply.AsArray();
-        if (elements.Length > 0 && elements[0].Type == RespDataType.Array)
+        if (elements.Length > 0 && elements[0].Type == RespireDataType.Array)
         {
             var pairEntries = new RespireSortedSetEntry<T>[elements.Length];
             for (var i = 0; i < elements.Length; i++)

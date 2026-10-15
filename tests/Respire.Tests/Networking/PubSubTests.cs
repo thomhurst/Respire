@@ -27,7 +27,7 @@ public class PubSubTests
         "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n"u8.ToArray();
 
     private static RespireClient CreateLazyClient(int port)
-        => RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
+        => RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
 
     [Test]
     public async Task MalformedLaterName_DoesNotRegisterEarlierRoute()
@@ -51,7 +51,7 @@ public class PubSubTests
                 "ch", new RespireSubscriptionOptions(BufferSize: 0), CancellationToken.None))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.SubscribeAsync(
-                "ch", new RespireSubscriptionOptions(Overflow: (SubscriptionOverflow)42), CancellationToken.None))
+                "ch", new RespireSubscriptionOptions(Overflow: (RespireSubscriptionOverflow)42), CancellationToken.None))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
@@ -65,7 +65,7 @@ public class PubSubTests
         var channel = new string("ch".AsSpan());
         await using var subscription = await client.SubscribeAsync(channel);
 
-        await Assert.That(subscription.Kind).IsEqualTo(SubscriptionKind.Channel);
+        await Assert.That(subscription.Kind).IsEqualTo(RespireSubscriptionKind.Channel);
         await Assert.That(subscription.Targets).IsEquivalentTo([(RespireChannel)channel]);
         await Assert.That(subscription.IsDisposed).IsFalse();
 
@@ -110,16 +110,16 @@ public class PubSubTests
     }
 
     [Test]
-    [Arguments(SubscriptionOverflow.DropOldest, "c")]
-    [Arguments(SubscriptionOverflow.DropNewest, "a")]
+    [Arguments(RespireSubscriptionOverflow.DropOldest, "c")]
+    [Arguments(RespireSubscriptionOverflow.DropNewest, "a")]
     public async Task FullBuffer_CountsDroppedMessages_AndAppliesPolicy(
-        SubscriptionOverflow overflow,
+        RespireSubscriptionOverflow overflow,
         string retainedMessage)
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             SubscriptionBufferSize = 1,
             SubscriptionOverflow = overflow,
@@ -140,14 +140,14 @@ public class PubSubTests
 
         await using var enumerator = subscription.GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-        if (overflow == SubscriptionOverflow.DropOldest)
+        if (overflow == RespireSubscriptionOverflow.DropOldest)
         {
             await Assert.That(enumerator.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
             await Assert.That(enumerator.Current.Gap!.DroppedMessages).IsEqualTo(2);
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
         }
         await Assert.That(enumerator.Current.Text).IsEqualTo(retainedMessage);
-        if (overflow == SubscriptionOverflow.DropNewest)
+        if (overflow == RespireSubscriptionOverflow.DropNewest)
         {
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
             await Assert.That(enumerator.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
@@ -161,14 +161,14 @@ public class PubSubTests
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             SubscriptionBufferSize = 8,
-            SubscriptionOverflow = SubscriptionOverflow.DropOldest,
+            SubscriptionOverflow = RespireSubscriptionOverflow.DropOldest,
         });
         await using var subscription = await client.SubscribeAsync(
             "ch",
-            new RespireSubscriptionOptions(BufferSize: 1, Overflow: SubscriptionOverflow.DropNewest),
+            new RespireSubscriptionOptions(BufferSize: 1, Overflow: RespireSubscriptionOverflow.DropNewest),
             CancellationToken.None);
 
         await server.SendRawAsync(

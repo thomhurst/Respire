@@ -27,7 +27,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
@@ -88,7 +88,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
@@ -118,7 +118,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Database = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
@@ -436,7 +436,7 @@ public class ClusterNotificationRoutingTests
         await using var hub = new SubscriptionHub(client.Core, new NotificationRecoveryClock());
         var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
         await using var subscription = await hub.SubscribeAsync(
-            SubscriptionKind.Channel, [descriptor], new(), CancellationToken.None);
+            RespireSubscriptionKind.Channel, [descriptor], new(), CancellationToken.None);
 
         // Publish newer routing evidence without delivering its callback to this standalone
         // hub, then deliver the older complete event while only a partial map is visible.
@@ -448,7 +448,7 @@ public class ClusterNotificationRoutingTests
         var key = Enumerable.Range(0, 100).Select(static index => $"barrier:{index}")
             .First(static value => ClusterHash.GetSlot(value) != 0);
         // A later subscription waits for the queued reconciliation under the control gate.
-        await using var barrier = await hub.SubscribeAsync(SubscriptionKind.Channel,
+        await using var barrier = await hub.SubscribeAsync(RespireSubscriptionKind.Channel,
             [RespireChannel.KeySpaceSingleKey(key, 0)], new(), CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(second.ReceivedCommands).DoesNotContain($"UNSUBSCRIBE {descriptor}");
@@ -476,7 +476,7 @@ public class ClusterNotificationRoutingTests
         await using var hub = new SubscriptionHub(client.Core, new NotificationRecoveryClock());
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
-        var activation = hub.SubscribeAsync(SubscriptionKind.Channel, [descriptor], new(), cancellation.Token).AsTask();
+        var activation = hub.SubscribeAsync(RespireSubscriptionKind.Channel, [descriptor], new(), cancellation.Token).AsTask();
         await ackPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // A standalone hub lets the router publish V2 while only the V1 callback has arrived.
@@ -609,7 +609,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             // The suppressed resubscribe below fails only through this command timeout, which
             // also bounds every setup round trip. Two seconds keeps setup clear of a busy
@@ -736,7 +736,7 @@ public class ClusterNotificationRoutingTests
         var options = new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMinutes(1),
             ReconnectPolicy = new RespireReconnectPolicy
@@ -897,7 +897,7 @@ public class ClusterNotificationRoutingTests
         await using var hub = new SubscriptionHub(client.Core, clock);
         var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
         await using var subscription = await hub.SubscribeAsync(
-            SubscriptionKind.Pattern, [descriptor], new(), CancellationToken.None)
+            RespireSubscriptionKind.Pattern, [descriptor], new(), CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         // One failure against the second primary, then a newer topology replaces it.
@@ -963,7 +963,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             // Expire the admitted notification command explicitly. A short global deadline
             // would also time out unrelated topology discovery under test-host contention.
@@ -1015,7 +1015,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = [new("127.0.0.1", first.Port)],
@@ -1054,7 +1054,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             ReconnectPolicy = new RespireReconnectPolicy
@@ -1110,7 +1110,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             ReconnectPolicy = new RespireReconnectPolicy
@@ -1421,7 +1421,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = [new("127.0.0.1", first.Port)],
@@ -1490,7 +1490,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
             ReconnectPolicy = new RespireReconnectPolicy
@@ -1505,10 +1505,10 @@ public class ClusterNotificationRoutingTests
         var clock = new NotificationRecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var stable = await hub.SubscribeAsync(
-            SubscriptionKind.Pattern, [stableDescriptor], new(), CancellationToken.None)
+            RespireSubscriptionKind.Pattern, [stableDescriptor], new(), CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await using var later = await hub.SubscribeAsync(
-            SubscriptionKind.Pattern, [laterDescriptor], new(), CancellationToken.None)
+            RespireSubscriptionKind.Pattern, [laterDescriptor], new(), CancellationToken.None)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1609,7 +1609,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             // Leave setup subscriptions room to be written and confirmed under parallel load.
             CommandTimeout = TimeSpan.FromSeconds(1),
@@ -1625,9 +1625,9 @@ public class ClusterNotificationRoutingTests
         var clock = new NotificationRecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var delayed = await hub.SubscribeAsync(
-            SubscriptionKind.Pattern, [delayedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            RespireSubscriptionKind.Pattern, [delayedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         await using var rejected = await hub.SubscribeAsync(
-            SubscriptionKind.Pattern, [rejectedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            RespireSubscriptionKind.Pattern, [rejectedDescriptor], new(), CancellationToken.None).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         topology = Topology(first.Port, second.Port);
         _ = await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default)
@@ -1713,7 +1713,7 @@ public class ClusterNotificationRoutingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             // Long enough for a loaded test host, short enough to exhaust the replay quickly.
             ConnectTimeout = TimeSpan.FromMilliseconds(500),
@@ -1783,7 +1783,7 @@ public class ClusterNotificationRoutingTests
         var node = new ClusterNotificationNode(endpoint);
         var descriptor = RespireChannel.KeyEvent(RespireKeyNotificationType.Set, 0);
         var subscription = new RespireSubscription(
-            hub, SubscriptionKind.Channel, [descriptor], 4, SubscriptionOverflow.DropOldest);
+            hub, RespireSubscriptionKind.Channel, [descriptor], 4, RespireSubscriptionOverflow.DropOldest);
         var coordinator = NotificationCoordinator(hub);
         coordinator.RegisterNode(node);
         coordinator.AddRoute(node, subscription, descriptor);
@@ -1922,7 +1922,7 @@ public class ClusterNotificationRoutingTests
         => RespireClient.Create(new RespireOptions
         {
             UseCluster = true,
-            Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             Connections = 1,
             ReconnectPolicy = reconnectPolicy,
             Endpoints = [new("127.0.0.1", port)],

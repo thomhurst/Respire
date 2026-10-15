@@ -219,7 +219,7 @@ public class ClusterReadyResponseTests
             harness._client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Endpoints = [new("127.0.0.1", harness.Source.Port)], UseCluster = true,
-                Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+                Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             });
             harness._connection = harness._client.Core.Cluster!.TryAcquireReadyConnection(Slot, default)
                 ?? throw new InvalidOperationException("The cluster slot has no ready connection.");

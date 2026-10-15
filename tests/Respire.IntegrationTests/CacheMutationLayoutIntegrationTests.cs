@@ -15,7 +15,7 @@ public class CacheMutationLayoutIntegrationTests(RedisTestContainer fixture)
     public async Task DestinationWritesInvalidateCachedMissAndRetainSourceEntries(string operation)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var prefix = "cache-layout:" + Guid.NewGuid().ToString("N") + ":";
         RespireKey first = prefix + "first", second = prefix + "second", destination = prefix + "destination";
         try

@@ -24,7 +24,7 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, AllowAdmin = true,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, AllowAdmin = true,
         });
         var server = client.WithKeyPrefix("ignored:").Server;
         var info = await server.CommandInfoAsync(["GET", "NOTAREDISCOMMAND"]);
@@ -100,7 +100,7 @@ public class ServerMetadataIntegrationTests(VersionedServerFixture servers)
         (await client.Server.ConfigRewriteOnAllNodesAsync())[0].Error.Should().BeOfType<RespireServerException>();
     }
 
-    private static async Task WaitForPersistence(IServerCommands server)
+    private static async Task WaitForPersistence(IRespireServerCommands server)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)

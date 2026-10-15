@@ -36,7 +36,7 @@ public class NativeLockCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -55,7 +55,7 @@ public class NativeLockCommandTests
             await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 41");
             missingEngine = false;
             if (extend) await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMinutes(1), deadline.Token)).IsTrue();
-            else await Assert.That(await mutex.ReleaseAsync(deadline.Token)).IsEqualTo(LockReleaseOutcome.Released);
+            else await Assert.That(await mutex.ReleaseAsync(deadline.Token)).IsEqualTo(RespireLockReleaseOutcome.Released);
         }
         finally
         {
@@ -75,7 +75,7 @@ public class NativeLockCommandTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await Assert.That(async () => await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromTicks(ticks)))
@@ -223,7 +223,7 @@ public class NativeLockCommandTests
         await using var seed = new FakeRespServer(Topology(source.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
@@ -250,7 +250,7 @@ public class NativeLockCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
             CommandTimeout = null,
         });
@@ -287,7 +287,7 @@ public class NativeLockCommandTests
         await using var seed = new FakeRespServer(Topology(source.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));

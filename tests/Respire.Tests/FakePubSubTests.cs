@@ -18,7 +18,7 @@ public class FakePubSubTests
     public async Task BinarySubscriptionsCountConnectionsAndOwnPublicationBytes(int protocol)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Protocol = (RespProtocol)protocol, Connections = 1 };
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 };
         await using var first = await RespireClient.ConnectAsync(options);
         await using var second = await RespireClient.ConnectAsync(options);
         byte[] channel = [0, 255, 128];
@@ -84,7 +84,7 @@ public class FakePubSubTests
         if (protocol == 3)
         {
             using var message = await wire.ReadAsync();
-            await Assert.That(message.Type).IsEqualTo(RespDataType.Push);
+            await Assert.That(message.Type).IsEqualTo(RespireDataType.Push);
             await Assert.That(message.AsArray()[0].AsString()).IsEqualTo("message");
             await Assert.That(message.AsArray()[2].AsString()).IsEqualTo("self");
         }
@@ -145,7 +145,7 @@ public class FakePubSubTests
     {
         await using var server = new RespireFakeServer();
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
-        await using var subscriber = RespireClient.Create(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var subscriber = RespireClient.Create(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("SUBSCRIBE", RespireFakeFault.Pause(gate, afterExecution: true));
         using var caller = new CancellationTokenSource();
@@ -223,7 +223,7 @@ public class FakePubSubTests
     {
         await using var server = new RespireFakeServer();
         await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
-        await using var subscriber = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var subscriber = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var subscription = await subscriber.SubscribeAsync("original");
         var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         subscriber.ConnectionStateChanged += change =>
@@ -281,7 +281,7 @@ public class FakePubSubTests
         for (var index = 0; index < 128; index++)
         {
             using var message = await subscriber.ReadAsync();
-            await Assert.That(message.Type).IsEqualTo(protocol == 3 ? RespDataType.Push : RespDataType.Array);
+            await Assert.That(message.Type).IsEqualTo(protocol == 3 ? RespireDataType.Push : RespireDataType.Array);
             await Assert.That(message.AsArray()[0].AsString()).IsEqualTo("message");
             await Assert.That(message.AsArray()[1].AsString()).IsEqualTo("shared");
             var parts = message.AsArray()[2].AsString().Split(':');
@@ -324,7 +324,7 @@ public class FakePubSubTests
         {
             await Assert.That(await publisher.PublishAsync("drained", payload).AsTask().WaitAsync(Limit)).IsEqualTo(1);
             using var message = await subscriber.ReadAsync();
-            await Assert.That(message.Type).IsEqualTo(RespDataType.Push);
+            await Assert.That(message.Type).IsEqualTo(RespireDataType.Push);
             await Assert.That(message.AsArray()[2].AsSpan().Length).IsEqualTo(payload.Length);
         }
     }
@@ -346,7 +346,7 @@ public class FakePubSubTests
     private static async Task Confirmation(WireClient wire, string kind, string? channel, long count, int protocol)
     {
         using var reply = await wire.ReadAsync();
-        await Assert.That(reply.Type).IsEqualTo(protocol == 3 ? RespDataType.Push : RespDataType.Array);
+        await Assert.That(reply.Type).IsEqualTo(protocol == 3 ? RespireDataType.Push : RespireDataType.Array);
         await Assert.That(reply.AsArray()[0].AsString()).IsEqualTo(kind);
         if (channel is null) await Assert.That(reply.AsArray()[1].IsNull).IsTrue();
         else await Assert.That(reply.AsArray()[1].AsString()).IsEqualTo(channel);
@@ -366,7 +366,7 @@ public class FakePubSubTests
             {
                 await wire.SendAsync("HELLO", "3");
                 using var hello = await wire.ReadAsync();
-                await Assert.That(hello.Type).IsEqualTo(RespDataType.Map);
+                await Assert.That(hello.Type).IsEqualTo(RespireDataType.Map);
             }
             return wire;
         }

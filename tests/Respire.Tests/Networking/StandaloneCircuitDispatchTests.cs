@@ -28,7 +28,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
         });
         await client.GetStringAsync("warm");
@@ -62,7 +62,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         await client.GetStringAsync("warm");
         if (failure == "redis")
@@ -128,7 +128,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
         });
         await client.GetStringAsync("warm");
@@ -181,7 +181,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(), CommandTimeout = TimeSpan.FromSeconds(10),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(), CommandTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = enabled ? Options(server).CircuitBreaker : null,
         });
         await client.GetStringAsync("warm");
@@ -254,7 +254,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var source = Server();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1) },
         });
         var (sourceCircuit, _) = await Prepare(client, source);
@@ -398,7 +398,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var source = Server();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(5), MaxInflightCommands = 2,
             ClientSideCache = shape == "cache" ? new() : null,
         });
@@ -562,7 +562,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var source = Server();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
         await Prepare(client, source);
         var original = client.Core.Multiplexer.GetConnection();
@@ -581,7 +581,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         var (circuit, clock) = await Prepare(client, server);
         await client.GetStringAsync("cached");
@@ -814,7 +814,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var source = Server();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
         var (sourceCircuit, _) = await Prepare(client, source);
@@ -1007,7 +1007,7 @@ public partial class StandaloneCircuitDispatchTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromMilliseconds(200),
         CircuitBreaker = new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25, HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },
     };

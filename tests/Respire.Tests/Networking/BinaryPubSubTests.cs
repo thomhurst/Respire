@@ -64,18 +64,18 @@ public class BinaryPubSubTests
     }
 
     [Test]
-    [Arguments(false, SubscriptionKind.Channel)]
-    [Arguments(true, SubscriptionKind.Channel)]
-    [Arguments(false, SubscriptionKind.Pattern)]
-    [Arguments(true, SubscriptionKind.Pattern)]
-    [Arguments(false, SubscriptionKind.Sharded)]
-    [Arguments(true, SubscriptionKind.Sharded)]
-    public async Task RawTargetsAndMessagesSurviveFrameLifetime(bool push, SubscriptionKind kind)
+    [Arguments(false, RespireSubscriptionKind.Channel)]
+    [Arguments(true, RespireSubscriptionKind.Channel)]
+    [Arguments(false, RespireSubscriptionKind.Pattern)]
+    [Arguments(true, RespireSubscriptionKind.Pattern)]
+    [Arguments(false, RespireSubscriptionKind.Sharded)]
+    [Arguments(true, RespireSubscriptionKind.Sharded)]
+    public async Task RawTargetsAndMessagesSurviveFrameLifetime(bool push, RespireSubscriptionKind kind)
     {
         byte[] input = [0xff, 0, (byte)':', (byte)'{', (byte)'x', (byte)'}', (byte)'*'];
         var expected = input.ToArray();
         RespireChannel channel = new RespireChannel(input).WithKind(kind);
-        var verb = kind switch { SubscriptionKind.Pattern => "PSUBSCRIBE", SubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE" };
+        var verb = kind switch { RespireSubscriptionKind.Pattern => "PSUBSCRIBE", RespireSubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE" };
         await using var server = new FakeRespServer(Confirmation(verb.ToLowerInvariant(), expected));
         await using var client = CreateClient(server.Port);
         await using var subscription = await client.SubscribeAsync(channel);
@@ -84,11 +84,11 @@ public class BinaryPubSubTests
         await Assert.That(subscription.Targets[0].Bytes.Span.SequenceEqual(expected)).IsTrue();
         await Assert.That(subscription.Kind).IsEqualTo(kind);
 
-        byte[] concrete = kind == SubscriptionKind.Pattern ? [0xff, 0, (byte)':', (byte)'x'] : expected;
+        byte[] concrete = kind == RespireSubscriptionKind.Pattern ? [0xff, 0, (byte)':', (byte)'x'] : expected;
         byte[] payload = [0xfe, 0, 0xff];
-        var frame = kind == SubscriptionKind.Pattern
+        var frame = kind == RespireSubscriptionKind.Pattern
             ? Frame(push, "pmessage"u8.ToArray(), expected, concrete, payload)
-            : Frame(push, Encoding.ASCII.GetBytes(kind == SubscriptionKind.Sharded ? "smessage" : "message"), concrete, payload);
+            : Frame(push, Encoding.ASCII.GetBytes(kind == RespireSubscriptionKind.Sharded ? "smessage" : "message"), concrete, payload);
         await using var reader = subscription.GetAsyncEnumerator();
         await server.SendRawAsync(frame);
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
@@ -97,7 +97,7 @@ public class BinaryPubSubTests
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(retained.Channel.Bytes.Span.SequenceEqual(concrete)).IsTrue();
         await Assert.That(retained.Payload.Span.SequenceEqual(payload)).IsTrue();
-        if (kind == SubscriptionKind.Pattern)
+        if (kind == RespireSubscriptionKind.Pattern)
         {
             await Assert.That(retained.Pattern!.Value.Bytes.Span.SequenceEqual(expected)).IsTrue();
         }
@@ -161,7 +161,7 @@ public class BinaryPubSubTests
 
     private static RespireClient CreateClient(int port) => RespireClient.Create(new RespireOptions
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         Endpoints = { new RespireEndpoint("127.0.0.1", port) },
         Connections = 1,
     });

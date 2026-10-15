@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IServerCommands",
+      "Type": "Respire.IRespireServerCommands",
       "OwnerType": "Respire.ServerCommands",
       "Members": [
         "ClientsAsync(CancellationToken):ValueTask<RespireServerClientInfo[]>",
@@ -10,9 +10,9 @@
         "ConfigAsync(string,CancellationToken):ValueTask<Dictionary<string,string>>",
         "DatabaseSizeAsync(CancellationToken):ValueTask<long>",
         "FlushAllAsync(CancellationToken):ValueTask",
-        "FlushAllAsync(ServerFlushMode,CancellationToken):ValueTask",
+        "FlushAllAsync(RespireServerFlushMode,CancellationToken):ValueTask",
         "FlushDatabaseAsync(CancellationToken):ValueTask",
-        "FlushDatabaseAsync(ServerFlushMode,CancellationToken):ValueTask",
+        "FlushDatabaseAsync(RespireServerFlushMode,CancellationToken):ValueTask",
         "InfoAsync(string?,CancellationToken):ValueTask<string>",
         "KillClientAsync(long,bool,CancellationToken):ValueTask<bool>",
         "LastSaveAsync(CancellationToken):ValueTask<DateTimeOffset>",

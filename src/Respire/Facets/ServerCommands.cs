@@ -103,7 +103,7 @@ public sealed record RespireServerRole(
     string[] MonitoredMasters);
 
 /// <summary>Server administration and introspection commands.</summary>
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>The INFO text, optionally one section ("server", "memory", …). Redis: INFO.</summary>
     ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default);
@@ -116,14 +116,14 @@ public partial interface IServerCommands
 
     /// <summary>Deletes every key in the current database with an explicit reclamation mode. Requires AllowAdmin.</summary>
     /// <remarks>The token is required to preserve calls to FlushDatabaseAsync(default). Pass default when no cancellation is needed.</remarks>
-    ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken);
+    ValueTask FlushDatabaseAsync(RespireServerFlushMode mode, CancellationToken cancellationToken);
 
     /// <summary>Deletes every key in every database. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: FLUSHALL.</summary>
     ValueTask FlushAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Deletes every key in every database with an explicit reclamation mode. Requires AllowAdmin.</summary>
     /// <remarks>The token is required to preserve calls to FlushAllAsync(default). Pass default when no cancellation is needed.</remarks>
-    ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken);
+    ValueTask FlushAllAsync(RespireServerFlushMode mode, CancellationToken cancellationToken);
 
     /// <summary>The server's clock. Redis: TIME.</summary>
     ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default);
@@ -186,7 +186,7 @@ public partial interface IServerCommands
     ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class ServerCommands(RespireClient client) : IServerCommands
+internal sealed partial class ServerCommands(RespireClient client) : IRespireServerCommands
 {
     private static readonly ReadCommandKind DbSizeReadKind = CommandReadMetadata.Get("DBSIZE").Kind;
     public ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default)
@@ -216,10 +216,10 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
     }
 
     public ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default)
-        => FlushDatabaseAsync(ServerFlushMode.Default, cancellationToken);
+        => FlushDatabaseAsync(RespireServerFlushMode.Default, cancellationToken);
 
     public ValueTask FlushAllAsync(CancellationToken cancellationToken = default)
-        => FlushAllAsync(ServerFlushMode.Default, cancellationToken);
+        => FlushAllAsync(RespireServerFlushMode.Default, cancellationToken);
 
     public ValueTask<RespireServerClientInfo[]> ClientsAsync(CancellationToken cancellationToken = default)
     {
@@ -634,7 +634,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
     }
 
     private static RespireMemoryStatValue ParseMemoryValue(in RespValue value)
-        => value.Type is RespDataType.Array or RespDataType.Map
+        => value.Type is RespireDataType.Array or RespireDataType.Map
             ? new RespireMemoryStatValue(null, ParseMemoryMap(value.AsArray()))
             : new RespireMemoryStatValue(ReadScalarString(in value), null);
 
@@ -726,7 +726,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         var elements = value.AsArray();
         if (elements.Length == 0)
         {
-            return value.Type is RespDataType.Array or RespDataType.Set ? [] : [value.AsString()];
+            return value.Type is RespireDataType.Array or RespireDataType.Set ? [] : [value.AsString()];
         }
 
         var result = new string[elements.Length];
@@ -749,7 +749,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
 
     private static long ReadInt64(in RespValue value)
     {
-        if (value.Type == RespDataType.Integer)
+        if (value.Type == RespireDataType.Integer)
         {
             return value.AsInteger();
         }
@@ -778,10 +778,10 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
     private static string? ReadScalarString(in RespValue value)
         => value.Type switch
         {
-            RespDataType.Null => null,
-            RespDataType.Integer => value.AsInteger().ToString(CultureInfo.InvariantCulture),
-            RespDataType.Double => value.AsDouble().ToString(CultureInfo.InvariantCulture),
-            RespDataType.Boolean => value.AsBoolean() ? "true" : "false",
+            RespireDataType.Null => null,
+            RespireDataType.Integer => value.AsInteger().ToString(CultureInfo.InvariantCulture),
+            RespireDataType.Double => value.AsDouble().ToString(CultureInfo.InvariantCulture),
+            RespireDataType.Boolean => value.AsBoolean() ? "true" : "false",
             _ => value.AsString(),
         };
 

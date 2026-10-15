@@ -30,7 +30,7 @@ public sealed class Outbox(IRespireClient client)
     {
         // Redis 8.4: recover abandoned deliveries and read new entries in the same command.
         var entries = await client.Streams.ReadGroupOnceAsync(StreamKey, Group, consumer,
-            new StreamReadOptions { Count = 10, ClaimMinIdle = claimMinIdle },
+            new RespireStreamReadOptions { Count = 10, ClaimMinIdle = claimMinIdle },
             cancellationToken: cancellationToken).ConfigureAwait(false);
         foreach (var entry in entries)
         {

@@ -41,7 +41,7 @@ public class MGetRoutingTests
         };
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)],
             ClientSideCache = cacheMode == 0 ? null : new() { CoalesceConcurrentMisses = cacheMode == 2 },
         });
@@ -75,7 +75,7 @@ public class MGetRoutingTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,

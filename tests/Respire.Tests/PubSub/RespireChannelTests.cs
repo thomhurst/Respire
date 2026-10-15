@@ -20,7 +20,7 @@ public class RespireChannelTests
         await Assert.That(channel).IsEqualTo(bytes);
         await Assert.That(channel.GetHashCode()).IsEqualTo(bytes.GetHashCode());
         await Assert.That(channel.ClusterSlot).IsEqualTo(new RespireKey(text).ClusterSlot);
-        await Assert.That(channel.Kind).IsEqualTo(SubscriptionKind.Channel);
+        await Assert.That(channel.Kind).IsEqualTo(RespireSubscriptionKind.Channel);
         await Assert.That(channel.ToString()).IsEqualTo(text);
         await Assert.That(RespireChannel.Pattern(channel)).IsEqualTo(bytes);
     }
@@ -39,8 +39,8 @@ public class RespireChannelTests
         await Assert.That(channel == different).IsFalse();
         await Assert.That(channel.ToString()).IsEqualTo(different.ToString());
         await Assert.That(default(RespireChannel)).IsEqualTo((RespireChannel)"");
-        await Assert.That(RespireChannel.Sharded(channel).Kind).IsEqualTo(SubscriptionKind.Sharded);
-        await Assert.That(RespireChannel.Literal(RespireChannel.Pattern(channel)).Kind).IsEqualTo(SubscriptionKind.Channel);
+        await Assert.That(RespireChannel.Sharded(channel).Kind).IsEqualTo(RespireSubscriptionKind.Sharded);
+        await Assert.That(RespireChannel.Literal(RespireChannel.Pattern(channel)).Kind).IsEqualTo(RespireSubscriptionKind.Channel);
     }
 
     [Test]

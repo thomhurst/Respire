@@ -8,7 +8,7 @@ namespace Respire;
 /// <summary>Counts returned by WAITAOF, including when the requested acknowledgement level was not reached.</summary>
 /// <param name="Local">Whether the local server has fsynced the preceding writes: 0 or 1.</param>
 /// <param name="Replicas">The number of replicas that have fsynced the preceding writes.</param>
-public readonly record struct RespireAofAcknowledgement(long Local, long Replicas);
+public readonly record struct RespireAofAcknowledgementResult(long Local, long Replicas);
 
 public sealed partial class RespireBatch
 {
@@ -53,7 +53,7 @@ public sealed partial class RespireBatch
     /// The acknowledgement runs after all write replies, outside MULTI/EXEC. Unsupported servers can reject WAITAOF after
     /// the batch's writes have already completed. Scripts that suppress replication propagation are not supported by WAITAOF.
     /// </remarks>
-    public ValueTask<RespireAofAcknowledgement> ExecuteAndWaitForAofAsync(
+    public ValueTask<RespireAofAcknowledgementResult> ExecuteAndWaitForAofAsync(
         bool requireLocal, int replicas, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         try
@@ -68,7 +68,7 @@ public sealed partial class RespireBatch
                 var replicaCount = ResponseReader.Integer(in counts[1]);
                 if (local is < 0 or > 1 || replicaCount < 0)
                     throw new RespireProtocolException("WAITAOF returned invalid acknowledgement counts.");
-                return new RespireAofAcknowledgement(local, replicaCount);
+                return new RespireAofAcknowledgementResult(local, replicaCount);
             }, cancellationToken);
         }
         catch (Exception error)

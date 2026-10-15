@@ -71,7 +71,7 @@ public class RecipeIntegrationTests(VersionedServerFixture fixture)
         (await client.Streams.PendingSummaryAsync(Outbox.StreamKey, Outbox.Group)).Count.Should().Be(1);
 
         // Model a dead consumer's idle time without delaying the test.
-        await client.Streams.ClaimAsync(new StreamClaimOptions { IdleTime = TimeSpan.FromMinutes(1) },
+        await client.Streams.ClaimAsync(new RespireStreamClaimOptions { IdleTime = TimeSpan.FromMinutes(1) },
             Outbox.StreamKey, Outbox.Group, "crashed", TimeSpan.Zero, id);
         List<RespireStreamId> published = [];
         (await outbox.RelayPageAsync("replacement", TimeSpan.FromSeconds(30), (entry, _) =>

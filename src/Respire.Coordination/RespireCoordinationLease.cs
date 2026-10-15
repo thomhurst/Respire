@@ -14,7 +14,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     private readonly Lock _releaseSync = new();
     private LeaseSnapshot _snapshot;
     private int _state;
-    private Task<LockReleaseOutcome>? _releaseTask;
+    private Task<RespireLockReleaseOutcome>? _releaseTask;
     private int _releasePreviousState;
 
     private const int StateHeld = 0;
@@ -113,13 +113,13 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
     }
 
     /// <summary>Releases only this owner, leaving unrelated hash fields untouched. Each attempt has a two-second deadline.</summary>
-    public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireLockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_releaseSync)
         {
-            if (_state == StateReleased) return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
-            if (_state == StateNotOwned) return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
+            if (_state == StateReleased) return ValueTask.FromResult(RespireLockReleaseOutcome.AlreadyReleased);
+            if (_state == StateNotOwned) return ValueTask.FromResult(RespireLockReleaseOutcome.NotOwned);
             if (_state == StateReleasing)
             {
                 if (_releaseTask is null)
@@ -128,7 +128,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
                     _releaseTask = retryTask;
                     ObserveReleaseFailure(retryTask);
                 }
-                return new ValueTask<LockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
+                return new ValueTask<RespireLockReleaseOutcome>(_releaseTask!.WaitAsync(cancellationToken));
             }
             _releasePreviousState = _state;
             _state = StateReleasing;
@@ -136,7 +136,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             var releaseTask = ReleaseCoreAsync();
             _releaseTask = releaseTask;
             ObserveReleaseFailure(releaseTask);
-            return new ValueTask<LockReleaseOutcome>(releaseTask.WaitAsync(cancellationToken));
+            return new ValueTask<RespireLockReleaseOutcome>(releaseTask.WaitAsync(cancellationToken));
         }
     }
 
@@ -147,7 +147,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-    private async Task<LockReleaseOutcome> ReleaseCoreAsync()
+    private async Task<RespireLockReleaseOutcome> ReleaseCoreAsync()
     {
         var entered = false;
         var retryAfterGateRelease = false;
@@ -159,7 +159,7 @@ public sealed class RespireCoordinationLease : IAsyncDisposable
             var released = await _coordination.ReleaseHashFieldLeaseAsync(HashKey, Field, _owner, deadline.Token)
                 .ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
-            return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
+            return released ? RespireLockReleaseOutcome.Released : RespireLockReleaseOutcome.NotOwned;
         }
         catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
         {

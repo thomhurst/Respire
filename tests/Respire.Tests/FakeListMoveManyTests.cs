@@ -45,7 +45,7 @@ public class FakeListMoveManyTests
     public async Task CancellationAndTimeoutRemoveOnlyTheirOwnWaiters(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var cancelled = client.Lists.MoveManyAsync("same", "destination", waitFor: Timeout.InfiniteTimeSpan,
@@ -166,11 +166,11 @@ public class FakeListMoveManyTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Lists.RightPushAsync("s", "a", "b", "c");
         using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000)) { }
         await client.SetAsync("wrong", "text");
-        await Assert.That(await client.Lists.MoveManyAsync("s", "wrong", 4, countMode: ListMoveCountMode.Exactly)).IsNull();
+        await Assert.That(await client.Lists.MoveManyAsync("s", "wrong", 4, countMode: RespireListMoveCountMode.Exactly)).IsNull();
         await Assert.That(async () => await client.Lists.MoveManyAsync("s", "wrong", 2)).Throws<RespireServerException>();
         await Assert.That(await client.Lists.RangeAsync("s")).IsEquivalentTo(["a", "b", "c"], CollectionOrdering.Matching);
         await Assert.That(await client.Lists.MoveManyAsync("s", "s", 2, to: RespireListSide.Left))
@@ -189,11 +189,11 @@ public class FakeListMoveManyTests
     public async Task BlockingExactlyWakesOnGrowthAndCancellationReleasesWait(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol, Connections = 1 });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         using var observed = server.InjectFault("BLMOVEM", RespireFakeFault.Delay(TimeSpan.Zero));
-        var move = client.Lists.MoveManyAsync("s", "d", count: 2, countMode: ListMoveCountMode.Exactly,
+        var move = client.Lists.MoveManyAsync("s", "d", count: 2, countMode: RespireListMoveCountMode.Exactly,
             waitFor: Timeout.InfiniteTimeSpan, cancellationToken: cancel.Token).AsTask();
         await observed.Matched.WaitAsync(deadline.Token);
         await client.Lists.RightPushAsync("s", ["a"], deadline.Token);
@@ -218,7 +218,7 @@ public class FakeListMoveManyTests
     public async Task MoveUsesDestinationOrderAndPreservesUnmovedElements(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Lists.RightPushAsync("source", "a", "b", "c");
         await client.Lists.RightPushAsync("destination", "x");
         using var moved = await client.ExecuteAsync("LMOVEM", "source", "destination", "LEFT", "LEFT", "COUNT", 2, "OBO");

@@ -74,13 +74,13 @@ public class SearchClientTests
                 ? "*2\r\n:1\r\n*2\r\n$5\r\nitems\r\n*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"u8.ToArray()
                 : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"));
         var values = result.StructuredRows[0]["items"];
 
-        await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(values.Type).IsEqualTo(RespireDataType.Array);
         await Assert.That(values.Items.Select(value => value.Scalar!).ToArray()).IsEquivalentTo(["foo", "bar"], CollectionOrdering.Matching);
     }
 
@@ -101,7 +101,7 @@ public class SearchClientTests
         var result = await search.AggregateAsync("idx", RespireSearchExpression.FromRaw("*"));
         var values = result.StructuredRows[0]["items"];
 
-        await Assert.That(values.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(values.Type).IsEqualTo(RespireDataType.Array);
         await Assert.That(values.Items.Select(value => value.Scalar!).ToArray()).IsEquivalentTo(["foo", "bar"], CollectionOrdering.Matching);
     }
 
@@ -196,17 +196,17 @@ public class SearchClientTests
     [Test]
     public async Task AggregateWithCursorSendsCursorOptionsAndParsesPages()
     {
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
         {
             await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
             {
                 ReplyOverride = (_, command) => command switch
                 {
                     "HELLO 3" => Hello,
-                    _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
+                    _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) => protocol == RespireProtocol.Resp2
                         ? "*2\r\n*2\r\n:1\r\n*2\r\n$1\r\nn\r\n$1\r\n1\r\n:42\r\n"u8.ToArray()
                         : "*2\r\n%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%2\r\n$16\r\nextra_attributes\r\n%1\r\n$1\r\nn\r\n$1\r\n1\r\n$6\r\nvalues\r\n*0\r\n:42\r\n"u8.ToArray(),
-                    "FT.CURSOR READ idx 42 COUNT 2" => protocol == RespProtocol.Resp2
+                    "FT.CURSOR READ idx 42 COUNT 2" => protocol == RespireProtocol.Resp2
                         ? "*2\r\n*2\r\n:1\r\n*2\r\n$1\r\nn\r\n$1\r\n2\r\n:0\r\n"u8.ToArray()
                         : "*2\r\n%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$16\r\nextra_attributes\r\n%1\r\n$1\r\nn\r\n$1\r\n2\r\n:0\r\n"u8.ToArray(),
                     "FT.CURSOR DEL idx 7" => FakeRespServer.OkReply,
@@ -265,7 +265,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var values = new List<string?>();
@@ -290,7 +290,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         await foreach (var _ in search.AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*"), cursor: new() { Count = 1 }))
@@ -315,7 +315,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
         var pages = 0;
 
@@ -346,7 +346,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.AggregateWithCursorAsync("idx", RespireSearchExpression.FromRaw("*"))).Throws<InvalidOperationException>();
@@ -374,7 +374,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var first = await search.AggregateWithCursorAsync("books", RespireSearchExpression.FromRaw("*"));
@@ -412,7 +412,7 @@ public class SearchClientTests
             : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -442,7 +442,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var exception = await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -464,7 +464,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -483,7 +483,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -502,7 +502,7 @@ public class SearchClientTests
                 _ => null,
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         for (var attempt = 0; attempt < 2; attempt++)
@@ -523,7 +523,7 @@ public class SearchClientTests
                 ? "-NOPERM this user has no permissions to run the 'ft.hybrid' command\r\n"u8.ToArray()
                 : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)))
@@ -686,7 +686,7 @@ public class SearchClientTests
                 ? "*3\r\n:1\r\n$3\r\ndoc\r\n*2\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n"u8.ToArray()
                 : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("query"), new() { Limit = (0, 1) }));
@@ -705,7 +705,7 @@ public class SearchClientTests
                 ? "*3\r\n:1\r\n$3\r\ndoc\r\n*3\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$4\r\nlost\r\n"u8.ToArray()
                 : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         await Assert.That(async () => await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")))).Throws<InvalidOperationException>();
@@ -720,7 +720,7 @@ public class SearchClientTests
                 ? Hello
                 : [.. "*3\r\n:1\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n*2\r\n$6\r\nvector\r\n$4\r\n"u8, 0, 255, 128, 1, .. "\r\n"u8],
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var result = await search.SearchAsync("idx", new(RespireSearchExpression.FromRaw("*")));
@@ -750,14 +750,14 @@ public class SearchClientTests
     [Test]
     public async Task HybridSearchPreservesBinaryDocumentKey()
     {
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
         {
             await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
             {
                 ReplyOverride = (_, command) => command switch
                 {
                     "HELLO 3" => Hello,
-                    _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
+                    _ when command.StartsWith("FT.HYBRID", StringComparison.Ordinal) => protocol == RespireProtocol.Resp2
                         ? [.. "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*2\r\n$5\r\n__key\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n"u8]
                         : [.. "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%1\r\n$5\r\n__key\r\n$3\r\n"u8, 0, 255, 128, .. "\r\n"u8],
                     _ => null,
@@ -804,7 +804,7 @@ public class SearchClientTests
                 ? "*8\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*4\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$8\r\nwarnings\r\n*1\r\n$4\r\nslow\r\n$14\r\nexecution_time\r\n$3\r\n0.1\r\n"u8.ToArray()
                 : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:$term"), "embedding", new byte[] { 1, 2 }, 3)
@@ -968,7 +968,7 @@ public class SearchClientTests
                 ? "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*8\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$7\r\n__score\r\n$3\r\n0.5\r\n$2\r\nid\r\n$5\r\nother\r\n$5\r\nscore\r\n$4\r\nhigh\r\n"u8.ToArray()
                 : null,
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, RespProtocol.Resp2));
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireProtocol.Resp2));
         var search = new RespireSearchClient(client);
 
         var result = await search.HybridSearchAsync("idx", new(RespireSearchExpression.FromRaw("title:foo"), "embedding", new byte[] { 1, 2 }, 3)
@@ -986,14 +986,14 @@ public class SearchClientTests
     [Test]
     public async Task HybridSearchPreservesLoadedExtraAttributesField()
     {
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
         {
             await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
             {
                 ReplyOverride = (_, command) => command switch
                 {
                     "HELLO 3" => Hello,
-                    _ when command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal) => protocol == RespProtocol.Resp2
+                    _ when command.StartsWith("FT.HYBRID idx", StringComparison.Ordinal) => protocol == RespireProtocol.Resp2
                         ? "*4\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n*6\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray()
                         : "%2\r\n$13\r\ntotal_results\r\n:1\r\n$7\r\nresults\r\n*1\r\n%3\r\n$5\r\n__key\r\n$3\r\ndoc\r\n$5\r\ntitle\r\n$3\r\nfoo\r\n$16\r\nextra_attributes\r\n$6\r\ncustom\r\n"u8.ToArray(),
                     _ => null,
@@ -1083,14 +1083,14 @@ public class SearchClientTests
     [Test]
     public async Task IndexInfoParsesResp2AndResp3Replies()
     {
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
         {
             await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
             {
                 ReplyOverride = (_, command) => command switch
                 {
                     "HELLO 3" => Hello,
-                    "FT.INFO idx" => protocol == RespProtocol.Resp2
+                    "FT.INFO idx" => protocol == RespireProtocol.Resp2
                         ? "*6\r\n$10\r\nindex_name\r\n$3\r\nidx\r\n$10\r\nattributes\r\n*1\r\n*9\r\n$10\r\nidentifier\r\n$5\r\ntitle\r\n$9\r\nattribute\r\n$5\r\ntitle\r\n$4\r\ntype\r\n$4\r\nTEXT\r\n$6\r\nWEIGHT\r\n$1\r\n1\r\n$8\r\nSORTABLE\r\n$8\r\nnum_docs\r\n$1\r\n5\r\n"u8.ToArray()
                         : "%3\r\n$10\r\nindex_name\r\n$3\r\nidx\r\n$10\r\nattributes\r\n*1\r\n%5\r\n$10\r\nidentifier\r\n$5\r\ntitle\r\n$9\r\nattribute\r\n$5\r\ntitle\r\n$4\r\ntype\r\n$4\r\nTEXT\r\n$6\r\nWEIGHT\r\n,1\r\n$5\r\nflags\r\n*1\r\n$8\r\nSORTABLE\r\n$8\r\nnum_docs\r\n:5\r\n"u8.ToArray(),
                     _ => null,
@@ -1136,7 +1136,7 @@ public class SearchClientTests
                 return true;
             },
         };
-        await using var client = await RespireClient.ConnectAsync(Options(server, (RespProtocol)protocol));
+        await using var client = await RespireClient.ConnectAsync(Options(server, (RespireProtocol)protocol));
         var search = new RespireSearchClient(client);
         using var cancellation = new CancellationTokenSource();
         var all = RespireSearchExpression.FromRaw("*");
@@ -1159,7 +1159,7 @@ public class SearchClientTests
     private static string[] LastArguments(FakeRespServer server)
         => server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString).ToArray();
 
-    private static RespireOptions Options(FakeRespServer server, RespProtocol protocol = RespProtocol.Resp3) => new()
+    private static RespireOptions Options(FakeRespServer server, RespireProtocol protocol = RespireProtocol.Resp3) => new()
     {
         Endpoints = { new("127.0.0.1", server.Port) },
         Protocol = protocol,

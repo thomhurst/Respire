@@ -8,9 +8,9 @@ namespace Respire;
 /// Each command affects only its execution node. Cluster batches route keyless flushes to one
 /// discovered primary; transactions use their selected node. Neither form fans out or makes a
 /// Cluster-wide operation atomic. Keyless batch commands form a separate group, so their order
-/// relative to keyed commands is not guaranteed. Use IServerCommands for immediate flush fan-out.
+/// relative to keyed commands is not guaranteed. Use IRespireServerCommands for immediate flush fan-out.
 /// </remarks>
-public interface IBatchServerCommands
+public interface IRespireBatchServerCommands
 {
     /// <summary>Queues CLIENT LIST on the execution node, with owned typed results.</summary>
     /// <remarks>IDs and filters refer only to that node. Keyless batches do not pin a previously observed endpoint.</remarks>
@@ -21,13 +21,13 @@ public interface IBatchServerCommands
     RespirePending<long> KillClients(RespireClientFilterOptions options);
 
     /// <summary>Queues FLUSHDB on the execution node. Returns true for OK.</summary>
-    RespirePending<bool> FlushDatabase(ServerFlushMode mode = ServerFlushMode.Default);
+    RespirePending<bool> FlushDatabase(RespireServerFlushMode mode = RespireServerFlushMode.Default);
 
     /// <summary>Queues FLUSHALL on the execution node. Returns true for OK.</summary>
-    RespirePending<bool> FlushAll(ServerFlushMode mode = ServerFlushMode.Default);
+    RespirePending<bool> FlushAll(RespireServerFlushMode mode = RespireServerFlushMode.Default);
 }
 
-internal sealed class BatchServerCommands(IPendingSink sink) : IBatchServerCommands
+internal sealed class BatchServerCommands(IPendingSink sink) : IRespireBatchServerCommands
 {
     public RespirePending<RespireServerClientInfo[]> Clients(RespireClientFilterOptions options)
         => sink.Add<CmdN, RespireServerClientInfo[]>("CLIENT LIST", ClientFilterArguments.Build(options, false),
@@ -40,13 +40,13 @@ internal sealed class BatchServerCommands(IPendingSink sink) : IBatchServerComma
             static (_, value) => value.AsInteger());
     }
 
-    public RespirePending<bool> FlushDatabase(ServerFlushMode mode = ServerFlushMode.Default)
+    public RespirePending<bool> FlushDatabase(RespireServerFlushMode mode = RespireServerFlushMode.Default)
         => Flush("FLUSHDB", false, mode);
 
-    public RespirePending<bool> FlushAll(ServerFlushMode mode = ServerFlushMode.Default)
+    public RespirePending<bool> FlushAll(RespireServerFlushMode mode = RespireServerFlushMode.Default)
         => Flush("FLUSHALL", true, mode);
 
-    private RespirePending<bool> Flush(string operation, bool allDatabases, ServerFlushMode mode)
+    private RespirePending<bool> Flush(string operation, bool allDatabases, RespireServerFlushMode mode)
     {
         var verb = ServerCommands.FlushVerb(allDatabases, mode);
         ServerCommands.EnsureAdminAllowed(sink.Client, operation);

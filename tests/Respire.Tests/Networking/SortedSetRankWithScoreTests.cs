@@ -25,7 +25,7 @@ public class SortedSetRankWithScoreTests
         await using var server = new FakeRespServer(frames.Select(Encoding.UTF8.GetBytes).ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
-        SortedSetRank? first, last, absent;
+        RespireSortedSetRankResult? first, last, absent;
         if (mode == "immediate")
         {
             first = await view.SortedSets.RankWithScoreAsync("key", "member");
@@ -44,8 +44,8 @@ public class SortedSetRankWithScoreTests
             else await transaction.CommitAsync();
             (first, last, absent) = (a.Result, d.Result, n.Result);
         }
-        await Assert.That(first).IsEqualTo(new SortedSetRank(2, 2.5));
-        await Assert.That(last).IsEqualTo(new SortedSetRank(0, 2.5));
+        await Assert.That(first).IsEqualTo(new RespireSortedSetRankResult(2, 2.5));
+        await Assert.That(last).IsEqualTo(new RespireSortedSetRankResult(0, 2.5));
         await Assert.That(absent).IsNull();
         await Assert.That(server.ReceivedCommands.Where(c => c.StartsWith("ZR")).SequenceEqual(
             ["ZRANK tenant:key member WITHSCORE", "ZREVRANK tenant:key member WITHSCORE", "ZRANK tenant:key missing WITHSCORE"])).IsTrue();
@@ -65,7 +65,7 @@ public class SortedSetRankWithScoreTests
         foreach (var value in malformed)
             await Assert.That(() => SortedSetCommands.ParseRankWithScore(value)).Throws<RespireProtocolException>();
         var infinity = RespValue.Array(RespValue.Integer(0), RespValue.BulkString("inf"));
-        await Assert.That(SortedSetCommands.ParseRankWithScore(infinity)).IsEqualTo(new SortedSetRank(0, double.PositiveInfinity));
+        await Assert.That(SortedSetCommands.ParseRankWithScore(infinity)).IsEqualTo(new RespireSortedSetRankResult(0, double.PositiveInfinity));
     }
 
     [Test]

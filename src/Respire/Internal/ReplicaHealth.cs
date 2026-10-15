@@ -80,12 +80,12 @@ internal sealed class ReplicaHealth<TConnection> where TConnection : class
     internal static bool IsReplica(in RespValue role, out bool linkUp)
     {
         linkUp = false;
-        if (role.Type != RespDataType.Array) return false;
+        if (role.Type != RespireDataType.Array) return false;
         var fields = role.AsArray();
-        if (fields.IsEmpty || fields[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+        if (fields.IsEmpty || fields[0].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return false;
         if (fields[0].AsString() is not ("slave" or "replica")) return false;
         linkUp = fields.Length >= 4
-            && fields[3].Type is (RespDataType.BulkString or RespDataType.SimpleString)
+            && fields[3].Type is (RespireDataType.BulkString or RespireDataType.SimpleString)
             && fields[3].AsString() == "connected";
         return true;
     }

@@ -21,8 +21,8 @@ public class FunctionClusterTests
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
         await Assert.That(await client.Functions.LoadAsync("source", true)).IsEqualTo("sample");
         await client.Functions.DeleteAsync("sample");
-        await client.Functions.RestoreAsync("binary"u8.ToArray(), FunctionRestorePolicy.Replace);
-        await client.Functions.FlushAsync(FunctionFlushMode.Async);
+        await client.Functions.RestoreAsync("binary"u8.ToArray(), RespireFunctionRestorePolicy.Replace);
+        await client.Functions.FlushAsync(RespireFunctionFlushMode.Async);
         await Assert.That(first.ReceivedCommands).IsEquivalentTo([
             "FUNCTION LOAD REPLACE source", "FUNCTION DELETE sample", "FUNCTION RESTORE binary REPLACE", "FUNCTION FLUSH ASYNC"]);
         await Assert.That(second.ReceivedCommands).IsEquivalentTo(first.ReceivedCommands);
@@ -298,7 +298,7 @@ public class FunctionClusterTests
 
     private static RespireOptions Options(int seedPort) => new()
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         UseCluster = true, Endpoints = { new RespireEndpoint("127.0.0.1", seedPort) }, Connections = 1
     };
     private static byte[] Topology(int first, int second) => Encoding.ASCII.GetBytes(

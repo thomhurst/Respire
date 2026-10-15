@@ -25,13 +25,13 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
     [Arguments(3)]
     public async Task ConfiguredRetentionEventuallyExpiresIdentities(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"configuration-expiry:{Guid.NewGuid():N}";
         try
         {
             await client.Streams.AddAsync(key, ("f", "seed"));
             await client.Streams.ConfigureAsync(key, new() { IdempotencyDurationSeconds = 1 });
-            var options = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("producer", "message") };
+            var options = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("producer", "message") };
             var first = await client.Streams.AddAsync(key, options, ("f", "v"));
             (await client.Streams.AddAsync(key, options, ("f", "duplicate"))).Should().Be(first);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -53,10 +53,10 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(
-            (fake ? server.CreateOptions() : RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol });
+            (fake ? server.CreateOptions() : RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"configuration:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
-        var identity = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 }) };
+        var identity = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 }) };
         try
         {
             var first = await view.Streams.AddAsync("s", identity, ("f", "first"));
@@ -69,7 +69,7 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
             var reset = await view.Streams.AddAsync("s", identity, ("f", "reset"));
             reset.Should().NotBe(changed);
             (await view.Streams.AddAsync("s", identity, ("f", "duplicate"))).Should().Be(reset);
-            await view.Streams.AddAsync("s", identity with { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255 }, "other") }, ("f", "evict"));
+            await view.Streams.AddAsync("s", identity with { Idempotency = RespireStreamIdempotency.Manual(new byte[] { 0, 255 }, "other") }, ("f", "evict"));
             (await view.Streams.AddAsync("s", identity, ("f", "evicted"))).Should().NotBe(reset);
             (await view.Streams.CountAsync("s")).Should().Be(5);
             if (!fake)
@@ -97,7 +97,7 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
         throw new InvalidOperationException($"Missing XINFO field {name}.");
     }
 
-    private static async Task Configure(IRespireClient client, int surface, StreamConfigurationOptions options, string key = "s")
+    private static async Task Configure(IRespireClient client, int surface, RespireStreamConfigurationOptions options, string key = "s")
     {
         if (surface == 0) { (await client.Streams.ConfigureAsync(key, options)).Should().BeTrue(); return; }
         using var batch = surface == 1 ? client.CreateBatch() : null;

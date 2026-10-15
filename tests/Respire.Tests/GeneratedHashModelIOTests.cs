@@ -9,9 +9,9 @@ namespace Respire.Tests;
 public class GeneratedHashModelIOTests
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task FakeRoundTrips(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task FakeRoundTrips(RespireProtocol protocol)
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });

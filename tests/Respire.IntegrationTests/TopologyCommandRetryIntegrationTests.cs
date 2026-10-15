@@ -188,13 +188,13 @@ public class TopologyCommandRetryIntegrationTests
 
     private static RespireOptions DirectOptions(RespireEndpoint endpoint) => new()
     {
-        Endpoints = [endpoint], Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+        Endpoints = [endpoint], Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
         Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30), ConnectTimeout = TimeSpan.FromSeconds(2),
     };
 
     private static RespireOptions WithFault(RespireOptions options, LostReply fault) => options with
     {
-        Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30),
+        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30),
         TestingStreamFactory = async (host, port, token) =>
         {
             if (Volatile.Read(ref fault.Dropped) != 0 && fault.BeforeDrop is not null)

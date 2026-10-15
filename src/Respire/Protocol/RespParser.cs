@@ -144,7 +144,7 @@ internal static class RespParser
             }
 
             var priorPayloadBytes = context.DeferredPayloadBytes;
-            var attrStatus = TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true,
+            var attrStatus = TryParseAggregate(buffer, ref cursor, RespireDataType.Map, pairCount: true,
                 out var attribute, context, progressOwner: null);
             if (attrStatus != RespParseStatus.Done)
             {
@@ -176,7 +176,7 @@ internal static class RespParser
     /// <paramref name="pos"/> without consuming it.
     /// </summary>
     internal static bool TryPeekBulkHeader(
-        ReadOnlySpan<byte> buffer, int pos, out RespDataType type, out long payloadLength, out int headerEnd)
+        ReadOnlySpan<byte> buffer, int pos, out RespireDataType type, out long payloadLength, out int headerEnd)
     {
         type = default;
         payloadLength = 0;
@@ -201,9 +201,9 @@ internal static class RespParser
 
         type = typeByte switch
         {
-            (byte)'$' => RespDataType.BulkString,
-            (byte)'=' => RespDataType.VerbatimString,
-            _ => RespDataType.BulkError,
+            (byte)'$' => RespireDataType.BulkString,
+            (byte)'=' => RespireDataType.VerbatimString,
+            _ => RespireDataType.BulkError,
         };
         headerEnd = cursor;
         return true;
@@ -217,14 +217,14 @@ internal static class RespParser
     internal static RespParseStatus TryParseBulkValue(
         ReadOnlySpan<byte> buffer,
         ref int pos,
-        RespDataType type,
+        RespireDataType type,
         long payloadLength,
         int headerEnd,
         out RespValue value)
         => TryParseBulkValue(buffer, ref pos, type, payloadLength, headerEnd, out value, ParseContext.ImmediateCopy);
 
     private static RespParseStatus TryParseBulkValue(
-        ReadOnlySpan<byte> buffer, ref int pos, RespDataType type, long payloadLength, int headerEnd,
+        ReadOnlySpan<byte> buffer, ref int pos, RespireDataType type, long payloadLength, int headerEnd,
         out RespValue value, ParseContext context)
     {
         value = default;
@@ -270,11 +270,11 @@ internal static class RespParser
         switch (typeByte)
         {
             case (byte)'+':
-                return TryParseLineString(buffer, ref cursor, RespDataType.SimpleString, out value, context);
+                return TryParseLineString(buffer, ref cursor, RespireDataType.SimpleString, out value, context);
             case (byte)'-':
-                return TryParseLineString(buffer, ref cursor, RespDataType.Error, out value, context);
+                return TryParseLineString(buffer, ref cursor, RespireDataType.Error, out value, context);
             case (byte)'(':
-                return TryParseLineString(buffer, ref cursor, RespDataType.BigNumber, out value, context);
+                return TryParseLineString(buffer, ref cursor, RespireDataType.BigNumber, out value, context);
             case (byte)':':
                 return TryParseInteger(buffer, ref cursor, out value);
             case (byte)'#':
@@ -284,11 +284,11 @@ internal static class RespParser
             case (byte)'_':
                 return TryParseNull(buffer, ref cursor, out value);
             case (byte)'$':
-                return TryParseBulk(buffer, ref cursor, RespDataType.BulkString, out value, context);
+                return TryParseBulk(buffer, ref cursor, RespireDataType.BulkString, out value, context);
             case (byte)'=':
-                return TryParseBulk(buffer, ref cursor, RespDataType.VerbatimString, out value, context);
+                return TryParseBulk(buffer, ref cursor, RespireDataType.VerbatimString, out value, context);
             case (byte)'!':
-                return TryParseBulk(buffer, ref cursor, RespDataType.BulkError, out value, context);
+                return TryParseBulk(buffer, ref cursor, RespireDataType.BulkError, out value, context);
             default:
                 return RespParseStatus.InvalidData;
         }
@@ -301,13 +301,13 @@ internal static class RespParser
         switch (buffer[cursor])
         {
             case (byte)'*':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Array, pairCount: false, out value, context, progressOwner);
+                return TryParseAggregate(buffer, ref cursor, RespireDataType.Array, pairCount: false, out value, context, progressOwner);
             case (byte)'~':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Set, pairCount: false, out value, context, progressOwner);
+                return TryParseAggregate(buffer, ref cursor, RespireDataType.Set, pairCount: false, out value, context, progressOwner);
             case (byte)'>':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Push, pairCount: false, out value, context, progressOwner);
+                return TryParseAggregate(buffer, ref cursor, RespireDataType.Push, pairCount: false, out value, context, progressOwner);
             case (byte)'%':
-                return TryParseAggregate(buffer, ref cursor, RespDataType.Map, pairCount: true, out value, context, progressOwner);
+                return TryParseAggregate(buffer, ref cursor, RespireDataType.Map, pairCount: true, out value, context, progressOwner);
             case (byte)'|':
                 return TryParseValue(buffer, ref cursor, out value, context, progressOwner, out _);
             default:
@@ -316,7 +316,7 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseLineString(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value, ParseContext context)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespireDataType type, out RespValue value, ParseContext context)
     {
         value = default;
         var pos = cursor + 1;
@@ -414,7 +414,7 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseBulk(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value, ParseContext context)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespireDataType type, out RespValue value, ParseContext context)
     {
         value = default;
         var pos = cursor + 1;
@@ -428,7 +428,7 @@ internal static class RespParser
     }
 
     private static RespParseStatus TryParseAggregate(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, bool pairCount, out RespValue value,
+        ReadOnlySpan<byte> buffer, ref int cursor, RespireDataType type, bool pairCount, out RespValue value,
         ParseContext context, RespParseState? progressOwner)
     {
         value = default;
@@ -505,7 +505,7 @@ internal static class RespParser
     // The owner travels only through aggregate recursion, never scalar/payload contexts.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ReleaseIncompleteAggregate(
-        ReadOnlySpan<byte> buffer, ref int cursor, int pos, RespDataType type, int count, int depth,
+        ReadOnlySpan<byte> buffer, ref int cursor, int pos, RespireDataType type, int count, int depth,
         RespValue[] elements, int completedCount, RespParseStatus status, RespParseState? progressOwner)
     {
         try
@@ -532,11 +532,11 @@ internal static class RespParser
     private static readonly ReadOnlyMemory<byte> InternedPong = "PONG"u8.ToArray();
     private static readonly ReadOnlyMemory<byte> InternedQueued = "QUEUED"u8.ToArray();
 
-    private static RespValue CreatePayload(RespDataType type, ReadOnlySpan<byte> buffer, int offset, int length, ParseContext context)
+    private static RespValue CreatePayload(RespireDataType type, ReadOnlySpan<byte> buffer, int offset, int length, ParseContext context)
     {
         if (!context.DeferPayloads || length == 0)
             return CopyToPooled(type, buffer.Slice(offset, length));
-        if (type == RespDataType.SimpleString && TryGetInternedSimpleString(buffer.Slice(offset, length), out var interned))
+        if (type == RespireDataType.SimpleString && TryGetInternedSimpleString(buffer.Slice(offset, length), out var interned))
             return RespValue.SimpleString(interned);
         // Empty and interned strings are already materialized, so positive bytes also
         // indicate whether the root has any deferred payloads to copy.
@@ -544,7 +544,7 @@ internal static class RespParser
         return RespValue.DeferredString(type, offset, length);
     }
 
-    internal static RespValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
+    internal static RespValue CopyToPooled(RespireDataType type, ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty)
         {
@@ -553,7 +553,7 @@ internal static class RespParser
 
         // The constant replies that dominate write-heavy traffic (+OK, +PONG, +QUEUED) are
         // interned: no pooled rent on this thread + return on the caller's thread per reply.
-        if (type == RespDataType.SimpleString && TryGetInternedSimpleString(payload, out var interned))
+        if (type == RespireDataType.SimpleString && TryGetInternedSimpleString(payload, out var interned))
             return RespValue.SimpleString(interned);
 
         var array = RespirePools.ResponsePayloads.Rent(payload.Length);

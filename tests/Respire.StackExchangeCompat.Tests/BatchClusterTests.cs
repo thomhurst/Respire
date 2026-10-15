@@ -25,7 +25,7 @@ public class BatchClusterTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
             Connections = 1,

@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchStringCommands",
+      "Type": "Respire.IRespireBatchStringCommands",
       "OwnerType": "Respire.BatchStringCommands",
       "Members": [
         "LcsIndex(RespireKey,RespireKey,RespireLcsOptions?):RespirePending<RespireLcsIndexResult>"

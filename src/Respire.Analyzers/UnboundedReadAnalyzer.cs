@@ -42,23 +42,23 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
                 command = "KEYS";
                 alternative = "SCAN (Keys.ScanAsync)";
                 break;
-            case "ISetCommands" or "SetCommands" or "IBatchSetCommands" or "BatchSetCommands"
+            case "IRespireSetCommands" or "SetCommands" or "IRespireBatchSetCommands" or "BatchSetCommands"
                 when name is "MembersAsync" or "Members":
                 command = "SMEMBERS";
                 alternative = "SSCAN (Sets.ScanAsync)";
                 break;
-            case "IHashCommands" or "HashCommands" or "IBatchHashCommands" or "BatchHashCommands"
+            case "IRespireHashCommands" or "HashCommands" or "IRespireBatchHashCommands" or "BatchHashCommands"
                 when name is "GetAllAsync" or "GetAll":
                 command = "HGETALL";
                 alternative = "HSCAN (Hashes.ScanAsync)";
                 break;
-            case "IListCommands" or "ListCommands" or "IBatchListCommands" or "BatchListCommands"
+            case "IRespireListCommands" or "ListCommands" or "IRespireBatchListCommands" or "BatchListCommands"
                 when name is "RangeAsync" or "Range":
                 if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
                 command = "LRANGE 0 -1";
                 alternative = "bounded LRANGE pages";
                 break;
-            case "ISortedSetCommands" or "SortedSetCommands" or "IBatchSortedSetCommands" or "BatchSortedSetCommands"
+            case "IRespireSortedSetCommands" or "SortedSetCommands" or "IRespireBatchSortedSetCommands" or "BatchSortedSetCommands"
                 when name is "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores":
                 if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
                 command = "ZRANGE 0 -1";

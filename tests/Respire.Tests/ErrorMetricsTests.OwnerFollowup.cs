@@ -27,7 +27,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         });
@@ -209,7 +209,7 @@ public partial class ErrorMetricsTests
             : "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
         });
@@ -234,7 +234,7 @@ public partial class ErrorMetricsTests
             ? "-WRONGTYPE terminal\r\n"u8.ToArray() : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", alternative ? replica.Port : primary.Port)],
             ReadFrom = alternative ? RespireReadFrom.ReplicaPreferred : RespireReadFrom.PrimaryPreferred,
@@ -271,7 +271,7 @@ public partial class ErrorMetricsTests
             { SuppressReply = command => command == "GET key" };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(1), MaximumExtraLoadPercent = 100 },

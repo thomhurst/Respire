@@ -198,7 +198,7 @@ public class DispatchResponseObservationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -241,7 +241,7 @@ public class DispatchResponseObservationTests
         await using var target = new FakeRespServer(FakeRespServer.OkReply) { ReplyOverride = Reply };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(15), Endpoints = [new("127.0.0.1", origin.Port)],
         });
         var connection = client.Core.Multiplexer.GetConnection();
@@ -546,7 +546,7 @@ public class DispatchResponseObservationTests
         await using var server = new FakeRespServer(1, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var capture = new Capture();
@@ -581,7 +581,7 @@ public class DispatchResponseObservationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));

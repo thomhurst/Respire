@@ -43,14 +43,14 @@ public class TransportAcceptanceBenchmarks
         _multiplexer = await RespireConnectionMultiplexer.CreateAsync(host, port, Connections);
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = Connections,
             Endpoints = { new RespireEndpoint(host, port) },
             ThreadPoolMonitoring = false,
         });
         _circuitClient = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = Connections,
             Endpoints = { new RespireEndpoint(host, port) },
             ThreadPoolMonitoring = false,

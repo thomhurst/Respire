@@ -27,7 +27,7 @@ public class ClusterReplicaRoutingAllocationTests
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             UseCluster = true,
             Endpoints = [new("127.0.0.1", primary.Port)],

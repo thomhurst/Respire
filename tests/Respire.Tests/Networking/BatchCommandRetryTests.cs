@@ -172,7 +172,7 @@ public class BatchCommandRetryTests
         }
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero,
                 MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
         });
@@ -395,7 +395,7 @@ public class BatchCommandRetryTests
             return false;
         };
         await using var client = await RespireClient.ConnectAsync(Options(server) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         using var caller = new CancellationTokenSource();
         using var firstBatch = client.CreateBatch();
         var write = firstBatch.Set("key", "first");
@@ -630,7 +630,7 @@ public class BatchCommandRetryTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };

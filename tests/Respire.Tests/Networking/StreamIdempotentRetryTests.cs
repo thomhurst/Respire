@@ -138,8 +138,8 @@ public class StreamIdempotentRetryTests
         await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked));
 
         await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "5-0" }, ("f", "v"));
-        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("mine", "m-1") }, ("f", "v"));
-        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = StreamIdempotency.Automatic("mine") }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("mine", "m-1") }, ("f", "v"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Automatic("mine") }, ("f", "v"));
 
         var adds = XAdds(server).Select(add => add.Select(Encoding.ASCII.GetString).ToArray()).ToArray();
         await Assert.That(adds[0]).IsEquivalentTo(new[] { "XADD", "s", "5-0", "f", "v" });
@@ -312,7 +312,7 @@ public class StreamIdempotentRetryTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandRetryCategory maximum) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1,
         CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
     };

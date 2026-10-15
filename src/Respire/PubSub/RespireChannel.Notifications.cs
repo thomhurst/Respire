@@ -96,7 +96,7 @@ public readonly partial struct RespireChannel
         var bytes = new byte[checked(header.Length + tail.Length)];
         header.CopyTo(bytes, 0);
         tail.CopyTo(bytes.AsSpan(header.Length));
-        return new(bytes, pattern ? SubscriptionKind.Pattern : SubscriptionKind.Channel,
+        return new(bytes, pattern ? RespireSubscriptionKind.Pattern : RespireSubscriptionKind.Channel,
             slot is null ? RespireChannelRoutingScope.AllPrimaries : RespireChannelRoutingScope.KeyOwner, database, slot);
     }
     private static byte[] Join(ReadOnlySpan<byte> first, byte separator, ReadOnlySpan<byte> second)

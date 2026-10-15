@@ -912,15 +912,15 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 
 /// <summary>SET key value [PX ms | PXAT unix-ms] [NX|XX] [KEEPTTL] [GET].</summary>
 internal readonly struct SetCommand(
-    RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
+    RespireValue key, RespireValue value, RespireExpiry expiry, RespireSetWhen when, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
     // NX replays check the condition again; XX replays overwrite like a plain SET.
     public RespireCommandRetryCategory RetryCategory => !expiry.IsNone || returnOld ? Verbs.Set.RetryCategory
         : when switch
         {
-            SetWhen.Always or SetWhen.Exists => RespireCommandRetryCategory.WriteLastWins,
-            SetWhen.NotExists => RespireCommandRetryCategory.WriteChecked,
+            RespireSetWhen.Always or RespireSetWhen.Exists => RespireCommandRetryCategory.WriteLastWins,
+            RespireSetWhen.NotExists => RespireCommandRetryCategory.WriteChecked,
             _ => Verbs.Set.RetryCategory,
         };
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
@@ -956,7 +956,7 @@ internal readonly struct SetCommand(
 
         var count = 3
             + expiry.TokenCount
-            + (when != SetWhen.Always ? 1 : 0)
+            + (when != RespireSetWhen.Always ? 1 : 0)
             + (returnOld ? 1 : 0);
         writer.WriteArrayHeader(count);
         writer.WriteRaw(Verbs.Set.Bulk);
@@ -976,11 +976,11 @@ internal readonly struct SetCommand(
             writer.WriteBulkInteger(unixMilliseconds);
         }
 
-        if (when == SetWhen.NotExists)
+        if (when == RespireSetWhen.NotExists)
         {
             writer.WriteRaw(CommandOptionFrames.NX);
         }
-        else if (when == SetWhen.Exists)
+        else if (when == RespireSetWhen.Exists)
         {
             writer.WriteRaw(CommandOptionFrames.XX);
         }
@@ -1008,11 +1008,11 @@ internal readonly struct SetCommand(
 
     // An undefined value would reserve a condition argument that the writer never emits,
     // leaving the RESP array short and desynchronizing the connection.
-    internal static void ValidateWhen(SetWhen when)
+    internal static void ValidateWhen(RespireSetWhen when)
     {
-        if (when is not (SetWhen.Always or SetWhen.NotExists or SetWhen.Exists))
+        if (when is not (RespireSetWhen.Always or RespireSetWhen.NotExists or RespireSetWhen.Exists))
         {
-            throw new ArgumentOutOfRangeException(nameof(when), when, "Unsupported SetWhen value for SET.");
+            throw new ArgumentOutOfRangeException(nameof(when), when, "Unsupported RespireSetWhen value for SET.");
         }
     }
 }

@@ -34,7 +34,7 @@ public class SentinelFailoverIntegrationTests
         var options = fixture.CreateOptions() with
         {
             LoggerFactory = logger,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ConnectTimeout = TimeSpan.FromSeconds(2),
             CommandTimeout = TimeSpan.FromSeconds(3),
         };
@@ -61,7 +61,7 @@ public class SentinelFailoverIntegrationTests
             {
                 await using var sentinel = await RespireClient.ConnectAsync(new RespireOptions
                 {
-                    Endpoints = [endpoint], Protocol = RespProtocol.Resp2, AllowAdmin = true,
+                    Endpoints = [endpoint], Protocol = RespireProtocol.Resp2, AllowAdmin = true,
                 }, deadline.Token);
                 while (!await ReplicaHasPriorityAsync(sentinel, "0", deadline.Token))
                     await Task.Delay(100, deadline.Token);

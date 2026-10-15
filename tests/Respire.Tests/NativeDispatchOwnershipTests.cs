@@ -29,7 +29,7 @@ public class NativeDispatchOwnershipTests
         {
             await using var connection = await RespireConnection.ConnectAsync("scripted", 6379, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 ObserveEstablishmentErrors = true,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(expected),
             }, cancellationToken: cancellation.Token);

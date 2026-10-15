@@ -87,13 +87,13 @@ public class MessageMetricsTests
     }
 
     [Test]
-    [Arguments(SubscriptionKind.Channel, SubscriptionOverflow.DropOldest)]
-    [Arguments(SubscriptionKind.Pattern, SubscriptionOverflow.DropOldest)]
-    [Arguments(SubscriptionKind.Sharded, SubscriptionOverflow.DropOldest)]
-    [Arguments(SubscriptionKind.Channel, SubscriptionOverflow.DropNewest)]
-    [Arguments(SubscriptionKind.Pattern, SubscriptionOverflow.DropNewest)]
-    [Arguments(SubscriptionKind.Sharded, SubscriptionOverflow.DropNewest)]
-    public async Task ReceivedFramesCountOnceAcrossFanOutAndDrops(SubscriptionKind kind, SubscriptionOverflow overflow)
+    [Arguments(RespireSubscriptionKind.Channel, RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(RespireSubscriptionKind.Pattern, RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(RespireSubscriptionKind.Sharded, RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(RespireSubscriptionKind.Channel, RespireSubscriptionOverflow.DropNewest)]
+    [Arguments(RespireSubscriptionKind.Pattern, RespireSubscriptionOverflow.DropNewest)]
+    [Arguments(RespireSubscriptionKind.Sharded, RespireSubscriptionOverflow.DropNewest)]
+    public async Task ReceivedFramesCountOnceAcrossFanOutAndDrops(RespireSubscriptionKind kind, RespireSubscriptionOverflow overflow)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.PubSub });
         var (confirmation, message) = Frames(kind);
@@ -108,7 +108,7 @@ public class MessageMetricsTests
         await capture.WaitForCountAsync(3);
         await Assert.That(capture.Items.Count).IsEqualTo(3);
         await Assert.That(capture.Items.All(item => item.Value == 1 && (string)item.Tags["redis.client.pubsub.message.direction"]! == "in"
-            && (bool)item.Tags["redis.client.pubsub.sharded"]! == (kind == SubscriptionKind.Sharded) && item.Tags.Count == 4)).IsTrue();
+            && (bool)item.Tags["redis.client.pubsub.sharded"]! == (kind == RespireSubscriptionKind.Sharded) && item.Tags.Count == 4)).IsTrue();
         // Drop callbacks follow the message metric; wait for their deterministic count boundary.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (first.DroppedMessages != 2 || second.DroppedMessages != 2) await Task.Delay(1, deadline.Token);
@@ -119,10 +119,10 @@ public class MessageMetricsTests
     }
 
     [Test]
-    [Arguments(SubscriptionKind.Channel)]
-    [Arguments(SubscriptionKind.Pattern)]
-    [Arguments(SubscriptionKind.Sharded)]
-    public async Task ReconnectMarkersDoNotCountAsMessages(SubscriptionKind kind)
+    [Arguments(RespireSubscriptionKind.Channel)]
+    [Arguments(RespireSubscriptionKind.Pattern)]
+    [Arguments(RespireSubscriptionKind.Sharded)]
+    public async Task ReconnectMarkersDoNotCountAsMessages(RespireSubscriptionKind kind)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.PubSub });
         var (confirmation, message) = Frames(kind);
@@ -269,15 +269,15 @@ public class MessageMetricsTests
     }
 
     private static RespireClient LazyClient(int port) => RespireClient.Create(new RespireOptions
-        { Protocol = RespProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
+        { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
 
-    private static (byte[] Confirmation, byte[] Message) Frames(SubscriptionKind kind)
+    private static (byte[] Confirmation, byte[] Message) Frames(RespireSubscriptionKind kind)
     {
-        var verb = kind switch { SubscriptionKind.Pattern => "psubscribe", SubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
-        var message = kind switch { SubscriptionKind.Pattern => "pmessage", SubscriptionKind.Sharded => "smessage", _ => "message" };
-        var pattern = kind == SubscriptionKind.Pattern ? "$2\r\nch\r\n" : "";
+        var verb = kind switch { RespireSubscriptionKind.Pattern => "psubscribe", RespireSubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
+        var message = kind switch { RespireSubscriptionKind.Pattern => "pmessage", RespireSubscriptionKind.Sharded => "smessage", _ => "message" };
+        var pattern = kind == RespireSubscriptionKind.Pattern ? "$2\r\nch\r\n" : "";
         return (Encoding.ASCII.GetBytes($"*3\r\n${verb.Length}\r\n{verb}\r\n$2\r\nch\r\n:1\r\n"),
-            Encoding.ASCII.GetBytes($"*{(kind == SubscriptionKind.Pattern ? 4 : 3)}\r\n${message.Length}\r\n{message}\r\n{pattern}$2\r\nch\r\n$5\r\nhello\r\n"));
+            Encoding.ASCII.GetBytes($"*{(kind == RespireSubscriptionKind.Pattern ? 4 : 3)}\r\n${message.Length}\r\n{message}\r\n{pattern}$2\r\nch\r\n$5\r\nhello\r\n"));
     }
 
     internal sealed record Item(string Name, string? Unit, double Value, Dictionary<string, object?> Tags);

@@ -22,7 +22,7 @@ public sealed record RespireLatencyHistogram(
     RespireLatencyHistogramBucket[] Buckets,
     IReadOnlyDictionary<string, RespireResult> AdditionalFields);
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Returns one node's human-readable latency analysis. Redis 2.8.13+: LATENCY DOCTOR.</summary>
     ValueTask<string> LatencyDoctorAsync(CancellationToken cancellationToken = default);

@@ -9,11 +9,11 @@ namespace Respire.IntegrationTests;
 public class ClusterReadFromIntegrationTests
 {
     [Test]
-    [Arguments(RespProtocol.Resp2, RespireReadFrom.Replica)]
-    [Arguments(RespProtocol.Resp3, RespireReadFrom.Replica)]
-    [Arguments(RespProtocol.Resp2, RespireReadFrom.Nearest)]
-    [Arguments(RespProtocol.Resp3, RespireReadFrom.Nearest)]
-    public async Task ReplicaReadsObserveUpdatesAndExpiry(RespProtocol protocol, RespireReadFrom policy)
+    [Arguments(RespireProtocol.Resp2, RespireReadFrom.Replica)]
+    [Arguments(RespireProtocol.Resp3, RespireReadFrom.Replica)]
+    [Arguments(RespireProtocol.Resp2, RespireReadFrom.Nearest)]
+    [Arguments(RespireProtocol.Resp3, RespireReadFrom.Nearest)]
+    public async Task ReplicaReadsObserveUpdatesAndExpiry(RespireProtocol protocol, RespireReadFrom policy)
     {
         await using var cluster = await RedisReadReplicaClusterTestContainer.StartAsync();
         var slots = await cluster.ClusterSlotsAsync();

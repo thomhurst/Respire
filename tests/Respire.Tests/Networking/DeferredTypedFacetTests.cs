@@ -33,7 +33,7 @@ public class DeferredTypedFacetTests
             // Params handles single keys; cast the hash field to select the scalar result.
             // Functions and multi-key pop result shapes use collection expressions.
             RespirePending<long> pendingDelete = queue.Keys.Delete("key");
-            RespirePending<RespireTtl> pendingExpiry = queue.Hashes.Expiry("hash", (RespireKey)"field");
+            RespirePending<RespireTtlResult> pendingExpiry = queue.Hashes.Expiry("hash", (RespireKey)"field");
             var pendingCall = queue.Functions.ExecuteInteger(function, ["key"]);
             var pendingList = queue.Lists.PopMany(["list"]);
             var pendingSorted = queue.SortedSets.PopMany(["sorted"]);
@@ -69,42 +69,42 @@ public class DeferredTypedFacetTests
             (guid, q =>
             {
                 _ = q.Hashes.Set("h", "f", guid);
-                _ = q.Hashes.Set("h", "f", guid, SetWhen.NotExists);
+                _ = q.Hashes.Set("h", "f", guid, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", guid);
                 _ = q.SortedSets.Add("z", guid, 2);
             }),
             (instant, q =>
             {
                 _ = q.Hashes.Set("h", "f", instant);
-                _ = q.Hashes.Set("h", "f", instant, SetWhen.NotExists);
+                _ = q.Hashes.Set("h", "f", instant, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", instant);
                 _ = q.SortedSets.Add("z", instant, 2);
             }),
             (duration, q =>
             {
                 _ = q.Hashes.Set("h", "f", duration);
-                _ = q.Hashes.Set("h", "f", duration, SetWhen.NotExists);
+                _ = q.Hashes.Set("h", "f", duration, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", duration);
                 _ = q.SortedSets.Add("z", duration, 2);
             }),
             (memory, q =>
             {
                 _ = q.Hashes.Set("h", "f", memory);
-                _ = q.Hashes.Set("h", "f", memory, SetWhen.NotExists);
+                _ = q.Hashes.Set("h", "f", memory, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", memory);
                 _ = q.SortedSets.Add("z", memory, 2);
             }),
             (segment, q =>
             {
                 _ = q.Hashes.Set("h", "f", segment);
-                _ = q.Hashes.Set("h", "f", segment, SetWhen.NotExists);
+                _ = q.Hashes.Set("h", "f", segment, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", segment);
                 _ = q.SortedSets.Add("z", segment, 2);
             }),
             (key, q =>
             {
                 _ = q.Hashes.Set("h", "f", key);
-                _ = q.Hashes.Set("h", "f", key, SetWhen.NotExists);
+                _ = q.Hashes.Set("h", "f", key, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", key);
                 _ = q.SortedSets.Add("z", key, 2);
             }),
@@ -117,7 +117,7 @@ public class DeferredTypedFacetTests
             foreach (var (value, enqueue) in cases)
             {
                 _ = queue.Hashes.Set("h", "f", value);
-                _ = queue.Hashes.Set("h", "f", value, SetWhen.NotExists);
+                _ = queue.Hashes.Set("h", "f", value, RespireSetWhen.NotExists);
                 _ = queue.Sets.Contains("s", value);
                 _ = queue.SortedSets.Add("z", value, 2);
                 enqueue(queue);
@@ -143,7 +143,7 @@ public class DeferredTypedFacetTests
         await using var server = new FakeRespServer([.. replies, .. DeferredReplies(transaction, replies)]);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await client.Hashes.SetAsync<Guid>("h", "f", guid);
-        await client.Hashes.SetAsync<Guid>("h", "f", guid, SetWhen.NotExists);
+        await client.Hashes.SetAsync<Guid>("h", "f", guid, RespireSetWhen.NotExists);
         await client.Sets.ContainsAsync<Guid>("s", guid);
         await client.SortedSets.AddAsync<Guid>("z", guid, 2);
         await client.Hashes.GetAsync<Guid>("h", "f");
@@ -151,7 +151,7 @@ public class DeferredTypedFacetTests
         await ExecuteAsync(client, transaction, async (queue, execute) =>
         {
             _ = queue.Hashes.Set<Guid>("h", "f", guid);
-            _ = queue.Hashes.Set<Guid>("h", "f", guid, SetWhen.NotExists);
+            _ = queue.Hashes.Set<Guid>("h", "f", guid, RespireSetWhen.NotExists);
             _ = queue.Sets.Contains<Guid>("s", guid);
             _ = queue.SortedSets.Add<Guid>("z", guid, 2);
             var read = queue.Hashes.Get<Guid>("h", "f");
@@ -177,8 +177,8 @@ public class DeferredTypedFacetTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await client.Hashes.SetAsync("hash", "person", person);
-        await client.Hashes.SetAsync("hash", "new", person, SetWhen.NotExists);
-        await client.Hashes.SetAsync("hash", "existing", person, SetWhen.Exists);
+        await client.Hashes.SetAsync("hash", "new", person, RespireSetWhen.NotExists);
+        await client.Hashes.SetAsync("hash", "existing", person, RespireSetWhen.Exists);
         var immediateGet = await client.Hashes.TryGetAsync<Person>("hash", "person");
         await client.Sets.ContainsAsync("set", true);
         await client.SortedSets.AddAsync("sorted", false, 2);
@@ -189,8 +189,8 @@ public class DeferredTypedFacetTests
         await ExecuteAsync(client, transaction, async (queue, execute) =>
         {
             var stored = queue.Hashes.Set("hash", "person", person);
-            var inserted = queue.Hashes.Set("hash", "new", person, SetWhen.NotExists);
-            var updated = queue.Hashes.Set("hash", "existing", person, SetWhen.Exists);
+            var inserted = queue.Hashes.Set("hash", "new", person, RespireSetWhen.NotExists);
+            var updated = queue.Hashes.Set("hash", "existing", person, RespireSetWhen.Exists);
             var found = queue.Hashes.TryGet<Person>("hash", "person");
             var contains = queue.Sets.Contains("set", true);
             var added = queue.SortedSets.Add("sorted", false, 2);

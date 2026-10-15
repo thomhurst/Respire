@@ -21,7 +21,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         var services = new ServiceCollection();
         services.AddSingleton<IRespireClient>(client);
@@ -112,7 +112,7 @@ public class DistributedLockerRegistrationTests(RedisTestContainer fixture)
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
         await using var firstClient = await RespireClient.ConnectAsync(options);
         await using var secondClient = await RespireClient.ConnectAsync(options);

@@ -125,7 +125,7 @@ public class RespireHybridCacheTests(RedisTestContainer fixture)
             {
                 if (!registeredClient) options.ConnectionString = fixture.ConnectionString;
                 options.InstanceName = InstanceName;
-                options.ValueCodec = new BrotliValueCodec();
+                options.ValueCodec = new RespireBrotliValueCodec();
             });
             return services.BuildServiceProvider();
         }

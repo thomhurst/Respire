@@ -121,7 +121,7 @@ public class TransactionDeadlineTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseTls = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseTls = true,
             CommandTimeout = Timeout, ConnectTimeout = Timeout,
             Endpoints = [new("127.0.0.1", port)],
         });
@@ -153,7 +153,7 @@ public class TransactionDeadlineTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ClientName = "acquisition-budget",
+            Protocol = RespireProtocol.Resp2, Connections = 1, ClientName = "acquisition-budget",
             CommandTimeout = Timeout, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = client.CreateTransaction();
@@ -231,7 +231,7 @@ public class TransactionDeadlineTests
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             // Setup shares this budget; allow AUTH and PREPARE to complete before
             // testing expiry at the held gate, still well below the ten-second safety limit.
             CommandTimeout = cancelCaller ? Timeout : TimeSpan.FromSeconds(2),
@@ -359,7 +359,7 @@ public class TransactionDeadlineTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 2, UseCluster = true, CommandTimeout = Timeout,
+            Protocol = RespireProtocol.Resp2, Connections = 2, UseCluster = true, CommandTimeout = Timeout,
             ReconnectPolicy = withReconnectPolicy ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -438,9 +438,9 @@ public class TransactionDeadlineTests
         await using var timedServer = CreateCommitServer();
         await using var untimedServer = CreateCommitServer();
         await using var timed = await RespireConnection.ConnectAsync("127.0.0.1", timedServer.Port,
-            new RespireConnectionOptions { Protocol = RespProtocol.Resp2, CommandTimeout = Timeout });
+            new RespireConnectionOptions { Protocol = RespireProtocol.Resp2, CommandTimeout = Timeout });
         await using var untimed = await RespireConnection.ConnectAsync("127.0.0.1", untimedServer.Port,
-            new RespireConnectionOptions { Protocol = RespProtocol.Resp2, CommandTimeout = null });
+            new RespireConnectionOptions { Protocol = RespireProtocol.Resp2, CommandTimeout = null });
         var body = "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n"u8.ToArray();
         // Measure atomic MULTI/SET/EXEC admission, excluding transaction construction,
         // reply waits, and async-builder pool misses on other completion threads. The wire
@@ -505,7 +505,7 @@ public class TransactionDeadlineTests
         IRespireCredentialProvider? credentialProvider = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = timeout, UseCluster = cluster,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = timeout, UseCluster = cluster,
             CredentialProvider = credentialProvider,
             Endpoints = [new("127.0.0.1", port)],
         });

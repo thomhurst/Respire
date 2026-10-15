@@ -5,7 +5,7 @@ namespace Respire;
 /// <summary>Reply limits and blocking behavior for XREAD and XREADGROUP.</summary>
 /// <remarks>This is a shared public API. Additional read options should use init-only properties,
 /// preserving existing call shapes.</remarks>
-public readonly record struct StreamReadOptions
+public readonly record struct RespireStreamReadOptions
 {
     /// <summary>Maximum entries per stream. Must be positive when specified.</summary>
     public int? Count { get; init; }
@@ -31,7 +31,7 @@ public readonly record struct StreamReadOptions
     /// <summary>Whether WaitFor was explicitly assigned, including an explicit null.</summary>
     public bool IsBlocking { get; private init; }
 
-    internal StreamReadOptions WithoutBlocking() => this with { IsBlocking = false };
+    internal RespireStreamReadOptions WithoutBlocking() => this with { IsBlocking = false };
 
     /// <summary>Do not add newly delivered entries to the pending list. Only valid for consumer group reads.</summary>
     /// <remarks>Redis ignores NOACK for pending entries, including those reclaimed with CLAIM.</remarks>

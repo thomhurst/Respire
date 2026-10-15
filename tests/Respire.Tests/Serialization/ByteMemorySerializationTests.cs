@@ -28,7 +28,7 @@ public class ByteMemorySerializationTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, reply, reply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             Serializer = new RejectingSerializer(),

@@ -17,7 +17,7 @@ public sealed class RespireCoordination
         public async ValueTask TrackAsync(CancellationToken cancellationToken)
             => _ = await coordination._client.Strings.GetStringAsync(leaseKey, cancellationToken).ConfigureAwait(false);
 
-        public ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken)
+        public ValueTask<RespireTtlResult> GetTimeToLiveAsync(CancellationToken cancellationToken)
             => coordination._client.Keys.ExpiryAsync(leaseKey, cancellationToken);
 
         public async ValueTask<(bool Succeeded, RespireFencedLock Result)> TryAsync(CancellationToken cancellationToken)
@@ -35,7 +35,7 @@ public sealed class RespireCoordination
         public async ValueTask TrackAsync(CancellationToken cancellationToken)
             => _ = await coordination._client.Hashes.GetBytesAsync(hashKey, field, cancellationToken).ConfigureAwait(false);
 
-        public ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken)
+        public ValueTask<RespireTtlResult> GetTimeToLiveAsync(CancellationToken cancellationToken)
             => coordination._client.Hashes.ExpiryAsync(hashKey, field, cancellationToken);
 
         public async ValueTask<(bool Succeeded, RespireCoordinationLease Result)> TryAsync(CancellationToken cancellationToken)

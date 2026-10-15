@@ -40,7 +40,7 @@ public class ConnectionHookTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp2, Password = "secret", Database = 2, ConnectionHook = hook,
+            Protocol = RespireProtocol.Resp2, Password = "secret", Database = 2, ConnectionHook = hook,
         }, cancellation.Token);
 
         await Assert.That(server.ReceivedCommands.Contains("AUTH secret")).IsTrue();
@@ -80,7 +80,7 @@ public class ConnectionHookTests
         var hook = new Hook { After = (_, _, _) => throw new InvalidOperationException("audit failed") };
         var options = new RespireConnectionOptions
         {
-            ConnectionHook = hook, Protocol = RespProtocol.Resp2,
+            ConnectionHook = hook, Protocol = RespireProtocol.Resp2,
             CredentialProvider = handshake ? new CountingProvider() : null,
             TestingStreamFactory = handshake ? null : (_, _, _) => throw failure,
         };
@@ -180,7 +180,7 @@ public class ConnectionHookTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         var hook = new Hook();
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new RespireOptions { ConnectionHook = hook, Protocol = RespProtocol.Resp2 }.ToConnectionOptions(), null);
+            new RespireOptions { ConnectionHook = hook, Protocol = RespireProtocol.Resp2 }.ToConnectionOptions(), null);
         var first = await pool.RentAsync(default);
         pool.Return(first);
         var reused = await pool.RentAsync(default);
@@ -213,7 +213,7 @@ public class ConnectionHookTests
         using var cancellation = new CancellationTokenSource(Limit);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1, Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
             UseCluster = cluster, ClusterTopologyRefreshInterval = null, ConnectionHook = hook,
             ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
         }, cancellation.Token);
@@ -247,7 +247,7 @@ public class ConnectionHookTests
         await using (var connection = await RespireConnection.ConnectAsync("127.0.0.1", port,
             new RespireConnectionOptions
             {
-                ConnectionHook = hook, UseTls = true, ClientName = "tls-hook", Protocol = RespProtocol.Resp2,
+                ConnectionHook = hook, UseTls = true, ClientName = "tls-hook", Protocol = RespireProtocol.Resp2,
                 TlsOptions = new() { RemoteCertificateValidationCallback = (_, _, _, _) => true },
             }, cancellationToken: cancellation.Token)) { }
         await peerClosed.WaitAsync(cancellation.Token);

@@ -153,17 +153,17 @@ internal sealed partial class KeyCommands
         // A node-local cursor must never be redirected or transferred to a replacement server.
         using var reply = await client.SendOnPinnedConnectionAsync("SCAN", node.Connection,
             new CmdN(Verbs.Scan, arguments), cancellationToken, observation: recovery.Observation).ConfigureAwait(false);
-        if (reply.Type != RespDataType.Array || reply.AsArray().Length != 2)
+        if (reply.Type != RespireDataType.Array || reply.AsArray().Length != 2)
             throw new RespireProtocolException("SCAN must return a cursor and a key array.");
         var values = reply.AsArray();
         if (!ulong.TryParse(ClusterInspectionParser.Text(in values[0]), NumberStyles.None,
-                CultureInfo.InvariantCulture, out var next) || values[1].Type != RespDataType.Array)
+                CultureInfo.InvariantCulture, out var next) || values[1].Type != RespireDataType.Array)
             throw new RespireProtocolException("SCAN returned an invalid cursor or key array.");
         List<string> keys = [];
         foreach (ref readonly var value in values[1].AsArray())
         {
             // Hash original bytes before string decoding, including binary keys and hash tags.
-            if (value.Type != RespDataType.BulkString || value.IsNull)
+            if (value.Type != RespireDataType.BulkString || value.IsNull)
                 throw new RespireProtocolException("SCAN keys must be bulk strings.");
             if (state.Completed[ClusterHash.GetSlot(value.AsSpan())]) continue;
             if (prefix is null) keys.Add(value.AsString());

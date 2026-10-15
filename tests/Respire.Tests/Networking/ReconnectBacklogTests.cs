@@ -239,7 +239,7 @@ public class ReconnectBacklogTests
     private static RespireOptions Options(int port) => new()
     {
         Endpoints = { new RespireEndpoint("127.0.0.1", port) },
-        Connections = 1, Protocol = RespProtocol.Resp2, Database = 1,
+        Connections = 1, Protocol = RespireProtocol.Resp2, Database = 1,
         ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = TimeSpan.FromSeconds(5),
     };
 

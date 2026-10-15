@@ -46,7 +46,7 @@ public sealed class RedisServerFixture : IAsyncLifetime
 
     private async Task AssertCapabilitiesAsync()
     {
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
         {
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(ConnectionString) with { Protocol = protocol }).ConfigureAwait(false);
             string[] commands = ["JSON.SET", "JSON.GET", "FT.CREATE", "FT.SEARCH", "FT.HYBRID", "FT.DROPINDEX", "FT._LIST", "HGETALL", "EVAL", "SCAN"];

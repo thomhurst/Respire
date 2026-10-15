@@ -10,11 +10,11 @@ namespace Respire.IntegrationTests;
 public class GeneratedHashMutationIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2, RespireHashExpiryMode.HSetEx)]
-    [Arguments(RespProtocol.Resp3, RespireHashExpiryMode.HSetEx)]
-    [Arguments(RespProtocol.Resp2, RespireHashExpiryMode.HSetThenExpire)]
-    [Arguments(RespProtocol.Resp3, RespireHashExpiryMode.HSetThenExpire)]
-    public async Task RealRedisCommandsExpiryAndPartialUpdates(RespProtocol protocol, RespireHashExpiryMode mode)
+    [Arguments(RespireProtocol.Resp2, RespireHashExpiryMode.HSetEx)]
+    [Arguments(RespireProtocol.Resp3, RespireHashExpiryMode.HSetEx)]
+    [Arguments(RespireProtocol.Resp2, RespireHashExpiryMode.HSetThenExpire)]
+    [Arguments(RespireProtocol.Resp3, RespireHashExpiryMode.HSetThenExpire)]
+    public async Task RealRedisCommandsExpiryAndPartialUpdates(RespireProtocol protocol, RespireHashExpiryMode mode)
         => await GeneratedHashMutationControls.RunAsync(fixture.Host, fixture.Port, protocol, mode);
 
     [Test]
@@ -83,9 +83,9 @@ public class GeneratedHashMutationIntegrationTests(ModernRedisTestContainer fixt
 public class GeneratedHashMutationRedis74Tests(HashExpiryRedis74Container fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ExplicitFallbackWorksWithoutHSetEx(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ExplicitFallbackWorksWithoutHSetEx(RespireProtocol protocol)
         => await GeneratedHashMutationControls.RunAsync(fixture.Host, fixture.Port, protocol, RespireHashExpiryMode.HSetThenExpire);
 
     [Test]
@@ -127,7 +127,7 @@ public partial record ShortLivedHashModel(string Id, [property: RespireFieldTtl(
 
 internal static class GeneratedHashMutationControls
 {
-    internal static async Task RunAsync(string host, int port, RespProtocol protocol, RespireHashExpiryMode mode)
+    internal static async Task RunAsync(string host, int port, RespireProtocol protocol, RespireHashExpiryMode mode)
     {
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {

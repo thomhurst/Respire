@@ -25,22 +25,22 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     private readonly KeyPrefix? _pubSubPrefix;
     private readonly byte[]? _pubSubPatternPrefix;
     private RespireClient? _deferredBatchClient;
-    private IStringCommands? _strings;
-    private IKeyCommands? _keys;
-    private ILockCommands? _locks;
-    private IHashCommands? _hashes;
-    private IListCommands? _lists;
-    private IArrayCommands? _arrays;
-    private ISetCommands? _sets;
-    private ISortedSetCommands? _sortedSets;
-    private IStreamCommands? _streams;
-    private IBitmapCommands? _bitmaps;
-    private IHyperLogLogCommands? _hyperLogLog;
-    private IGeoCommands? _geo;
-    private IVectorSetCommands? _vectorSets;
-    private IScriptCommands? _scripts;
-    private IFunctionCommands? _functions;
-    private IServerCommands? _server;
+    private IRespireStringCommands? _strings;
+    private IRespireKeyCommands? _keys;
+    private IRespireLockCommands? _locks;
+    private IRespireHashCommands? _hashes;
+    private IRespireListCommands? _lists;
+    private IRespireArrayCommands? _arrays;
+    private IRespireSetCommands? _sets;
+    private IRespireSortedSetCommands? _sortedSets;
+    private IRespireStreamCommands? _streams;
+    private IRespireBitmapCommands? _bitmaps;
+    private IRespireHyperLogLogCommands? _hyperLogLog;
+    private IRespireGeoCommands? _geo;
+    private IRespireVectorSetCommands? _vectorSets;
+    private IRespireScriptCommands? _scripts;
+    private IRespireFunctionCommands? _functions;
+    private IRespireServerCommands? _server;
     private readonly bool _ownsCore;
     private readonly bool _broadcastTracking;
     private readonly bool _bypassClientCache;
@@ -242,39 +242,39 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     }
 
     /// <inheritdoc/>
-    public IStringCommands Strings => Volatile.Read(ref _strings) ?? InitializeFacet(ref _strings, static client => new StringCommands(client));
+    public IRespireStringCommands Strings => Volatile.Read(ref _strings) ?? InitializeFacet(ref _strings, static client => new StringCommands(client));
     /// <inheritdoc/>
-    public IKeyCommands Keys => Volatile.Read(ref _keys) ?? InitializeFacet(ref _keys, static client => new KeyCommands(client));
+    public IRespireKeyCommands Keys => Volatile.Read(ref _keys) ?? InitializeFacet(ref _keys, static client => new KeyCommands(client));
     /// <inheritdoc/>
-    public ILockCommands Locks => Volatile.Read(ref _locks) ?? InitializeFacet(ref _locks, static client => new LockCommands(client));
+    public IRespireLockCommands Locks => Volatile.Read(ref _locks) ?? InitializeFacet(ref _locks, static client => new LockCommands(client));
     /// <inheritdoc/>
-    public IHashCommands Hashes => Volatile.Read(ref _hashes) ?? InitializeFacet(ref _hashes, static client => new HashCommands(client));
+    public IRespireHashCommands Hashes => Volatile.Read(ref _hashes) ?? InitializeFacet(ref _hashes, static client => new HashCommands(client));
     /// <inheritdoc/>
-    public IListCommands Lists => Volatile.Read(ref _lists) ?? InitializeFacet(ref _lists, static client => new ListCommands(client));
+    public IRespireListCommands Lists => Volatile.Read(ref _lists) ?? InitializeFacet(ref _lists, static client => new ListCommands(client));
 
     /// <summary>Redis sparse array commands.</summary>
-    public IArrayCommands Arrays => Volatile.Read(ref _arrays) ?? InitializeFacet(ref _arrays, static client => new ArrayCommands(client));
+    public IRespireArrayCommands Arrays => Volatile.Read(ref _arrays) ?? InitializeFacet(ref _arrays, static client => new ArrayCommands(client));
     /// <inheritdoc/>
-    public ISetCommands Sets => Volatile.Read(ref _sets) ?? InitializeFacet(ref _sets, static client => new SetCommands(client));
+    public IRespireSetCommands Sets => Volatile.Read(ref _sets) ?? InitializeFacet(ref _sets, static client => new SetCommands(client));
     /// <inheritdoc/>
-    public ISortedSetCommands SortedSets => Volatile.Read(ref _sortedSets) ?? InitializeFacet(ref _sortedSets, static client => new SortedSetCommands(client));
+    public IRespireSortedSetCommands SortedSets => Volatile.Read(ref _sortedSets) ?? InitializeFacet(ref _sortedSets, static client => new SortedSetCommands(client));
     /// <inheritdoc/>
-    public IStreamCommands Streams => Volatile.Read(ref _streams) ?? InitializeFacet(ref _streams, static client => new StreamCommands(client));
+    public IRespireStreamCommands Streams => Volatile.Read(ref _streams) ?? InitializeFacet(ref _streams, static client => new StreamCommands(client));
     /// <inheritdoc/>
-    public IBitmapCommands Bitmaps => Volatile.Read(ref _bitmaps) ?? InitializeFacet(ref _bitmaps, static client => new BitmapCommands(client));
+    public IRespireBitmapCommands Bitmaps => Volatile.Read(ref _bitmaps) ?? InitializeFacet(ref _bitmaps, static client => new BitmapCommands(client));
     /// <inheritdoc/>
-    public IHyperLogLogCommands HyperLogLog => Volatile.Read(ref _hyperLogLog) ?? InitializeFacet(ref _hyperLogLog, static client => new HyperLogLogCommands(client));
+    public IRespireHyperLogLogCommands HyperLogLog => Volatile.Read(ref _hyperLogLog) ?? InitializeFacet(ref _hyperLogLog, static client => new HyperLogLogCommands(client));
     /// <inheritdoc/>
-    public IGeoCommands Geo => Volatile.Read(ref _geo) ?? InitializeFacet(ref _geo, static client => new GeoCommands(client));
+    public IRespireGeoCommands Geo => Volatile.Read(ref _geo) ?? InitializeFacet(ref _geo, static client => new GeoCommands(client));
     /// <inheritdoc/>
-    public IVectorSetCommands VectorSets => Volatile.Read(ref _vectorSets) ?? InitializeFacet(ref _vectorSets, static client => new VectorSetCommands(client));
+    public IRespireVectorSetCommands VectorSets => Volatile.Read(ref _vectorSets) ?? InitializeFacet(ref _vectorSets, static client => new VectorSetCommands(client));
     /// <inheritdoc/>
-    public IScriptCommands Scripts => Volatile.Read(ref _scripts) ?? InitializeFacet(ref _scripts, static client => new ScriptCommands(client));
+    public IRespireScriptCommands Scripts => Volatile.Read(ref _scripts) ?? InitializeFacet(ref _scripts, static client => new ScriptCommands(client));
 
     /// <summary>Redis Functions (Redis 7+).</summary>
-    public IFunctionCommands Functions => Volatile.Read(ref _functions) ?? InitializeFacet(ref _functions, static client => new FunctionCommands(client));
+    public IRespireFunctionCommands Functions => Volatile.Read(ref _functions) ?? InitializeFacet(ref _functions, static client => new FunctionCommands(client));
     /// <inheritdoc/>
-    public IServerCommands Server => Volatile.Read(ref _server) ?? InitializeFacet(ref _server, static client => new ServerCommands(client));
+    public IRespireServerCommands Server => Volatile.Read(ref _server) ?? InitializeFacet(ref _server, static client => new ServerCommands(client));
 
     private T InitializeFacet<T>(ref T? field, Func<RespireClient, T> create) where T : class
     {
@@ -328,7 +328,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// <inheritdoc/>
     public RespireChannel ResolveChannel(RespireChannel channel)
         => _pubSubPrefix is null || channel.IsNotification ? channel
-            : channel.Prepend(channel.Kind == SubscriptionKind.Pattern ? _pubSubPatternPrefix! : _pubSubPrefix.Bytes);
+            : channel.Prepend(channel.Kind == RespireSubscriptionKind.Pattern ? _pubSubPatternPrefix! : _pubSubPrefix.Bytes);
 
     /// <summary>Returns a view that applies a read-routing policy to metadata-confirmed read-only commands.</summary>
     /// <remarks>
@@ -1355,7 +1355,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     // Pub/sub
 
     private ValueTask<RespireSubscription> SubscribeCoreAsync(
-        SubscriptionKind kind,
+        RespireSubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
@@ -1382,11 +1382,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         if (channel.IsNotification)
             throw new ArgumentException("Notification descriptors are server-owned and cannot be published.", nameof(channel));
-        if (channel.Kind == SubscriptionKind.Pattern)
+        if (channel.Kind == RespireSubscriptionKind.Pattern)
         {
             throw new ArgumentException("A pattern cannot be published; use a literal channel.", nameof(channel));
         }
-        return channel.Kind == SubscriptionKind.Sharded
+        return channel.Kind == RespireSubscriptionKind.Sharded
             ? PublishShardedAsync(channel, message, cancellationToken)
             : IntegerAsync("PUBLISH", new Cmd2(Verbs.Publish, ResolveChannel(channel).AsValue(), message), cancellationToken);
     }
@@ -1396,7 +1396,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         if (channel.IsNotification)
             throw new ArgumentException("Notification descriptors are server-owned and cannot be published.", nameof(channel));
-        if (channel.Kind == SubscriptionKind.Pattern)
+        if (channel.Kind == RespireSubscriptionKind.Pattern)
         {
             throw new ArgumentException("A pattern cannot be published; use a sharded channel.", nameof(channel));
         }
@@ -1412,7 +1412,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     public ValueTask<RespireSubscription> SubscribeAsync(
         ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
     {
-        var kind = channels.IsEmpty ? SubscriptionKind.Channel : channels[0].Kind;
+        var kind = channels.IsEmpty ? RespireSubscriptionKind.Channel : channels[0].Kind;
         foreach (var channel in channels)
         {
             if (channel.Kind != kind)
@@ -1428,35 +1428,35 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
-        => SubscribeAsync(SubscriptionChannel(channel, SubscriptionKind.Pattern), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel, RespireSubscriptionKind.Pattern), options, cancellationToken);
 
     /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, MapChannels(channels, SubscriptionKind.Pattern), options, cancellationToken);
+        => SubscribeCoreAsync(RespireSubscriptionKind.Pattern, MapChannels(channels, RespireSubscriptionKind.Pattern), options, cancellationToken);
 
     /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         RespireChannel channel, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
-        => SubscribeAsync(SubscriptionChannel(channel, SubscriptionKind.Sharded), options, cancellationToken);
+        => SubscribeAsync(SubscriptionChannel(channel, RespireSubscriptionKind.Sharded), options, cancellationToken);
 
     /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options = default, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, MapChannels(channels, SubscriptionKind.Sharded), options, cancellationToken);
+        => SubscribeCoreAsync(RespireSubscriptionKind.Sharded, MapChannels(channels, RespireSubscriptionKind.Sharded), options, cancellationToken);
 
     // Channel mapping and validation run before SubscribeCoreAsync starts the activation owner.
     // Report their caller-visible failures here; the activation never sees these inputs.
     private static void RecordSubscriptionPreflightFailure(Exception error)
         => RespireTelemetry.RecordError(error, internallyHandled: false);
 
-    private static RespireChannel SubscriptionChannel(RespireChannel channel, SubscriptionKind kind)
+    private static RespireChannel SubscriptionChannel(RespireChannel channel, RespireSubscriptionKind kind)
     {
         try { return channel.WithKind(kind); }
         catch (Exception error) { RecordSubscriptionPreflightFailure(error); throw; }
     }
 
-    private static RespireChannel[] MapChannels(ReadOnlySpan<RespireChannel> channels, SubscriptionKind kind)
+    private static RespireChannel[] MapChannels(ReadOnlySpan<RespireChannel> channels, RespireSubscriptionKind kind)
     {
         try
         {
@@ -1792,8 +1792,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal RespireGet<T> TryDeserializeBorrowed<T>(in RespValue value)
-        => value.IsNull ? default : new RespireGet<T>(true, DeserializeBorrowed<T>(in value)!);
+    internal RespireGetResult<T> TryDeserializeBorrowed<T>(in RespValue value)
+        => value.IsNull ? default : new RespireGetResult<T>(true, DeserializeBorrowed<T>(in value)!);
 
     /// <summary>Reads a value the caller does not own (e.g. a transaction-array element).</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -6158,29 +6158,29 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.IntegerMinusOneOrNull(in value));
 
-    internal ValueTask<RespireTtl[]> TtlArrayAsync<TCommand>(
+    internal ValueTask<RespireTtlResult[]> TtlArrayAsync<TCommand>(
         string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.TtlArray(in value), observation: observation);
 
-    internal ValueTask<RespireTtl> SingleTtlArrayAsync<TCommand>(
+    internal ValueTask<RespireTtlResult> SingleTtlArrayAsync<TCommand>(
         string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) =>
             {
-                if (value.Type != RespDataType.Array)
+                if (value.Type != RespireDataType.Array)
                     throw new RespireProtocolException("A single hash field TTL reply must be an array.");
                 var elements = value.AsArray();
-                if (elements.Length != 1 || elements[0].Type != RespDataType.Integer)
+                if (elements.Length != 1 || elements[0].Type != RespireDataType.Integer)
                     throw new RespireProtocolException("A single hash field TTL reply must contain exactly one integer.");
-                return RespireTtl.FromRedisMilliseconds(elements[0].AsInteger());
+                return RespireTtlResult.FromRedisMilliseconds(elements[0].AsInteger());
             }, observation: observation);
 
-    internal ValueTask<HashFieldExpiryResult[]> HashFieldExpiryResultArrayAsync<TCommand>(
+    internal ValueTask<RespireHashFieldExpiryResult[]> HashFieldExpiryResultArrayAsync<TCommand>(
         string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => ConvertAsync(
@@ -6260,9 +6260,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal ValueTask<RespireGet<T>> TryDeserializeAsync<T, TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
+    internal ValueTask<RespireGetResult<T>> TryDeserializeAsync<T, TCommand>(string operation, in TCommand command, CancellationToken ct, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => ConvertAsync<TCommand, RespireGet<T>>(
+        => ConvertAsync<TCommand, RespireGetResult<T>>(
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.TryDeserializeBorrowed<T>(in value), observation: observation);
 

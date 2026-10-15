@@ -2,13 +2,13 @@ using Respire.Commands;
 
 namespace Respire;
 
-public partial interface IBatchStreamCommands
+public partial interface IRespireBatchStreamCommands
 {
     /// <summary>Queues a nonblocking read with optional Redis 8.10 cumulative reply limits.</summary>
-    RespirePending<RespireStreamEntry[]> Read(StreamReadOptions options, RespireKey key, RespireStreamId after = default);
+    RespirePending<RespireStreamEntry[]> Read(RespireStreamReadOptions options, RespireKey key, RespireStreamId after = default);
 
     /// <summary>Queues a same-slot read with shared reply limits. WaitFor must be omitted.</summary>
-    RespirePending<RespireStreamReadResult[]> Read(StreamReadOptions options, ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams);
+    RespirePending<RespireStreamReadResult[]> Read(RespireStreamReadOptions options, ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams);
 
     /// <summary>Queues nonblocking XREAD for one stream. Returns owned entries newer than after.</summary>
     RespirePending<RespireStreamEntry[]> Read(RespireKey key, RespireStreamId after = default, int? count = null);
@@ -19,7 +19,7 @@ public partial interface IBatchStreamCommands
 
 internal sealed partial class BatchStreamCommands
 {
-    public RespirePending<RespireStreamEntry[]> Read(StreamReadOptions options, RespireKey key, RespireStreamId after = default)
+    public RespirePending<RespireStreamEntry[]> Read(RespireStreamReadOptions options, RespireKey key, RespireStreamId after = default)
         => sink.Add<StreamReadCommand, RespireStreamEntry[]>("XREAD",
             StreamCommands.BuildReadCommand(sink.Client, [(key, after)], options, queued: true),
             static (client, value) =>
@@ -28,14 +28,14 @@ internal sealed partial class BatchStreamCommands
                 return result.Length == 0 ? [] : result[0].Entries;
             });
 
-    public RespirePending<RespireStreamReadResult[]> Read(StreamReadOptions options, ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams)
+    public RespirePending<RespireStreamReadResult[]> Read(RespireStreamReadOptions options, ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams)
         => sink.Add<StreamReadCommand, RespireStreamReadResult[]>("XREAD",
             StreamCommands.BuildReadCommand(sink.Client, streams, options, queued: true),
             static (client, value) => StreamCommands.ParseStreamRead(in value, client));
 
     public RespirePending<RespireStreamEntry[]> Read(RespireKey key, RespireStreamId after = default, int? count = null)
         => sink.Add<StreamReadCommand, RespireStreamEntry[]>("XREAD",
-            StreamCommands.BuildReadCommand(sink.Client, [(key, after)], new StreamReadOptions { Count = count }, queued: true),
+            StreamCommands.BuildReadCommand(sink.Client, [(key, after)], new RespireStreamReadOptions { Count = count }, queued: true),
             static (client, value) =>
             {
                 var result = StreamCommands.ParseStreamRead(in value, client);
@@ -44,6 +44,6 @@ internal sealed partial class BatchStreamCommands
 
     public RespirePending<RespireStreamReadResult[]> Read(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, int? count = null)
         => sink.Add<StreamReadCommand, RespireStreamReadResult[]>("XREAD",
-            StreamCommands.BuildReadCommand(sink.Client, streams, new StreamReadOptions { Count = count }, queued: true),
+            StreamCommands.BuildReadCommand(sink.Client, streams, new RespireStreamReadOptions { Count = count }, queued: true),
             static (client, value) => StreamCommands.ParseStreamRead(in value, client));
 }

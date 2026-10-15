@@ -18,7 +18,7 @@ public class SetManyIfNotExistsIntegrationTests(VersionedServerFixture servers)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [server.Endpoint], Database = server.Database, Connections = 1,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         foreach (var mode in new[] { "immediate", "batch", "transaction" })
         {

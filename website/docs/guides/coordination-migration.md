@@ -166,7 +166,7 @@ both physical keys in one Cluster slot; account for client prefixes too. See the
 
 `AcquireFencedLockAsync` waits for tracking invalidations and expiry, without a `timeout`
 parameter. It needs RESP3 client-side caching. Configure the application client with
-`Protocol = RespProtocol.Resp3` and `ClientSideCache = new RespireClientSideCacheOptions()`;
+`Protocol = RespireProtocol.Resp3` and `ClientSideCache = new RespireClientSideCacheOptions()`;
 see [waiting client setup](coordination.md#wait-for-a-fenced-lease).
 
 To preserve `TryAcquireAsync(timeout)`'s null-on-timeout contract, translate only the acquisition
@@ -217,7 +217,7 @@ Cancellation cannot recall a command already accepted by Redis. An unreturned fe
 remain until expiry and its counter may have advanced. Never interpret cancellation as proof that
 no acquisition occurred. `VerifyStillHeldAsync` checks only one instant. On explicit renewal,
 `ResetExpiryAsync` returning false means stop work. Use `ReleaseAsync` if you need its
-`LockReleaseOutcome`; disposal uses best-effort cleanup with expiry as the fallback.
+`RespireLockReleaseOutcome`; disposal uses best-effort cleanup with expiry as the fallback.
 
 ### Constructs that need redesign
 

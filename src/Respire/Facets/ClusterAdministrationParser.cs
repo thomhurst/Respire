@@ -77,7 +77,7 @@ internal static class ClusterAdministrationParser
         var metadata = new Dictionary<string, RespireResult>(StringComparer.Ordinal);
         if (fields.Length >= 4)
         {
-            if (fields[3].Type is not (RespDataType.Array or RespDataType.Map))
+            if (fields[3].Type is not (RespireDataType.Array or RespireDataType.Map))
                 throw new RespireProtocolException("CLUSTER SLOTS metadata requires a map or array of pairs.");
             var pairs = fields[3].AsArray();
             if (pairs.Length % 2 != 0) throw new RespireProtocolException("CLUSTER SLOTS metadata contains an incomplete pair.");
@@ -94,6 +94,6 @@ internal static class ClusterAdministrationParser
     }
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
-        => value.Type == RespDataType.Array ? value.AsArray()
+        => value.Type == RespireDataType.Array ? value.AsArray()
             : throw new RespireProtocolException("Cluster administration list must be an array.");
 }

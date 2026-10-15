@@ -12,9 +12,9 @@ namespace Respire.IntegrationTests;
 public class AvailabilityZoneIntegrationTests
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ValkeyClusterPrefersLocalPrimaryOnlyWhenRequested(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ValkeyClusterPrefersLocalPrimaryOnlyWhenRequested(RespireProtocol protocol)
     {
         await using var cluster = await RedisReadReplicaClusterTestContainer.StartAsync(RespireContainerServer.Valkey);
         for (var node = 0; node < 6; node++)
@@ -39,11 +39,11 @@ public class AvailabilityZoneIntegrationTests
     }
 
     [Test]
-    [Arguments(false, RespProtocol.Resp2)]
-    [Arguments(false, RespProtocol.Resp3)]
-    [Arguments(true, RespProtocol.Resp2)]
-    [Arguments(true, RespProtocol.Resp3)]
-    public async Task ValkeyReplicaAndSentinelRoutingUsesZoneAndFallsBack(bool sentinel, RespProtocol protocol)
+    [Arguments(false, RespireProtocol.Resp2)]
+    [Arguments(false, RespireProtocol.Resp3)]
+    [Arguments(true, RespireProtocol.Resp2)]
+    [Arguments(true, RespireProtocol.Resp3)]
+    public async Task ValkeyReplicaAndSentinelRoutingUsesZoneAndFallsBack(bool sentinel, RespireProtocol protocol)
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {

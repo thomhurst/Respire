@@ -136,7 +136,7 @@ public class BackplaneTests(RedisTestContainer fixture)
         }
         var options = new BackplaneSubscriptionOptions("test", "instance", channel, _ => { }, _ => { },
             info => { if (info.IsReconnection) events.Writer.TryWrite("gap"); return default; }, Receive);
-        await using var backplane = new RespireFusionCacheBackplane(client, new(BufferSize: 1, Overflow: SubscriptionOverflow.DropOldest));
+        await using var backplane = new RespireFusionCacheBackplane(client, new(BufferSize: 1, Overflow: RespireSubscriptionOverflow.DropOldest));
         await backplane.SubscribeAsync(options);
         try
         {
@@ -200,7 +200,7 @@ public class BackplaneTests(RedisTestContainer fixture)
     private ValueTask<RespireClient> ConnectAsync(int protocol, string? name = null)
         => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ClientName = name, Connections = 1, AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });

@@ -4,7 +4,7 @@ using Respire.Internal;
 namespace Respire;
 
 /// <summary>The result of releasing a managed distributed lock.</summary>
-public enum LockReleaseOutcome
+public enum RespireLockReleaseOutcome
 {
     /// <summary>This call removed the lock while the handle still owned it.</summary>
     Released,
@@ -38,7 +38,7 @@ public readonly struct RespireLockAttempt : IAsyncDisposable
 
 /// <summary>
 /// An acquired distributed lock. Exposed by <see cref="RespireLockAttempt.Lock"/> or returned by
-/// <see cref="ILockCommands.AcquireOrThrowAsync(RespireKey, TimeSpan, CancellationToken)"/>,
+/// <see cref="IRespireLockCommands.AcquireOrThrowAsync(RespireKey, TimeSpan, CancellationToken)"/>,
 /// which generates the owner token, so callers never invent or thread one through calls. Every
 /// operation compares that token on the server, so a lock that expired and was taken by someone
 /// else is never extended or deleted by this handle.
@@ -56,7 +56,7 @@ public sealed class RespireLock : IAsyncDisposable
     private const int StateReleased = 2;
     private const int StateNotOwned = 3;
 
-    private readonly ILockCommands _locks;
+    private readonly IRespireLockCommands _locks;
     private readonly SemaphoreSlim _extendSync = new(1, 1);
     private CancellationTokenSource _leaseChanged = new();
     private long _durationTicks;
@@ -69,7 +69,7 @@ public sealed class RespireLock : IAsyncDisposable
     private ReleaseAttempt? _releaseAttempt;
 
     internal RespireLock(
-        ILockCommands locks,
+        IRespireLockCommands locks,
         RespireKey key,
         RespireLockToken token,
         TimeSpan duration,
@@ -92,7 +92,7 @@ public sealed class RespireLock : IAsyncDisposable
     /// <summary>
     /// The owner token stored in the key: 32 ASCII hex characters from a <see cref="Guid"/>. Held
     /// as bytes so it compares byte-for-byte with the value the server round-trips, and with
-    /// <see cref="ILockCommands.GetOwnerTokenAsync"/>.
+    /// <see cref="IRespireLockCommands.GetOwnerTokenAsync"/>.
     /// </summary>
     public RespireLockToken Token { get; }
 
@@ -271,7 +271,7 @@ public sealed class RespireLock : IAsyncDisposable
 
     /// <summary>
     /// Releases the lock, only while this handle is still the owner. Redis: compare-and-DEL.
-    /// Idempotent: later calls return <see cref="LockReleaseOutcome.AlreadyReleased"/> without
+    /// Idempotent: later calls return <see cref="RespireLockReleaseOutcome.AlreadyReleased"/> without
     /// touching the server. Concurrent callers share one in-flight release, governed by the
     /// cancellation token of the caller that starts it. When that caller cancels before the command
     /// is submitted, the other callers retry with their own tokens. Any other failure, including a
@@ -288,11 +288,11 @@ public sealed class RespireLock : IAsyncDisposable
     /// <returns>
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
     /// </returns>
-    public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
-        => DispatchResponseSource<LockReleaseOutcome>.Run((Lock: this, Token: cancellationToken),
+    public ValueTask<RespireLockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+        => DispatchResponseSource<RespireLockReleaseOutcome>.Run((Lock: this, Token: cancellationToken),
             static (state, owner) => state.Lock.ReleaseBorrowedAsync(state.Token, owner));
 
-    private ValueTask<LockReleaseOutcome> ReleaseBorrowedAsync(
+    private ValueTask<RespireLockReleaseOutcome> ReleaseBorrowedAsync(
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var attempt = EnterRelease(cancellationToken, observation, out var outcome, out var started);
@@ -302,7 +302,7 @@ public sealed class RespireLock : IAsyncDisposable
         }
 
         return started
-            ? new ValueTask<LockReleaseOutcome>(attempt.Task)
+            ? new ValueTask<RespireLockReleaseOutcome>(attempt.Task)
             : JoinReleaseAsync(attempt, cancellationToken, observation);
     }
 
@@ -312,7 +312,7 @@ public sealed class RespireLock : IAsyncDisposable
     /// </summary>
     private ReleaseAttempt? EnterRelease(
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
-        out LockReleaseOutcome outcome, out bool started)
+        out RespireLockReleaseOutcome outcome, out bool started)
     {
         ReleaseAttempt attempt;
         lock (_releaseSync)
@@ -322,10 +322,10 @@ public sealed class RespireLock : IAsyncDisposable
             switch (Volatile.Read(ref _state))
             {
                 case StateReleased:
-                    outcome = LockReleaseOutcome.AlreadyReleased;
+                    outcome = RespireLockReleaseOutcome.AlreadyReleased;
                     return null;
                 case StateNotOwned:
-                    outcome = LockReleaseOutcome.NotOwned;
+                    outcome = RespireLockReleaseOutcome.NotOwned;
                     return null;
                 case StateReleasing:
                     return _releaseAttempt!;
@@ -342,7 +342,7 @@ public sealed class RespireLock : IAsyncDisposable
         return attempt;
     }
 
-    private async ValueTask<LockReleaseOutcome> JoinReleaseAsync(
+    private async ValueTask<RespireLockReleaseOutcome> JoinReleaseAsync(
         ReleaseAttempt attempt, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         // Each pass follows a newer attempt only after the previous one was cancelled before
@@ -391,7 +391,7 @@ public sealed class RespireLock : IAsyncDisposable
 
     private async Task CompleteReleaseAsync(ReleaseAttempt attempt, CancellationToken cancellationToken)
     {
-        LockReleaseOutcome outcome = default;
+        RespireLockReleaseOutcome outcome = default;
         Exception? failure = null;
         try { outcome = await ReleaseCoreAsync(attempt, cancellationToken).ConfigureAwait(false); }
         catch (Exception error) { failure = error; }
@@ -402,7 +402,7 @@ public sealed class RespireLock : IAsyncDisposable
         else attempt.TrySetResult(outcome);
     }
 
-    private async Task<LockReleaseOutcome> ReleaseCoreAsync(
+    private async Task<RespireLockReleaseOutcome> ReleaseCoreAsync(
         ReleaseAttempt attempt, CancellationToken cancellationToken)
     {
         try
@@ -423,7 +423,7 @@ public sealed class RespireLock : IAsyncDisposable
             }
 
             SignalLeaseChanged();
-            return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
+            return released ? RespireLockReleaseOutcome.Released : RespireLockReleaseOutcome.NotOwned;
         }
         catch (LockReleaseNotSubmittedException notSubmitted)
         {
@@ -587,7 +587,7 @@ public sealed class RespireLock : IAsyncDisposable
 
     /// <summary>One shared release; joiners read <see cref="OwnershipRestored"/> after it completes.</summary>
     private sealed class ReleaseAttempt(RespireTelemetry.ErrorObservation observation)
-        : TaskCompletionSource<LockReleaseOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
+        : TaskCompletionSource<RespireLockReleaseOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
     {
         internal RespireTelemetry.ErrorObservation Observation { get; } = observation;
         internal int RetryAttempts;

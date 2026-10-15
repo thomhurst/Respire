@@ -12,7 +12,7 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
     public async Task ConsumerCreationIsIdempotentAndDoesNotConsumeEntries(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"metadata:{Guid.NewGuid():N}:");
         await view.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
         (await view.Streams.CreateConsumerAsync("events", "workers", "alice")).Should().BeTrue();
@@ -37,7 +37,7 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
     public async Task LastIdUpdatesOnlyRequestedMetadataAndPreservesBinaryEntries(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"metadata:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         byte[] payload = [0xff, 0, 0x80];
@@ -76,7 +76,7 @@ public class StreamMetadataIntegrationTests(RedisTestContainer fixture)
     public async Task InvalidMetadataAndMissingOrWrongTypeStreamsReturnServerErrors(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"metadata:{Guid.NewGuid():N}:");
         await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "2-0" }, ("value", "first"));
         Func<Task>[] invalid =

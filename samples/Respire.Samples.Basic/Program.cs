@@ -18,7 +18,7 @@ var user = await redis.GetAsync<User>("user:1");
 Console.WriteLine($"user:1 = {user}");
 
 // Conditional set: only when the key does not exist.
-var claimed = await redis.SetAsync("lock:job42", "worker-a", expiry: TimeSpan.FromSeconds(30), when: SetWhen.NotExists);
+var claimed = await redis.SetAsync("lock:job42", "worker-a", expiry: TimeSpan.FromSeconds(30), when: RespireSetWhen.NotExists);
 Console.WriteLine($"lock claimed: {claimed}");
 
 // Expiry is one argument: a TimeSpan (PX), an instant (PXAT), or "keep what's there" (KEEPTTL).

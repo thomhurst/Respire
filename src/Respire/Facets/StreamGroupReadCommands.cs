@@ -4,26 +4,26 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IStreamCommands
+public partial interface IRespireStreamCommands
 {
     /// <summary>Reads one consumer-group page. Null startAt reads new entries; a numeric ID reads pending entries.</summary>
     ValueTask<RespireStreamEntry[]> ReadGroupOnceAsync(RespireKey key, string group, string consumer,
-        StreamReadOptions options = default, RespireStreamId? startAt = null, CancellationToken cancellationToken = default);
+        RespireStreamReadOptions options = default, RespireStreamId? startAt = null, CancellationToken cancellationToken = default);
 
     /// <summary>Reads one page from same-slot consumer-group streams. Use &gt; for new entries or numeric pending cursors.</summary>
     ValueTask<RespireStreamReadResult[]> ReadGroupAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
-        string group, string consumer, StreamReadOptions options = default, CancellationToken cancellationToken = default);
+        string group, string consumer, RespireStreamReadOptions options = default, CancellationToken cancellationToken = default);
 
     /// <summary>Continuously reads new group entries, or replays pending entries until empty, with reply limits.</summary>
     /// <remarks>New-entry reads use a five-second blocking interval when WaitFor is omitted. Pending reads do not block.</remarks>
-    IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(StreamReadOptions options, RespireKey key, string group,
+    IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(RespireStreamReadOptions options, RespireKey key, string group,
         string consumer, RespireStreamId? startAt = null, CancellationToken cancellationToken = default);
 }
 
 internal sealed partial class StreamCommands
 {
     public ValueTask<RespireStreamEntry[]> ReadGroupOnceAsync(RespireKey key, string group, string consumer,
-        StreamReadOptions options = default, RespireStreamId? startAt = null, CancellationToken cancellationToken = default)
+        RespireStreamReadOptions options = default, RespireStreamId? startAt = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamEntry[]>.Start();
         try
@@ -36,7 +36,7 @@ internal sealed partial class StreamCommands
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamEntry[]> ReadGroupSingleBorrowedAsync(RespireKey key, string group, string consumer,
-        StreamReadOptions options, RespireStreamId? startAt, CancellationToken cancellationToken,
+        RespireStreamReadOptions options, RespireStreamId? startAt, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
         var result = await ReadGroupBorrowedAsync([(key, startAt ?? (RespireStreamId)">")],
@@ -45,7 +45,7 @@ internal sealed partial class StreamCommands
     }
 
     public ValueTask<RespireStreamReadResult[]> ReadGroupAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
-        string group, string consumer, StreamReadOptions options = default, CancellationToken cancellationToken = default)
+        string group, string consumer, RespireStreamReadOptions options = default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamReadResult[]>.Start();
         try
@@ -57,7 +57,7 @@ internal sealed partial class StreamCommands
 
     private ValueTask<RespireStreamReadResult[]> ReadGroupBorrowedAsync(
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, string group, string consumer,
-        StreamReadOptions options, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireStreamReadOptions options, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(consumer);
@@ -78,7 +78,7 @@ internal sealed partial class StreamCommands
             .ConfigureAwait(false);
     }
 
-    public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(StreamReadOptions options, RespireKey key,
+    public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(RespireStreamReadOptions options, RespireKey key,
         string group, string consumer, RespireStreamId? startAt = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {

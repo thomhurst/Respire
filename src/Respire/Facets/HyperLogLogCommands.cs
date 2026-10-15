@@ -3,7 +3,7 @@ using Respire.Commands;
 namespace Respire;
 
 /// <summary>Probabilistic cardinality commands. Redis: PFADD, PFCOUNT, PFMERGE.</summary>
-public interface IHyperLogLogCommands
+public interface IRespireHyperLogLogCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
@@ -34,7 +34,7 @@ public interface IHyperLogLogCommands
         RespireKey destination, ReadOnlySpan<RespireKey> sourceKeys, CancellationToken cancellationToken);
 }
 
-internal sealed class HyperLogLogCommands(RespireClient client) : IHyperLogLogCommands
+internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperLogLogCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)

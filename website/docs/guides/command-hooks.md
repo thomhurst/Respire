@@ -172,7 +172,7 @@ internal connection setup and cancellation control commands do not create hook e
 Continuous `ReadGroupAsync` enumerations with a configured hook admit an initially
 canceled call before reporting cancellation. The single-stream overload that accepts
 `startAt` drains an already fetched batch and then ends quietly if canceled, with or
-without a hook; it does not admit another page. The `StreamReadOptions` overload checks
+without a hook; it does not admit another page. The `RespireStreamReadOptions` overload checks
 cancellation between entries and throws outside the already completed page scope.
 
 Ordinary `Keys.ScanAsync` and collection SSCAN/HSCAN/ZSCAN enumerations admit each

@@ -16,7 +16,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
     public async Task ReadsOwnBinaryKeysAndValuesAcrossSurfaces(int protocol, int surface)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("租户:");
         RespireKey key = new byte[] { 0xff, 0, 0x42 };
         await view.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("字段", (RespireValue)new byte[] { 0xff, 0 }));
@@ -56,7 +56,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
     {
         var name = $"stream-block-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = (RespProtocol)protocol, Connections = 1, ClientName = name });
+        { Protocol = (RespireProtocol)protocol, Connections = 1, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
@@ -82,7 +82,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
     {
         var name = $"stream-resume-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = (RespProtocol)protocol, ClientName = name });
+        { Protocol = (RespireProtocol)protocol, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));

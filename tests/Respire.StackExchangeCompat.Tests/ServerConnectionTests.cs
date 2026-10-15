@@ -30,7 +30,7 @@ public class ServerConnectionTests
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             UseTls = true,
             CommandTimeout = TimeSpan.FromSeconds(1),
@@ -55,7 +55,7 @@ public class ServerConnectionTests
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             UseTls = tls,
         });

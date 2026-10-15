@@ -61,7 +61,7 @@ internal sealed partial class RespireConnection
                 discardRepliesBefore: 0, throwOnError: false, probeCancellation.Token,
                 commandName: "INFO scriptingengines", commandDeadline: CommandDeadline.After(remaining),
                 pinToConnection: true).ConfigureAwait(false);
-            if (reply.Type is RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString
+            if (reply.Type is RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString
                 && ScriptingEngineInfo.ConfirmsAbsence(reply.AsString(), engine))
                 return new RespireScriptingEngineUnavailableException(engine, new RespireEndpoint(Host, Port), error);
         }

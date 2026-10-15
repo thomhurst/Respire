@@ -264,9 +264,9 @@ public class SearchProfileTests
         };
         var type = (kind, protocol) switch
         {
-            ("scalar", _) => RespDataType.BulkString,
-            ("missing-profile", 3) => RespDataType.Map,
-            _ => RespDataType.Array,
+            ("scalar", _) => RespireDataType.BulkString,
+            ("missing-profile", 3) => RespireDataType.Map,
+            _ => RespireDataType.Array,
         };
         var count = kind == "scalar" ? 0 : 4;
         await using var server = Server(_ => Frame(envelope, protocol));
@@ -497,6 +497,6 @@ public class SearchProfileTests
 
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespProtocol)protocol, ThreadPoolMonitoring = false,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespireProtocol)protocol, ThreadPoolMonitoring = false,
     };
 }

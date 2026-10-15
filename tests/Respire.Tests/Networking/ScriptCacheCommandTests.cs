@@ -15,8 +15,8 @@ public class ScriptCacheCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var flags = await client.WithKeyPrefix("tenant:").Scripts.ExistsAsync("first", "missing", "first");
         await client.Scripts.FlushAsync();
-        await client.Scripts.FlushAsync(ScriptFlushMode.Sync);
-        await client.Scripts.FlushAsync(ScriptFlushMode.Async);
+        await client.Scripts.FlushAsync(RespireScriptFlushMode.Sync);
+        await client.Scripts.FlushAsync(RespireScriptFlushMode.Async);
         await Assert.That(flags).IsEquivalentTo([true, false, true]);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
             "SCRIPT EXISTS first missing first", "SCRIPT FLUSH", "SCRIPT FLUSH SYNC", "SCRIPT FLUSH ASYNC"]);
@@ -43,7 +43,7 @@ public class ScriptCacheCommandTests
         var scripts = transaction ? tx.Scripts : batch.Scripts;
         var load = scripts.Load(script);
         var exists = scripts.Exists(script.Sha1);
-        var flush = scripts.Flush(ScriptFlushMode.Sync);
+        var flush = scripts.Flush(RespireScriptFlushMode.Sync);
         var evaluation = scripts.Evaluate(script, ["key"]);
         if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
         await Assert.That(load.Result).IsEqualTo(script.Sha1);
@@ -80,11 +80,11 @@ public class ScriptCacheCommandTests
     [Test]
     public async Task InvalidInputsAreRejectedBeforeSending()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = { new RespireEndpoint("localhost") } });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("localhost") } });
         await Assert.That(async () => await client.Scripts.ExistsAsync()).ThrowsExactly<ArgumentException>();
-        await Assert.That(async () => await client.Scripts.FlushAsync((ScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Scripts.FlushAsync((RespireScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
         using var batch = client.CreateBatch();
         await Assert.That(() => batch.Scripts.Exists()).ThrowsExactly<ArgumentException>();
-        await Assert.That(() => batch.Scripts.Flush((ScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => batch.Scripts.Flush((RespireScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
     }
 }

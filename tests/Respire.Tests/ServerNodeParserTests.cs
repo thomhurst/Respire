@@ -34,7 +34,7 @@ public class ServerNodeParserTests
         {
             var wire = Encoding.UTF8.GetBytes("%5\r\n" + string.Concat(fields.Select(field =>
             {
-                if (field.Type == RespDataType.Integer) return $":{field.AsInteger()}\r\n";
+                if (field.Type == RespireDataType.Integer) return $":{field.AsInteger()}\r\n";
                 var text = field.AsString();
                 return $"${Encoding.UTF8.GetByteCount(text)}\r\n{text}\r\n";
             })));

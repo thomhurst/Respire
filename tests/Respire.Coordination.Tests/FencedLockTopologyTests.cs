@@ -17,7 +17,7 @@ public class FencedLockTopologyTests
     {
         await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Connections = 1,
             ClientSideCache = new(),
         });
@@ -28,7 +28,7 @@ public class FencedLockTopologyTests
         await Task.Delay(100);
         await Assert.That(waiting.IsCompleted).IsFalse();
 
-        await Assert.That(await owner.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await owner.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await using var acquired = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(acquired.FencingToken).IsEqualTo(owner.Lock.FencingToken + 1);
     }
@@ -38,13 +38,13 @@ public class FencedLockTopologyTests
     [Arguments(3)]
     public async Task ClusterSupportsSameSlotKeysAndRejectsCrossSlotPairs(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with { Protocol = (RespProtocol)protocol, Connections = 1 });
+        await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 1 });
         var view = client.WithKeyPrefix(SharedRespireContainer.Prefix("coordination"));
         var coordination = new RespireCoordination(view);
         await using var attempt = await coordination.TryAcquireFencedLockAsync("{job}:lease", "{job}:counter", TimeSpan.FromSeconds(30));
         await Assert.That(attempt.Lock.FencingToken).IsEqualTo(1);
         await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(30))).IsTrue();
-        await Assert.That(await attempt.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await using var next = await coordination.TryAcquireFencedLockAsync("{job}:lease", "{job}:counter", TimeSpan.FromSeconds(30));
         await Assert.That(next.Lock.FencingToken).IsEqualTo(2);
 

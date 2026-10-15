@@ -57,10 +57,10 @@ public class ValueCodecBenchmarks
         // clearing different previous output lengths. Codec-owned scratch remains measured.
         _destination = new ArrayBufferWriter<byte>(Length + RespireValueCodec.HeaderLength);
         var options = new RespireValueCodecOptions { MinimumLength = MinimumLength };
-        _brotli = new BrotliValueCodec(options);
-        _deflate = new DeflateValueCodec(options);
-        _lz4 = new Lz4ValueCodec(options);
-        _zstd = new ZstdValueCodec(options);
+        _brotli = new RespireBrotliValueCodec(options);
+        _deflate = new RespireDeflateValueCodec(options);
+        _lz4 = new RespireLz4ValueCodec(options);
+        _zstd = new RespireZstdValueCodec(options);
         _brotliFrame = Validate("Brotli", _brotli);
         _deflateFrame = Validate("Deflate", _deflate);
         _lz4Frame = Validate("Lz4", _lz4);

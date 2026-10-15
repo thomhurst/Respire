@@ -10,7 +10,7 @@ public class HashListTests(RedisTestContainer fixture)
     private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.ConnectionString) with
     {
         Connections = 1,
-        Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
     };
 
     [Test]

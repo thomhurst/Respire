@@ -6,12 +6,12 @@ namespace Respire.Compression.Lz4;
 /// <summary>LZ4 block compression using versioned Respire frames and reserved algorithm ID 3.</summary>
 /// <remarks>Requires the optional Respire.Compression.Lz4 package. Payloads use raw LZ4 blocks,
 /// not LZ4 frame streams or K4os pickles. Decoding never requires the encoder's compression level.</remarks>
-public sealed class Lz4ValueCodec : RespireValueCodec
+public sealed class RespireLz4ValueCodec : RespireValueCodec
 {
     private readonly LZ4Level _level;
 
     /// <summary>Creates a thread-safe codec. Level 0 is fast (the default); levels 3 through 12 use high compression.</summary>
-    public Lz4ValueCodec(RespireValueCodecOptions? options = null, int level = 0)
+    public RespireLz4ValueCodec(RespireValueCodecOptions? options = null, int level = 0)
         : base(3, options, allowReservedAlgorithm: true)
     {
         if (level != 0 && level is not (>= 3 and <= 12))

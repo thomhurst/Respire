@@ -14,22 +14,22 @@ long added = await redis.Geo.AddAsync("{places}:cafes",
     new RespireGeoEntry(-0.1276, 51.5072, "london"),
     new RespireGeoEntry(-0.1419, 51.5014, "westminster"));
 
-GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
+RespireGeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     "{places}:cafes",
-    GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
+    RespireGeoSearchOrigin.FromCoordinates(-0.1, 51.5),
     RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers),
-    new GeoSearchOptions
+    new RespireGeoSearchOptions
     {
-        Sort = GeoSortOrder.Ascending,
+        Sort = RespireGeoSortOrder.Ascending,
         Count = 10,
         IncludeDistance = true,
         IncludeCoordinates = true,
     });
 ```
 
-`GeoSearchOrigin.FromMember` searches around an existing member. Use `RespireGeoSearchShape.Box`
+`RespireGeoSearchOrigin.FromMember` searches around an existing member. Use `RespireGeoSearchShape.Box`
 for a rectangular area. `Count` limits results and must be positive. `Any = true`
-requires `Count` and `Sort = GeoSortOrder.Unsorted`; it cannot be combined with the
+requires `Count` and `Sort = RespireGeoSortOrder.Unsorted`; it cannot be combined with the
 ascending sort in the example above. It lets the server stop early, so it does not
 guarantee the nearest matches. Distance uses the search shape's unit.
 
@@ -37,14 +37,14 @@ guarantee the nearest matches. Distance uses the search shape's unit.
 
 | Method | Redis command | Result |
 | --- | --- | --- |
-| `AddAsync` | GEOADD | Number of newly added members; `GeoAddOptions.Changed` includes updated members |
+| `AddAsync` | GEOADD | Number of newly added members; `RespireGeoAddOptions.Changed` includes updated members |
 | `DistanceAsync` | GEODIST | Distance, or `null` when either member is absent |
 | `HashAsync` | GEOHASH | One geohash string per member, with `null` for missing members |
 | `PositionAsync` | GEOPOS | One nullable `RespireGeoPosition` per member |
 | `SearchAsync` | GEOSEARCH | Members and requested distance, hash, and coordinate details |
 | `SearchStoreAsync` | GEOSEARCHSTORE | Number of members stored at the destination |
 
-`GeoAddOptions.When` selects conditional writes with `SetWhen`. Search result `Member`
+`RespireGeoAddOptions.When` selects conditional writes with `RespireSetWhen`. Search result `Member`
 decodes UTF-8; use `MemberBytes` for exact binary member data. Optional result fields are
 `null` unless requested.
 
@@ -54,7 +54,7 @@ decodes UTF-8; use `MemberBytes` for exact binary member data. Optional result f
 await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379");
 long stored = await redis.Geo.SearchStoreAsync(
     "{places}:nearby", "{places}:cafes",
-    GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
+    RespireGeoSearchOrigin.FromCoordinates(-0.1, 51.5),
     RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers));
 await redis.SortedSets.RemoveAsync("{places}:cafes", "london");
 ```

@@ -248,7 +248,7 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
     {
         var options = RespireOptions.Parse(CacheServer.ConnectionString) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         };
         await using var client = await RespireClient.ConnectAsync(options);

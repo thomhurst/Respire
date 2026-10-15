@@ -24,7 +24,7 @@ public class KeyNotificationBenchmarks
             "subkeys-one" => ("__subkeyspace@0__:tenant:42", "hset|5:field"),
             _ => ("__subkeyevent@0__:hset", "9:tenant:42|5:first,6:second,0:,3:x,y"),
         };
-        _message = new(channel, null, Encoding.UTF8.GetBytes(payload), new SystemTextJsonSerializer());
+        _message = new(channel, null, Encoding.UTF8.GetBytes(payload), new RespireSystemTextJsonSerializer());
         if (!_message.TryParseKeyNotification(out _)) throw new InvalidOperationException("Invalid benchmark input.");
     }
 

@@ -25,7 +25,7 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { server.Endpoint }, Database = server.Database,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Connections = 1,
             ClientSideCache = protocol == 3 ? new() : null,
         });
@@ -124,7 +124,7 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
         await using var mutex = await client.Locks.AcquireOrThrowAsync(key, TimeSpan.FromSeconds(30));
         (await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(60))).Should().BeTrue();
         (await mutex.VerifyStillHeldAsync()).Should().BeTrue();
-        (await mutex.ReleaseAsync()).Should().Be(LockReleaseOutcome.Released);
+        (await mutex.ReleaseAsync()).Should().Be(RespireLockReleaseOutcome.Released);
     }
 
     private static async Task<Dictionary<string, long>> Stats(RespireClient client)

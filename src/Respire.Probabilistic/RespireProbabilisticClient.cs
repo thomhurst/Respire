@@ -5,13 +5,13 @@ namespace Respire.Probabilistic;
 /// <summary>Typed operations for Redis Bloom, Cuckoo, Count-Min, Top-K, and t-digest structures.</summary>
 public sealed class RespireProbabilisticClient
 {
-    private readonly IRespireProbabilisticCommandsImplementation _commands;
+    private readonly RespireProbabilisticCommandsImplementation _commands;
 
     /// <summary>Creates probabilistic operations over a caller-owned Respire client.</summary>
     public RespireProbabilisticClient(IRespireClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
-        _commands = new IRespireProbabilisticCommandsImplementation(client);
+        _commands = new RespireProbabilisticCommandsImplementation(client);
     }
 
     /// <summary>Creates a Bloom filter.</summary>
@@ -390,7 +390,7 @@ public sealed class RespireProbabilisticClient
 
     private static RespireProbabilisticDumpChunk ParseDumpChunk(RespireResult result)
     {
-        if (result.Type != RespDataType.Array || result.Count != 2)
+        if (result.Type != RespireDataType.Array || result.Count != 2)
             throw new InvalidOperationException("Unexpected SCANDUMP reply: expected an iterator and a data chunk.");
         return new(result[0].AsInteger(), result[1].IsNull ? null : result[1].AsBytes());
     }
@@ -425,7 +425,7 @@ public sealed class RespireProbabilisticClient
     /// </summary>
     private static double ReadDouble(RespireResult result)
     {
-        if (result.Type != RespDataType.Double)
+        if (result.Type != RespireDataType.Double)
         {
             var text = result.AsString();
             if (string.Equals(text, "inf", StringComparison.OrdinalIgnoreCase) || string.Equals(text, "+inf", StringComparison.OrdinalIgnoreCase))
@@ -436,9 +436,9 @@ public sealed class RespireProbabilisticClient
         return result.AsDouble();
     }
 
-    private static bool IsOk(RespireResult result) => result.Type == RespDataType.SimpleString ? result.AsString() == "OK" : result.AsBoolean();
+    private static bool IsOk(RespireResult result) => result.Type == RespireDataType.SimpleString ? result.AsString() == "OK" : result.AsBoolean();
     private static bool ReadBoolean(RespireResult result)
-        => result.Type == RespDataType.Boolean ? result.AsBoolean() : result.AsInteger() == 1;
+        => result.Type == RespireDataType.Boolean ? result.AsBoolean() : result.AsInteger() == 1;
     private static bool[] ReadBooleans(RespireResult result) { var values = new bool[result.Count]; for (var i = 0; i < values.Length; i++) values[i] = ReadBoolean(result[i]); return values; }
     private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result)
     {
@@ -447,7 +447,7 @@ public sealed class RespireProbabilisticClient
         {
             // RESP3 replies with booleans for success/presence and keeps -1 for a full filter.
             var item = result[i];
-            values[i] = (item.Type == RespDataType.Boolean ? (item.AsBoolean() ? 1 : 0) : item.AsInteger()) switch
+            values[i] = (item.Type == RespireDataType.Boolean ? (item.AsBoolean() ? 1 : 0) : item.AsInteger()) switch
             {
                 1 => RespireCuckooInsertResult.Inserted,
                 0 => RespireCuckooInsertResult.AlreadyExists,

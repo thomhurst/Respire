@@ -14,9 +14,9 @@
         "GetBytesAsync(RespireKey,CancellationToken):ValueTask<byte[]?>",
         "GetStringAsync(RespireKey,CancellationToken):ValueTask<string?>",
         "IncrementAsync(RespireKey,long,CancellationToken):ValueTask<long>",
-        "SetAsync(RespireKey,RespireValue,RespireExpiry,SetWhen,CancellationToken):ValueTask<bool>",
-        "SetAsync`1(RespireKey,T,RespireExpiry,SetWhen,CancellationToken):ValueTask<bool>",
-        "TryGetAsync`1(RespireKey,CancellationToken):ValueTask<RespireGet<T>>"
+        "SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "SetAsync`1(RespireKey,T,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
+        "TryGetAsync`1(RespireKey,CancellationToken):ValueTask<RespireGetResult<T>>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

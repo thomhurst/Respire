@@ -19,10 +19,10 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task AtomicCompletionPreservesOtherGroupsAndOriginalBytes(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions()
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         foreach (var root in new[] { real, fake })
         {
             var client = root.WithKeyPrefix("{worker}tenant:");
@@ -50,8 +50,8 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
             await Assert.That(await root.Streams.CountAsync("s")).IsEqualTo(0);
             using var source = await root.ExecuteAsync("XREAD", ["STREAMS", "{worker}tenant:s", "0"]);
             using var target = await root.ExecuteAsync("XREAD", ["STREAMS", "{worker}tenant:dlq", "0"]);
-            var targetEntries = target.Type == RespDataType.Map ? target[1] : target[0][1];
-            var sourceEntries = source.Type == RespDataType.Map ? source[1] : source[0][1];
+            var targetEntries = target.Type == RespireDataType.Map ? target[1] : target[0][1];
+            var sourceEntries = source.Type == RespireDataType.Map ? source[1] : source[0][1];
             await Assert.That(targetEntries.Count).IsEqualTo(1);
             var fields = targetEntries[0][1];
             await Assert.That(fields[1].AsString()).IsEqualTo("1-0");
@@ -128,10 +128,10 @@ public class StreamDeadLetterIntegrationTests(RedisTestContainer redis)
     public async Task WrongTypeDeadLetterDoesNotAcknowledgeOrMutate(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions()
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         foreach (var client in new[] { real, fake })
         {
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));

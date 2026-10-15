@@ -24,7 +24,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.Replica,
         });
@@ -68,7 +68,7 @@ public partial class ErrorMetricsTests
         var expected = new SocketException((int)SocketError.ConnectionRefused);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
             HedgedReads = shape == "hedged" ? new() { Delay = TimeSpan.FromSeconds(1), MaximumExtraLoadPercent = 100 } : null,

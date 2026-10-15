@@ -17,7 +17,7 @@ public class HashReadTests
     [Arguments(long.MaxValue, false)]
     public async Task ExpiryTime_TryConversionPreservesStatesAndTimestamp(long timestamp, bool convertible)
     {
-        var expiry = RespireExpiryTime.FromRedis(timestamp, ExpiryTimePrecision.Milliseconds);
+        var expiry = RespireExpiryTimeResult.FromRedis(timestamp, RespireExpiryTimePrecision.Milliseconds);
         await Assert.That(expiry.TryGetExpiresAt(out var instant)).IsEqualTo(convertible);
         if (convertible)
         {
@@ -38,7 +38,7 @@ public class HashReadTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var milliseconds = await client.Hashes.ExpiryTimeAsync("hash", "a", "b");
-        var seconds = await client.Hashes.ExpiryTimeAsync("hash", ExpiryTimePrecision.Seconds, "a");
+        var seconds = await client.Hashes.ExpiryTimeAsync("hash", RespireExpiryTimePrecision.Seconds, "a");
 
         await Assert.That(milliseconds[0].UnixTimeMilliseconds).IsEqualTo(1000);
         await Assert.That(seconds[0].UnixTimeMilliseconds).IsEqualTo(1000);
@@ -83,31 +83,31 @@ public class HashReadTests
     public async Task ExpiryTime_PreservesLargeTimestampsWithoutDateTimeOverflow()
     {
         const long timestamp = 281474976710000;
-        var milliseconds = RespireExpiryTime.FromRedis(timestamp, ExpiryTimePrecision.Milliseconds);
-        var seconds = RespireExpiryTime.FromRedis(timestamp / 1000, ExpiryTimePrecision.Seconds);
+        var milliseconds = RespireExpiryTimeResult.FromRedis(timestamp, RespireExpiryTimePrecision.Milliseconds);
+        var seconds = RespireExpiryTimeResult.FromRedis(timestamp / 1000, RespireExpiryTimePrecision.Seconds);
         await Assert.That(milliseconds.UnixTimeMilliseconds).IsEqualTo(timestamp);
         await Assert.That(seconds.UnixTimeMilliseconds).IsEqualTo(timestamp);
         await Assert.That(milliseconds.Exists && milliseconds.HasExpiry).IsTrue();
-        await Assert.That(default(RespireExpiryTime).Exists).IsFalse();
+        await Assert.That(default(RespireExpiryTimeResult).Exists).IsFalse();
         await Assert.That(() => milliseconds.GetExpiresAt()).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(default(RespireExpiryTime).GetExpiresAt()).IsNull();
+        await Assert.That(default(RespireExpiryTimeResult).GetExpiresAt()).IsNull();
     }
 
     [Test]
     public async Task ExpiryTime_RejectsOverflowingSecondsAsMalformedReplies()
     {
         const long largestSeconds = long.MaxValue / 1000;
-        await Assert.That(RespireExpiryTime.FromRedis(largestSeconds, ExpiryTimePrecision.Seconds).UnixTimeMilliseconds)
+        await Assert.That(RespireExpiryTimeResult.FromRedis(largestSeconds, RespireExpiryTimePrecision.Seconds).UnixTimeMilliseconds)
             .IsEqualTo(largestSeconds * 1000);
-        await Assert.That(() => RespireExpiryTime.FromRedis(largestSeconds + 1, ExpiryTimePrecision.Seconds))
+        await Assert.That(() => RespireExpiryTimeResult.FromRedis(largestSeconds + 1, RespireExpiryTimePrecision.Seconds))
             .Throws<RespireProtocolException>();
-        await Assert.That(() => RespireExpiryTime.FromRedis(long.MaxValue, ExpiryTimePrecision.Seconds))
+        await Assert.That(() => RespireExpiryTimeResult.FromRedis(long.MaxValue, RespireExpiryTimePrecision.Seconds))
             .Throws<RespireProtocolException>();
     }
     [Test]
     public async Task ExpiryTime_RejectsUnexpectedNegativeSentinels()
     {
-        await Assert.That(() => RespireExpiryTime.FromRedis(-3, ExpiryTimePrecision.Milliseconds))
+        await Assert.That(() => RespireExpiryTimeResult.FromRedis(-3, RespireExpiryTimePrecision.Milliseconds))
             .Throws<RespireProtocolException>();
     }
 
@@ -119,14 +119,14 @@ public class HashReadTests
         await using var transaction = client.CreateTransaction();
         await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash")).Throws<ArgumentException>();
         await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", [], CancellationToken.None)).Throws<ArgumentException>();
-        await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", ExpiryTimePrecision.Seconds)).Throws<ArgumentException>();
-        await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", (ExpiryTimePrecision)99, "field"))
+        await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", RespireExpiryTimePrecision.Seconds)).Throws<ArgumentException>();
+        await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", (RespireExpiryTimePrecision)99, "field"))
             .Throws<ArgumentOutOfRangeException>();
         foreach (var hashes in new[] { batch.Hashes, transaction.Hashes })
         {
             await Assert.That(() => hashes.ExpiryTime("hash")).Throws<ArgumentException>();
-            await Assert.That(() => hashes.ExpiryTime("hash", ExpiryTimePrecision.Seconds)).Throws<ArgumentException>();
-            await Assert.That(() => hashes.ExpiryTime("hash", (ExpiryTimePrecision)99, "field"))
+            await Assert.That(() => hashes.ExpiryTime("hash", RespireExpiryTimePrecision.Seconds)).Throws<ArgumentException>();
+            await Assert.That(() => hashes.ExpiryTime("hash", (RespireExpiryTimePrecision)99, "field"))
                 .Throws<ArgumentOutOfRangeException>();
         }
         await Assert.That(batch.Count).IsEqualTo(0);

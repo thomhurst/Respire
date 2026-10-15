@@ -11,7 +11,7 @@ namespace Respire.Aws;
 /// deployments use the replication group ID. Cache names must be lowercase. The AWS credentials
 /// provider remains owned by the caller.
 /// </remarks>
-public sealed class ElastiCacheIamCredentialProvider : IRespireCredentialProvider
+public sealed class RespireElastiCacheIamCredentialProvider : IRespireCredentialProvider
 {
     private readonly AWSCredentials _awsCredentials;
     private readonly RegionEndpoint _region;
@@ -24,7 +24,7 @@ public sealed class ElastiCacheIamCredentialProvider : IRespireCredentialProvide
     /// <param name="cacheName">Serverless cache name or provisioned replication group ID.</param>
     /// <param name="userId">IAM-enabled ElastiCache user ID (equal to its username).</param>
     /// <param name="isServerless">Whether the cache is serverless.</param>
-    public ElastiCacheIamCredentialProvider(
+    public RespireElastiCacheIamCredentialProvider(
         AWSCredentials awsCredentials,
         RegionEndpoint region,
         string cacheName,

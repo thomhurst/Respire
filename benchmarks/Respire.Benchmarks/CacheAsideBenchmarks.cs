@@ -88,7 +88,7 @@ public class CacheAsideBenchmarks
         var created = await factory(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (created is null) return null;
-        return await client.Strings.GetAndSetAsync(key, created, ttl, SetWhen.NotExists, cancellationToken) ?? created;
+        return await client.Strings.GetAndSetAsync(key, created, ttl, RespireSetWhen.NotExists, cancellationToken) ?? created;
     }
 
     [GlobalCleanup]

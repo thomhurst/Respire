@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IHyperLogLogCommands",
+      "Type": "Respire.IRespireHyperLogLogCommands",
       "OwnerType": "Respire.HyperLogLogCommands",
       "Members": [
         "AddAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<bool>",

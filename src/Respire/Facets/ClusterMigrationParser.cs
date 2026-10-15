@@ -6,14 +6,14 @@ internal static class ClusterMigrationParser
 {
     internal static string TaskId(in RespValue value)
     {
-        if (value.Type != RespDataType.BulkString || value.AsSpan().IsEmpty)
+        if (value.Type != RespireDataType.BulkString || value.AsSpan().IsEmpty)
             throw new RespireProtocolException("CLUSTER MIGRATION IMPORT must return a nonempty bulk task ID.");
         return value.AsString();
     }
 
     internal static RespireClusterMigrationTask[] Tasks(in RespValue value)
     {
-        if (value.Type != RespDataType.Array)
+        if (value.Type != RespireDataType.Array)
             throw new RespireProtocolException("CLUSTER MIGRATION STATUS must return an array.");
         var rows = value.AsArray();
         var result = new RespireClusterMigrationTask[rows.Length];
@@ -23,7 +23,7 @@ internal static class ClusterMigrationParser
 
     private static RespireClusterMigrationTask Task(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("CLUSTER MIGRATION task must be a map or field/value array.");
         var pairs = value.AsArray();
         if (pairs.Length % 2 != 0)
@@ -58,7 +58,7 @@ internal static class ClusterMigrationParser
 
     private static DateTimeOffset? Timestamp(in RespValue value, bool allowUnset)
     {
-        if (value.Type != RespDataType.Integer)
+        if (value.Type != RespireDataType.Integer)
             throw new RespireProtocolException("CLUSTER MIGRATION timestamps must be integer Unix milliseconds.");
         var milliseconds = value.AsInteger();
         if (allowUnset && milliseconds == -1) return null;

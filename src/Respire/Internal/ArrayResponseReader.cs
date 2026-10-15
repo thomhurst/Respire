@@ -10,7 +10,7 @@ internal static class ArrayResponseReader
     // Redis sends values beyond Int64.MaxValue as bulk strings rather than RESP integers.
     internal static ulong Unsigned(in RespValue value)
     {
-        if (value.Type == RespDataType.Integer && value.AsInteger() >= 0) return (ulong)value.AsInteger();
+        if (value.Type == RespireDataType.Integer && value.AsInteger() >= 0) return (ulong)value.AsInteger();
         var bytes = value.AsSpan();
         if (Utf8Parser.TryParse(bytes, out ulong result, out var consumed) && consumed == bytes.Length) return result;
         throw new RespireProtocolException("Expected an unsigned array integer.");
@@ -26,8 +26,8 @@ internal static class ArrayResponseReader
         return result;
     }
 
-    internal static RespireArrayAggregate Aggregate(in RespValue value)
-        => value.IsNull ? default : value.Type == RespDataType.Integer
+    internal static RespireArrayAggregateResult Aggregate(in RespValue value)
+        => value.IsNull ? default : value.Type == RespireDataType.Integer
             ? new(null, value.AsInteger()) : new(value.AsString(), null);
 
     internal static RespireArrayEntry<string>[] Entries(in RespValue value)

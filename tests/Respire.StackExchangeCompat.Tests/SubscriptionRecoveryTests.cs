@@ -26,7 +26,7 @@ public class SubscriptionRecoveryTests
         await using var native = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         });

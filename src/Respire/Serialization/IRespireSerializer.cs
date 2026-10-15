@@ -39,5 +39,5 @@ public interface IRespireSerializer
 public static class RespireSerializer
 {
     /// <summary>System.Text.Json with default options.</summary>
-    public static IRespireSerializer Default { get; } = new SystemTextJsonSerializer();
+    public static IRespireSerializer Default { get; } = new RespireSystemTextJsonSerializer();
 }

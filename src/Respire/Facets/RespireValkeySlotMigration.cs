@@ -72,7 +72,7 @@ public sealed partial class RespireServerNode
     /// <summary>Deletes one slot's keys across databases on the selected Valkey 9+ node. Requires AllowAdmin.</summary>
     /// <remarks>This destructive FLUSHSLOT operation is distinct from FLUSHSLOTS, which removes slot ownership.
     /// Default uses the server's lazyfree-lazy-user-flush setting. Redis does not support FLUSHSLOT.</remarks>
-    public ValueTask ClusterFlushSlotAsync(int slot, ServerFlushMode mode = ServerFlushMode.Default,
+    public ValueTask ClusterFlushSlotAsync(int slot, RespireServerFlushMode mode = RespireServerFlushMode.Default,
         CancellationToken cancellationToken = default)
     {
         try
@@ -80,9 +80,9 @@ public sealed partial class RespireServerNode
             if ((uint)slot >= 16384) throw new ArgumentOutOfRangeException(nameof(slot));
             RespireValue[] arguments = mode switch
             {
-                ServerFlushMode.Default => [slot],
-                ServerFlushMode.Sync => [slot, "SYNC"],
-                ServerFlushMode.Async => [slot, "ASYNC"],
+                RespireServerFlushMode.Default => [slot],
+                RespireServerFlushMode.Sync => [slot, "SYNC"],
+                RespireServerFlushMode.Async => [slot, "ASYNC"],
                 _ => throw new ArgumentOutOfRangeException(nameof(mode)),
             };
             return MutationAsync("CLUSTER FLUSHSLOT", arguments, cancellationToken);

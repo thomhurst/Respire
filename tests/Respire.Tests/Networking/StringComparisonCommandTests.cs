@@ -52,13 +52,13 @@ public class StringComparisonCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await client.Strings.SetAsync("raw", (RespireValue)"value", default);
         await client.Strings.SetAsync("typed", "value", default);
-        await client.Strings.SetAsync("nx", (RespireValue)"value", default, SetWhen.NotExists);
-        await client.Strings.SetAsync("xx", "value", default, SetWhen.Exists);
+        await client.Strings.SetAsync("nx", (RespireValue)"value", default, RespireSetWhen.NotExists);
+        await client.Strings.SetAsync("xx", "value", default, RespireSetWhen.Exists);
         using var batch = client.CreateBatch();
         _ = batch.Strings.Set("raw", (RespireValue)"value", default);
         _ = batch.Strings.Set("typed", "value", default);
-        _ = batch.Strings.Set("nx", (RespireValue)"value", default, SetWhen.NotExists);
-        _ = batch.Strings.Set("xx", "value", default, SetWhen.Exists);
+        _ = batch.Strings.Set("nx", (RespireValue)"value", default, RespireSetWhen.NotExists);
+        _ = batch.Strings.Set("xx", "value", default, RespireSetWhen.Exists);
         await batch.ExecuteAsync();
         string[] expected = ["SET raw value", "SET typed value", "SET nx value NX", "SET xx value XX"];
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(expected.Concat(expected));
@@ -198,7 +198,7 @@ public class StringComparisonCommandTests
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var view = client.WithKeyPrefix("tenant:");

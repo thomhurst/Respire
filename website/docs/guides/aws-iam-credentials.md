@@ -25,7 +25,7 @@ var elasticache = new RespireOptions
 {
     Endpoints = { new RespireEndpoint("cache.example.amazonaws.com", 6379) },
     UseTls = true,
-    CredentialProvider = new ElastiCacheIamCredentialProvider(
+    CredentialProvider = new RespireElastiCacheIamCredentialProvider(
         awsCredentials, RegionEndpoint.USEast1, "my-cache", "my-user", isServerless: true),
 };
 
@@ -33,7 +33,7 @@ var memoryDb = new RespireOptions
 {
     Endpoints = { new RespireEndpoint("cluster.example.amazonaws.com", 6379) },
     UseTls = true,
-    CredentialProvider = new MemoryDbIamCredentialProvider(
+    CredentialProvider = new RespireMemoryDbIamCredentialProvider(
         awsCredentials, RegionEndpoint.USEast1, "my-cluster", "my-user"),
 };
 ```
@@ -49,7 +49,7 @@ var memoryDb = new RespireOptions
 - Keep TLS enabled. ElastiCache IAM authentication requires it.
 - Tokens expire after 15 minutes. Keep `CredentialRefreshBeforeExpiry` (default 5 minutes) below 15 minutes.
 - AWS closes IAM-authenticated connections after 12 hours unless the client reauthenticates with a fresh token.
-- Use `Protocol = RespProtocol.Resp3` with Pub/Sub, so subscribed connections can reauthenticate without dropping subscriptions.
+- Use `Protocol = RespireProtocol.Resp3` with Pub/Sub, so subscribed connections can reauthenticate without dropping subscriptions.
 - The provider passes its cancellation token to AWS credential resolution and signing. Respire does not own or dispose the AWS credentials provider.
 
 :::warning

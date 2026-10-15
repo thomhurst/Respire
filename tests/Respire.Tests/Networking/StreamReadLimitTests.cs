@@ -21,7 +21,7 @@ public class StreamReadLimitTests
         await using var server = new FakeRespServer(replies);
         await using var owner = Create(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
-        var options = new StreamReadOptions { Count = 2, MaxCount = 3, MaxSize = 100 };
+        var options = new RespireStreamReadOptions { Count = 2, MaxCount = 3, MaxSize = 100 };
         byte[] key = "{s}:one"u8.ToArray();
         (RespireKey Key, RespireStreamId After)[] streams = [(key, group ? ">" : "0"), ("{s}:two", group ? ">" : "0")];
         RespireStreamReadResult[] result;
@@ -58,7 +58,7 @@ public class StreamReadLimitTests
         await using var client = Create(server.Port);
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
-        StreamReadOptions[] invalid = [new() { MaxCount = 0 }, new() { MaxSize = -1 }, new() { Count = 3, MaxCount = 2 }];
+        RespireStreamReadOptions[] invalid = [new() { MaxCount = 0 }, new() { MaxSize = -1 }, new() { Count = 3, MaxCount = 2 }];
         foreach (var options in invalid)
         {
             await Assert.That(async () => await client.Streams.ReadAsync(options, "key")).Throws<ArgumentException>();
@@ -69,7 +69,7 @@ public class StreamReadLimitTests
                 await Assert.That(() => queue.Streams.ReadGroup("key", "g", "c", options)).Throws<ArgumentException>();
             }
         }
-        await Assert.That(() => batch.Streams.Read(new StreamReadOptions { WaitFor = Timeout.InfiniteTimeSpan }, "key"))
+        await Assert.That(() => batch.Streams.Read(new RespireStreamReadOptions { WaitFor = Timeout.InfiniteTimeSpan }, "key"))
             .Throws<ArgumentException>();
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
@@ -89,7 +89,7 @@ public class StreamReadLimitTests
         await using var client = Create(server.Port);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-        var options = new StreamReadOptions { MaxCount = 2, MaxSize = 50, WaitFor = Timeout.InfiniteTimeSpan };
+        var options = new RespireStreamReadOptions { MaxCount = 2, MaxSize = 50, WaitFor = Timeout.InfiniteTimeSpan };
         async Task Read()
         {
             if (group) await client.Streams.ReadGroupOnceAsync("key", "g", "c", options, cancellationToken: cancel.Token);
@@ -105,5 +105,5 @@ public class StreamReadLimitTests
     }
 
     private static RespireClient Create(int port) => RespireClient.Create(new RespireOptions
-    { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)] });
+    { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)] });
 }

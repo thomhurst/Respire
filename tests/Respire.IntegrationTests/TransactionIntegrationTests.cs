@@ -15,7 +15,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         var key = $"tx:readonly:{Guid.NewGuid():N}";
         await client.SetAsync(key, "before");
@@ -39,7 +39,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:key", "tx:counter");
 
@@ -72,7 +72,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:discarded");
         var transaction = client.CreateTransaction();
@@ -99,7 +99,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:err:applied");
         await client.SetAsync("tx:err:string", "not-a-number");
@@ -131,7 +131,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         var transaction = client.CreateTransaction();
         var pendings = new RespirePending<bool>[100];
@@ -156,7 +156,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:concurrent:counter");
 
@@ -192,7 +192,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.SetAsync("tx:watched", "initial");
 
@@ -222,7 +222,7 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await client.SetAsync("tx:watched:success", "initial");
 

@@ -23,7 +23,7 @@ public class StandaloneBatchFlushTests
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
-            connectionCount: 2, options: new RespireConnectionOptions { Protocol = RespProtocol.Resp2 });
+            connectionCount: 2, options: new RespireConnectionOptions { Protocol = RespireProtocol.Resp2 });
         var retired = multiplexer.GetConnection();
         await retired.RetireAsync();
         if (pinned)
@@ -164,7 +164,7 @@ public class StandaloneBatchFlushTests
         CountingStream? transport = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -199,7 +199,7 @@ public class StandaloneBatchFlushTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
             CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
@@ -223,7 +223,7 @@ public class StandaloneBatchFlushTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
             CommandTimeout = TimeSpan.FromMilliseconds(500),
             CircuitBreaker = circuitEnabled ? new() { MinimumFailureCount = 101 } : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
@@ -259,7 +259,7 @@ public class StandaloneBatchFlushTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             MaxInflightCommands = boundedRing ? 2 : 128,
             CommandTimeout = TimeSpan.FromSeconds(1),
             CircuitBreaker = circuitEnabled ? new() : null,
@@ -335,7 +335,7 @@ public class StandaloneBatchFlushTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
             CommandTimeout = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });

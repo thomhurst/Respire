@@ -25,7 +25,7 @@ public class ExpiryApiContractTests
     [Test]
     public async Task LockAcquisitionUsesRelativeLeaseDuration()
     {
-        var methods = new[] { typeof(ILockCommands), typeof(LockCommandExtensions) }
+        var methods = new[] { typeof(IRespireLockCommands), typeof(RespireLockCommandExtensions) }
             .SelectMany(type => type.GetMethods())
             .Where(method => method.Name is "AcquireAsync" or "AcquireOrThrowAsync" or "TryTakeAsync")
             .ToArray();

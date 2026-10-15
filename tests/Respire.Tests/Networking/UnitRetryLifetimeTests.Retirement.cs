@@ -174,7 +174,7 @@ public partial class UnitRetryLifetimeTests
 
     private static RespireOptions LifetimeOptions(FakeRespServer server, string owner) => Options(server, sentinel: false) with
     {
-        Protocol = owner == "cache" ? RespProtocol.Resp3 : RespProtocol.Resp2,
+        Protocol = owner == "cache" ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
         ClientSideCache = owner == "cache" ? new() { CoalesceConcurrentMisses = true } : null,
         CommandTimeout = TimeSpan.FromSeconds(15),
     };

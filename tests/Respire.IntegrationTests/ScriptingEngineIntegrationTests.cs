@@ -91,7 +91,7 @@ public class ScriptingEngineIntegrationTests
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))],
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Connections = 1, AllowAdmin = true,
             Username = restricted ? "engine_test" : null,
             Password = restricted ? "fixture-password" : null,

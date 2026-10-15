@@ -24,7 +24,7 @@ public class TypedSerializationLifetimeTests
     public async Task InvalidDestinationDoesNotFreezeSerializerOptions()
     {
         var options = new JsonSerializerOptions();
-        var serializer = new SystemTextJsonSerializer(options);
+        var serializer = new RespireSystemTextJsonSerializer(options);
         await Assert.That(() => serializer.Serialize<int>(null!, 42)).ThrowsExactly<ArgumentNullException>();
         await Assert.That(options.IsReadOnly).IsFalse();
     }
@@ -36,8 +36,8 @@ public class TypedSerializationLifetimeTests
     {
         var lowerOptions = new JsonSerializerOptions { PropertyNamingPolicy = generated ? JsonNamingPolicy.CamelCase : null };
         var upperOptions = new JsonSerializerOptions();
-        var lower = generated ? SystemTextJsonSerializer.FromContext(new TestJsonContext(lowerOptions)) : new SystemTextJsonSerializer(lowerOptions);
-        var upper = generated ? SystemTextJsonSerializer.FromContext(new TestJsonContext(upperOptions)) : new SystemTextJsonSerializer(upperOptions);
+        var lower = generated ? RespireSystemTextJsonSerializer.FromContext(new TestJsonContext(lowerOptions)) : new RespireSystemTextJsonSerializer(lowerOptions);
+        var upper = generated ? RespireSystemTextJsonSerializer.FromContext(new TestJsonContext(upperOptions)) : new RespireSystemTextJsonSerializer(upperOptions);
         // Reflection-backed options remain mutable until first use, as before.
         if (!generated) lowerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         var destination = new ArrayBufferWriter<byte>();
@@ -75,7 +75,7 @@ public class TypedSerializationLifetimeTests
         options.Converters.Add(converter);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 6379)], Serializer = new SystemTextJsonSerializer(options),
+            Endpoints = [new("localhost", 6379)], Serializer = new RespireSystemTextJsonSerializer(options),
         });
         converter.Nested = () => client.Serialize(new TypedSerializationAllocationTests.Payload(7)).ToString();
         for (var index = 0; index < 3; index++)
@@ -95,7 +95,7 @@ public class TypedSerializationLifetimeTests
     {
         var options = new JsonSerializerOptions();
         options.Converters.Add(new NestedConverter());
-        var serializer = new SystemTextJsonSerializer(options);
+        var serializer = new RespireSystemTextJsonSerializer(options);
         var destination = new FailingDestination();
         Exception? failure = null;
         try
@@ -117,7 +117,7 @@ public class TypedSerializationLifetimeTests
     [Arguments(true)]
     public async Task DestinationFailureStillPropagatesWithoutConverterFailure(bool typeBased)
     {
-        var serializer = new SystemTextJsonSerializer();
+        var serializer = new RespireSystemTextJsonSerializer();
         var destination = new FailingDestination();
         Exception? failure = null;
         try

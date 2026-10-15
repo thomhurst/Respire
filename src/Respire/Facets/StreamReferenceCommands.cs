@@ -5,7 +5,7 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>Redis 8.2+ handling of consumer-group references during stream removal or trimming.</summary>
-public enum StreamReferencePolicy
+public enum RespireStreamReferencePolicy
 {
     /// <summary>Remove stream entries while retaining other pending references (KEEPREF).</summary>
     KeepReferences,
@@ -26,76 +26,76 @@ public enum RespireStreamDeletionResult
     Retained = 2,
 }
 
-public partial interface IStreamCommands
+public partial interface IRespireStreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken);
+    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, RespireStreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken);
+    ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, RespireStreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Removes entries under a reference policy, returning one outcome per ID. Redis 8.2+: XDELEX.</summary>
-    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy,
+    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, RespireStreamReferencePolicy policy,
         params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Removes entries under a reference policy. Redis 8.2+: XDELEX.</summary>
-    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy,
+    ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, RespireStreamReferencePolicy policy,
         ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Acknowledges group entries and conditionally removes them. Redis 8.2+: XACKDEL.</summary>
     ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group,
-        StreamReferencePolicy policy, params ReadOnlySpan<RespireStreamId> ids);
+        RespireStreamReferencePolicy policy, params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Acknowledges group entries and conditionally removes them. Redis 8.2+: XACKDEL.</summary>
     ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group,
-        StreamReferencePolicy policy, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
+        RespireStreamReferencePolicy policy, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 }
 
 internal sealed partial class StreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
+    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, RespireStreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
         => RemoveAsync(key, policy, [ids], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, StreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
+    public ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group, RespireStreamReferencePolicy policy, RespireStreamId ids, CancellationToken cancellationToken)
         => AcknowledgeAndRemoveAsync(key, group, policy, [ids], cancellationToken);
 
 
     private static readonly Verb XDelEx = new("XDELEX");
     private static readonly Verb XAckDel = new("XACKDEL");
 
-    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy,
+    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, RespireStreamReferencePolicy policy,
         params ReadOnlySpan<RespireStreamId> ids)
         => RemoveAsync(key, policy, ids, CancellationToken.None);
 
-    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, StreamReferencePolicy policy,
+    public ValueTask<RespireStreamDeletionResult[]> RemoveAsync(RespireKey key, RespireStreamReferencePolicy policy,
         ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
         => client.ConvertResponseAsync("XDELEX", BuildReferenceRemovalCommand(client, key, null, policy, ids),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ParseDeletionResults(in value));
 
     public ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group,
-        StreamReferencePolicy policy, params ReadOnlySpan<RespireStreamId> ids)
+        RespireStreamReferencePolicy policy, params ReadOnlySpan<RespireStreamId> ids)
         => AcknowledgeAndRemoveAsync(key, group, policy, ids, CancellationToken.None);
 
     public ValueTask<RespireStreamDeletionResult[]> AcknowledgeAndRemoveAsync(RespireKey key, string group,
-        StreamReferencePolicy policy, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
+        RespireStreamReferencePolicy policy, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(group);
         return client.ConvertResponseAsync("XACKDEL", BuildReferenceRemovalCommand(client, key, group, policy, ids),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ParseDeletionResults(in value));
     }
 
-    internal static string ReferencePolicyToken(StreamReferencePolicy policy) => policy switch
+    internal static string ReferencePolicyToken(RespireStreamReferencePolicy policy) => policy switch
     {
-        StreamReferencePolicy.KeepReferences => "KEEPREF",
-        StreamReferencePolicy.DeleteReferences => "DELREF",
-        StreamReferencePolicy.Acknowledged => "ACKED",
+        RespireStreamReferencePolicy.KeepReferences => "KEEPREF",
+        RespireStreamReferencePolicy.DeleteReferences => "DELREF",
+        RespireStreamReferencePolicy.Acknowledged => "ACKED",
         _ => throw new ArgumentOutOfRangeException(nameof(policy)),
     };
 
     internal static Cmd1N BuildReferenceRemovalCommand(RespireClient client, RespireKey key, string? group,
-        StreamReferencePolicy policy, ReadOnlySpan<RespireStreamId> ids)
+        RespireStreamReferencePolicy policy, ReadOnlySpan<RespireStreamId> ids)
     {
         RequireIds(ids);
         var token = ReferencePolicyToken(policy);
@@ -123,7 +123,7 @@ internal sealed partial class StreamCommands
 
     internal static RespireStreamDeletionResult[] ParseDeletionResults(in RespValue value)
     {
-        if (value.Type != RespDataType.Array) throw new RespireProtocolException("Expected stream deletion outcomes.");
+        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("Expected stream deletion outcomes.");
         var items = value.AsArray();
         var results = new RespireStreamDeletionResult[items.Length];
         for (var i = 0; i < items.Length; i++)

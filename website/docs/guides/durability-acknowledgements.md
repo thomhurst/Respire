@@ -25,7 +25,7 @@ For AOF acknowledgements (Redis 7.2+):
 ```csharp
 using var batch = redis.CreateBatch();
 var write = batch.Set("payment:{42}", "recorded");
-RespireAofAcknowledgement acknowledgement = await batch.ExecuteAndWaitForAofAsync(
+RespireAofAcknowledgementResult acknowledgement = await batch.ExecuteAndWaitForAofAsync(
     requireLocal: true, replicas: 1, timeout: TimeSpan.FromSeconds(2));
 bool persistenceTargetMet = acknowledgement.Local >= 1 && acknowledgement.Replicas >= 1;
 ```

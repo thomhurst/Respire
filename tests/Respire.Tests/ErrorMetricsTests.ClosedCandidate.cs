@@ -13,15 +13,15 @@ namespace Respire.Tests;
 public partial class ErrorMetricsTests
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task HandshakeAfterReceiveLoopClosesRetainsOnePhysicalObservation(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task HandshakeAfterReceiveLoopClosesRetainsOnePhysicalObservation(RespireProtocol protocol)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture(throwOnMeasurement: true);
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         var failedPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         connection.PendingCommandsFailing += () => failedPending.TrySetResult();
         await server.ConnectionAccepted.WaitAsync(TimeSpan.FromSeconds(5));
@@ -54,7 +54,7 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true);
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         var failedPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         connection.PendingCommandsFailing += () => failedPending.TrySetResult();
         await server.ConnectionAccepted.WaitAsync(TimeSpan.FromSeconds(5));

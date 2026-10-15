@@ -31,7 +31,7 @@ public class ClusterReplicaRoutingBenchmarks
         _replicaPort = int.TryParse(Environment.GetEnvironmentVariable("REDIS_REPLICA_PORT"), out configured) ? configured : 6381;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(host, port)], Protocol = RespProtocol.Resp2,
+            Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2,
             Connections = 1, ThreadPoolMonitoring = false, UseCluster = true,
         }).ConfigureAwait(false);
         _replica = _client.WithReadFrom(RespireReadFrom.Replica);

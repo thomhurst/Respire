@@ -38,7 +38,7 @@ public class IdleReadWatchdogBenchmarks
         }
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Connections = 1, Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint(host, port) }, Connections = 1, Protocol = RespireProtocol.Resp2,
             ConnectionIdleReadTimeout = WatchdogEnabled ? TimeSpan.FromSeconds(30) : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });

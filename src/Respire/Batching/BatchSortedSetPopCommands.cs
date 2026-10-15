@@ -4,7 +4,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IBatchSortedSetCommands
+public partial interface IRespireBatchSortedSetCommands
 {
     /// <summary>Pops entries from the first nonempty sorted set, or null if all are empty. Redis: ZMPOP (7.0+).</summary>
     /// <remarks>Count must be positive; keys must share a Cluster slot. Blocking pops have no deferred form.</remarks>

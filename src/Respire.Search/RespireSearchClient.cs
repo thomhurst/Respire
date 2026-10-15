@@ -30,7 +30,7 @@ public sealed partial class RespireSearchClient
     private static readonly string[] NoOptions = [];
 
     private readonly IRespireClient _client;
-    private readonly IRespireSearchCommandsImplementation _commands;
+    private readonly RespireSearchCommandsImplementation _commands;
     // Set once a COMMAND INFO probe has shown that the server knows FT.HYBRID, so later
     // FT.HYBRID errors are passed through without probing again.
     private volatile bool _hybridConfirmed;
@@ -40,7 +40,7 @@ public sealed partial class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
-        _commands = new IRespireSearchCommandsImplementation(client);
+        _commands = new RespireSearchCommandsImplementation(client);
     }
 
     /// <summary>Returns owned index names from FT._LIST on the selected node, without cluster fan-out.</summary>
@@ -255,7 +255,7 @@ public sealed partial class RespireSearchClient
         try
         {
             using var info = await _client.ExecuteLeaseAsync(RespireCommands.Server.COMMAND_INFO, ["FT.HYBRID"], cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (info.Type is RespDataType.Array or RespDataType.Set && info.Count == 1)
+            if (info.Type is RespireDataType.Array or RespireDataType.Set && info.Count == 1)
             {
                 if (info[0].IsNull) return true;
                 _hybridConfirmed = true;

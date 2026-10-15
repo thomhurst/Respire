@@ -98,6 +98,6 @@ public class ProbabilisticCacheIntegrationTests(ModernRedisTestContainer fixture
     private ValueTask<RespireClient> ConnectAsync()
         => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
 }

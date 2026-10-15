@@ -20,7 +20,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");
         using var repeatedGet = await client.ExecuteAsync("SET", key, "replacement", "GET", "GET");
@@ -53,7 +53,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = Guid.NewGuid().ToString("N");
         await client.SetAsync(key, "original");
         foreach (var (command, arguments) in new (string, RespireValue[])[]
@@ -82,7 +82,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         byte[] bytes = [0, 255, 13, 10];
         using var echoed = await client.ExecuteAsync("ECHO", bytes);
         echoed.AsBytes().Should().Equal(bytes);
@@ -99,7 +99,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
 
         // The gap TryGetAsync closes: GetAsync<int> answers 0 for both cases.
@@ -131,7 +131,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var payload = new TypedPayload(7, "seven");
 
@@ -156,7 +156,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var deletedPayload = new TypedPayload(8, "deleted");
         var expiredPayload = new TypedPayload(9, "expired");
@@ -181,7 +181,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var payload = new TypedPayload(42, "answer");
 
@@ -257,7 +257,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         // The real fixture assigns a separate Redis database to each argument row.
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
 
         await client.Lists.RightPushAsync("typed:list:count", 1, 2, 3);
 
@@ -275,7 +275,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var payload = new TypedPayload(3, "three");
         await client.Lists.RightPushAsync("typed:list:json", JsonSerializer.Serialize(payload));
         (await client.Lists.LeftPopAsync<TypedPayload>("typed:list:json")).Should().Be(payload);
@@ -301,7 +301,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var payload = new TypedPayload(9, "nine");
 
@@ -342,7 +342,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var payload = new TypedPayload(5, "five");
 
         (await client.SortedSets.AddAsync("typed:zset", 7, 1.5)).Should().BeTrue();

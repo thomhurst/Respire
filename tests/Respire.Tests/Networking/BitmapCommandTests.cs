@@ -51,12 +51,12 @@ public class BitmapCommandTests
         await Assert.That(await client.Bitmaps.GetAsync("bits", 4)).IsTrue();
         await Assert.That(await client.Bitmaps.SetAsync("bits", 4, true)).IsFalse();
         await Assert.That(await client.Bitmaps.SetBitCountAsync("bits")).IsEqualTo(3);
-        await Assert.That(await client.Bitmaps.SetBitCountAsync("bits", 1, 9, BitIndexUnit.Bit)).IsEqualTo(2);
+        await Assert.That(await client.Bitmaps.SetBitCountAsync("bits", 1, 9, RespireBitIndexUnit.Bit)).IsEqualTo(2);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", true)).IsEqualTo(8);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", false, 2)).IsEqualTo(9);
-        await Assert.That(await client.Bitmaps.PositionAsync("bits", true, 2, 8, BitIndexUnit.Bit)).IsEqualTo(10);
+        await Assert.That(await client.Bitmaps.PositionAsync("bits", true, 2, 8, RespireBitIndexUnit.Bit)).IsEqualTo(10);
         await Assert.That(await client.Bitmaps.PositionAsync("missing", true)).IsNull();
-        await Assert.That(await client.Bitmaps.OperateAsync(BitOperation.Xor, "dest", "one", "two")).IsEqualTo(4);
+        await Assert.That(await client.Bitmaps.OperateAsync(RespireBitOperation.Xor, "dest", "one", "two")).IsEqualTo(4);
         await Assert.That(await client.Bitmaps.FieldAsync(
             "bits",
             RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0)),
@@ -95,15 +95,15 @@ public class BitmapCommandTests
         await Assert.That(async () => await client.Bitmaps.PositionAsync("bits", true, end: 2))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.PositionAsync(
-            "bits", true, start: 2, unit: BitIndexUnit.Bit))
+            "bits", true, start: 2, unit: RespireBitIndexUnit.Bit))
             .Throws<ArgumentException>();
-        await Assert.That(async () => await client.Bitmaps.OperateAsync(BitOperation.Not, "dest", "a", "b"))
+        await Assert.That(async () => await client.Bitmaps.OperateAsync(RespireBitOperation.Not, "dest", "a", "b"))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.FieldReadOnlyAsync("bits", RespireBitFieldOperation.Set(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0), 1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.GetAsync("bits", -1))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Bitmaps.SetBitCountAsync("bits", 0, 1, (BitIndexUnit)42))
+        await Assert.That(async () => await client.Bitmaps.SetBitCountAsync("bits", 0, 1, (RespireBitIndexUnit)42))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Bitmaps.FieldAsync("bits", default(RespireBitFieldOperation)))
             .Throws<ArgumentException>();

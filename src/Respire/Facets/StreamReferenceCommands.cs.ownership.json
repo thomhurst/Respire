@@ -1,15 +1,15 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IStreamCommands",
+      "Type": "Respire.IRespireStreamCommands",
       "OwnerType": "Respire.StreamCommands",
       "Members": [
-        "AcknowledgeAndRemoveAsync(RespireKey,string,StreamReferencePolicy,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
-        "AcknowledgeAndRemoveAsync(RespireKey,string,StreamReferencePolicy,RespireStreamId,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
-        "AcknowledgeAndRemoveAsync(RespireKey,string,StreamReferencePolicy,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamDeletionResult[]>",
-        "RemoveAsync(RespireKey,StreamReferencePolicy,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
-        "RemoveAsync(RespireKey,StreamReferencePolicy,RespireStreamId,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
-        "RemoveAsync(RespireKey,StreamReferencePolicy,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamDeletionResult[]>"
+        "AcknowledgeAndRemoveAsync(RespireKey,string,RespireStreamReferencePolicy,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
+        "AcknowledgeAndRemoveAsync(RespireKey,string,RespireStreamReferencePolicy,RespireStreamId,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
+        "AcknowledgeAndRemoveAsync(RespireKey,string,RespireStreamReferencePolicy,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamDeletionResult[]>",
+        "RemoveAsync(RespireKey,RespireStreamReferencePolicy,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
+        "RemoveAsync(RespireKey,RespireStreamReferencePolicy,RespireStreamId,CancellationToken):ValueTask<RespireStreamDeletionResult[]>",
+        "RemoveAsync(RespireKey,RespireStreamReferencePolicy,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamDeletionResult[]>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

@@ -25,95 +25,95 @@ public interface IRespireCommandQueue
     RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args);
 
     /// <summary>String (plain value) commands.</summary>
-    IBatchStringCommands Strings { get; }
+    IRespireBatchStringCommands Strings { get; }
 
     /// <summary>Generic key management commands.</summary>
-    IBatchKeyCommands Keys { get; }
+    IRespireBatchKeyCommands Keys { get; }
 
     /// <summary>Server flush commands affecting only the execution node.</summary>
-    IBatchServerCommands Server { get; }
+    IRespireBatchServerCommands Server { get; }
 
     /// <summary>Hash (field → value map) commands.</summary>
-    IBatchHashCommands Hashes { get; }
+    IRespireBatchHashCommands Hashes { get; }
 
     /// <summary>List commands.</summary>
-    IBatchListCommands Lists { get; }
+    IRespireBatchListCommands Lists { get; }
 
     /// <summary>Redis sparse array commands.</summary>
-    IBatchArrayCommands Arrays { get; }
+    IRespireBatchArrayCommands Arrays { get; }
 
     /// <summary>Set (unordered, unique members) commands.</summary>
-    IBatchSetCommands Sets { get; }
+    IRespireBatchSetCommands Sets { get; }
 
     /// <summary>Sorted set (score-ordered members) commands.</summary>
-    IBatchSortedSetCommands SortedSets { get; }
+    IRespireBatchSortedSetCommands SortedSets { get; }
 
     /// <summary>Bitmap commands.</summary>
-    IBatchBitmapCommands Bitmaps { get; }
+    IRespireBatchBitmapCommands Bitmaps { get; }
 
     /// <summary>HyperLogLog commands.</summary>
-    IBatchHyperLogLogCommands HyperLogLog { get; }
+    IRespireBatchHyperLogLogCommands HyperLogLog { get; }
 
     /// <summary>Geospatial commands.</summary>
-    IBatchGeoCommands Geo { get; }
+    IRespireBatchGeoCommands Geo { get; }
 
     /// <summary>Redis vector-set commands.</summary>
-    IBatchVectorSetCommands VectorSets { get; }
+    IRespireBatchVectorSetCommands VectorSets { get; }
 
     /// <summary>Lua script evaluation.</summary>
-    IBatchScriptCommands Scripts { get; }
+    IRespireBatchScriptCommands Scripts { get; }
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
-    IBatchFunctionCommands Functions { get; }
+    IRespireBatchFunctionCommands Functions { get; }
 
     /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
-    IBatchStreamCommands Streams { get; }
+    IRespireBatchStreamCommands Streams { get; }
 
-    /// <inheritdoc cref="IBatchStringCommands.GetString"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.GetString"/>
     RespirePending<string?> GetString(RespireKey key);
 
-    /// <inheritdoc cref="IBatchStringCommands.Get{T}"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Get{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> Get<T>(RespireKey key);
 
-    /// <inheritdoc cref="IBatchStringCommands.TryGet{T}"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.TryGet{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key);
+    RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key);
 
-    /// <inheritdoc cref="IBatchStringCommands.GetBytes"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.GetBytes"/>
     RespirePending<byte[]?> GetBytes(RespireKey key);
 
-    /// <inheritdoc cref="IBatchStringCommands.Set(RespireKey, RespireValue, RespireExpiry, SetWhen)"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Set(RespireKey, RespireValue, RespireExpiry, RespireSetWhen)"/>
     RespirePending<bool> Set(
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always);
+        RespireSetWhen when = RespireSetWhen.Always);
 
-    /// <inheritdoc cref="IBatchStringCommands.Set{T}(RespireKey, T, RespireExpiry, SetWhen)"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Set{T}(RespireKey, T, RespireExpiry, RespireSetWhen)"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<bool> Set<T>(
         RespireKey key,
         T value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always);
+        RespireSetWhen when = RespireSetWhen.Always);
 
-    /// <inheritdoc cref="IBatchKeyCommands.Delete(ReadOnlySpan{RespireKey})"/>
+    /// <inheritdoc cref="IRespireBatchKeyCommands.Delete(ReadOnlySpan{RespireKey})"/>
     RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys);
 
-    /// <inheritdoc cref="IBatchKeyCommands.Exists"/>
+    /// <inheritdoc cref="IRespireBatchKeyCommands.Exists"/>
     RespirePending<bool> Exists(RespireKey key);
 
-    /// <inheritdoc cref="IBatchStringCommands.Increment(RespireKey, long)"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Increment(RespireKey, long)"/>
     RespirePending<long> Increment(RespireKey key, long by = 1);
 
-    /// <inheritdoc cref="IBatchStringCommands.Decrement"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Decrement"/>
     RespirePending<long> Decrement(RespireKey key, long by = 1);
 
-    /// <inheritdoc cref="IBatchKeyCommands.Expire"/>
+    /// <inheritdoc cref="IRespireBatchKeyCommands.Expire"/>
     RespirePending<bool> Expire(
         RespireKey key,
         RespireExpiry expiry,

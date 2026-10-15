@@ -136,7 +136,7 @@ public sealed partial class RespireSearchClient
     }
 
     private static RespireSearchSpellingCorrection[] ParseSpellCheck(RespireResult result)
-        => result.Type == RespDataType.Map ? ParseSpellCheckResp3(result) : ParseSpellCheckResp2(result);
+        => result.Type == RespireDataType.Map ? ParseSpellCheckResp3(result) : ParseSpellCheckResp2(result);
 
     private static RespireSearchSpellingCorrection[] ParseSpellCheckResp2(RespireResult result)
     {
@@ -160,7 +160,7 @@ public sealed partial class RespireSearchClient
         if (result.Count != 2 || RespireSearchReply.ReadString(result[0], SpellCheckCommand) != "results")
             throw RespireSearchReply.Unexpected(SpellCheckCommand, "a results map was expected");
         var terms = result[1];
-        if (terms.Type != RespDataType.Map || (terms.Count & 1) != 0)
+        if (terms.Type != RespireDataType.Map || (terms.Count & 1) != 0)
             throw RespireSearchReply.Unexpected(SpellCheckCommand, "a term map was expected");
         var corrections = new RespireSearchSpellingCorrection[terms.Count / 2];
         for (var i = 0; i < corrections.Length; i++)
@@ -178,7 +178,7 @@ public sealed partial class RespireSearchClient
         for (var i = 0; i < suggestions.Length; i++)
         {
             var pair = result[i];
-            RequireSpellingPair(pair, RespDataType.Array);
+            RequireSpellingPair(pair, RespireDataType.Array);
             suggestions[i] = new(RespireSearchReply.ReadString(pair[1], SpellCheckCommand), ReadSpellingScore(pair[0]));
         }
         return suggestions;
@@ -191,13 +191,13 @@ public sealed partial class RespireSearchClient
         for (var i = 0; i < suggestions.Length; i++)
         {
             var pair = result[i];
-            RequireSpellingPair(pair, RespDataType.Map);
+            RequireSpellingPair(pair, RespireDataType.Map);
             suggestions[i] = new(RespireSearchReply.ReadString(pair[0], SpellCheckCommand), ReadSpellingScore(pair[1]));
         }
         return suggestions;
     }
 
-    private static void RequireSpellingPair(RespireResult pair, RespDataType type)
+    private static void RequireSpellingPair(RespireResult pair, RespireDataType type)
     {
         if (pair.Type != type || pair.IsNull || pair.Count != 2)
             throw RespireSearchReply.Unexpected(SpellCheckCommand, "a suggestion/score pair was expected");
@@ -206,7 +206,7 @@ public sealed partial class RespireSearchClient
     private static double ReadSpellingScore(RespireResult value)
     {
         double score;
-        if (value.Type == RespDataType.Double) score = value.AsDouble();
+        if (value.Type == RespireDataType.Double) score = value.AsDouble();
         else if (!double.TryParse(RespireSearchReply.ReadString(value, SpellCheckCommand), NumberStyles.Float, CultureInfo.InvariantCulture, out score))
             throw RespireSearchReply.Unexpected(SpellCheckCommand, "a numeric score was expected");
         if (!double.IsFinite(score) || score < 0)
@@ -216,7 +216,7 @@ public sealed partial class RespireSearchClient
 
     private static void RequireSpellArray(RespireResult value)
     {
-        if (value.Type != RespDataType.Array || value.IsNull)
+        if (value.Type != RespireDataType.Array || value.IsNull)
             throw RespireSearchReply.Unexpected(SpellCheckCommand, "an array was expected");
     }
 }

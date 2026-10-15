@@ -130,7 +130,7 @@ public class FencedLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 2,
             CommandTimeout = null,
@@ -246,7 +246,7 @@ public class FencedLockWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -272,7 +272,7 @@ public class FencedLockWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             CommandTimeout = null,
         });
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -369,7 +369,7 @@ public class FencedLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             ClientSideCache = new(),
@@ -413,7 +413,7 @@ public class FencedLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             ClientSideCache = new(),
@@ -451,7 +451,7 @@ public class FencedLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             ClientSideCache = new(),
@@ -502,7 +502,7 @@ public class FencedLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             ClientSideCache = new(),

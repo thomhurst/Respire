@@ -40,7 +40,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     private volatile bool _disposed;
 
     private RespireSubscription CreateSubscription(
-        SubscriptionKind kind, RespireChannel[] names, RespireSubscriptionOptions options)
+        RespireSubscriptionKind kind, RespireChannel[] names, RespireSubscriptionOptions options)
     {
         var (bufferSize, overflow) = ValidateSubscription(names, options);
         // Defensive copy: unsubscription must use the registered, deduplicated targets.
@@ -48,11 +48,11 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             this, kind, [.. names.Distinct()], bufferSize, overflow, options.MaxPayloadBytes);
     }
 
-    private (int BufferSize, SubscriptionOverflow Overflow) ValidateSubscription(
+    private (int BufferSize, RespireSubscriptionOverflow Overflow) ValidateSubscription(
         RespireChannel[] names, RespireSubscriptionOptions options)
     {
-        if (core.Options.CredentialProvider is not null && core.Options.Protocol != RespProtocol.Resp3)
-            throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
+        if (core.Options.CredentialProvider is not null && core.Options.Protocol != RespireProtocol.Resp3)
+            throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespireProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
         ArgumentNullException.ThrowIfNull(names);
         if (core.Cluster is not null && names.Any(static name => name.IsNotification)
             && names.Any(static name => !name.IsNotification))
@@ -70,7 +70,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     /// server-side when the caller sees it — enumeration only drains the buffer.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeAsync(
-        SubscriptionKind kind,
+        RespireSubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
@@ -82,7 +82,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     }
 
     public ValueTask<RespireSubscription> SubscribeAsync(
-        SubscriptionKind kind,
+        RespireSubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken,
@@ -101,7 +101,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
     internal RespireCommandHook? CommandHook => core.Options.CommandHook;
 
     private async ValueTask<RespireSubscription> SubscribeUnhookedAsync(
-        SubscriptionKind kind,
+        RespireSubscriptionKind kind,
         RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken,
@@ -251,9 +251,9 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
     }
 
-    private List<(SubscriptionKind Kind, RespireChannel Name)> RemoveRoutes(RespireSubscription subscription)
+    private List<(RespireSubscriptionKind Kind, RespireChannel Name)> RemoveRoutes(RespireSubscription subscription)
     {
-        var releasedRoutes = new List<(SubscriptionKind Kind, RespireChannel Name)>();
+        var releasedRoutes = new List<(RespireSubscriptionKind Kind, RespireChannel Name)>();
         lock (_gate)
         {
             _interrupted.Remove(subscription);
@@ -318,7 +318,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         HashSet<RespireSubscription> affected = [];
         for (var i = 0; i < _routes.Length; i++)
         {
-            if (IsClusterSharded((SubscriptionKind)i)) continue;
+            if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
             foreach (var subscriptions in _routes[i].Values) affected.UnionWith(subscriptions);
         }
         foreach (var subscription in affected)
@@ -380,31 +380,31 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         }
     }
 
-    private static Verb SubscribeVerb(SubscriptionKind kind) => kind switch
+    private static Verb SubscribeVerb(RespireSubscriptionKind kind) => kind switch
     {
-        SubscriptionKind.Pattern => Verbs.PSubscribe,
-        SubscriptionKind.Sharded => Verbs.SSubscribe,
+        RespireSubscriptionKind.Pattern => Verbs.PSubscribe,
+        RespireSubscriptionKind.Sharded => Verbs.SSubscribe,
         _ => Verbs.Subscribe,
     };
 
-    private static Verb UnsubscribeVerb(SubscriptionKind kind) => kind switch
+    private static Verb UnsubscribeVerb(RespireSubscriptionKind kind) => kind switch
     {
-        SubscriptionKind.Pattern => Verbs.PUnsubscribe,
-        SubscriptionKind.Sharded => Verbs.SUnsubscribe,
+        RespireSubscriptionKind.Pattern => Verbs.PUnsubscribe,
+        RespireSubscriptionKind.Sharded => Verbs.SUnsubscribe,
         _ => Verbs.Unsubscribe,
     };
 
-    private static string SubscribeOperation(SubscriptionKind kind) => kind switch
+    private static string SubscribeOperation(RespireSubscriptionKind kind) => kind switch
     {
-        SubscriptionKind.Pattern => "PSUBSCRIBE",
-        SubscriptionKind.Sharded => "SSUBSCRIBE",
+        RespireSubscriptionKind.Pattern => "PSUBSCRIBE",
+        RespireSubscriptionKind.Sharded => "SSUBSCRIBE",
         _ => "SUBSCRIBE",
     };
 
-    internal static string UnsubscribeOperation(SubscriptionKind kind) => kind switch
+    internal static string UnsubscribeOperation(RespireSubscriptionKind kind) => kind switch
     {
-        SubscriptionKind.Pattern => "PUNSUBSCRIBE",
-        SubscriptionKind.Sharded => "SUNSUBSCRIBE",
+        RespireSubscriptionKind.Pattern => "PUNSUBSCRIBE",
+        RespireSubscriptionKind.Sharded => "SUNSUBSCRIBE",
         _ => "UNSUBSCRIBE",
     };
 
@@ -463,7 +463,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             && (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested);
 
     private ValueTask SendRecoveryControlAsync(RespireConnection connection,
-        SubscriptionKind kind, RespireChannel name, CancellationToken cancellationToken)
+        RespireSubscriptionKind kind, RespireChannel name, CancellationToken cancellationToken)
         => SendControlAsync(connection, SubscribeVerb(kind), SubscribeOperation(kind), name,
             cancellationToken, instrument: false);
 
@@ -606,16 +606,16 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
                 {
                     var replacement = await EnsureConnectionAsync(CancellationToken.None).ConfigureAwait(false);
 
-                    (SubscriptionKind Kind, RespireChannel Name)[] routes;
+                    (RespireSubscriptionKind Kind, RespireChannel Name)[] routes;
                     lock (_gate)
                     {
-                        var snapshot = new List<(SubscriptionKind Kind, RespireChannel Name)>();
+                        var snapshot = new List<(RespireSubscriptionKind Kind, RespireChannel Name)>();
                         for (var i = 0; i < _routes.Length; i++)
                         {
-                            if (IsClusterSharded((SubscriptionKind)i)) continue;
+                            if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
                             foreach (var name in _routes[i].Names)
                             {
-                                snapshot.Add(((SubscriptionKind)i, name));
+                                snapshot.Add(((RespireSubscriptionKind)i, name));
                             }
                         }
 
@@ -741,10 +741,10 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         var elements = value.AsArray();
         if (elements.Length < 3) return;
         var verb = elements[0].AsSpan();
-        SubscriptionKind kind;
-        if (verb.SequenceEqual("subscribe"u8)) kind = SubscriptionKind.Channel;
-        else if (verb.SequenceEqual("psubscribe"u8)) kind = SubscriptionKind.Pattern;
-        else if (verb.SequenceEqual("ssubscribe"u8)) kind = SubscriptionKind.Sharded;
+        RespireSubscriptionKind kind;
+        if (verb.SequenceEqual("subscribe"u8)) kind = RespireSubscriptionKind.Channel;
+        else if (verb.SequenceEqual("psubscribe"u8)) kind = RespireSubscriptionKind.Pattern;
+        else if (verb.SequenceEqual("ssubscribe"u8)) kind = RespireSubscriptionKind.Sharded;
         else return;
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? gaps = null;
         lock (_gate)
@@ -787,24 +787,24 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         var frameKind = elements[0].AsSpan();
         if (frameKind.SequenceEqual("message"u8))
         {
-            Deliver(epoch, SubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(),
+            Deliver(epoch, RespireSubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(),
                 isPattern: false, elements[2].AsSpan());
         }
         else if (frameKind.SequenceEqual("smessage"u8))
         {
-            Deliver(epoch, SubscriptionKind.Sharded, elements[1].AsSpan(), elements[1].AsSpan(),
+            Deliver(epoch, RespireSubscriptionKind.Sharded, elements[1].AsSpan(), elements[1].AsSpan(),
                 isPattern: false, elements[2].AsSpan());
         }
         else if (frameKind.SequenceEqual("pmessage"u8) && elements.Length >= 4)
         {
-            Deliver(epoch, SubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(),
+            Deliver(epoch, RespireSubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(),
                 isPattern: true, elements[3].AsSpan());
         }
     }
 
     private void Deliver(
         long epoch,
-        SubscriptionKind kind,
+        RespireSubscriptionKind kind,
         ReadOnlySpan<byte> routeName,
         ReadOnlySpan<byte> channel,
         bool isPattern,
@@ -821,7 +821,7 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             EnqueueMessage(targets, channelName, isPattern ? cachedRouteName : (RespireChannel?)null, payload, ref drops);
         }
         // User handlers and metric callbacks never run under the routing/buffer gates.
-        RespireTelemetry.RecordReceivedMessage(kind == SubscriptionKind.Sharded);
+        RespireTelemetry.RecordReceivedMessage(kind == RespireSubscriptionKind.Sharded);
         if (drops is not null)
         {
             foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
@@ -959,6 +959,6 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
         _lifetimeCancellation.Dispose();
     }
 
-    private ByteRouteDictionary<List<RespireSubscription>> Routes(SubscriptionKind kind)
+    private ByteRouteDictionary<List<RespireSubscription>> Routes(RespireSubscriptionKind kind)
         => _routes[(int)kind];
 }

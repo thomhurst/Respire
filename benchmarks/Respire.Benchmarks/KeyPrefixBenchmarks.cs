@@ -70,7 +70,7 @@ public class KeyPrefixBenchmarks
     }
 
     [Benchmark]
-    public IStringCommands ReadInitializedFacet() => _client.Strings;
+    public IRespireStringCommands ReadInitializedFacet() => _client.Strings;
 
     [Benchmark]
     public int FixedTagLargeTextSlot() => _fixedTag.ResolveKey(_largeText).ClusterSlot;

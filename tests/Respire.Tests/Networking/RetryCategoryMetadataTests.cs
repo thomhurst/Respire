@@ -110,17 +110,17 @@ public class RetryCategoryMetadataTests
     }
 
     [Test]
-    [Arguments(SetWhen.Always, false, false, RespireCommandRetryCategory.WriteLastWins)]
-    [Arguments(SetWhen.Exists, false, false, RespireCommandRetryCategory.WriteLastWins)]
-    [Arguments(SetWhen.NotExists, false, false, RespireCommandRetryCategory.WriteChecked)]
-    [Arguments(SetWhen.Always, true, false, RespireCommandRetryCategory.WriteAccumulating)]
-    [Arguments(SetWhen.Exists, true, false, RespireCommandRetryCategory.WriteAccumulating)]
-    [Arguments(SetWhen.NotExists, true, false, RespireCommandRetryCategory.WriteAccumulating)]
-    [Arguments(SetWhen.Always, false, true, RespireCommandRetryCategory.WriteAccumulating)]
-    [Arguments(SetWhen.Exists, false, true, RespireCommandRetryCategory.WriteAccumulating)]
-    [Arguments(SetWhen.NotExists, false, true, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSetWhen.Always, false, false, RespireCommandRetryCategory.WriteLastWins)]
+    [Arguments(RespireSetWhen.Exists, false, false, RespireCommandRetryCategory.WriteLastWins)]
+    [Arguments(RespireSetWhen.NotExists, false, false, RespireCommandRetryCategory.WriteChecked)]
+    [Arguments(RespireSetWhen.Always, true, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSetWhen.Exists, true, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSetWhen.NotExists, true, false, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSetWhen.Always, false, true, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSetWhen.Exists, false, true, RespireCommandRetryCategory.WriteAccumulating)]
+    [Arguments(RespireSetWhen.NotExists, false, true, RespireCommandRetryCategory.WriteAccumulating)]
     public async Task TypedSetRefinesRiskOnlyWithoutExpiryOrGet(
-        SetWhen when, bool expires, bool returnOld, RespireCommandRetryCategory expected)
+        RespireSetWhen when, bool expires, bool returnOld, RespireCommandRetryCategory expected)
     {
         var expiry = expires ? RespireExpiry.In(TimeSpan.FromSeconds(1)) : RespireExpiry.None;
         await Assert.That(new SetCommand("key", "value", expiry, when, returnOld).RetryCategory)

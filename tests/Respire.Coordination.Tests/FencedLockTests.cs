@@ -83,8 +83,8 @@ public class FencedLockTests(RedisTestContainer fixture)
         await Assert.That(await client.GetStringAsync(pair.Counter)).IsEqualTo("1");
         await Assert.That(await first.Lock.ResetExpiryAsync(Lease)).IsTrue();
         await Assert.That(first.Lock.FencingToken).IsEqualTo(1);
-        await Assert.That(await first.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
-        await Assert.That(await first.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.AlreadyReleased);
+        await Assert.That(await first.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
+        await Assert.That(await first.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.AlreadyReleased);
         await using var second = await coordination.TryAcquireFencedLockAsync(pair.Key, pair.Counter, Lease);
         await Assert.That(second.Lock.FencingToken).IsEqualTo(2);
         await Assert.That(second.Lock.OwnerToken == first.Lock.OwnerToken).IsFalse();
@@ -111,7 +111,7 @@ public class FencedLockTests(RedisTestContainer fixture)
         await using var next = await coordinators[1].TryAcquireFencedLockAsync(pair.Key, pair.Counter, Lease);
         await Assert.That(next.Lock.FencingToken).IsEqualTo(old.Lock.FencingToken + 1);
         await Assert.That(await old.Lock.ResetExpiryAsync(Lease)).IsFalse();
-        await Assert.That(await old.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await old.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
         await Assert.That(await next.Lock.VerifyStillHeldAsync()).IsTrue();
         var protectedResource = new FencedResource();
         await Assert.That(protectedResource.Write(next.Lock.FencingToken, "new")).IsTrue();
@@ -125,7 +125,7 @@ public class FencedLockTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
-            Connections = 1, Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         var pair = Keys();
         var coordination = new RespireCoordination(client);
@@ -135,7 +135,7 @@ public class FencedLockTests(RedisTestContainer fixture)
         await Task.Delay(100);
         await Assert.That(waiting.IsCompleted).IsFalse();
 
-        await Assert.That(await owner.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await owner.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await using var acquired = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(acquired.FencingToken).IsEqualTo(owner.Lock.FencingToken + 1);
     }
@@ -146,7 +146,7 @@ public class FencedLockTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
-            Connections = 1, Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         var pair = Keys();
         var coordination = new RespireCoordination(client);
@@ -255,14 +255,14 @@ public class FencedLockTests(RedisTestContainer fixture)
         await Assert.That(await view.Locks.GetOwnerTokenAsync(new byte[] { 0xff, 0, 1 })).IsEqualTo(attempt.Lock.OwnerToken);
         await Assert.That(await view.GetStringAsync(new byte[] { 0xff, 0, 2 })).IsEqualTo("1");
         await Assert.That(await attempt.Lock.ResetExpiryAsync(Lease)).IsTrue();
-        await Assert.That(await attempt.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(await view.GetBytesAsync(new byte[] { 0xff, 0, 1 })).IsNull();
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
         Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
-        Connections = 1, Protocol = (RespProtocol)protocol,
+        Connections = 1, Protocol = (RespireProtocol)protocol,
     });
     private static (RespireKey Key, RespireKey Counter) Keys()
     {

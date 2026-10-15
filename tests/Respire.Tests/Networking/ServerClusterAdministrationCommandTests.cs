@@ -248,7 +248,7 @@ public class ServerClusterAdministrationCommandTests
         => RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", port)], Connections = 1, AllowAdmin = admin,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ClientSideCache = cache ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });

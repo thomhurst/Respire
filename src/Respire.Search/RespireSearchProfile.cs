@@ -72,12 +72,12 @@ public sealed record RespireSearchProfileNode(
 
             if (kind == ProfileFieldKind.ListNode)
             {
-                if (value.IsNull || value.Type != RespDataType.Array)
+                if (value.IsNull || value.Type != RespireDataType.Array)
                     throw Unexpected("a non-array " + field);
                 for (var j = 0; j < value.Count; j++)
                     children.Add(Parse(value[j], field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), copied.Items[j]));
             }
-            else if (kind == ProfileFieldKind.ObjectNode || value.Type == RespDataType.Map)
+            else if (kind == ProfileFieldKind.ObjectNode || value.Type == RespireDataType.Map)
             {
                 children.Add(Parse(value, field, copied));
             }
@@ -135,13 +135,13 @@ public sealed record RespireSearchProfileNode(
 
         switch (value.Type)
         {
-            case RespDataType.Integer:
+            case RespireDataType.Integer:
                 number = value.AsInteger();
                 return true;
-            case RespDataType.Double:
+            case RespireDataType.Double:
                 number = value.AsDouble();
                 return double.IsFinite(number);
-            case RespDataType.BulkString or RespDataType.SimpleString or RespDataType.BigNumber:
+            case RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.BigNumber:
                 return double.TryParse(value.AsString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
                     && double.IsFinite(number);
             default:
@@ -151,11 +151,11 @@ public sealed record RespireSearchProfileNode(
     }
 
     private static bool IsName(RespireResult value) => !value.IsNull &&
-        value.Type is RespDataType.BulkString or RespDataType.SimpleString && value.AsString().Length != 0;
+        value.Type is RespireDataType.BulkString or RespireDataType.SimpleString && value.AsString().Length != 0;
 
     private static void RequireObject(RespireResult value)
     {
-        if (value.IsNull || value.Type is not (RespDataType.Array or RespDataType.Map) || (value.Count & 1) != 0)
+        if (value.IsNull || value.Type is not (RespireDataType.Array or RespireDataType.Map) || (value.Count & 1) != 0)
             throw Unexpected("a value that is not a field/value array or map");
     }
 

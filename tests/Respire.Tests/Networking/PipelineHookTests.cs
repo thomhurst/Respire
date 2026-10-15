@@ -421,7 +421,7 @@ public class PipelineHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespirePipelineHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3), PipelineHook = hook,
     };
 

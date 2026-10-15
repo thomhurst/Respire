@@ -128,13 +128,13 @@ public sealed partial class RespireClient
             }
             response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
                 cancellationToken, onRedirect, observation: observation).ConfigureAwait(false);
-            if (response.Type != RespDataType.Array || response.AsArray().Length != fields.Length)
+            if (response.Type != RespireDataType.Array || response.AsArray().Length != fields.Length)
                 throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
             // Validate the entire reply before publishing any field from an untrusted frame.
             for (var index = 0; index < fields.Length; index++)
             {
                 var value = response.AsArray()[index];
-                if (!value.IsNull && value.Type != RespDataType.BulkString)
+                if (!value.IsNull && value.Type != RespireDataType.BulkString)
                     throw new RespireProtocolException("HMGET field values must be bulk strings or null.");
             }
             for (var index = 0; index < fields.Length; index++)

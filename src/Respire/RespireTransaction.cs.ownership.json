@@ -22,9 +22,9 @@
         "GetString(RespireKey):RespirePending<string?>",
         "Get`1(RespireKey):RespirePending<T?>",
         "Increment(RespireKey,long):RespirePending<long>",
-        "Set(RespireKey,RespireValue,RespireExpiry,SetWhen):RespirePending<bool>",
-        "Set`1(RespireKey,T,RespireExpiry,SetWhen):RespirePending<bool>",
-        "TryGet`1(RespireKey):RespirePending<RespireGet<T>>"
+        "Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set`1(RespireKey,T,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "TryGet`1(RespireKey):RespirePending<RespireGetResult<T>>"
       ],
       "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
     },

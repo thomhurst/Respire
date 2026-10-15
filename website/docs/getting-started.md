@@ -57,7 +57,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRespire(_ => new RespireOptions
 {
     Endpoints = { new RespireEndpoint("localhost") },
-    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
+    Serializer = RespireSystemTextJsonSerializer.FromContext(AppJsonContext.Default),
 });
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
@@ -125,7 +125,7 @@ public sealed record Stats(User? User, long Visits);
 internal partial class AppJsonContext : JsonSerializerContext;
 ```
 
-The JSON context generates metadata for your POCOs. `SystemTextJsonSerializer.FromContext` makes Respire's serializer safe for trimming and NativeAOT; the HTTP endpoints use the same metadata. Publishing this whole app as NativeAOT has additional [serialization and analyzer requirements](./fundamentals/values-and-serialization#nativeaot-and-trimming).
+The JSON context generates metadata for your POCOs. `RespireSystemTextJsonSerializer.FromContext` makes Respire's serializer safe for trimming and NativeAOT; the HTTP endpoints use the same metadata. Publishing this whole app as NativeAOT has additional [serialization and analyzer requirements](./fundamentals/values-and-serialization#nativeaot-and-trimming).
 
 The subscriber prints notifications to the app's terminal. Pub/sub is live delivery, so missed messages are not replayed; [pub/sub](./guides/pub-sub) explains reconnects and delivery gaps. The batch queues both commands before `ExecuteAsync`; read `.Result` only after execution finishes. A batch is not an atomic transaction.
 

@@ -42,10 +42,10 @@ public class GeoSearchResultTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long MeasureResult(byte[] member, out GeoSearchResult result)
+    private static long MeasureResult(byte[] member, out RespireGeoSearchResult result)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        result = new GeoSearchResult(member.AsSpan());
+        result = new RespireGeoSearchResult(member.AsSpan());
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -54,7 +54,7 @@ public class GeoSearchResultTests
     {
         byte[] member = [0xff, 0x00];
         var position = new RespireGeoPosition(2.5, 3.5);
-        var result = new GeoSearchResult(member.AsSpan(), 1.5, 123, position);
+        var result = new RespireGeoSearchResult(member.AsSpan(), 1.5, 123, position);
         member[0] = 0;
         var (text, distance, hash, coordinates) = result;
 
@@ -63,21 +63,21 @@ public class GeoSearchResultTests
         await Assert.That(hash).IsEqualTo(123);
         await Assert.That(coordinates).IsEqualTo(position);
         await Assert.That(result.MemberBytes.Span.SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
-        await Assert.That(result).IsNotEqualTo(new GeoSearchResult(text, distance, hash, coordinates));
+        await Assert.That(result).IsNotEqualTo(new RespireGeoSearchResult(text, distance, hash, coordinates));
     }
 
     [Test]
     public async Task TextAndRawMembers_HaveMatchingValueSemantics()
     {
-        var text = new GeoSearchResult(Member: "café", Distance: 1.5, Hash: 123, Position: new(2.5, 3.5));
-        var raw = new GeoSearchResult("café"u8, 1.5, 123, new(2.5, 3.5));
+        var text = new RespireGeoSearchResult(Member: "café", Distance: 1.5, Hash: 123, Position: new(2.5, 3.5));
+        var raw = new RespireGeoSearchResult("café"u8, 1.5, 123, new(2.5, 3.5));
         text.Deconstruct(Member: out var member, Distance: out var distance, Hash: out var hash, Position: out var position);
 
         await Assert.That(raw).IsEqualTo(text);
-        await Assert.That(new GeoSearchResult(member, distance, hash, position)).IsEqualTo(text);
+        await Assert.That(new RespireGeoSearchResult(member, distance, hash, position)).IsEqualTo(text);
         await Assert.That(raw.GetHashCode()).IsEqualTo(text.GetHashCode());
         await Assert.That((raw with { Member = "new" }).MemberBytes.Span.SequenceEqual("new"u8)).IsTrue();
         await Assert.That((raw with { Distance = 2 }).MemberBytes.Span.SequenceEqual("café"u8)).IsTrue();
-        await Assert.That(default(GeoSearchResult).MemberBytes.IsEmpty).IsTrue();
+        await Assert.That(default(RespireGeoSearchResult).MemberBytes.IsEmpty).IsTrue();
     }
 }

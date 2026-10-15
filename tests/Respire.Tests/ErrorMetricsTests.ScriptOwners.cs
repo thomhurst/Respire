@@ -31,7 +31,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var capture = new Capture();
@@ -68,7 +68,7 @@ public partial class ErrorMetricsTests
                 case "generic": await client.Scripts.ExecuteAsync<int>(null!); break;
                 case "load": await client.Scripts.LoadAsync(null!); break;
                 case "exists": await client.Scripts.ExistsAsync([]); break;
-                case "flush": await client.Scripts.FlushAsync((ScriptFlushMode)99); break;
+                case "flush": await client.Scripts.FlushAsync((RespireScriptFlushMode)99); break;
             }
         }
         catch (ArgumentException error) { failure = error; }

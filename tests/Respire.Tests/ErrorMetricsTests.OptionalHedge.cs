@@ -37,7 +37,7 @@ public partial class ErrorMetricsTests
         var expected = new SocketException((int)SocketError.ConnectionRefused);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)], ClusterTopologyRefreshInterval = null,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
@@ -99,7 +99,7 @@ public partial class ErrorMetricsTests
         using var unavailable = new ReservedUnavailablePort();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", unavailable.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", unavailable.Port)],
         });
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         var error = await Assert.That(() =>

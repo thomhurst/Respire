@@ -145,7 +145,7 @@ internal static class ArrayFacetScenarios
         await Assert.That(manySet.Result).IsEqualTo(1UL);
         await Assert.That(get.Result).IsEqualTo("2");
         await Assert.That(typedGet.Result).IsNull();
-        await Assert.That(found.Result).IsEqualTo(new RespireGet<int>(true, 0));
+        await Assert.That(found.Result).IsEqualTo(new RespireGetResult<int>(true, 0));
         await Assert.That(many.Result).IsEquivalentTo(new int?[] { 0, null, 3 }, CollectionOrdering.Matching);
         await Assert.That(range.Result).IsEquivalentTo(new int?[] { 3, 2, null, 0 }, CollectionOrdering.Matching);
         await Assert.That(count.Result).IsEqualTo(3UL);
@@ -178,7 +178,7 @@ internal static class ArrayFacetScenarios
         await Assert.That(await arrays.CountAsync("sparse")).IsEqualTo(2UL);
         await Assert.That(await arrays.LengthAsync("sparse")).IsEqualTo(4UL);
         await Assert.That((await arrays.TryGetAsync<int>("sparse", 1)).Found).IsFalse();
-        await Assert.That(await arrays.TryGetAsync<int>("sparse", 2)).IsEqualTo(new RespireGet<int>(true, 0));
+        await Assert.That(await arrays.TryGetAsync<int>("sparse", 2)).IsEqualTo(new RespireGetResult<int>(true, 0));
         await Assert.That(await arrays.RangeAsync<int?>("sparse", 3, 0)).IsEquivalentTo(new int?[] { 7, 0, null, null }, CollectionOrdering.Matching);
         await Assert.That(await arrays.GetManyAsync("sparse", 2, 1, 3)).IsEquivalentTo(new string?[] { "0", null, "7" }, CollectionOrdering.Matching);
         var high = (ulong)long.MaxValue + 10;

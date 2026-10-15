@@ -27,7 +27,7 @@ public class TransactionRetryTests
     public async Task ReadOnlyDecisionValidatesWatchBeforeReturning(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("balance", "1");
         var attempts = 0;
         var result = await client.RunTransactionAsync(["balance"], async (_, token) =>
@@ -47,7 +47,7 @@ public class TransactionRetryTests
     public async Task ConcurrentWritersConvergeAfterConflicts(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         const int writers = 8;
         var arrived = 0;
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

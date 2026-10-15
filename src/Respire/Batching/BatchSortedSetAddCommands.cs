@@ -6,7 +6,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IBatchSortedSetCommands
+public partial interface IRespireBatchSortedSetCommands
 {
     /// <summary>Queues conditional ZADD. True when new, or changed with CH.</summary>
     RespirePending<bool> Add(RespireKey key, RespireSortedSetAddOptions options, RespireValue member, double score);

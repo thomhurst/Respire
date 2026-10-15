@@ -11,16 +11,16 @@ public class HedgedReadIntegrationTests
 {
     [Test]
     [ParallelLimiter<DockerHeavy>]
-    [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Valkey, false, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Valkey, false, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Valkey, true, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Valkey, true, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Redis, false, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, false, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Redis, true, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, true, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, false, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, false, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, true, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, true, RespireProtocol.Resp3)]
     public async Task PausedReplicaLosesToPrimaryAndLaterRepliesStayOrdered(
-        RespireContainerServer server, bool useSentinel, RespProtocol protocol)
+        RespireContainerServer server, bool useSentinel, RespireProtocol protocol)
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
@@ -60,9 +60,9 @@ public class HedgedReadIntegrationTests
 
     [Test]
     [ParallelLimiter<DockerHeavy>]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task PausedClusterReplicaLosesToItsSlotPrimary(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task PausedClusterReplicaLosesToItsSlotPrimary(RespireProtocol protocol)
     {
         await using var cluster = await RedisReadReplicaClusterTestContainer.StartAsync();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions

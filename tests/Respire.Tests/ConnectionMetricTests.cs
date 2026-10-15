@@ -131,7 +131,7 @@ public class ConnectionMetricTests
         };
         server.DelayCommand("HELLO 3", 100);
         using var capture = new Capture(server.Port);
-        await using var client = await RespireClient.ConnectAsync(Options(server) with { Protocol = RespProtocol.Resp3 });
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { Protocol = RespireProtocol.Resp3 });
         await WaitUntil(() => capture.Events.Any(item => item.Name == "db.client.connection.create_time"));
         var created = capture.Events.Single(item => item.Name == "db.client.connection.create_time");
         await Assert.That(created.Value).IsGreaterThanOrEqualTo(0.09);
@@ -160,7 +160,7 @@ public class ConnectionMetricTests
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
         using var capture = new Capture(server.Port);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 }, null);
+            new() { Protocol = RespireProtocol.Resp2 }, null);
         var connection = await pool.RentAsync(default);
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
@@ -186,7 +186,7 @@ public class ConnectionMetricTests
         await using var server = new FakeRespServer(5, FakeRespServer.PongReply);
         using var capture = new Capture(server.Port);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 }, null);
+            new() { Protocol = RespireProtocol.Resp2 }, null);
         var connections = new RespireConnection[5];
         for (var i = 0; i < connections.Length; i++) connections[i] = await pool.RentAsync(default);
         foreach (var connection in connections) pool.Return(connection);
@@ -204,7 +204,7 @@ public class ConnectionMetricTests
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply) { CloseConnectionAfterCommand = 1 };
         using var capture = new Capture(server.Port);
         await using var first = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         await Assert.That(async () => { using var reply = await first.SendAsync(new Commands.RawCommand(FakeRespServer.PingFrame)); })
             .Throws<RespireConnectionException>();
         await first.DisposeAsync();
@@ -212,7 +212,7 @@ public class ConnectionMetricTests
         await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(0d);
         server.CloseConnectionAfterCommand = null;
         await using var replacement = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(1d);
         var closed = await capture.WaitForCloseAsync();
@@ -233,7 +233,7 @@ public class ConnectionMetricTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         using var capture = new Capture(port);
         var connect = RespireConnection.ConnectAsync("127.0.0.1", port,
-            new() { Protocol = RespProtocol.Resp2, UseTls = tls,
+            new() { Protocol = RespireProtocol.Resp2, UseTls = tls,
                 TlsOptions = new() { RemoteCertificateValidationCallback = static (_, _, _, _) => true } },
             cancellationToken: deadline.Token);
         using var peer = await listener.AcceptSocketAsync(deadline.Token);
@@ -266,7 +266,7 @@ public class ConnectionMetricTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         using var capture = new Capture(port);
         var connect = RespireConnection.ConnectAsync("127.0.0.1", port,
-            new() { Protocol = RespProtocol.Resp2, UseTls = true }, cancellationToken: deadline.Token);
+            new() { Protocol = RespireProtocol.Resp2, UseTls = true }, cancellationToken: deadline.Token);
         using var peer = await listener.AcceptSocketAsync(deadline.Token);
         using var stream = new NetworkStream(peer, ownsSocket: false);
         await Assert.That(await stream.ReadAsync(new byte[4096], deadline.Token)).IsGreaterThan(0);
@@ -377,7 +377,7 @@ public class ConnectionMetricTests
         await using var server = new FakeRespServer(1, "-WRONGPASS rejected\r\n"u8.ToArray());
         using var capture = new Capture(server.Port);
         await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp3 })).Throws<RespireConnectionException>();
+            new() { Protocol = RespireProtocol.Resp3 })).Throws<RespireConnectionException>();
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(0d);
         await Assert.That(capture.Events.Count(item => item.Name == "db.client.connection.create_time")).IsEqualTo(0);
@@ -443,7 +443,7 @@ public class ConnectionMetricTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         using var capture = new Capture(port);
         var connect = RespireConnection.ConnectAsync("127.0.0.1", port,
-            new() { Protocol = RespProtocol.Resp3, UseTls = tls,
+            new() { Protocol = RespireProtocol.Resp3, UseTls = tls,
                 ConnectTimeout = TimeSpan.FromSeconds(callerCancels ? 5 : 1) }, cancellationToken: caller.Token);
         using var peer = await listener.AcceptSocketAsync(deadline.Token);
         using var stream = new NetworkStream(peer, ownsSocket: false);
@@ -483,7 +483,7 @@ public class ConnectionMetricTests
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
         using var capture = new Capture(server.Port);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2, SubscriptionConfirmationHandler = static (in global::Respire.Protocol.RespValue _) => { } });
+            new() { Protocol = RespireProtocol.Resp2, SubscriptionConfirmationHandler = static (in global::Respire.Protocol.RespValue _) => { } });
         capture.Observe();
         await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
         await Assert.That(capture.Current("db.client.connection.pending_requests")).IsEqualTo(0d);
@@ -502,7 +502,7 @@ public class ConnectionMetricTests
         var expiry = DateTimeOffset.UtcNow.AddHours(1);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CredentialProvider = new PendingRenewalProvider(new(null, "first", expiry), renewal.Task),
             CredentialRefreshBeforeExpiry = TimeSpan.FromHours(2),
             CredentialCacheInvalidation = static () => throw new InvalidOperationException("cache fence"),
@@ -530,7 +530,7 @@ public class ConnectionMetricTests
         using var capture = new Capture(server.Port);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
             MaintenanceWindowTimeout = TimeSpan.FromMilliseconds(100),
         });
@@ -568,7 +568,7 @@ public class ConnectionMetricTests
         await using var target = MaintenanceServer();
         using var capture = new Capture(source.Port);
         await using var client = await RespireClient.ConnectAsync(Options(source) with
-        { Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
+        { Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
         var moving = Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:5\r\n+127.0.0.1:{target.Port}\r\n");
         await source.SendRawAsync(moving.Concat(moving).ToArray());
         await WaitUntil(() => capture.Events.Any(item => item.Name == "redis.client.connection.handoff"));
@@ -587,7 +587,7 @@ public class ConnectionMetricTests
         await using var target = MaintenanceServer();
         using var capture = new Capture(source.Port);
         await using var client = await RespireClient.ConnectAsync(Options(source) with
-        { Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
+        { Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
         var old = client.Core.Multiplexer.GetConnection();
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -621,7 +621,7 @@ public class ConnectionMetricTests
         using var configuration = new MetricConfigurationScope();
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         using var capture = new Capture(server.Port);
         var pool = new ConnectionTelemetry.Pool($"127.0.0.1:{server.Port}/0/shared", false);
         var state = new ConnectionTelemetry.State(connection, pool, false);
@@ -659,7 +659,7 @@ public class ConnectionMetricTests
         };
         var options = Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
         };
         if (mode == "sentinel")
@@ -717,7 +717,7 @@ public class ConnectionMetricTests
         using var configuration = new MetricConfigurationScope();
         await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 }, null);
+            new() { Protocol = RespireProtocol.Resp2 }, null);
         var idle = await pool.RentAsync(default);
         var borrowed = await pool.RentAsync(default, reuseIdle: false);
         var dead = await pool.RentAsync(default, reuseIdle: false);
@@ -789,7 +789,7 @@ public class ConnectionMetricTests
         };
         var options = Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
         };
         if (mode == "sentinel")
@@ -929,7 +929,7 @@ public class ConnectionMetricTests
         await using var source = MaintenanceServer();
         await using var target = MaintenanceServer();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
-        { Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
+        { Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
         var old = client.Core.Multiplexer.GetConnection();
         var sent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         source.SuppressReply = command => { if (command != "PING") return false; sent.TrySetResult(); return true; };
@@ -980,7 +980,7 @@ public class ConnectionMetricTests
         listener.Start();
         var droppedBefore = ConnectionTelemetry.DroppedMeasurements;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         using var reply = await connection.SendAsync(new Commands.RawCommand(FakeRespServer.PingFrame));
         await Assert.That(reply.ToString()).IsEqualTo("PONG");
         await connection.DisposeAsync();
@@ -994,7 +994,7 @@ public class ConnectionMetricTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         var pool = new ConnectionTelemetry.Pool("test", false);
         var state = new ConnectionTelemetry.State(connection, pool, false);
         pool.Add(state);
@@ -1018,7 +1018,7 @@ public class ConnectionMetricTests
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         var pool = new ConnectionTelemetry.Pool("unobserved", false);
         var abandoned = new ConnectionTelemetry.State[64];
         for (var i = 0; i < abandoned.Length; i++)
@@ -1107,7 +1107,7 @@ public class ConnectionMetricTests
         using var configuration = new MetricConfigurationScope();
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 }, null);
+            new() { Protocol = RespireProtocol.Resp2 }, null);
         var connection = await pool.RentAsync(default);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1161,7 +1161,7 @@ public class ConnectionMetricTests
         using var configuration = new MetricConfigurationScope(new() { Groups = groups });
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         for (var i = 0; i < 20; i++) MeasureDisabled(connection);
         MeasurePositiveControl();
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (MeasureDisabled(connection), MeasurePositiveControl()));
@@ -1175,7 +1175,7 @@ public class ConnectionMetricTests
         using var configuration = new MetricConfigurationScope();
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply) { SuppressReply = _ => true };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2, ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+            new() { Protocol = RespireProtocol.Resp2, ResponseTimeout = TimeSpan.FromMilliseconds(100) });
         var gate = (Lock)typeof(RespireConnection).GetField("_receiveDeadlineGate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(connection)!;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1249,7 +1249,7 @@ public class ConnectionMetricTests
     private static RespireOptions Options(FakeRespServer server) => new()
     {
         Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-        Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
     };
 
     private sealed record Sample(string Name, string? Unit, double Value, Dictionary<string, object?> Tags);

@@ -32,7 +32,7 @@ public class ReconnectPolicyTests
             new() { BackoffMultiplier = 0.5 }, new() { JitterRatio = -0.1 }, new() { JitterRatio = 1.1 },
             new() { JitterRatio = double.NaN }, new() { MaxAttempts = 0 }];
         foreach (var policy in invalid)
-            await Assert.That(() => RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, ReconnectPolicy = policy }))
+            await Assert.That(() => RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, ReconnectPolicy = policy }))
                 .ThrowsExactly<RespireConfigurationException>();
     }
 
@@ -204,7 +204,7 @@ public class ReconnectPolicyTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
-            { Protocol = RespProtocol.Resp2, ClientName = "policy-test" });
+            { Protocol = RespireProtocol.Resp2, ClientName = "policy-test" });
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
         // A command with an uncertain outcome keeps the server-side identity owed to the fence.
         await Assert.That(async () => await client.PingAsync()).Throws<RespireConnectionException>();
@@ -368,7 +368,7 @@ public class ReconnectPolicyTests
 
     private static RespireOptions Options(int port, RespireReconnectPolicy policy) => new()
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         Endpoints = { new RespireEndpoint("127.0.0.1", port) }, Connections = 1,
         ConnectTimeout = TimeSpan.FromSeconds(1), ReconnectPolicy = policy,
     };

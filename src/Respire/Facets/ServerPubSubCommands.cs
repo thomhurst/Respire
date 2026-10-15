@@ -7,7 +7,7 @@ namespace Respire;
 /// <summary>An owned channel name and its node-local subscriber count.</summary>
 public readonly record struct RespireChannelSubscriberCount(RespireChannel Channel, long Subscribers);
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Lists literal channels on one execution node. Set sharded for PUBSUB SHARDCHANNELS (Redis 7+).</summary>
     /// <remarks>Pattern and channel bytes are not key-prefixed. Pattern subscriptions are excluded.</remarks>
@@ -91,7 +91,7 @@ internal sealed partial class ServerCommands
 
     private static RespireChannel[] ParseChannels(in RespValue value, bool sharded)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Set))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Set))
             throw new RespireProtocolException("PUBSUB channels must be an array.");
         var items = value.AsArray();
         var result = new RespireChannel[items.Length];
@@ -101,7 +101,7 @@ internal sealed partial class ServerCommands
 
     private static RespireChannel ParseChannel(in RespValue value, bool sharded)
     {
-        if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+        if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
             throw new RespireProtocolException("PUBSUB channel names must be strings.");
         var channel = RespireChannel.FromOwnedBytes(value.AsSpan().ToArray());
         return sharded ? RespireChannel.Sharded(channel) : channel;
@@ -109,14 +109,14 @@ internal sealed partial class ServerCommands
 
     private static long ParseSubscriptionCount(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("PUBSUB counts must be nonnegative integers.");
         return value.AsInteger();
     }
 
     private static RespireChannelSubscriberCount[] ParseSubscriberCounts(in RespValue value, bool sharded)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("PUBSUB subscriber counts must contain channel/count pairs.");
         var items = value.AsArray();
         if (items.Length % 2 != 0)

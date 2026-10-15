@@ -30,7 +30,7 @@ public class CacheMutationDispatchReviewTests
         };
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1,
+            Protocol = RespireProtocol.Resp3, Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -77,7 +77,7 @@ public class CacheMutationDispatchReviewTests
         };
         await using var owner = RespireClient.Create(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, ClientSideCache = new(),
+            Protocol = (RespireProtocol)protocol, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var options = owner.Core.CreateConnectionOptions(enableClientTracking: protocol == 3) with
@@ -113,7 +113,7 @@ public class CacheMutationDispatchReviewTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var attempts = 0;

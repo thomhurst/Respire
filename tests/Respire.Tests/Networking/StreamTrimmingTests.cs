@@ -14,7 +14,7 @@ public class StreamTrimmingTests
     [Arguments(2)]
     public async Task TrimOptionsHaveIdenticalWireEncodingAcrossSurfaces(int surface)
     {
-        StreamTrimOptions[] options =
+        RespireStreamTrimOptions[] options =
         [
             new() { MaxLength = 2 }, new() { MinId = "2-0" }, new() { MinId = "2" },
             new() { MaxLength = 2, Approximate = true }, new() { MinId = "2-0", Approximate = true },
@@ -69,10 +69,10 @@ public class StreamTrimmingTests
     public async Task InvalidTrimmingFailsBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
-        StreamTrimOptions[] invalid =
+        RespireStreamTrimOptions[] invalid =
         [
             new() { MaxLength = 1, MinId = "1-0" }, new() { MaxLength = -1 },
             new() { MinId = "1-0", Limit = 1 }, new() { Limit = 1, Approximate = true },
@@ -111,7 +111,7 @@ public class StreamTrimmingTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var batch = client.CreateBatch();
@@ -136,6 +136,6 @@ public class StreamTrimmingTests
         await Assert.That(original == original with { Limit = 11 }).IsFalse();
         await Assert.That(original == original with { ApproximateTrim = true, CreateStream = true }).IsTrue();
         await Assert.That(default(RespireStreamAddOptions).ApproximateTrim).IsTrue();
-        await Assert.That(default(StreamTrimOptions).Approximate).IsFalse();
+        await Assert.That(default(RespireStreamTrimOptions).Approximate).IsFalse();
     }
 }

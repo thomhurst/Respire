@@ -139,5 +139,5 @@ public class SearchSynonymIntegrationTests(ModernRedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(int protocol, bool cache = false, StandaloneRedisTestContainer? server = null)
         => RespireClient.ConnectAsync(RespireOptions.Parse((server ?? fixture).ConnectionString) with
-        { Protocol = (RespProtocol)protocol, ClientSideCache = cache ? new() : null });
+        { Protocol = (RespireProtocol)protocol, ClientSideCache = cache ? new() : null });
 }

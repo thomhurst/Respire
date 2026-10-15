@@ -2,7 +2,7 @@ using Respire.Commands;
 
 namespace Respire;
 
-public partial interface IBatchHashCommands
+public partial interface IRespireBatchHashCommands
 {
     /// <summary>Queues one HSCAN NOVALUES page. Requires Redis 7.4; results own their field names.</summary>
     /// <remarks>Continue only after reading the previous cursor. Use a stable server and read policy across pages.

@@ -7,14 +7,14 @@ internal static class ServerNodeParser
 {
     internal static bool Ok(in RespValue value)
     {
-        if (value.Type != RespDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
             throw new RespireProtocolException("Server mutation must return OK.");
         return true;
     }
 
     internal static RespireMigrateResult Migration(in RespValue value)
     {
-        if (value.Type != RespDataType.SimpleString)
+        if (value.Type != RespireDataType.SimpleString)
             throw new RespireProtocolException("MIGRATE must return OK or NOKEY.");
         if (value.AsSpan().SequenceEqual("OK"u8)) return RespireMigrateResult.Migrated;
         if (value.AsSpan().SequenceEqual("NOKEY"u8)) return RespireMigrateResult.NoKey;
@@ -36,7 +36,7 @@ internal static class ServerNodeParser
 
     internal static RespireBackupStatus BackupStatus(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("BACKUP STATUS must return a map or array of field/value pairs.");
         var pairs = value.AsArray();
         if (pairs.Length % 2 != 0) throw new RespireProtocolException("BACKUP STATUS has an incomplete field/value pair.");
@@ -61,7 +61,7 @@ internal static class ServerNodeParser
     private static DateTimeOffset? Timestamp(in RespValue value)
     {
         long seconds;
-        if (value.Type == RespDataType.Integer) seconds = value.AsInteger();
+        if (value.Type == RespireDataType.Integer) seconds = value.AsInteger();
         else if (!long.TryParse(ServerDiagnosticsParser.Text(in value), NumberStyles.None, CultureInfo.InvariantCulture, out seconds))
             throw new RespireProtocolException("BACKUP STATUS timestamps must be nonnegative Unix seconds.");
         if (seconds < 0) throw new RespireProtocolException("BACKUP STATUS timestamps must be nonnegative Unix seconds.");
@@ -70,5 +70,5 @@ internal static class ServerNodeParser
     }
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
-        => value.Type == RespDataType.Array ? value.AsArray() : throw new RespireProtocolException("Server rows must be arrays.");
+        => value.Type == RespireDataType.Array ? value.AsArray() : throw new RespireProtocolException("Server rows must be arrays.");
 }

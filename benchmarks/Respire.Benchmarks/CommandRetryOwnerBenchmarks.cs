@@ -39,7 +39,7 @@ public class CommandRetryOwnerBenchmarks
         var options = new RespireOptions
         {
             Endpoints = [new(host, port)], Connections = 1, ThreadPoolMonitoring = false,
-            Protocol = IsCacheProducer ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Protocol = IsCacheProducer ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             SentinelPrimaryName = Owner == "Sentinel" ? "mymaster" : null,
             UseCluster = Owner is "Cluster" or "ClusterCacheProducer",

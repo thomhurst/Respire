@@ -23,7 +23,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var server = new RespireFakeServer();
         var options = fake ? server.CreateOptions() : RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix($"set-cardinality:{Guid.NewGuid():N}:");
         await client.Sets.AddAsync("first", "a", "b", "c");
         await client.Sets.AddAsync("second", "c", "d", "e");
@@ -69,7 +69,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     public async Task Redis810DiscoversCountedKeysAndReportsReadOnlyCommands(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         foreach (var command in new[] { "SDIFFCARD", "SUNIONCARD" })
         {
             using var metadata = await client.ExecuteAsync("COMMAND", "INFO", command);
@@ -97,7 +97,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var server = fake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var watcher = await RespireClient.ConnectAsync(options);
         await using var writer = await RespireClient.ConnectAsync(options);
         var first = new RespireKey($"set-watch:{Guid.NewGuid():N}:first");
@@ -131,7 +131,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var server = fake ? new RespireFakeServer() : null;
         var options = (server?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol };
+            with { Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         foreach (var command in new[] { "SDIFFCARD", "SUNIONCARD" })
         {
@@ -151,7 +151,7 @@ public class SetCardinalityIntegrationTests(ModernRedisTestContainer fixture)
     public async Task CachedCountsInvalidateWhenEitherInputChanges()
     {
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+            with { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var client = root.WithKeyPrefix($"set-count-cache:{Guid.NewGuid():N}:");
         await client.Sets.AddAsync("first", "a", "b");
         await client.Sets.AddAsync("second", "b", "c");

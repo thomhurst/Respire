@@ -33,10 +33,10 @@ public class StreamReferenceTests
         var pending = new List<RespirePending<RespireStreamDeletionResult[]>>();
         byte[] key = "events"u8.ToArray();
         RespireStreamId[] ids = ["1-0", "2-0", "3-0"];
-        foreach (var policy in Enum.GetValues<StreamReferencePolicy>())
+        foreach (var policy in Enum.GetValues<RespireStreamReferencePolicy>())
         {
             var add = new RespireStreamAddOptions { Id = "9-0", MaxLength = 0, ApproximateTrim = false, ReferencePolicy = policy };
-            var trim = new StreamTrimOptions { MinId = "9-0", Approximate = true, Limit = 0, ReferencePolicy = policy };
+            var trim = new RespireStreamTrimOptions { MinId = "9-0", Approximate = true, Limit = 0, ReferencePolicy = policy };
             if (queue is null)
             {
                 results.Add(await view.Streams.RemoveAsync(key, policy, ids));
@@ -75,23 +75,23 @@ public class StreamReferenceTests
     public async Task InvalidArgumentsFailBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamId[][] invalid = [[], ["$"], ["-"], ["+"], ["1-*"], ["1-"], ["18446744073709551616-0"]];
         foreach (var ids in invalid)
         {
-            await Assert.That(async () => await client.Streams.RemoveAsync("events", StreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
-            await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", StreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
+            await Assert.That(async () => await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
+            await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
             foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
             {
-                await Assert.That(() => queue.Streams.Remove("events", StreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
-                await Assert.That(() => queue.Streams.AcknowledgeAndRemove("events", "g", StreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
+                await Assert.That(() => queue.Streams.Remove("events", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
+                await Assert.That(() => queue.Streams.AcknowledgeAndRemove("events", "g", RespireStreamReferencePolicy.Acknowledged, ids)).Throws<ArgumentException>();
             }
         }
-        var unknown = (StreamReferencePolicy)99;
+        var unknown = (RespireStreamReferencePolicy)99;
         await Assert.That(async () => await client.Streams.RemoveAsync("events", unknown, "1-0")).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", null!, StreamReferencePolicy.KeepReferences, "1-0"))
+        await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", null!, RespireStreamReferencePolicy.KeepReferences, "1-0"))
             .Throws<ArgumentNullException>();
         await Assert.That(async () => await client.Streams.TrimAsync("events", new() { MaxLength = 0, ReferencePolicy = unknown })).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => batch.Streams.Add("events", new RespireStreamAddOptions { ReferencePolicy = unknown }, ("f", "v")))
@@ -101,9 +101,9 @@ public class StreamReferenceTests
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands).IsEmpty();
-        var options = new RespireStreamAddOptions { ReferencePolicy = StreamReferencePolicy.KeepReferences };
+        var options = new RespireStreamAddOptions { ReferencePolicy = RespireStreamReferencePolicy.KeepReferences };
         await Assert.That(options == default).IsFalse();
-        await Assert.That(options == options with { ReferencePolicy = StreamReferencePolicy.DeleteReferences }).IsFalse();
+        await Assert.That(options == options with { ReferencePolicy = RespireStreamReferencePolicy.DeleteReferences }).IsFalse();
     }
 
     [Test]
@@ -114,9 +114,9 @@ public class StreamReferenceTests
     {
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes(response), "*1\r\n:1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        await Assert.That(async () => await client.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0"))
+        await Assert.That(async () => await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0"))
             .Throws<RespireProtocolException>();
-        await Assert.That(await client.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0"))
+        await Assert.That(await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0"))
             .IsEquivalentTo(new[] { RespireStreamDeletionResult.Deleted });
     }
 
@@ -125,10 +125,10 @@ public class StreamReferenceTests
     {
         await using var server = new FakeRespServer("-ERR unknown command\r\n"u8.ToArray(), "-ERR syntax error\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        await Assert.That(async () => await client.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0")).Throws<RespireServerException>();
-        await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", StreamReferencePolicy.DeleteReferences, "1-0")).Throws<RespireServerException>();
-        await Assert.That(async () => await client.Streams.AddAsync("events", new RespireStreamAddOptions { ReferencePolicy = StreamReferencePolicy.Acknowledged }, ("f", "v"))).Throws<RespireServerException>();
-        await Assert.That(async () => await client.Streams.TrimAsync("events", new() { MaxLength = 0, ReferencePolicy = StreamReferencePolicy.Acknowledged })).Throws<RespireServerException>();
+        await Assert.That(async () => await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0")).Throws<RespireServerException>();
+        await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", RespireStreamReferencePolicy.DeleteReferences, "1-0")).Throws<RespireServerException>();
+        await Assert.That(async () => await client.Streams.AddAsync("events", new RespireStreamAddOptions { ReferencePolicy = RespireStreamReferencePolicy.Acknowledged }, ("f", "v"))).Throws<RespireServerException>();
+        await Assert.That(async () => await client.Streams.TrimAsync("events", new() { MaxLength = 0, ReferencePolicy = RespireStreamReferencePolicy.Acknowledged })).Throws<RespireServerException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(4);
     }
 
@@ -136,12 +136,12 @@ public class StreamReferenceTests
     public async Task CancellationBeforeDispatchDoesNotSendWrites()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.That(async () => await client.Streams.RemoveAsync("events", StreamReferencePolicy.DeleteReferences,
+        await Assert.That(async () => await client.Streams.RemoveAsync("events", RespireStreamReferencePolicy.DeleteReferences,
             ["1-0"], cancellation.Token)).Throws<OperationCanceledException>();
-        await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", StreamReferencePolicy.DeleteReferences,
+        await Assert.That(async () => await client.Streams.AcknowledgeAndRemoveAsync("events", "g", RespireStreamReferencePolicy.DeleteReferences,
             ["1-0"], cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
@@ -154,10 +154,10 @@ public class StreamReferenceTests
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+            { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
         var view = client.WithKeyPrefix("{tenant}:");
-        await view.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0");
-        await view.Streams.AcknowledgeAndRemoveAsync("events", "group", StreamReferencePolicy.DeleteReferences, "1-0");
+        await view.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0");
+        await view.Streams.AcknowledgeAndRemoveAsync("events", "group", RespireStreamReferencePolicy.DeleteReferences, "1-0");
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(new[] { "CLUSTER SLOTS" });
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(new[]
         {

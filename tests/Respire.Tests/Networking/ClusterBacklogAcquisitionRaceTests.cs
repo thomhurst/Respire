@@ -96,7 +96,7 @@ public class ClusterBacklogAcquisitionRaceTests
                 var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
                     UseCluster = true, AllowAdmin = true, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-                    Protocol = surface == "tracked" ? RespProtocol.Resp3 : RespProtocol.Resp2, Password = "test",
+                    Protocol = surface == "tracked" ? RespireProtocol.Resp3 : RespireProtocol.Resp2, Password = "test",
                     CommandTimeout = Limit, ConnectTimeout = Limit, RetryPolicy = null,
                     ClientSideCache = surface == "tracked" ? new() : null,
                     ReadFrom = surface == "hedged" ? RespireReadFrom.PrimaryPreferred : RespireReadFrom.Primary,

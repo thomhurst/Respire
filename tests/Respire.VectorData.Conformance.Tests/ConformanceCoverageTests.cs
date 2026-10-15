@@ -51,13 +51,13 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
     }
 
     [Theory]
-    [InlineData(RespProtocol.Resp2)]
-    [InlineData(RespProtocol.Resp3)]
-    public void Every_applicable_hash_fact_is_discoverable(RespProtocol protocol)
+    [InlineData(RespireProtocol.Resp2)]
+    [InlineData(RespireProtocol.Resp3)]
+    public void Every_applicable_hash_fact_is_discoverable(RespireProtocol protocol)
     {
         foreach (var (suite, resp2, resp3, excluded) in HashSuites)
         {
-            var adapter = protocol == RespProtocol.Resp2 ? resp2 : resp3;
+            var adapter = protocol == RespireProtocol.Resp2 ? resp2 : resp3;
             AssertDiscoverable(adapter);
             Assert.True(suite.IsAssignableFrom(adapter));
             var upstream = Facts(suite).Select(m => m.Name).ToHashSet();
@@ -75,7 +75,7 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
             (null, typeof(HashResp2KeyTypeTests), typeof(HashResp3KeyTypeTests)),
         })
         {
-            var type = protocol == RespProtocol.Resp2 ? resp2 : resp3;
+            var type = protocol == RespireProtocol.Resp2 ? resp2 : resp3;
             AssertDiscoverable(type);
             var expected = upstream is null ? ["String"] : Facts(upstream).Select(m => m.Name).Except(["Embedding_of_float"]);
             Assert.Equal(expected.Order(), Facts(type).Where(m => !IsExcluded(m)).Select(m => m.Name).Order());
@@ -84,14 +84,14 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
     }
 
     [Theory]
-    [InlineData(RespProtocol.Resp2)]
-    [InlineData(RespProtocol.Resp3)]
-    public void Every_applicable_json_fact_has_all_theory_rows(RespProtocol protocol)
+    [InlineData(RespireProtocol.Resp2)]
+    [InlineData(RespireProtocol.Resp3)]
+    public void Every_applicable_json_fact_has_all_theory_rows(RespireProtocol protocol)
     {
         // Independent of Cases() exclusions: changing the runner cannot silently reduce coverage.
         AssertDiscoverable(typeof(JsonBackendTests));
         AssertRunnable(typeof(JsonBackendTests).GetMethod(nameof(JsonBackendTests.Official_json_contract))!);
-        var cases = JsonBackendTests.Cases().Where(row => (RespProtocol)row[0] == protocol).ToArray();
+        var cases = JsonBackendTests.Cases().Where(row => (RespireProtocol)row[0] == protocol).ToArray();
         foreach (var (name, suite, excluded) in new (string, Type, string[])[]
         {
             ("Basic", typeof(BasicModelTests<string>),
@@ -116,7 +116,7 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
             }
         }
         Assert.Single(cases, row => (string)row[1] == "Index" && (string)row[2] == "Hnsw");
-        var lifecycle = protocol == RespProtocol.Resp2 ? typeof(JsonResp2CollectionManagementTests) : typeof(JsonResp3CollectionManagementTests);
+        var lifecycle = protocol == RespireProtocol.Resp2 ? typeof(JsonResp2CollectionManagementTests) : typeof(JsonResp3CollectionManagementTests);
         AssertDiscoverable(lifecycle);
         AssertCovered(Facts(typeof(CollectionManagementTests<string>)).Select(m => m.Name), Facts(lifecycle).Select(m => m.Name));
         Assert.All(Facts(lifecycle), AssertRunnable);
@@ -138,9 +138,9 @@ public sealed class ConformanceCoverageTests : TestSuiteImplementationTests
         AssertRunnable(method);
         var rows = method.GetCustomAttributes<InlineDataAttribute>().Select(row => row.Data).ToArray();
         Assert.Equal(4, rows.Length);
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
         foreach (var json in new[] { false, true })
-            Assert.Single(rows, row => (RespProtocol)row[0]! == protocol && (bool)row[1]! == json);
+            Assert.Single(rows, row => (RespireProtocol)row[0]! == protocol && (bool)row[1]! == json);
     }
 
     private static void AssertReviewed(IEnumerable<Type> upstream, IEnumerable<Type> reviewed)

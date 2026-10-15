@@ -33,29 +33,29 @@ public static class RespireStackExchangeExtensions
         {
             return result.NullWireType switch
             {
-                RespDataType.Array => RedisResult.Create((RedisResult[])null!, ResultType.Array),
-                RespDataType.BulkString or RespDataType.Null => RedisResult.Create(RedisValue.Null),
+                RespireDataType.Array => RedisResult.Create((RedisResult[])null!, ResultType.Array),
+                RespireDataType.BulkString or RespireDataType.Null => RedisResult.Create(RedisValue.Null),
                 var wireType => throw Unsupported(wireType ?? type),
             };
         }
 
         switch (type)
         {
-            case RespDataType.SimpleString:
+            case RespireDataType.SimpleString:
                 return RedisResult.Create(result.AsBytes(), ResultType.SimpleString);
-            case RespDataType.BulkString:
+            case RespireDataType.BulkString:
                 return RedisResult.Create(result.AsBytes(), ResultType.BulkString);
-            case RespDataType.Integer:
+            case RespireDataType.Integer:
                 return RedisResult.Create(result.AsInteger(), ResultType.Integer);
-            case RespDataType.Boolean:
+            case RespireDataType.Boolean:
                 return RedisResult.Create(result.AsBoolean(), ResultType.Boolean);
-            case RespDataType.Double:
+            case RespireDataType.Double:
                 return RedisResult.Create(result.AsDouble(), ResultType.Double);
-            case RespDataType.BigNumber:
+            case RespireDataType.BigNumber:
                 return RedisResult.Create(result.AsBytes(), ResultType.BigInteger);
-            case RespDataType.Array:
-            case RespDataType.Map:
-            case RespDataType.Set:
+            case RespireDataType.Array:
+            case RespireDataType.Map:
+            case RespireDataType.Set:
                 var children = new RedisResult[result.Count];
                 for (var index = 0; index < children.Length; index++)
                 {
@@ -63,8 +63,8 @@ public static class RespireStackExchangeExtensions
                 }
                 return RedisResult.Create(children, type switch
                 {
-                    RespDataType.Map => ResultType.Map,
-                    RespDataType.Set => ResultType.Set,
+                    RespireDataType.Map => ResultType.Map,
+                    RespireDataType.Set => ResultType.Set,
                     _ => ResultType.Array,
                 });
             default:
@@ -107,7 +107,7 @@ public static class RespireStackExchangeExtensions
         return result.ToStackExchangeResult();
     }
 
-    private static NotSupportedException Unsupported(RespDataType type)
+    private static NotSupportedException Unsupported(RespireDataType type)
         => new($"The {type} reply cannot be represented faithfully by this compatibility boundary. "
             + "Use native ExecuteAsync and RespireResult for this reply.");
 }

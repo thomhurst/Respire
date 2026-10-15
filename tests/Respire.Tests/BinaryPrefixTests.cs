@@ -105,7 +105,7 @@ public class BinaryPrefixTests
             FakeRespServer.OkReply, Bulk("old"u8.ToArray()), FakeRespServer.OkReply, Bulk("new"u8.ToArray()));
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp2, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var view = root.WithKeyPrefix((RespireKey)new byte[] { 255, 0 });

@@ -18,7 +18,7 @@ public class CrossSlotExceptionTests
         await using var server = new FakeRespServer();
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             IncludeCrossSlotKeyContext = includeKeys,
         });
@@ -71,7 +71,7 @@ public class CrossSlotExceptionTests
         await using var server = new FakeRespServer();
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             IncludeCrossSlotKeyContext = includeKeys,
             ClientSideCache = cache ? new() : null,
@@ -135,7 +135,7 @@ public class CrossSlotExceptionTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var batch = transactional ? null : client.CreateBatch();

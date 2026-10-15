@@ -20,7 +20,7 @@ public class StreamRecoveryChaosIntegrationTests(RedisTestContainer redis)
     {
         await using var server = new RespireFakeServer();
         var options = useFake ? server.CreateOptions() : RespireOptions.Parse(redis.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix("{chaos}tenant:");
         var ids = Enumerable.Range(1, 12).Select(index => $"{index}-0").ToArray();
         var poisonIds = ids.Where((_, index) => index % 3 == 0).ToArray();

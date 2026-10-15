@@ -2,9 +2,9 @@ namespace Respire;
 
 /// <summary>One mutually exclusive XADD idempotency mode. Requires Redis 8.6+.</summary>
 /// <remarks>Factories copy binary identifiers. Redis retains deduplication state only within its configured limits.</remarks>
-public sealed record StreamIdempotency
+public sealed record RespireStreamIdempotency
 {
-    private StreamIdempotency(RespireValue producerId, RespireValue idempotentId)
+    private RespireStreamIdempotency(RespireValue producerId, RespireValue idempotentId)
     {
         ProducerId = producerId;
         IdempotentId = idempotentId;
@@ -15,15 +15,15 @@ public sealed record StreamIdempotency
     internal int ArgumentCount => IdempotentId.IsNull ? 2 : 3;
 
     /// <summary>Uses an explicit producer/message identity (IDMP), independent of field values.</summary>
-    public static StreamIdempotency Manual(RespireValue producerId, RespireValue idempotentId)
+    public static RespireStreamIdempotency Manual(RespireValue producerId, RespireValue idempotentId)
         => new(SnapshotIdentifier(producerId, nameof(producerId)), SnapshotIdentifier(idempotentId, nameof(idempotentId)));
 
     /// <summary>Asks Redis to derive the message identity from the field/value payload (IDMPAUTO).</summary>
-    public static StreamIdempotency Automatic(RespireValue producerId)
+    public static RespireStreamIdempotency Automatic(RespireValue producerId)
         => new(SnapshotIdentifier(producerId, nameof(producerId)), default);
 
     // Client-owned identifiers are immutable and nonempty, so no defensive copy is needed.
-    internal static StreamIdempotency Owned(RespireValue producerId, RespireValue idempotentId) => new(producerId, idempotentId);
+    internal static RespireStreamIdempotency Owned(RespireValue producerId, RespireValue idempotentId) => new(producerId, idempotentId);
 
     private static RespireValue SnapshotIdentifier(RespireValue value, string parameterName)
     {

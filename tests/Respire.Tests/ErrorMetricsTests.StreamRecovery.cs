@@ -25,7 +25,7 @@ public partial class ErrorMetricsTests
         };
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var client = prefix ? root.WithKeyPrefix("tenant:") : root;
@@ -39,7 +39,7 @@ public partial class ErrorMetricsTests
             switch (path)
             {
                 case 0: await client.Streams.ReadAsync(streams, cancellationToken: deadline.Token); break;
-                case 1: await client.Streams.ReadAsync(new StreamReadOptions(), streams, deadline.Token); break;
+                case 1: await client.Streams.ReadAsync(new RespireStreamReadOptions(), streams, deadline.Token); break;
                 case 2: await client.Streams.ReadGroupAsync(streams, "group", "consumer", cancellationToken: deadline.Token); break;
                 case 3:
                     await using (var reader = client.Streams.ReadAllAsync(streams, cancellationToken: deadline.Token).GetAsyncEnumerator())
@@ -106,7 +106,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var capture = new Capture(throwOnMeasurement: true);
@@ -151,7 +151,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer("-CLUSTERDOWN retry\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
         });
         using var capture = new Capture(throwOnMeasurement: true);
         await using var reader = client.Streams.ReadAllAsync("events", cancellationToken: deadline.Token).GetAsyncEnumerator();
@@ -210,7 +210,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
         });
         await using var subscription = await (pattern ? client.SubscribePatternAsync("one") : client.SubscribeAsync("one"));

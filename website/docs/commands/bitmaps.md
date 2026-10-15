@@ -18,14 +18,14 @@ long? firstActive = await redis.Bitmaps.PositionAsync("{activity}:today", true);
 
 `SetAsync` returns the previous bit. `PositionAsync` returns `null` when Redis finds no match.
 Range overloads of `SetBitCountAsync` and `PositionAsync` use inclusive byte offsets by default;
-choose `BitIndexUnit.Bit` for bit offsets (Redis 7+).
+choose `RespireBitIndexUnit.Bit` for bit offsets (Redis 7+).
 
 ## Combine bitmaps
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379");
 long bytes = await redis.Bitmaps.OperateAsync(
-    BitOperation.Or, "{activity}:week", "{activity}:today", "{activity}:yesterday");
+    RespireBitOperation.Or, "{activity}:week", "{activity}:today", "{activity}:yesterday");
 ```
 
 `OperateAsync` returns the destination's byte length, not its set-bit count. `And`, `Or`,

@@ -747,7 +747,7 @@ public partial class TopologyCommandRetryTests
 
     private static RespireOptions StandaloneOptions(FakeRespServer server) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespProtocol.Resp2,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
@@ -761,7 +761,7 @@ public partial class TopologyCommandRetryTests
 
     private static RespireOptions ClusterOptions(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true, Connections = 1, Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true, Connections = 1, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, ClusterTopologyRefreshInterval = null, CommandTimeout = TimeSpan.FromSeconds(5),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
@@ -789,7 +789,7 @@ public partial class TopologyCommandRetryTests
     private static RespireOptions SentinelOptions(FakeRespServer sentinel) => new()
     {
         Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster", Connections = 1,
-        Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5),
+        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 
@@ -801,7 +801,7 @@ public partial class TopologyCommandRetryTests
 
     private static RespireFailoverCandidate Candidate(FakeRespServer server, int priority) => new(new RespireOptions
     {
-        Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+        Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
         ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(2),
         Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
     }, priority);

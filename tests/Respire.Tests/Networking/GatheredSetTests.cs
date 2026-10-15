@@ -285,7 +285,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var connection = client.Core.Multiplexer.GetConnection();
@@ -318,7 +318,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(500) : null,
             ConnectionIdleReadTimeout = receiveOnly ? TimeSpan.FromMilliseconds(200) : null,
@@ -405,7 +405,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = pausedConsumer ? null : reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
             ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromSeconds(1),
@@ -491,7 +491,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
             // A resumed 5 MiB copied send can remain pending while Linux drains it, especially
@@ -621,7 +621,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             ConnectionIdleReadTimeout = independent ? null : TimeSpan.FromMilliseconds(200), CommandTimeout = null,
             GatheredWriteStallTimeout = independent ? TimeSpan.FromMilliseconds(200) : null,
@@ -645,7 +645,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = deadline ? TimeSpan.FromMilliseconds(500) : null,
         });
@@ -720,7 +720,7 @@ public sealed class GatheredSetTests
             for (var index = 0; index < 256; index++)
             {
                 var command = new SetCommand($"key-{index}", new RespireValue(slice.AsMemory()),
-                    RespireExpiry.Keep, SetWhen.NotExists, returnOld: false);
+                    RespireExpiry.Keep, RespireSetWhen.NotExists, returnOld: false);
                 var lease = GatheredSetWriteLease.Rent();
                 await Assert.That(gathered.PrepareBorrowedPayload()).IsTrue();
                 var wrapper = new GatheredSetCommand(command, slice, lease);
@@ -778,7 +778,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await Assert.That(await client.SetAsync("non-array", new RespireValue(memory.Memory))).IsTrue();
@@ -793,7 +793,7 @@ public sealed class GatheredSetTests
         PausedWriteStream? stream = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             TestingStreamFactory = async (host, port, token) =>
             {

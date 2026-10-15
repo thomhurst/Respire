@@ -26,7 +26,7 @@ RespireChannelSubscriberCount[] shardSubscribers =
 - Unsupported versions and denied ACL permissions surface the server error.
 - Channel names and patterns keep their exact bytes. Result channels own their storage after the reply and client are disposed.
 - Empty names, empty name lists, and an omitted versus empty pattern are distinct.
-- `sharded` alone selects the command family; the input channel's kind does not. Returned sharded names have `SubscriptionKind.Sharded`.
+- `sharded` alone selects the command family; the input channel's kind does not. Returned sharded names have `RespireSubscriptionKind.Sharded`.
 - `WithKeyPrefix` and `WithPubSubPrefix` are not applied. Pass `((IRespireNameResolver)view).ResolveChannel(logicalChannel)` for a prefixed literal or sharded count, and `((IRespireNameResolver)view).ResolveChannel(RespireChannel.Pattern(logicalPattern))` for a prefixed CHANNELS pattern.
 
 What the counts mean:
@@ -79,7 +79,7 @@ Execution:
 - Cancellation before or during discovery throws. After discovery, it is recorded per node, and completed results stay available.
 - No command is replayed or redirected to another endpoint.
 
-Custom `IServerCommands` implementations, decorators, and mocks must implement or forward all six methods (three single-node methods and their `OnAllNodesAsync` counterparts). These queries are not available in batches or transactions.
+Custom `IRespireServerCommands` implementations, decorators, and mocks must implement or forward all six methods (three single-node methods and their `OnAllNodesAsync` counterparts). These queries are not available in batches or transactions.
 
 Redis contracts: [CHANNELS](https://redis.io/docs/latest/commands/pubsub-channels/),
 [NUMSUB](https://redis.io/docs/latest/commands/pubsub-numsub/),

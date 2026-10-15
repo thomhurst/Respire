@@ -12,10 +12,10 @@ public class PubSubPrefixTests
     [MatrixDataSource]
     public async Task TypedRoutesRetainPhysicalIdentity(
         [Matrix(false, true)] bool push,
-        [Matrix(SubscriptionKind.Channel, SubscriptionKind.Pattern, SubscriptionKind.Sharded)] SubscriptionKind kind)
+        [Matrix(RespireSubscriptionKind.Channel, RespireSubscriptionKind.Pattern, RespireSubscriptionKind.Sharded)] RespireSubscriptionKind kind)
     {
         RespireChannel physicalTarget = default;
-        var verb = kind switch { SubscriptionKind.Pattern => "PSUBSCRIBE", SubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE" };
+        var verb = kind switch { RespireSubscriptionKind.Pattern => "PSUBSCRIBE", RespireSubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE" };
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith(verb + " ", StringComparison.Ordinal)
@@ -24,15 +24,15 @@ public class PubSubPrefixTests
         };
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
         });
         byte[] prefix = [255, 0, (byte)'*', (byte)'?', (byte)'[', (byte)']', (byte)'\\', (byte)':'];
         var view = root.WithKeyPrefix("keys:").WithPubSubPrefix((RespireKey)prefix);
         var logical = new RespireChannel("item");
         var target = kind switch
         {
-            SubscriptionKind.Pattern => RespireChannel.Pattern("i*"),
-            SubscriptionKind.Sharded => RespireChannel.Sharded(logical),
+            RespireSubscriptionKind.Pattern => RespireChannel.Pattern("i*"),
+            RespireSubscriptionKind.Sharded => RespireChannel.Sharded(logical),
             _ => logical,
         };
         var physical = view.ResolveChannel(logical);
@@ -44,7 +44,7 @@ public class PubSubPrefixTests
         await using var duplicateReader = duplicate.GetAsyncEnumerator();
         var firstRead = firstReader.MoveNextAsync().AsTask();
         var duplicateRead = duplicateReader.MoveNextAsync().AsTask();
-        var receivers = kind == SubscriptionKind.Sharded
+        var receivers = kind == RespireSubscriptionKind.Sharded
             ? await view.PublishAsync(RespireChannel.Sharded(logical), "before") : await view.PublishAsync(logical, "before");
         await Assert.That(receivers).IsEqualTo(1L);
         var subscriptionConnection = server.ReceivedConnectionIds[0];
@@ -54,11 +54,11 @@ public class PubSubPrefixTests
         await Assert.That(firstReader.Current.Channel).IsEqualTo(physical);
         await Assert.That(duplicateReader.Current.Channel).IsEqualTo(physical);
         await Assert.That(first.Targets[0]).IsEqualTo(physicalTarget);
-        await Assert.That(firstReader.Current.Pattern).IsEqualTo(kind == SubscriptionKind.Pattern ? physicalTarget : (RespireChannel?)null);
+        await Assert.That(firstReader.Current.Pattern).IsEqualTo(kind == RespireSubscriptionKind.Pattern ? physicalTarget : (RespireChannel?)null);
         await first.DisposeAsync();
         await view.DisposeAsync();
         var retainedRead = duplicateReader.MoveNextAsync().AsTask();
-        if (kind == SubscriptionKind.Sharded) await root.PublishShardedAsync(physical, "retained");
+        if (kind == RespireSubscriptionKind.Sharded) await root.PublishShardedAsync(physical, "retained");
         else await root.PublishAsync(physical, "retained");
         await server.SendRawAsync(Message("retained"), subscriptionConnection);
         await Assert.That(await retainedRead.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
@@ -68,16 +68,16 @@ public class PubSubPrefixTests
         await duplicate.DisposeAsync();
         var commands = server.ReceivedArguments;
         await Assert.That(commands.Select(arguments => Encoding.ASCII.GetString(arguments[0])))
-            .IsEquivalentTo([verb, verb, kind == SubscriptionKind.Sharded ? "SPUBLISH" : "PUBLISH",
-                kind == SubscriptionKind.Sharded ? "SPUBLISH" : "PUBLISH", verb.Replace("SUBSCRIBE", "UNSUBSCRIBE")]);
+            .IsEquivalentTo([verb, verb, kind == RespireSubscriptionKind.Sharded ? "SPUBLISH" : "PUBLISH",
+                kind == RespireSubscriptionKind.Sharded ? "SPUBLISH" : "PUBLISH", verb.Replace("SUBSCRIBE", "UNSUBSCRIBE")]);
         await Assert.That(commands[0][1].SequenceEqual(physicalTarget.Bytes.ToArray())).IsTrue();
         await Assert.That(commands[1][1].SequenceEqual(physicalTarget.Bytes.ToArray())).IsTrue();
         await Assert.That(commands[2][1].SequenceEqual(physical.Bytes.ToArray())).IsTrue();
         await Assert.That(commands[^1][1].SequenceEqual(physicalTarget.Bytes.ToArray())).IsTrue();
 
-        byte[] Message(string payload) => kind == SubscriptionKind.Pattern
+        byte[] Message(string payload) => kind == RespireSubscriptionKind.Pattern
             ? Frame(push, "pmessage"u8.ToArray(), physicalTarget.Bytes.ToArray(), physical.Bytes.ToArray(), Encoding.UTF8.GetBytes(payload))
-            : Frame(push, Encoding.ASCII.GetBytes(kind == SubscriptionKind.Sharded ? "smessage" : "message"),
+            : Frame(push, Encoding.ASCII.GetBytes(kind == RespireSubscriptionKind.Sharded ? "smessage" : "message"),
                 physical.Bytes.ToArray(), Encoding.UTF8.GetBytes(payload));
     }
 

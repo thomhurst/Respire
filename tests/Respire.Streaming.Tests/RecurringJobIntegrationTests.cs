@@ -501,7 +501,7 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
             .GetField(name, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
 
     private ValueTask<RespireClient> ConnectAsync(int protocol = 3)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireJobQueue<string> Queue(IRespireClient client)
         => new(client, "recurring", Encoding.UTF8.GetBytes);

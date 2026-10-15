@@ -15,7 +15,7 @@ namespace Respire;
 /// Positive fractional milliseconds are rounded up to Redis millisecond precision, capped at the largest
 /// whole millisecond representable by <see cref="TimeSpan"/>. Values above that cap are rounded down to it.
 /// </remarks>
-public interface ILockCommands
+public interface IRespireLockCommands
 {
     /// <summary>
     /// Acquires a lock with a generated owner token. The returned attempt makes contention
@@ -113,14 +113,14 @@ public interface ILockCommands
 }
 
 /// <summary>Convenience operations composed from managed distributed-lock commands.</summary>
-public static class LockCommandExtensions
+public static class RespireLockCommandExtensions
 {
     /// <summary>
     /// Acquires a managed lock and, when requested, starts renewal owned by the returned lock
     /// handle. Disposing the attempt stops renewal and releases the lock.
     /// </summary>
     public static ValueTask<RespireLockAttempt> AcquireAsync(
-        this ILockCommands locks,
+        this IRespireLockCommands locks,
         RespireKey key,
         TimeSpan leaseDuration,
         bool keepAlive,
@@ -132,7 +132,7 @@ public static class LockCommandExtensions
                 static (state, owner) => AcquireBorrowedAsync(state.Locks!, state.Key, state.Expiry, state.KeepAlive, state.Token, owner));
 
     private static async ValueTask<RespireLockAttempt> AcquireWrappedAsync(
-        ILockCommands locks, RespireKey key, TimeSpan leaseDuration, bool keepAlive, CancellationToken cancellationToken)
+        IRespireLockCommands locks, RespireKey key, TimeSpan leaseDuration, bool keepAlive, CancellationToken cancellationToken)
     {
         // A public implementation may forward to a native caller boundary. Let acquisition
         // retain its own final publisher; only keep-alive startup belongs to this extension.
@@ -143,7 +143,7 @@ public static class LockCommandExtensions
     }
 
     private static async ValueTask<RespireLockAttempt> AcquireBorrowedAsync(
-        ILockCommands locks, RespireKey key, TimeSpan leaseDuration, bool keepAlive,
+        IRespireLockCommands locks, RespireKey key, TimeSpan leaseDuration, bool keepAlive,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(locks);
@@ -201,7 +201,7 @@ internal interface IManagedLockCommands
         CancellationToken cancellationToken);
 }
 
-internal sealed class LockCommands(RespireClient client) : ILockCommands, IManagedLockCommands
+internal sealed class LockCommands(RespireClient client) : IRespireLockCommands, IManagedLockCommands
 {
     private static readonly TimeSpan DefaultRetryInterval = TimeSpan.FromMilliseconds(50);
 

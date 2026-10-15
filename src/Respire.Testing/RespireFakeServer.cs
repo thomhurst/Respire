@@ -173,13 +173,13 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
 
     private static byte[][] ReadArguments(in RespValue request)
     {
-        if (request.Type != RespDataType.Array) throw new IOException("Expected a RESP command array.");
+        if (request.Type != RespireDataType.Array) throw new IOException("Expected a RESP command array.");
         var values = request.AsArray();
         if (values.Length == 0) throw new IOException("Expected a command name.");
         var arguments = new byte[values.Length][];
         for (var index = 0; index < values.Length; index++)
         {
-            if (values[index].Type != RespDataType.BulkString || values[index].IsNull)
+            if (values[index].Type != RespireDataType.BulkString || values[index].IsNull)
                 throw new IOException("Expected bulk-string command arguments.");
             arguments[index] = values[index].AsSpan().ToArray();
         }

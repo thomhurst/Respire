@@ -16,7 +16,7 @@ public class ScriptInterfaceTests
         var script = RespireScript.Create("return ARGV[1]");
         using var cancellation = new CancellationTokenSource();
         var implementation = new SpanOnlyScripts(keys, args);
-        IScriptCommands commands = implementation;
+        IRespireScriptCommands commands = implementation;
 
         using var result = await commands.ExecuteAsync(script, keys, args, cancellation.Token);
 
@@ -30,7 +30,7 @@ public class ScriptInterfaceTests
     public async Task NullArrayInputs_ReachSpanCoreAsEmptySpans()
     {
         var implementation = new SpanOnlyScripts([], []);
-        IScriptCommands commands = implementation;
+        IRespireScriptCommands commands = implementation;
 
         using var result = await commands.ExecuteAsync(RespireScript.Create("return 1"));
 
@@ -38,7 +38,7 @@ public class ScriptInterfaceTests
         await Assert.That(implementation.OriginalStorage).IsTrue();
     }
 
-    private sealed class SpanOnlyScripts(RespireKey[] expectedKeys, RespireValue[] expectedArgs) : IScriptCommands
+    private sealed class SpanOnlyScripts(RespireKey[] expectedKeys, RespireValue[] expectedArgs) : IRespireScriptCommands
     {
         public int Calls { get; private set; }
         public bool OriginalStorage { get; private set; }
@@ -62,7 +62,7 @@ public class ScriptInterfaceTests
         public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
             => ValueTask.FromResult(new bool[sha1s.Length]);
 
-        public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
+        public ValueTask FlushAsync(RespireScriptFlushMode mode = RespireScriptFlushMode.Default, CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
         private static bool SameStorage<T>(ReadOnlySpan<T> actual, T[] expected)

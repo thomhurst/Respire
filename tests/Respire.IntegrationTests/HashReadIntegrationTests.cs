@@ -8,13 +8,13 @@ namespace Respire.IntegrationTests;
 public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2, 0)]
-    [Arguments(RespProtocol.Resp3, 0)]
-    [Arguments(RespProtocol.Resp2, 1)]
-    [Arguments(RespProtocol.Resp3, 1)]
-    [Arguments(RespProtocol.Resp2, 2)]
-    [Arguments(RespProtocol.Resp3, 2)]
-    public async Task RandomFields_PreserveCountValuesAndMissingSemantics(RespProtocol protocol, int mode)
+    [Arguments(RespireProtocol.Resp2, 0)]
+    [Arguments(RespireProtocol.Resp3, 0)]
+    [Arguments(RespireProtocol.Resp2, 1)]
+    [Arguments(RespireProtocol.Resp3, 1)]
+    [Arguments(RespireProtocol.Resp2, 2)]
+    [Arguments(RespireProtocol.Resp3, 2)]
+    public async Task RandomFields_PreserveCountValuesAndMissingSemantics(RespireProtocol protocol, int mode)
     {
         await using var root = await ConnectAsync(protocol);
         var client = root.WithKeyPrefix("typed-hash:");
@@ -57,13 +57,13 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, 0)]
-    [Arguments(RespProtocol.Resp3, 0)]
-    [Arguments(RespProtocol.Resp2, 1)]
-    [Arguments(RespProtocol.Resp3, 1)]
-    [Arguments(RespProtocol.Resp2, 2)]
-    [Arguments(RespProtocol.Resp3, 2)]
-    public async Task Length_ReturnsByteLengthAndZeroForMissingFields(RespProtocol protocol, int mode)
+    [Arguments(RespireProtocol.Resp2, 0)]
+    [Arguments(RespireProtocol.Resp3, 0)]
+    [Arguments(RespireProtocol.Resp2, 1)]
+    [Arguments(RespireProtocol.Resp3, 1)]
+    [Arguments(RespireProtocol.Resp2, 2)]
+    [Arguments(RespireProtocol.Resp3, 2)]
+    public async Task Length_ReturnsByteLengthAndZeroForMissingFields(RespireProtocol protocol, int mode)
     {
         await using var root = await ConnectAsync(protocol);
         var client = root.WithKeyPrefix("typed-hash:");
@@ -80,13 +80,13 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, 0)]
-    [Arguments(RespProtocol.Resp3, 0)]
-    [Arguments(RespProtocol.Resp2, 1)]
-    [Arguments(RespProtocol.Resp3, 1)]
-    [Arguments(RespProtocol.Resp2, 2)]
-    [Arguments(RespProtocol.Resp3, 2)]
-    public async Task ExpiryTime_PreservesOrderPrecisionAndSentinels(RespProtocol protocol, int mode)
+    [Arguments(RespireProtocol.Resp2, 0)]
+    [Arguments(RespireProtocol.Resp3, 0)]
+    [Arguments(RespireProtocol.Resp2, 1)]
+    [Arguments(RespireProtocol.Resp3, 1)]
+    [Arguments(RespireProtocol.Resp2, 2)]
+    [Arguments(RespireProtocol.Resp3, 2)]
+    public async Task ExpiryTime_PreservesOrderPrecisionAndSentinels(RespireProtocol protocol, int mode)
     {
         await using var root = await ConnectAsync(protocol);
         var client = root.WithKeyPrefix("typed-hash:");
@@ -100,7 +100,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             () => client.Hashes.ExpiryTimeAsync(key, fields), h => h.ExpiryTime(key, fields));
         defaultPrecision[1].UnixTimeMilliseconds.Should().Be(expires.ToUnixTimeMilliseconds());
         defaultPrecision[1].GetExpiresAt().Should().Be(expires);
-        foreach (var precision in new[] { ExpiryTimePrecision.Milliseconds, ExpiryTimePrecision.Seconds })
+        foreach (var precision in new[] { RespireExpiryTimePrecision.Milliseconds, RespireExpiryTimePrecision.Seconds })
         {
             var result = await ExecuteAsync(client, mode,
                 () => client.Hashes.ExpiryTimeAsync(key, precision, fields), h => h.ExpiryTime(key, precision, fields));
@@ -110,7 +110,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             result[0].UnixTimeMilliseconds.Should().BeNull();
             result[1].Exists.Should().BeTrue();
             result[1].HasExpiry.Should().BeTrue();
-            result[1].UnixTimeMilliseconds.Should().Be(precision == ExpiryTimePrecision.Milliseconds
+            result[1].UnixTimeMilliseconds.Should().Be(precision == RespireExpiryTimePrecision.Milliseconds
                 ? expires.ToUnixTimeMilliseconds() : (expires.ToUnixTimeSeconds() + 1) * 1000);
             result[2].Exists.Should().BeFalse();
             result[2].HasExpiry.Should().BeFalse();
@@ -124,13 +124,13 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, 0)]
-    [Arguments(RespProtocol.Resp3, 0)]
-    [Arguments(RespProtocol.Resp2, 1)]
-    [Arguments(RespProtocol.Resp3, 1)]
-    [Arguments(RespProtocol.Resp2, 2)]
-    [Arguments(RespProtocol.Resp3, 2)]
-    public async Task WrongType_PropagatesServerErrors(RespProtocol protocol, int mode)
+    [Arguments(RespireProtocol.Resp2, 0)]
+    [Arguments(RespireProtocol.Resp3, 0)]
+    [Arguments(RespireProtocol.Resp2, 1)]
+    [Arguments(RespireProtocol.Resp3, 1)]
+    [Arguments(RespireProtocol.Resp2, 2)]
+    [Arguments(RespireProtocol.Resp3, 2)]
+    public async Task WrongType_PropagatesServerErrors(RespireProtocol protocol, int mode)
     {
         await using var root = await ConnectAsync(protocol);
         var client = root.WithKeyPrefix("typed-hash:");
@@ -144,14 +144,14 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
             () => client.Hashes.RandomFieldsWithValuesAsync(key, 1), h => h.RandomFieldsWithValues(key, 1)));
         await AssertWrongType(() => ExecuteAsync(client, mode,
             () => client.Hashes.LengthAsync(key, "f"), h => h.Length(key, "f")));
-        foreach (var precision in new[] { ExpiryTimePrecision.Milliseconds, ExpiryTimePrecision.Seconds })
+        foreach (var precision in new[] { RespireExpiryTimePrecision.Milliseconds, RespireExpiryTimePrecision.Seconds })
         {
             await AssertWrongType(() => ExecuteAsync(client, mode,
                 () => client.Hashes.ExpiryTimeAsync(key, precision, "f"), h => h.ExpiryTime(key, precision, "f")));
         }
     }
 
-    private ValueTask<RespireClient> ConnectAsync(RespProtocol protocol)
+    private ValueTask<RespireClient> ConnectAsync(RespireProtocol protocol)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
@@ -166,7 +166,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     private static async Task<T> ExecuteAsync<T>(IRespireClient client, int mode,
-        Func<ValueTask<T>> immediate, Func<IBatchHashCommands, RespirePending<T>> enqueue)
+        Func<ValueTask<T>> immediate, Func<IRespireBatchHashCommands, RespirePending<T>> enqueue)
     {
         if (mode == 0)
         {

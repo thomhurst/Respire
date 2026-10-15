@@ -41,7 +41,7 @@ public class ProtocolSurfaceTests
     {
         var exported = typeof(RespireClient).Assembly
             .GetExportedTypes()
-            .Any(static type => type.FullName == "Respire.Protocol.RespDataType");
+            .Any(static type => type.FullName == "Respire.Protocol.RespireDataType");
 
         await Assert.That(exported).IsTrue();
     }

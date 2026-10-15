@@ -74,7 +74,7 @@ public class ServerCommandLogIntegrationTests(VersionedServerFixture servers)
         await using var restricted = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [lease.Endpoint], Connections = 1,
-            Protocol = (RespProtocol)protocol, Username = "restricted", Password = "commandlog-test-password",
+            Protocol = (RespireProtocol)protocol, Username = "restricted", Password = "commandlog-test-password",
         });
         Func<Task> denied = async () => await restricted.Server.CommandLogAsync(type);
         (await denied.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("NOPERM");

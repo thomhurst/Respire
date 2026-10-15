@@ -34,7 +34,7 @@ public class CommandWriteOutcomeTests
         bytes.AsSpan().Fill((byte)'a');
         var lease = GatheredSetWriteLease.Rent();
         var command = new GatheredSetCommand(
-            new SetCommand("key", new RespireValue(bytes.AsMemory()), default, SetWhen.Always, returnOld: false),
+            new SetCommand("key", new RespireValue(bytes.AsMemory()), default, RespireSetWhen.Always, returnOld: false),
             new ArraySegment<byte>(bytes), lease);
         CommandAttemptResult attempt;
         try { attempt = await connection.SendAttemptAsync(command, commandName: "SET"); }
@@ -61,7 +61,7 @@ public class CommandWriteOutcomeTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         await using var payload = new MemoryStream("value"u8.ToArray());
         var attempt = streaming
-            ? await connection.SendAttemptAsync(new StreamedSetCommand("key", payload, 5, default, SetWhen.Always),
+            ? await connection.SendAttemptAsync(new StreamedSetCommand("key", payload, 5, default, RespireSetWhen.Always),
                 commandName: "SET", throwOnError: throwOnError)
             : await connection.SendAttemptAsync(new RawCommand(FakeRespServer.PingFrame),
                 commandName: "PING", throwOnError: throwOnError);
@@ -101,7 +101,7 @@ public class CommandWriteOutcomeTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         using var caller = new CancellationTokenSource();
         await using var source = new MemoryStream("data"u8.ToArray());
-        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamAttemptAsync(asking, command, caller.Token,
             CommandDeadline.None, default).AsTask();
@@ -450,7 +450,7 @@ public class CommandWriteOutcomeTests
         var original = new IOException("Injected source failure.");
         await using var source = new FailingPayload(afterHeader, original);
         var command = new StreamedSetCommand((RespireValue)"key", source, RespireConnection.StreamChunkSize + 1,
-            default, SetWhen.Always);
+            default, RespireSetWhen.Always);
         var attempt = await connection.SendAttemptAsync(command, commandName: "SET").AsTask().WaitAsync(Guard);
         await Assert.That(attempt.WriteOutcome).IsEqualTo(afterHeader
             ? CommandWriteOutcome.EffectMayHaveReachedServer : CommandWriteOutcome.DefinitelyUnwritten);
@@ -524,7 +524,7 @@ public class CommandWriteOutcomeTests
             new() { StreamPayloadPool = pool });
         using var caller = new CancellationTokenSource();
         await using var source = new LatePayload();
-        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var pending = connection.SendAttemptAsync(command, caller.Token, commandName: "SET").AsTask();
         try
         {

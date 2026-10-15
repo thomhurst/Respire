@@ -204,7 +204,7 @@ public class GeneratedHashMutationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
         });
@@ -264,7 +264,7 @@ public class GeneratedHashMutationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
             // The timeout is client-wide: it also bounds the retry's COMMAND INFO on a fresh
@@ -303,7 +303,7 @@ public class GeneratedHashMutationTests
         await using var server = new FakeRespServer(connections + 3, "*1\r\n$-1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
         });
@@ -331,7 +331,7 @@ public class GeneratedHashMutationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
         });
         var first = new ExpiringHashModel("x", "name", "old", null);
         var tracker = ExpiringHashModelHashMapper.Track(client, first);
@@ -355,7 +355,7 @@ public class GeneratedHashMutationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections, CommandTimeout = null,
         });
         var first = new ExpiringHashModel("x", "name", "old", null);
@@ -390,7 +390,7 @@ public class GeneratedHashMutationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
         });
         var first = new ExpiringHashModel("x", "name", "old", null);
         var next = first with { Token = "new" };
@@ -422,7 +422,7 @@ public class GeneratedHashMutationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = connections,
             CommandTimeout = TimeSpan.FromMilliseconds(200),

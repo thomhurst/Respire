@@ -437,7 +437,7 @@ public class StandaloneReplicaReadyTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = replicas.Select(server => new RespireEndpoint("127.0.0.1", server.Port)).ToArray(),
-            Connections = 1, Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Connections = 1, Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(10),
         };
 }

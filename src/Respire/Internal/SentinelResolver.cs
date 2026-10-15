@@ -71,21 +71,21 @@ internal static class SentinelResolver
     internal static bool TryParseReplicaList(in RespValue reply, out RespireEndpoint[] replicas)
     {
         replicas = [];
-        if (reply.IsError || reply.Type != RespDataType.Array) return false;
+        if (reply.IsError || reply.Type != RespireDataType.Array) return false;
         var discovered = new List<RespireEndpoint>();
         foreach (ref readonly var row in reply.AsArray())
         {
-            if (row.Type != RespDataType.Array) return false;
+            if (row.Type != RespireDataType.Array) return false;
             var fields = row.AsArray();
             if (fields.Length % 2 != 0) return false;
             string? host = null, port = null, flags = null;
             for (var index = 0; index < fields.Length; index += 2)
             {
-                if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+                if (fields[index].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return false;
                 var name = fields[index].AsString();
                 if (name is not ("ip" or "port" or "flags")) continue;
                 // Other fields may carry any type; the ones routing depends on must be strings.
-                if (fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+                if (fields[index + 1].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return false;
                 var value = fields[index + 1].AsString();
                 switch (name)
                 {
@@ -368,7 +368,7 @@ internal static class SentinelResolver
                 ?? (options.SentinelPassword is null && options.SentinelUsername is null ? options.CredentialProvider : null),
             ClientName = null,
             Database = 0,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             // The discovery deadline already bounds GET-MASTER-ADDR-BY-NAME. A second
             // command timer can win the same deadline and hide its timeout classification.
             CommandTimeout = null,
@@ -485,7 +485,7 @@ internal static class SentinelResolver
                 $"Redis Sentinel service '{serviceName}' was not found on {sentinel}. Check RespireOptions.SentinelPrimaryName.") { Endpoint = sentinel };
         }
 
-        if (reply.Type != RespDataType.Array)
+        if (reply.Type != RespireDataType.Array)
             throw new RespireProtocolException($"Redis Sentinel returned an invalid address reply for service '{serviceName}'.") { Endpoint = sentinel };
         var parts = reply.AsArray();
         if (parts.Length < 2)
@@ -494,8 +494,8 @@ internal static class SentinelResolver
                 $"Redis Sentinel returned {parts.Length} fields for service '{serviceName}', expected host and port.") { Endpoint = sentinel };
         }
 
-        if (parts[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-            || parts[1].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+        if (parts[0].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)
+            || parts[1].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
             throw new RespireProtocolException($"Redis Sentinel returned non-string host or port fields for service '{serviceName}'.") { Endpoint = sentinel };
         var host = parts[0].AsString();
         var portText = parts[1].AsString();
@@ -635,16 +635,16 @@ internal static class SentinelResolver
         endpoint = default;
         epoch = -1;
         failoverInProgress = false;
-        if (reply.Type != RespDataType.Array) return false;
+        if (reply.Type != RespireDataType.Array) return false;
         var fields = reply.AsArray();
         if (fields.Length % 2 != 0) return false;
         string? host = null, port = null;
         for (var index = 0; index < fields.Length; index += 2)
         {
-            if (fields[index].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+            if (fields[index].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return false;
             var name = fields[index].AsString();
             if (name is not ("ip" or "port" or "config-epoch" or "flags")) continue;
-            if (fields[index + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return false;
+            if (fields[index + 1].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return false;
             var value = fields[index + 1].AsString();
             if (name == "ip") host = value;
             else if (name == "port") port = value;
@@ -664,19 +664,19 @@ internal static class SentinelResolver
             logger?.SentinelPeerDiscoveryUnavailable(in reply);
             return; // Optional discovery permissions must not reject a usable configured Sentinel.
         }
-        if (reply.Type != RespDataType.Array) return;
+        if (reply.Type != RespireDataType.Array) return;
         var peers = new List<RespireEndpoint>();
         var complete = true;
         foreach (ref readonly var peer in reply.AsArray())
         {
-            if (peer.Type != RespDataType.Array) { complete = false; continue; }
+            if (peer.Type != RespireDataType.Array) { complete = false; continue; }
             var fields = peer.AsArray();
             if (fields.Length % 2 != 0) { complete = false; continue; }
             string? host = null, port = null;
             for (var field = 0; field < fields.Length; field += 2)
             {
-                if (fields[field].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-                    || fields[field + 1].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+                if (fields[field].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)
+                    || fields[field + 1].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
                 { complete = false; continue; }
                 var name = fields[field].AsString();
                 if (name == "ip") host = fields[field + 1].AsString();

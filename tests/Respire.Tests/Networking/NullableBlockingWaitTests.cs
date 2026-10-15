@@ -140,7 +140,7 @@ public class NullableBlockingWaitTests
         await client.SortedSets.PopManyAsync<string>(["key"]);
         await client.Streams.ReadAsync("key");
         await client.Streams.ReadAsync([("key", RespireStreamId.Beginning)]);
-        await client.Streams.ReadAsync(new StreamReadOptions { Count = 1 }, "key");
+        await client.Streams.ReadAsync(new RespireStreamReadOptions { Count = 1 }, "key");
         await client.Streams.ReadGroupOnceAsync("key", "group", "consumer");
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith('B') || command.Contains(" BLOCK ", StringComparison.Ordinal))).IsFalse();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(11);
@@ -156,7 +156,7 @@ public class NullableBlockingWaitTests
         await using var transaction = client.CreateTransaction();
         foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
         {
-            var options = new StreamReadOptions { WaitFor = null };
+            var options = new RespireStreamReadOptions { WaitFor = null };
             await Assert.That(() => queue.Streams.Read(options, "key")).Throws<ArgumentException>();
             await Assert.That(() => queue.Streams.ReadGroup("key", "group", "consumer", options)).Throws<ArgumentException>();
         }
@@ -176,7 +176,7 @@ public class NullableBlockingWaitTests
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var options = mode == "omitted" ? default : new StreamReadOptions { WaitFor = null };
+        var options = mode == "omitted" ? default : new RespireStreamReadOptions { WaitFor = null };
         await using var reader = client.Streams.ReadGroupAsync(options, "key", "group", "consumer",
             startAt: mode == "pending" ? RespireStreamId.Beginning : (RespireStreamId?)null,
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
@@ -208,8 +208,8 @@ public class NullableBlockingWaitTests
             "sorted-many-typed" => client.SortedSets.PopManyAsync<string>(["key"], waitFor, cancellationToken: cancellationToken).AsTask(),
             "stream" => client.Streams.ReadAsync("key", waitFor, cancellationToken: cancellationToken).AsTask(),
             "streams" => client.Streams.ReadAsync([("key", RespireStreamId.Beginning)], waitFor, cancellationToken: cancellationToken).AsTask(),
-            "stream-options" => client.Streams.ReadAsync(new StreamReadOptions { WaitFor = waitFor }, "key", cancellationToken: cancellationToken).AsTask(),
-            "group" => client.Streams.ReadGroupOnceAsync("key", "group", "consumer", new StreamReadOptions { WaitFor = waitFor }, cancellationToken: cancellationToken).AsTask(),
+            "stream-options" => client.Streams.ReadAsync(new RespireStreamReadOptions { WaitFor = waitFor }, "key", cancellationToken: cancellationToken).AsTask(),
+            "group" => client.Streams.ReadGroupOnceAsync("key", "group", "consumer", new RespireStreamReadOptions { WaitFor = waitFor }, cancellationToken: cancellationToken).AsTask(),
             _ => throw new ArgumentException("Unknown operation", nameof(operation)),
         };
 }

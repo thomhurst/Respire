@@ -37,7 +37,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", primary.Port)], ReadFrom = policy,
             ClientAvailabilityZone = ReadFallbackPolicy.UsesAvailabilityZone(policy) ? "local" : null,
             HedgedReads = shape == "hedged" ? new() { Delay = TimeSpan.FromSeconds(1), MaximumExtraLoadPercent = 100 } : null,
@@ -132,7 +132,7 @@ public partial class ErrorMetricsTests
                 ? "-WRONGTYPE private-selection\r\n"u8.ToArray() : "$2\r\nok\r\n"u8.ToArray() : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", primary.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
         });
@@ -185,7 +185,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", primary.Port)],
             ReadFrom = RespireReadFrom.Replica,
         });

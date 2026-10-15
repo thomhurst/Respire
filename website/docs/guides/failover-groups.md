@@ -12,12 +12,12 @@ await using var group = await RespireFailoverGroup.ConnectAsync(
     new RespireFailoverCandidate(new RespireOptions
     {
         Endpoints = ["redis-primary:6379"],
-        Protocol = RespProtocol.Auto,
+        Protocol = RespireProtocol.Auto,
     }, Priority: 0),
     new RespireFailoverCandidate(new RespireOptions
     {
         Endpoints = ["redis-secondary:6379"],
-        Protocol = RespProtocol.Auto,
+        Protocol = RespireProtocol.Auto,
     }, Priority: 1),
 ],
 new RespireFailoverGroupOptions

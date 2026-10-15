@@ -30,7 +30,7 @@ public class ClusterDatabaseTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
-                Database = 2, RequireClusterDatabaseSupport = true, Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2, EnableClientTracking = resp3,
+                Database = 2, RequireClusterDatabaseSupport = true, Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2, EnableClientTracking = resp3,
             });
         using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
@@ -80,7 +80,7 @@ public class ClusterDatabaseTests
         var info = Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(body)}\r\n{body}\r\n");
         await using var server = new FakeRespServer(resp3 ? [Hello, info] : [info]);
         var error = await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true, Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2 }))
+            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true, Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2 }))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(error!.Message).Contains("valkey_version=<missing>");
         await Assert.That(server.ReceivedCommands).DoesNotContain("SELECT 2");
@@ -317,7 +317,7 @@ public class ClusterDatabaseTests
 
     private static RespireOptions Options(int port) => new()
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         UseCluster = true, Database = 2, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", port) },
     };
 

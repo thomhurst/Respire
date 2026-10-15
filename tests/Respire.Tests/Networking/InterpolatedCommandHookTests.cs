@@ -167,7 +167,7 @@ public partial class CommandHookTests
     private static RespireOptions OptionsForUnavailableEndpoint(int port) => new()
     {
         Endpoints = [new("127.0.0.1", port)], UseCluster = true,
-        Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
     };
 
     [Test]
@@ -314,7 +314,7 @@ public partial class CommandHookTests
         var hook = new RecordingHook();
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         var activeAtAdmission = -1;
         var activeAtCompletion = -1;

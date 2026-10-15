@@ -42,7 +42,7 @@
   "Boundaries": [],
   "NonRoutes": [
     {
-      "Member": "Respire.RespireServerNodeExtensions.OnNode(this IServerCommands,RespireEndpoint):RespireServerNode",
+      "Member": "Respire.RespireServerNodeExtensions.OnNode(this IRespireServerCommands,RespireEndpoint):RespireServerNode",
       "Reason": "Selects a node-specific facet; the selected command entry point owns dispatch."
     }
   ]

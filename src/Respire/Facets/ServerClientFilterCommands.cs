@@ -5,7 +5,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Lists matching clients on one execution node. IDs are local to that node.</summary>
     /// <remarks>The token is required to preserve ClientsAsync(default). Use a connection handle to select a known endpoint.</remarks>

@@ -171,7 +171,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task NestedRenamedVectorPathSupportsReadsAndSearch(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "nested:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new NestedVectorMapper());
         using var collection = store.GetJsonCollection<NestedVectorRecord>("nested");
@@ -202,7 +202,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task NestedVectorsUnderSharedParentSupportExplicitSelection(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "nested-multi:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new NestedMultiVectorMapper());
         using var collection = store.GetJsonCollection<NestedMultiVectorRecord>("nested");
@@ -238,7 +238,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task GeneratedMaxDepthAppliesToUpsertAndBothRetrievalModes(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "deep:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new DeepJsonMapper());
         using var collection = store.GetJsonCollection<DeepJsonRecord>("records");
@@ -281,7 +281,7 @@ public class JsonCollectionTests(ModernRedisTestContainer fixture)
 
     private async Task WithCollection(int protocol, Func<RespireClient, RespireVectorStore, RespireVectorStoreCollection<JsonMovie>, Task> test)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "json:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new JsonMovieMapper());
         using var collection = store.GetJsonCollection<JsonMovie>("映画:a:b");

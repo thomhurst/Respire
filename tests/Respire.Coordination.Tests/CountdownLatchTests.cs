@@ -116,7 +116,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
     {
         var options = Cluster.CreateOptions() with
         {
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
             Connections = 1,
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -151,7 +151,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
                 Database = fixture.Database,
                 Username = username,
                 Password = password,
-                Protocol = RespProtocol.Resp3,
+                Protocol = RespireProtocol.Resp3,
             });
             var coordination = new RespireCoordination(restricted);
             RespireServerException? resetError = null;
@@ -269,7 +269,7 @@ public class CountdownLatchTests(RedisTestContainer fixture)
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions
     {
         Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
-        Connections = 2, Protocol = RespProtocol.Resp3,
+        Connections = 2, Protocol = RespireProtocol.Resp3,
     });
 
     private static RespireKey Key() => $"{{{Guid.NewGuid():N}}}:latch";

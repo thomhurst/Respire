@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IListCommands",
+      "Type": "Respire.IRespireListCommands",
       "OwnerType": "Respire.ListCommands",
       "Members": [
         "PopAsync(ReadOnlySpan<RespireKey>,TimeSpan?,RespireListSide,CancellationToken):ValueTask<RespireListPopResult?>",

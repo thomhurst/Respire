@@ -5,9 +5,9 @@ namespace Respire;
 
 /// <summary>
 /// Bitmap commands queued on a <see cref="RespireBatch"/> or <see cref="RespireTransaction"/>.
-/// Mirrors <see cref="IBitmapCommands"/>.
+/// Mirrors <see cref="IRespireBitmapCommands"/>.
 /// </summary>
-public interface IBatchBitmapCommands
+public interface IRespireBatchBitmapCommands
 {
     /// <summary>The bit at an offset. Redis: GETBIT.</summary>
     RespirePending<bool> Get(RespireKey key, long offset);
@@ -19,15 +19,15 @@ public interface IBatchBitmapCommands
     RespirePending<long> SetBitCount(RespireKey key);
 
     /// <summary>Number of set bits within a range. Redis: BITCOUNT.</summary>
-    RespirePending<long> SetBitCount(RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte);
+    RespirePending<long> SetBitCount(RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte);
 
     /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
     RespirePending<long?> Position(
-        RespireKey key, bool value, long? start = null, long? end = null, BitIndexUnit unit = BitIndexUnit.Byte);
+        RespireKey key, bool value, long? start = null, long? end = null, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte);
 
     /// <summary>Combines bitmaps into <paramref name="destination"/>; returns its byte length. Redis: BITOP.</summary>
     RespirePending<long> Operate(
-        BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
+        RespireBitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
 
     /// <summary>Runs bit-field operations in order. Redis: BITFIELD.</summary>
     RespirePending<long?[]> Field(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> operations);
@@ -36,7 +36,7 @@ public interface IBatchBitmapCommands
     RespirePending<long?[]> FieldReadOnly(RespireKey key, params ReadOnlySpan<RespireBitFieldOperation> gets);
 }
 
-internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapCommands
+internal sealed class BatchBitmapCommands(IPendingSink sink) : IRespireBatchBitmapCommands
 {
     public RespirePending<bool> Get(RespireKey key, long offset)
     {
@@ -60,7 +60,7 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> SetBitCount(
-        RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte)
+        RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte)
         => sink.Add<Cmd4, long>(
             "BITCOUNT",
             new Cmd4(
@@ -68,7 +68,7 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long?> Position(
-        RespireKey key, bool value, long? start = null, long? end = null, BitIndexUnit unit = BitIndexUnit.Byte)
+        RespireKey key, bool value, long? start = null, long? end = null, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte)
     {
         BitmapCommands.ValidatePosition(start, end, unit);
         return (start, end) switch
@@ -88,7 +88,7 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
     }
 
     public RespirePending<long> Operate(
-        BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
+        RespireBitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
     {
         BitmapCommands.ValidateOperate(operation, sourceKeys);
         return sink.Add<BitOpCommand, long>(

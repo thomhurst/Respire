@@ -196,7 +196,7 @@ using Respire.Azure;
 builder.Services.AddSingleton<TokenCredential>(new DefaultAzureCredential());
 builder.AddRespireClient("cache", configureOptions: (services, options) => options with
 {
-    CredentialProvider = new AzureManagedRedisCredentialProvider(
+    CredentialProvider = new RespireAzureManagedRedisCredentialProvider(
         services.GetRequiredService<TokenCredential>(),
         builder.Configuration["RedisIdentityObjectId"]!),
 });

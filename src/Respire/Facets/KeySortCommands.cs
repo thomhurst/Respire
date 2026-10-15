@@ -6,7 +6,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IKeyCommands
+public partial interface IRespireKeyCommands
 {
     /// <summary>Sorts a list, set, or sorted set; missing external GET values are null. Redis: SORT/SORT_RO.</summary>
     ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default);

@@ -260,7 +260,7 @@ public class ClusterReadyReplyTests
     private static RespireOptions Options(FakeRespServer server) => new()
     {
         Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true,
-        Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+        Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
     };
 
     private static FakeRespServer Primary()

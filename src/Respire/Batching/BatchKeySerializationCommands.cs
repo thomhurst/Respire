@@ -3,13 +3,13 @@ using Respire.Internal;
 
 namespace Respire;
 
-public partial interface IBatchKeyCommands
+public partial interface IRespireBatchKeyCommands
 {
     /// <summary>An owned Redis-serialized payload, or null for a missing key. Does not include expiry. Redis: DUMP.</summary>
     RespirePending<byte[]?> Dump(RespireKey key);
 
     /// <summary>Restores a Redis-serialized payload; true on OK. Redis: RESTORE.</summary>
-    /// <remarks>Uses the expiry and option rules of IKeyCommands.RestoreAsync. The payload is borrowed:
+    /// <remarks>Uses the expiry and option rules of IRespireKeyCommands.RestoreAsync. The payload is borrowed:
     /// do not modify its bytes until batch/transaction execution completes.</remarks>
     RespirePending<bool> Restore(RespireKey key, ReadOnlyMemory<byte> payload,
         RespireExpiry expiry = default, RespireRestoreOptions options = default);

@@ -8,10 +8,10 @@ namespace Respire;
 
 /// <summary>
 /// Set (unordered, unique members) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="ISetCommands"/>; collection cardinality
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IRespireSetCommands"/>; collection cardinality
 /// uses <see cref="Count"/>.
 /// </summary>
-public partial interface IBatchSetCommands
+public partial interface IRespireBatchSetCommands
 {
     /// <summary>Adds members; returns how many were new. Redis: SADD.</summary>
     RespirePending<long> Add(RespireKey key, params ReadOnlySpan<RespireValue> members);
@@ -84,7 +84,7 @@ public partial interface IBatchSetCommands
     RespirePending<long> DifferenceStore(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
 }
 
-internal sealed partial class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
+internal sealed partial class BatchSetCommands(IPendingSink sink) : IRespireBatchSetCommands
 {
     public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<RespireValue> members)
         => sink.Add<Cmd1N, long>(

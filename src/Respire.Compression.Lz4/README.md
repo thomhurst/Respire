@@ -20,7 +20,7 @@ await using var redis = RespireClient.Create(new RespireOptions
 {
     Endpoints = [new RespireEndpoint("localhost", 6379)],
     Serializer = new RespireValueCodecSerializer(
-        RespireSerializer.Default, new Lz4ValueCodec()),
+        RespireSerializer.Default, new RespireLz4ValueCodec()),
 });
 await redis.SetAsync("profile", new Dictionary<string, string>
 {

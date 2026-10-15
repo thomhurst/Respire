@@ -17,7 +17,7 @@ public class CopyDatabaseIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Transaction)]
     public async Task CopyTargetsRequestedDatabaseWithoutChangingSource(int protocol, ExecutionMode mode)
     {
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol };
+        var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol };
         // No test owns the scratch database; the Guid prefix keeps this row's keys apart there.
         const int destinationDatabase = RedisTestContainer.ScratchDatabase;
         await using var source = await RespireClient.ConnectAsync(options);

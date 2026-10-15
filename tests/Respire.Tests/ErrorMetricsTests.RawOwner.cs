@@ -73,7 +73,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var capture = new Capture(throwOnMeasurement: true);
@@ -124,7 +124,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             CommandTimeout = TimeSpan.FromMilliseconds(100), ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(100),
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
@@ -174,7 +174,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             MaxInflightCommands = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var capture = new Capture(throwOnMeasurement: true);

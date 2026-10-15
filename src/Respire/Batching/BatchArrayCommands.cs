@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Array commands queued on batches and transactions. Argument spans are copied; referenced byte buffers must remain unchanged until execution.</summary>
-public interface IBatchArrayCommands
+public interface IRespireBatchArrayCommands
 {
     /// <summary>Matching indexes with default OR options. Redis: ARGREP.</summary>
     RespirePending<ulong[]> Grep(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates);
@@ -43,7 +43,7 @@ public interface IBatchArrayCommands
     /// <summary>Deserialized value with explicit slot presence, including stored defaults. Redis: ARGET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key, ulong index);
+    RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key, ulong index);
 
     /// <summary>Values in requested index order, retaining null holes. Redis: ARMGET.</summary>
     RespirePending<string?[]> GetMany(RespireKey key, params ReadOnlySpan<ulong> indexes);
@@ -102,7 +102,7 @@ public interface IBatchArrayCommands
     RespirePending<RespireArrayInfo> Info(RespireKey key, bool full = false);
 
     /// <summary>Aggregates existing slots, preserving numeric text and nil. MATCH requires a match value. Redis: AROP.</summary>
-    RespirePending<RespireArrayAggregate> Aggregate(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null);
+    RespirePending<RespireArrayAggregateResult> Aggregate(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null);
 
     /// <summary>Existing slots in inclusive index order; limit caps populated slots. Redis uses index ranges, not cursors. Redis: ARSCAN.</summary>
     RespirePending<RespireArrayEntry<string>[]> ScanPage(RespireKey key, ulong start, ulong end, long? limit = null);
@@ -125,7 +125,7 @@ public interface IBatchArrayCommands
 
 }
 
-internal sealed class BatchArrayCommands(IPendingSink sink) : IBatchArrayCommands
+internal sealed class BatchArrayCommands(IPendingSink sink) : IRespireBatchArrayCommands
 {
     public RespirePending<ulong[]> Grep(RespireKey key, RespireArrayBound start, RespireArrayBound end, params ReadOnlySpan<RespireArrayPredicate> predicates)
         => Grep(key, start, end, predicates, default);
@@ -163,7 +163,7 @@ internal sealed class BatchArrayCommands(IPendingSink sink) : IBatchArrayCommand
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key, ulong index)
+    public RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key, ulong index)
         => ReadIndex(RespireCommands.Array.ARGET, key, index, static (c, v) => c.TryDeserializeBorrowed<T>(in v));
 
     public RespirePending<string?[]> GetMany(RespireKey key, params ReadOnlySpan<ulong> indexes)
@@ -223,7 +223,7 @@ internal sealed class BatchArrayCommands(IPendingSink sink) : IBatchArrayCommand
     public RespirePending<RespireArrayInfo> Info(RespireKey key, bool full = false)
         => Read(RespireCommands.Array.ARINFO, key, ArrayCommandArguments.Info(full), static (c, v) => ArrayResponseReader.Info(in v));
 
-    public RespirePending<RespireArrayAggregate> Aggregate(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null)
+    public RespirePending<RespireArrayAggregateResult> Aggregate(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null)
         => Read(RespireCommands.Array.AROP, key, ArrayCommandArguments.Aggregate(start, end, operation, match), static (c, v) => ArrayResponseReader.Aggregate(in v));
 
     public RespirePending<RespireArrayEntry<string>[]> ScanPage(RespireKey key, ulong start, ulong end, long? limit = null)

@@ -19,8 +19,8 @@ var options = new RespireOptions
 {
     Endpoints = { new RespireEndpoint(endpoint, 10000) },
     UseTls = true,
-    Protocol = RespProtocol.Resp3,
-    CredentialProvider = new AzureManagedRedisCredentialProvider(credential, redisUserObjectId),
+    Protocol = RespireProtocol.Resp3,
+    CredentialProvider = new RespireAzureManagedRedisCredentialProvider(credential, redisUserObjectId),
 };
 
 // The same options and provider can be registered through dependency injection.

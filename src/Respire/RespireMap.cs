@@ -73,7 +73,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     /// Before loading a miss, drains this map's pending write-behind changes so the loader sees
     /// them in the external store. A writer failure propagates without invoking the loader.
     /// </remarks>
-    public async ValueTask<RespireGet<TValue>> GetAsync(TKey key, CancellationToken cancellationToken = default)
+    public async ValueTask<RespireGetResult<TValue>> GetAsync(TKey key, CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -84,7 +84,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     }
 
     // The caller owns admission for its entire operation, including every entry in a preload.
-    private async ValueTask<RespireGet<TValue>> GetCoreAsync(TKey key, CancellationToken cancellationToken)
+    private async ValueTask<RespireGetResult<TValue>> GetCoreAsync(TKey key, CancellationToken cancellationToken)
     {
         var field = Format(key);
         var bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
@@ -97,7 +97,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         var loaded = await _options.Loader(key, cancellationToken).ConfigureAwait(false);
         if (!loaded.Found) return default;
         // Never replace a concurrent writer's value, and never echo a loader fill to its writer.
-        await StoreAsync(field, Encode(loaded.Value!), SetWhen.NotExists,
+        await StoreAsync(field, Encode(loaded.Value!), RespireSetWhen.NotExists,
             _options.EntryExpiration, cancellationToken).ConfigureAwait(false);
         bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
         return bytes is null ? default : new(true, _decode(bytes));
@@ -123,7 +123,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
             // Redis I/O must not change what the external store receives.
             var change = _options.Writer is null ? default : new RespireMapChange<TKey, TValue>(key, new(true, _decode(bytes)));
             await MakeRoomAsync(cancellationToken).ConfigureAwait(false);
-            await StoreAsync(field, bytes, SetWhen.Always, expiration, cancellationToken).ConfigureAwait(false);
+            await StoreAsync(field, bytes, RespireSetWhen.Always, expiration, cancellationToken).ConfigureAwait(false);
             await PersistAsync(change, cancellationToken).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
@@ -252,7 +252,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     private byte[] Encode(TValue value)
         => (_encode(value) ?? throw new InvalidOperationException("The value encoder returned null.")).ToArray();
 
-    private async ValueTask StoreAsync(string field, byte[] value, SetWhen when,
+    private async ValueTask StoreAsync(string field, byte[] value, RespireSetWhen when,
         TimeSpan? expiration, CancellationToken cancellationToken)
     {
         if (expiration is { } lifetime)

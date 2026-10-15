@@ -34,7 +34,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole, Bulk("replica"));
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -73,7 +73,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -99,7 +99,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole, Bulk("encoding"));
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -134,7 +134,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -146,7 +146,7 @@ public class ReadEndpointRoutingTests
         var key = "key";
         using (await view.ExecuteAsync($"OBJECT ENCODING {key}")) { }
         using (await view.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key")) { }
-        await view.Geo.SearchAsync("geo", GeoSearchOrigin.FromCoordinates(0, 0), RespireGeoSearchShape.Circle(1));
+        await view.Geo.SearchAsync("geo", RespireGeoSearchOrigin.FromCoordinates(0, 0), RespireGeoSearchShape.Circle(1));
         await view.Streams.PendingSummaryAsync("stream", "group");
         await view.Streams.PendingAsync("stream", "group");
         await view.Streams.InfoAsync("stream");
@@ -174,7 +174,7 @@ public class ReadEndpointRoutingTests
         await using var wrongRole = new FakeRespServer(2, PrimaryRole, PrimaryRole);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
@@ -214,7 +214,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(2),
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -244,7 +244,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -269,7 +269,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(300),
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
@@ -299,7 +299,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -323,7 +323,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole, ":1\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -361,7 +361,7 @@ public class ReadEndpointRoutingTests
         reservation.Stop();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", port)],
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
@@ -398,7 +398,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole, ":1\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -421,7 +421,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -456,7 +456,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 2,
             // Long enough that a slow machine never revalidates within the test.
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
@@ -487,7 +487,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
@@ -532,7 +532,7 @@ public class ReadEndpointRoutingTests
         }
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.Zero,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -563,7 +563,7 @@ public class ReadEndpointRoutingTests
         await using var second = new FakeRespServer(ReplicaRole) { ReplyOverride = (_, command) => Pages(command) };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
@@ -610,7 +610,7 @@ public class ReadEndpointRoutingTests
         }
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.Zero,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -659,7 +659,7 @@ public class ReadEndpointRoutingTests
         }
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.Zero,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -703,7 +703,7 @@ public class ReadEndpointRoutingTests
         }
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.Zero,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -738,7 +738,7 @@ public class ReadEndpointRoutingTests
         await using var second = new FakeRespServer(ReplicaRole) { ReplyOverride = (_, command) => Reply(command) };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -765,7 +765,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -820,7 +820,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -867,7 +867,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", unlinked.Port), new("127.0.0.1", linked.Port)],
@@ -893,7 +893,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -920,7 +920,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -958,7 +958,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -1003,7 +1003,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -1065,7 +1065,7 @@ public class ReadEndpointRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -1131,7 +1131,7 @@ public class ReadEndpointRoutingTests
         replica.DelayReply(2, (int)(FunctionPropagationLimit + TimeSpan.FromSeconds(1)).TotalMilliseconds);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             CommandTimeout = timeoutMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -1180,7 +1180,7 @@ public class ReadEndpointRoutingTests
             "$2\r\nab\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = new(),
@@ -1241,7 +1241,7 @@ public class ReadEndpointRoutingTests
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10),
             CommandTimeout = TimeSpan.FromSeconds(10),
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
             ReplicaEndpoints = [new("127.0.0.1", first.Port)],
         });
@@ -1312,7 +1312,7 @@ public class ReadEndpointRoutingTests
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10),
             CommandTimeout = TimeSpan.FromSeconds(10),
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         var router = client.Core.ReadRouter;
@@ -1375,7 +1375,7 @@ public class ReadEndpointRoutingTests
             ConnectTimeout = TimeSpan.FromSeconds(10),
             // Far shorter than the time the consumer below holds the stream open.
             CommandTimeout = TimeSpan.FromMilliseconds(200),
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         var view = client.WithReadFrom(RespireReadFrom.Replica);
@@ -1446,7 +1446,7 @@ public class ReadEndpointRoutingTests
             // Keep command timeout above the 300 ms retired-stream idle limit below.
             // Discovery must settle under parallel CI load before testing stream retirement.
             CommandTimeout = TimeSpan.FromSeconds(2),
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         var view = client.WithReadFrom(RespireReadFrom.Replica);
@@ -1486,7 +1486,7 @@ public class ReadEndpointRoutingTests
         await using var replica = new FakeRespServer(ReplicaRole) { SuppressReply = command => command == "ROLE" };
         var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
@@ -1574,7 +1574,7 @@ public class ReadEndpointRoutingTests
     private static RespireOptions DiscoveryOptions() => new()
     {
         SentinelPrimaryName = "mymaster",
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         ConnectTimeout = TimeSpan.FromSeconds(10),
         CommandTimeout = TimeSpan.FromSeconds(10),
     };

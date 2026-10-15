@@ -209,7 +209,7 @@ public class HashImportIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     private RespireOptions Options(RespireFakeServer? fake, int protocol)
-        => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol };
+        => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol };
 
     [Test]
     [Arguments(2, false)]

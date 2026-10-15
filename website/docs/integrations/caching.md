@@ -296,7 +296,7 @@ builder.Services.AddRespireDistributedCache(options =>
 {
     options.ConnectionString = "redis://localhost";
     options.InstanceName = "myapp:compressed-v1:";
-    options.ValueCodec = new BrotliValueCodec(new RespireValueCodecOptions
+    options.ValueCodec = new RespireBrotliValueCodec(new RespireValueCodecOptions
     {
         MinimumLength = 1024,
         MaximumDecodedLength = 4 * 1024 * 1024,
@@ -313,7 +313,7 @@ builder.Services.AddRespireHybridCache(options =>
 {
     options.ConnectionString = "redis://localhost";
     options.InstanceName = "myapp:hybrid-compressed-v1:";
-    options.ValueCodec = new BrotliValueCodec();
+    options.ValueCodec = new RespireBrotliValueCodec();
 });
 ```
 

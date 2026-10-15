@@ -32,7 +32,7 @@ public class ClientSideCacheTests
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await using var entries = client.Streams.ReadGroupAsync(new StreamReadOptions
+        await using var entries = client.Streams.ReadGroupAsync(new RespireStreamReadOptions
         {
             WaitFor = Timeout.InfiniteTimeSpan,
         }, "events", "group", "consumer", cancellationToken: cancellation.Token).GetAsyncEnumerator();
@@ -710,16 +710,16 @@ public class ClientSideCacheTests
             "*1\r\n$3\r\none\r\n"u8.ToArray(),
             "*1\r\n$3\r\ntwo\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
-        var options = new GeoSearchOptions { Count = 1, Any = true };
+        var options = new RespireGeoSearchOptions { Count = 1, Any = true };
 
         await Assert.That((await client.Geo.SearchAsync(
             "places",
-            GeoSearchOrigin.FromMember("origin"),
+            RespireGeoSearchOrigin.FromMember("origin"),
             RespireGeoSearchShape.Circle(1),
             options))[0].Member).IsEqualTo("one");
         await Assert.That((await client.Geo.SearchAsync(
             "places",
-            GeoSearchOrigin.FromMember("origin"),
+            RespireGeoSearchOrigin.FromMember("origin"),
             RespireGeoSearchShape.Circle(1),
             options))[0].Member).IsEqualTo("two");
 
@@ -1206,7 +1206,7 @@ public class ClientSideCacheTests
             Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1241,7 +1241,7 @@ public class ClientSideCacheTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1268,7 +1268,7 @@ public class ClientSideCacheTests
         var parked = new ParkedReply(seed, "SET key new");
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1336,10 +1336,10 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    [Arguments(ServerFlushMode.Default, "")]
-    [Arguments(ServerFlushMode.Sync, " SYNC")]
-    [Arguments(ServerFlushMode.Async, " ASYNC")]
-    public async Task ClusterFlush_FencesCacheThroughCompletion(ServerFlushMode mode, string suffix)
+    [Arguments(RespireServerFlushMode.Default, "")]
+    [Arguments(RespireServerFlushMode.Sync, " SYNC")]
+    [Arguments(RespireServerFlushMode.Async, " ASYNC")]
+    public async Task ClusterFlush_FencesCacheThroughCompletion(RespireServerFlushMode mode, string suffix)
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var target = new FakeRespServer(
@@ -1364,7 +1364,7 @@ public class ClientSideCacheTests
             topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             AllowAdmin = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1403,7 +1403,7 @@ public class ClientSideCacheTests
             topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1440,7 +1440,7 @@ public class ClientSideCacheTests
             topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1505,11 +1505,11 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    [Arguments(true, ScriptFlushMode.Default)]
-    [Arguments(false, ScriptFlushMode.Default)]
-    [Arguments(false, ScriptFlushMode.Sync)]
-    [Arguments(false, ScriptFlushMode.Async)]
-    public async Task ScriptCacheManagementPreservesCachedValues(bool load, ScriptFlushMode mode)
+    [Arguments(true, RespireScriptFlushMode.Default)]
+    [Arguments(false, RespireScriptFlushMode.Default)]
+    [Arguments(false, RespireScriptFlushMode.Sync)]
+    [Arguments(false, RespireScriptFlushMode.Async)]
+    public async Task ScriptCacheManagementPreservesCachedValues(bool load, RespireScriptFlushMode mode)
     {
         var script = RespireScript.Create("return 1");
         var reply = load ? Encoding.ASCII.GetBytes($"$40\r\n{script.Sha1}\r\n") : FakeRespServer.OkReply;
@@ -1703,16 +1703,16 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    [Arguments(0, ServerFlushMode.Default)]
-    [Arguments(0, ServerFlushMode.Sync)]
-    [Arguments(0, ServerFlushMode.Async)]
-    [Arguments(1, ServerFlushMode.Default)]
-    [Arguments(1, ServerFlushMode.Sync)]
-    [Arguments(1, ServerFlushMode.Async)]
-    [Arguments(2, ServerFlushMode.Default)]
-    [Arguments(2, ServerFlushMode.Sync)]
-    [Arguments(2, ServerFlushMode.Async)]
-    public async Task ServerFlushModesInvalidateCachedValues(int execution, ServerFlushMode mode)
+    [Arguments(0, RespireServerFlushMode.Default)]
+    [Arguments(0, RespireServerFlushMode.Sync)]
+    [Arguments(0, RespireServerFlushMode.Async)]
+    [Arguments(1, RespireServerFlushMode.Default)]
+    [Arguments(1, RespireServerFlushMode.Sync)]
+    [Arguments(1, RespireServerFlushMode.Async)]
+    [Arguments(2, RespireServerFlushMode.Default)]
+    [Arguments(2, RespireServerFlushMode.Sync)]
+    [Arguments(2, RespireServerFlushMode.Async)]
+    public async Task ServerFlushModesInvalidateCachedValues(int execution, RespireServerFlushMode mode)
     {
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
@@ -1727,7 +1727,7 @@ public class ClientSideCacheTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, AllowAdmin = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, AllowAdmin = true, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ClientSideCache = new(),
         });
@@ -1827,7 +1827,7 @@ public class ClientSideCacheTests
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = new(),
@@ -1836,7 +1836,7 @@ public class ClientSideCacheTests
     private static RespireClient CreateLazyClient(FakeRespServer server)
         => RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = new(),

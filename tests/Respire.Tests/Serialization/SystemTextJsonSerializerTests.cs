@@ -15,7 +15,7 @@ public class SystemTextJsonSerializerTests
     [Test]
     public async Task ExplicitNullOptionsRemainSourceCompatible()
     {
-        var serializer = new SystemTextJsonSerializer(null);
+        var serializer = new RespireSystemTextJsonSerializer(null);
 
         await Assert.That(serializer).IsNotNull();
     }
@@ -33,8 +33,8 @@ public class SystemTextJsonSerializerTests
             typeof(IRespireClient).GetMethods().Single(method =>
                 method.Name == nameof(IRespireClient.SetAsync) && method.IsGenericMethod),
             typeof(RespireResult).GetMethod(nameof(RespireResult.As))!,
-            .. typeof(IScriptCommands).GetMethods().Where(method =>
-                method.Name == nameof(IScriptCommands.ExecuteAsync) && method.IsGenericMethod),
+            .. typeof(IRespireScriptCommands).GetMethods().Where(method =>
+                method.Name == nameof(IRespireScriptCommands.ExecuteAsync) && method.IsGenericMethod),
         ];
 
         foreach (var method in methods)
@@ -47,7 +47,7 @@ public class SystemTextJsonSerializerTests
     [Test]
     public async Task ContextBackedSerializer_SupportsGenericMembers()
     {
-        var serializer = SystemTextJsonSerializer.FromContext(TestJsonContext.Default);
+        var serializer = RespireSystemTextJsonSerializer.FromContext(TestJsonContext.Default);
         var destination = new ArrayBufferWriter<byte>();
 
         serializer.Serialize(destination, new Payload("Ada", 36));
@@ -59,7 +59,7 @@ public class SystemTextJsonSerializerTests
     [Test]
     public async Task ContextBackedSerializer_SupportsTypeBasedMembers()
     {
-        IRespireSerializer serializer = SystemTextJsonSerializer.FromContext(TestJsonContext.Default);
+        IRespireSerializer serializer = RespireSystemTextJsonSerializer.FromContext(TestJsonContext.Default);
         var destination = new ArrayBufferWriter<byte>();
         var value = new Payload("Ada", 36);
 

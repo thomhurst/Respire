@@ -18,7 +18,7 @@ public readonly record struct RespireHashScanPage(ulong Cursor,
     public bool IsComplete => Cursor == 0;
 }
 
-public partial interface IHashCommands
+public partial interface IRespireHashCommands
 {
     /// <summary>Enumerates field names without values using HSCAN NOVALUES. Requires Redis 7.4 or later.</summary>
     /// <remarks>COUNT is a hint. Scans are not snapshots and may return duplicates during mutation.</remarks>

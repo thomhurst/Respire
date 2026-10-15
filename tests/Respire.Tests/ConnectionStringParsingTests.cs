@@ -45,13 +45,13 @@ public class ConnectionStringParsingTests
     }
 
     [Test]
-    [Arguments("2", RespProtocol.Resp2)]
-    [Arguments("resp2", RespProtocol.Resp2)]
-    [Arguments("RESP2", RespProtocol.Resp2)]
-    [Arguments("3", RespProtocol.Resp3)]
-    [Arguments("resp3", RespProtocol.Resp3)]
-    [Arguments("ReSp3", RespProtocol.Resp3)]
-    public async Task ProtocolAliasesHaveTheSameMeaningInBothSyntaxes(string value, RespProtocol expected)
+    [Arguments("2", RespireProtocol.Resp2)]
+    [Arguments("resp2", RespireProtocol.Resp2)]
+    [Arguments("RESP2", RespireProtocol.Resp2)]
+    [Arguments("3", RespireProtocol.Resp3)]
+    [Arguments("resp3", RespireProtocol.Resp3)]
+    [Arguments("ReSp3", RespireProtocol.Resp3)]
+    public async Task ProtocolAliasesHaveTheSameMeaningInBothSyntaxes(string value, RespireProtocol expected)
     {
         foreach (var prefix in new[] { "redis://localhost?", "localhost," })
         {

@@ -80,7 +80,7 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         await client.Server.AclSetUserAsync("reader", ["reset", "on", ">hotkeys-test", "+ping"]);
         await using var restricted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [tracker.Endpoint], Protocol = (RespProtocol)protocol, Connections = 1,
+            Endpoints = [tracker.Endpoint], Protocol = (RespireProtocol)protocol, Connections = 1,
             Username = "reader", Password = "hotkeys-test",
         });
         var restrictedTracker = await restricted.Server.GetHotKeysTrackerAsync();
@@ -136,7 +136,7 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         }
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(container.Hostname, port)], UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Endpoints = [new(container.Hostname, port)], UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
         });
         var tracker = await client.WithKeyPrefix("ignored:").Server.GetHotKeysTrackerAsync();
         await tracker.StartAsync(new() { Slots = new[] { 3, 1, 2, 16383 }, SampleRatio = 2 });

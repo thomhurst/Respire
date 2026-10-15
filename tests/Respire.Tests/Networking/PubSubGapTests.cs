@@ -13,29 +13,29 @@ public class PubSubGapTests
     [Arguments(0)]
     [Arguments(-1)]
     public async Task BufferRejectsNonpositiveCapacity(int capacity)
-        => await Assert.That(() => new SubscriptionBuffer(capacity, SubscriptionOverflow.DropOldest))
+        => await Assert.That(() => new SubscriptionBuffer(capacity, RespireSubscriptionOverflow.DropOldest))
             .Throws<ArgumentOutOfRangeException>();
 
     [Test]
-    [Arguments(false, SubscriptionKind.Channel)]
-    [Arguments(true, SubscriptionKind.Channel)]
-    [Arguments(false, SubscriptionKind.Pattern)]
-    [Arguments(true, SubscriptionKind.Pattern)]
-    [Arguments(false, SubscriptionKind.Sharded)]
-    [Arguments(true, SubscriptionKind.Sharded)]
-    public async Task ReconnectAcknowledgementAndMessageInOneRead_YieldsGapFirst(bool push, SubscriptionKind kind)
+    [Arguments(false, RespireSubscriptionKind.Channel)]
+    [Arguments(true, RespireSubscriptionKind.Channel)]
+    [Arguments(false, RespireSubscriptionKind.Pattern)]
+    [Arguments(true, RespireSubscriptionKind.Pattern)]
+    [Arguments(false, RespireSubscriptionKind.Sharded)]
+    [Arguments(true, RespireSubscriptionKind.Sharded)]
+    public async Task ReconnectAcknowledgementAndMessageInOneRead_YieldsGapFirst(bool push, RespireSubscriptionKind kind)
     {
-        var verb = kind switch { SubscriptionKind.Pattern => "psubscribe", SubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
-        var messageVerb = kind switch { SubscriptionKind.Pattern => "pmessage", SubscriptionKind.Sharded => "smessage", _ => "message" };
+        var verb = kind switch { RespireSubscriptionKind.Pattern => "psubscribe", RespireSubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
+        var messageVerb = kind switch { RespireSubscriptionKind.Pattern => "pmessage", RespireSubscriptionKind.Sharded => "smessage", _ => "message" };
         var prefix = push ? ">" : "*";
         var confirmation = $"{prefix}3\r\n${verb.Length}\r\n{verb}\r\n$2\r\nch\r\n:1\r\n";
-        var pattern = kind == SubscriptionKind.Pattern ? "$2\r\nch\r\n" : "";
-        var data = $"{prefix}{(kind == SubscriptionKind.Pattern ? 4 : 3)}\r\n${messageVerb.Length}\r\n{messageVerb}\r\n{pattern}$2\r\nch\r\n$5\r\nhello\r\n";
+        var pattern = kind == RespireSubscriptionKind.Pattern ? "$2\r\nch\r\n" : "";
+        var data = $"{prefix}{(kind == RespireSubscriptionKind.Pattern ? 4 : 3)}\r\n${messageVerb.Length}\r\n{messageVerb}\r\n{pattern}$2\r\nch\r\n$5\r\nhello\r\n";
         await using var server = new FakeRespServer(2, Encoding.ASCII.GetBytes(confirmation + data));
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         await using var subscription = await client.SubscribeAsync(((RespireChannel)"ch").WithKind(kind));
@@ -73,7 +73,7 @@ public class PubSubGapTests
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         await using var subscription = await client.SubscribeAsync(["a", "b"]);
@@ -99,9 +99,9 @@ public class PubSubGapTests
     }
 
     [Test]
-    [Arguments(SubscriptionOverflow.DropOldest)]
-    [Arguments(SubscriptionOverflow.DropNewest)]
-    public async Task OverflowPreservesGapAndDataOrder(SubscriptionOverflow overflow)
+    [Arguments(RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(RespireSubscriptionOverflow.DropNewest)]
+    public async Task OverflowPreservesGapAndDataOrder(RespireSubscriptionOverflow overflow)
     {
         var buffer = new SubscriptionBuffer(2, overflow);
         buffer.Write(Message("a"));
@@ -112,18 +112,18 @@ public class PubSubGapTests
         var items = new List<RespireMessage>();
         await foreach (var item in buffer.ReadAllAsync()) items.Add(item);
         await Assert.That(items.Count).IsEqualTo(3);
-        var gapIndex = overflow == SubscriptionOverflow.DropOldest ? 0 : 2;
+        var gapIndex = overflow == RespireSubscriptionOverflow.DropOldest ? 0 : 2;
         await Assert.That(items[gapIndex].Kind).IsEqualTo(RespireMessageKind.Gap);
         await Assert.That(items[gapIndex].Gap!.DroppedMessages).IsEqualTo(2);
-        string[] expected = overflow == SubscriptionOverflow.DropOldest ? ["c", "d"] : ["a", "b"];
+        string[] expected = overflow == RespireSubscriptionOverflow.DropOldest ? ["c", "d"] : ["a", "b"];
         await Assert.That(items.Where(item => item.Kind == RespireMessageKind.Message).Select(item => item.Text))
             .IsEquivalentTo(expected);
     }
 
     [Test]
-    [Arguments(SubscriptionOverflow.DropOldest)]
-    [Arguments(SubscriptionOverflow.DropNewest)]
-    public async Task FullBufferRetainsReconnectMarkerAcrossRepeatedOverflow(SubscriptionOverflow overflow)
+    [Arguments(RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(RespireSubscriptionOverflow.DropNewest)]
+    public async Task FullBufferRetainsReconnectMarkerAcrossRepeatedOverflow(RespireSubscriptionOverflow overflow)
     {
         var buffer = new SubscriptionBuffer(1, overflow);
         buffer.Write(Message("before"));
@@ -143,7 +143,7 @@ public class PubSubGapTests
     [Test]
     public async Task GapWakesEmptyReaderAndSurvivesEnumeratorReplacement()
     {
-        var buffer = new SubscriptionBuffer(2, SubscriptionOverflow.DropOldest);
+        var buffer = new SubscriptionBuffer(2, RespireSubscriptionOverflow.DropOldest);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var first = buffer.ReadAllAsync(deadline.Token).GetAsyncEnumerator();
         var pending = first.MoveNextAsync().AsTask();
@@ -165,7 +165,7 @@ public class PubSubGapTests
     [Test]
     public async Task CancellationDoesNotDiscardBufferedGapOrData()
     {
-        var buffer = new SubscriptionBuffer(1, SubscriptionOverflow.DropOldest);
+        var buffer = new SubscriptionBuffer(1, RespireSubscriptionOverflow.DropOldest);
         var now = DateTimeOffset.UtcNow;
         buffer.WriteGap(new(RespireSubscriptionGapReason.Reconnect, now, now));
         buffer.Write(Message("retained"));
@@ -185,11 +185,11 @@ public class PubSubGapTests
     }
 
     [Test]
-    [Arguments(1, SubscriptionOverflow.DropOldest)]
-    [Arguments(3, SubscriptionOverflow.DropOldest)]
-    [Arguments(1, SubscriptionOverflow.DropNewest)]
-    [Arguments(3, SubscriptionOverflow.DropNewest)]
-    public async Task ConcurrentBufferPreservesOrderAndAccountsForEveryMessage(int capacity, SubscriptionOverflow overflow)
+    [Arguments(1, RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(3, RespireSubscriptionOverflow.DropOldest)]
+    [Arguments(1, RespireSubscriptionOverflow.DropNewest)]
+    [Arguments(3, RespireSubscriptionOverflow.DropNewest)]
+    public async Task ConcurrentBufferPreservesOrderAndAccountsForEveryMessage(int capacity, RespireSubscriptionOverflow overflow)
     {
         const int produced = 10_000;
         var buffer = new SubscriptionBuffer(capacity, overflow);
@@ -232,7 +232,7 @@ public class PubSubGapTests
         await using var server = new FakeRespServer("*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         await using var subscription = await client.SubscribeAsync("ch", new RespireSubscriptionOptions(BufferSize: 1), CancellationToken.None);
@@ -246,11 +246,11 @@ public class PubSubGapTests
         var now = DateTimeOffset.UtcNow;
         subscription.Buffer.WriteGap(new(RespireSubscriptionGapReason.Reconnect, now, now));
         // Represents an old callback that already passed OnPush's optimistic epoch check.
-        deliver(epoch, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "stale"u8);
-        deliver(epoch + 1, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "current"u8);
+        deliver(epoch, RespireSubscriptionKind.Channel, "ch"u8, "ch"u8, false, "stale"u8);
+        deliver(epoch + 1, RespireSubscriptionKind.Channel, "ch"u8, "ch"u8, false, "current"u8);
         var outsideGate = false;
         subscription.DeliveryGap += _ => outsideGate = !gate.IsHeldByCurrentThread;
-        deliver(epoch + 1, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "latest"u8);
+        deliver(epoch + 1, RespireSubscriptionKind.Channel, "ch"u8, "ch"u8, false, "latest"u8);
         subscription.Buffer.Complete();
         var items = new List<RespireMessage>();
         await foreach (var item in subscription) items.Add(item);
@@ -260,9 +260,9 @@ public class PubSubGapTests
         await Assert.That(outsideGate).IsTrue();
     }
 
-    private delegate void DeliverFrame(long epoch, SubscriptionKind kind, ReadOnlySpan<byte> route,
+    private delegate void DeliverFrame(long epoch, RespireSubscriptionKind kind, ReadOnlySpan<byte> route,
         ReadOnlySpan<byte> channel, bool isPattern, ReadOnlySpan<byte> payload);
 
     private static RespireMessage Message(string text)
-        => new("ch", null, Encoding.UTF8.GetBytes(text), new SystemTextJsonSerializer());
+        => new("ch", null, Encoding.UTF8.GetBytes(text), new RespireSystemTextJsonSerializer());
 }

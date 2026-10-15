@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchHashCommands",
+      "Type": "Respire.IRespireBatchHashCommands",
       "OwnerType": "Respire.BatchHashCommands",
       "Members": [
         "DiscardAllImports():RespirePending<long>",

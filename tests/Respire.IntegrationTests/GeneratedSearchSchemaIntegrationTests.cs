@@ -40,7 +40,7 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
     [Arguments(3, true)]
     public async Task MappedSchemasIndexTextTagsNumbersAndVectorsWithRealModule(int protocol, bool json)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var index = "generated-schema:" + Guid.NewGuid().ToString("N");
         var key = index + ":doc:1";
         var vector = new byte[8];

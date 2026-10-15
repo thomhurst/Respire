@@ -16,7 +16,7 @@ public class FakeTransactionTests
     public async Task QueuedWritesAndOwnedArgumentsWaitForExec(int protocol)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Protocol = (RespProtocol)protocol };
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
         await using var observer = await RespireClient.ConnectAsync(options);
         await using var session = await TestRespSession.ConnectAsync(options);
         using (var multi = await session.CommandAsync("MULTI"))
@@ -79,7 +79,7 @@ public class FakeTransactionTests
     public async Task CancelledCommitDrainsExecWithoutUndoOrReplay(bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Connections = 1, Protocol = (RespProtocol)protocol };
+        var options = server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await using var observer = await RespireClient.ConnectAsync(options);
         var gate = new RespireFakeGate();
@@ -199,7 +199,7 @@ public class FakeTransactionTests
     public async Task WatchOwnsBinaryKeysAndDisconnectDiscardsQueuedWrites(int protocol)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Protocol = (RespProtocol)protocol };
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
         await using var session = await TestRespSession.ConnectAsync(options);
         byte[] key = [0, 255, 128];
         using (var watched = await session.CommandBytesAsync("WATCH"u8.ToArray(), key, key)) { }
@@ -229,7 +229,7 @@ public class FakeTransactionTests
     public async Task UnsupportedCommandsAndProtocolChangesInvalidateQueue(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         foreach (var arguments in new[] { new[] { "HELLO", "3" }, new[] { "SUBSCRIBE", "channel" }, new[] { "UNSUBSCRIBE", "channel" },
             new[] { "PSUBSCRIBE", "*" }, new[] { "PUNSUBSCRIBE" }, new[] { "SSUBSCRIBE", "channel" },
             new[] { "SUNSUBSCRIBE" }, new[] { "SPUBLISH", "channel", "payload" } })
@@ -249,7 +249,7 @@ public class FakeTransactionTests
     public async Task UnsupportedScriptsFailDuringExecWithoutAbortingOtherCommands(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         using (var multi = await session.CommandAsync("MULTI")) { }
         foreach (var command in new[] { "EVAL", "EVALSHA" })
         {
@@ -272,7 +272,7 @@ public class FakeTransactionTests
     public async Task HeldExecKeepsSelfPublicationsBehindReplyAndCleansUpOnShutdown(bool shutdown)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Protocol = RespProtocol.Resp3 };
+        var options = server.CreateOptions() with { Protocol = RespireProtocol.Resp3 };
         await using var session = await TestRespSession.ConnectAsync(options);
         await using var observer = await TestRespSession.ConnectAsync(options);
         await using var publisher = await RespireClient.ConnectAsync(options);
@@ -301,7 +301,7 @@ public class FakeTransactionTests
         gate.Release();
         using (var reply = await executed.WaitAsync(Limit))
         {
-            await Assert.That(reply.Type).IsEqualTo(Respire.Protocol.RespDataType.Array);
+            await Assert.That(reply.Type).IsEqualTo(Respire.Protocol.RespireDataType.Array);
             await Assert.That(reply.AsArray()[0].AsInteger()).IsEqualTo(2);
             await Assert.That(reply.AsArray()[1].AsString()).IsEqualTo("PONG");
         }

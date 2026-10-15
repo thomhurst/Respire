@@ -10,13 +10,13 @@ description: Delete every key in a database or on a server with FLUSHDB and FLUS
 Both need `RespireOptions.AllowAdmin = true` or `allowAdmin=true` in the connection string. Otherwise they throw `NotSupportedException` before sending.
 
 ```csharp
-await redis.Server.FlushDatabaseAsync(ServerFlushMode.Async, cancellationToken: default);
-await redis.Server.FlushAllAsync(ServerFlushMode.Sync, cancellationToken: default);
+await redis.Server.FlushDatabaseAsync(RespireServerFlushMode.Async, cancellationToken: default);
+await redis.Server.FlushAllAsync(RespireServerFlushMode.Sync, cancellationToken: default);
 ```
 
 ## Flush modes
 
-Overloads without a mode use the server default. Pass a `ServerFlushMode` to choose how Redis reclaims memory:
+Overloads without a mode use the server default. Pass a `RespireServerFlushMode` to choose how Redis reclaims memory:
 
 | Mode | Wire form | Minimum Redis version |
 | --- | --- | --- |
@@ -49,7 +49,7 @@ To flush every primary, use the immediate methods. `MULTI`/`EXEC` cannot make th
 
 ## Custom implementations
 
-Classes that implement `IServerCommands` must implement both mode overloads.
+Classes that implement `IRespireServerCommands` must implement both mode overloads.
 
 ## Redis references
 

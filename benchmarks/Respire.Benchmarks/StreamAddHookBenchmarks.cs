@@ -27,7 +27,7 @@ public class StreamAddHookBenchmarks
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(_server.Hostname, _server.GetMappedPublicPort(6379))],
-            Connections = 1, Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Connections = 1, Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandHook = Hooks ? new Observer() : null,
             RetryPolicy = Route == "Ordinary" ? null : new()

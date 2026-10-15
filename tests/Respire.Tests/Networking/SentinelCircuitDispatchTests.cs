@@ -911,7 +911,7 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => primary.Port);
         await using var client = await Connect(sentinel);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", unrelated.Port,
-            new RespireConnectionOptions { Protocol = RespProtocol.Resp2 });
+            new RespireConnectionOptions { Protocol = RespireProtocol.Resp2 });
         connection.StopAcceptingCommands();
         var command = new CatalogCommand(RespireCommands.String.GET, ["never"]);
         await Assert.That(await Failure(async () =>
@@ -1018,7 +1018,7 @@ public sealed class SentinelCircuitDispatchTests
         var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Connections = connections, Protocol = clientSideCache ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Connections = connections, Protocol = clientSideCache ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             ClientSideCache = clientSideCache ? new() : null, ThreadPoolMonitoring = false,
             ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = commandTimeout ?? TimeSpan.FromSeconds(5),
             CircuitBreaker = circuitBreaker ?? new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25,

@@ -49,7 +49,7 @@ public class ScriptingEngineTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, UseCluster = cluster,
+            Protocol = (RespireProtocol)protocol, Connections = 1, UseCluster = cluster,
             ClusterTopologyRefreshInterval = null, ClientSideCache = cache ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -94,7 +94,7 @@ public class ScriptingEngineTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, UseCluster = route != "cache",
+            Protocol = (RespireProtocol)protocol, Connections = 1, UseCluster = route != "cache",
             ClusterTopologyRefreshInterval = null, ClientSideCache = route != "cluster" ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -315,7 +315,7 @@ public class ScriptingEngineTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromSeconds(10),
         });

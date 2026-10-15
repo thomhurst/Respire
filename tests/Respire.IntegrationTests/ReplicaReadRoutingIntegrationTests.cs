@@ -18,12 +18,12 @@ namespace Respire.IntegrationTests;
 public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologies)
 {
     [Test]
-    [Arguments(RespireContainerServer.Redis, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Redis, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Redis, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, RespireProtocol.Resp3)]
     public async Task PreparedStandaloneReplicaKeepsTypedAndStreamedReplies(
-        RespireContainerServer server, RespProtocol protocol)
+        RespireContainerServer server, RespireProtocol protocol)
     {
         var fixture = await topologies.GetAsync(server);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -75,16 +75,16 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
 
     /// <summary>Checks eligible nearest reads and primary writes on Redis and Valkey replica topologies.</summary>
     [Test]
-    [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Redis, true, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Redis, false, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Valkey, true, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Valkey, true, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Valkey, false, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Valkey, false, RespProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Redis, true, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, true, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Redis, false, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, false, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, true, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, true, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, false, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, false, RespireProtocol.Resp3)]
     public async Task NearestUsesEligibleEndpointsAndKeepsWritesOnPrimary(
-        RespireContainerServer server, bool useSentinel, RespProtocol protocol)
+        RespireContainerServer server, bool useSentinel, RespireProtocol protocol)
     {
         var fixture = await topologies.GetAsync(server);
         var options = useSentinel ? fixture.CreateOptions() : new RespireOptions
@@ -127,7 +127,7 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
             };
         await using var client = await RespireClient.ConnectAsync(options with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
         var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);

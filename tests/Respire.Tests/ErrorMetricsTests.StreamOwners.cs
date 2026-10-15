@@ -26,7 +26,7 @@ public partial class ErrorMetricsTests
             if (route == "page") await client.Streams.ReadGroupOnceAsync("events", group, consumer);
             else
             {
-                await foreach (var _ in client.Streams.ReadGroupAsync(new StreamReadOptions(), "events", group, consumer)) { }
+                await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "events", group, consumer)) { }
             }
         }
         var error = await Assert.That(Execute).ThrowsExactly<ArgumentNullException>();
@@ -44,7 +44,7 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", 6379)] });
         using var capture = new Capture(throwOnMeasurement: true);
-        await using var reader = client.Streams.ReadGroupAsync(new StreamReadOptions { Count = 0 },
+        await using var reader = client.Streams.ReadGroupAsync(new RespireStreamReadOptions { Count = 0 },
             "events", "group", "consumer").GetAsyncEnumerator();
         await Assert.That(async () => await reader.MoveNextAsync()).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -68,7 +68,7 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true);
         var entries = route switch
         {
-            "options" => client.Streams.ReadGroupAsync(new StreamReadOptions(), "events", "group", "consumer"),
+            "options" => client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "events", "group", "consumer"),
             "live" => client.Streams.ReadGroupAsync("events", "group", "consumer"),
             _ => client.Streams.ReadGroupAsync("events", "group", "consumer", RespireStreamId.Beginning),
         };

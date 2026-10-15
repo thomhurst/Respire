@@ -170,9 +170,9 @@ public class SiloScenarios
         Connections = 1,
         Protocol = Environment.GetEnvironmentVariable("RESPIRE_TEST_PROTOCOL") switch
         {
-            "2" => RespProtocol.Resp2,
-            "3" => RespProtocol.Resp3,
-            null or "" => RespProtocol.Auto,
+            "2" => RespireProtocol.Resp2,
+            "3" => RespireProtocol.Resp3,
+            null or "" => RespireProtocol.Auto,
             var value => throw new InvalidOperationException($"Invalid RESPIRE_TEST_PROTOCOL: {value}")
         },
         ConnectTimeout = TimeSpan.FromSeconds(3),

@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Redis 8.8+ sparse arrays with unsigned indexes. Reads preserve holes; generic value types require nullable T or TryGet to distinguish absent slots.</summary>
-public interface IArrayCommands
+public interface IRespireArrayCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken);
@@ -91,7 +91,7 @@ public interface IArrayCommands
     /// <summary>Deserialized value with explicit slot presence, including stored defaults. Redis: ARGET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, ulong index, CancellationToken cancellationToken = default);
+    ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, ulong index, CancellationToken cancellationToken = default);
 
     /// <summary>Values in requested index order, retaining null holes. Redis: ARMGET.</summary>
     ValueTask<string?[]> GetManyAsync(RespireKey key, params ReadOnlySpan<ulong> indexes);
@@ -176,7 +176,7 @@ public interface IArrayCommands
     ValueTask<RespireArrayInfo> InfoAsync(RespireKey key, bool full = false, CancellationToken cancellationToken = default);
 
     /// <summary>Aggregates existing slots, preserving numeric text and nil. MATCH requires a match value. Redis: AROP.</summary>
-    ValueTask<RespireArrayAggregate> AggregateAsync(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null, CancellationToken cancellationToken = default);
+    ValueTask<RespireArrayAggregateResult> AggregateAsync(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null, CancellationToken cancellationToken = default);
 
     /// <summary>Existing slots in inclusive index order; limit caps populated slots. Redis uses index ranges, not cursors. Redis: ARSCAN.</summary>
     ValueTask<RespireArrayEntry<string>[]> ScanPageAsync(RespireKey key, ulong start, ulong end, long? limit = null, CancellationToken cancellationToken = default);
@@ -207,7 +207,7 @@ public interface IArrayCommands
 
 }
 
-internal sealed class ArrayCommands(RespireClient client) : IArrayCommands
+internal sealed class ArrayCommands(RespireClient client) : IRespireArrayCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<ulong[]> GrepAsync(RespireKey key, RespireArrayBound start, RespireArrayBound end, RespireArrayPredicate predicate, CancellationToken cancellationToken)
@@ -306,7 +306,7 @@ internal sealed class ArrayCommands(RespireClient client) : IArrayCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, ulong index, CancellationToken cancellationToken = default)
+    public ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, ulong index, CancellationToken cancellationToken = default)
         => ReadIndex(RespireCommands.Array.ARGET, key, index, cancellationToken, static (RespireClient c, in RespValue v) => c.TryDeserializeBorrowed<T>(in v));
 
     public ValueTask<string?[]> GetManyAsync(RespireKey key, params ReadOnlySpan<ulong> indexes)
@@ -392,7 +392,7 @@ internal sealed class ArrayCommands(RespireClient client) : IArrayCommands
     public ValueTask<RespireArrayInfo> InfoAsync(RespireKey key, bool full = false, CancellationToken cancellationToken = default)
         => Read(RespireCommands.Array.ARINFO, key, ArrayCommandArguments.Info(full), cancellationToken, static (RespireClient c, in RespValue v) => ArrayResponseReader.Info(in v));
 
-    public ValueTask<RespireArrayAggregate> AggregateAsync(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null, CancellationToken cancellationToken = default)
+    public ValueTask<RespireArrayAggregateResult> AggregateAsync(RespireKey key, ulong start, ulong end, RespireArrayOperation operation, RespireValue? match = null, CancellationToken cancellationToken = default)
         => Read(RespireCommands.Array.AROP, key, ArrayCommandArguments.Aggregate(start, end, operation, match), cancellationToken, static (RespireClient c, in RespValue v) => ArrayResponseReader.Aggregate(in v));
 
     public ValueTask<RespireArrayEntry<string>[]> ScanPageAsync(RespireKey key, ulong start, ulong end, long? limit = null, CancellationToken cancellationToken = default)

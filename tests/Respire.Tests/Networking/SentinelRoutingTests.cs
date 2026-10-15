@@ -3384,7 +3384,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
@@ -3421,7 +3421,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -3670,7 +3670,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => primary.Port);
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
@@ -3679,7 +3679,7 @@ public partial class SentinelRoutingTests
         // The discovery owner disposes this candidate after ROLE rejects it.
         await using var candidate = new Respire.Internal.SentinelRouter.Generation(client.Core.Sentinel, client.Core,
             Options(sentinel.Port) with { Endpoints = [new("127.0.0.1", replica.Port)], SentinelPrimaryName = null,
-                Protocol = RespProtocol.Resp3 });
+                Protocol = RespireProtocol.Resp3 });
         await Assert.That(async () => await candidate.Multiplexer.EnsureConnectedAsync(default))
             .Throws<RespireConnectionException>();
         await Assert.That(candidate.IsRetired).IsTrue();
@@ -3802,7 +3802,7 @@ public partial class SentinelRoutingTests
             _ => null,
         });
         await using var sentinel = Sentinel(() => primary.Port);
-        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Protocol = RespProtocol.Resp3 });
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Protocol = RespireProtocol.Resp3 });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
         await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
@@ -3853,7 +3853,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         await using var prefixed = client.WithKeyPrefix("tenant:");
@@ -3934,7 +3934,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce },
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -4006,7 +4006,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
         generation = client.Core.Sentinel!.Current!;
@@ -4057,7 +4057,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { ReuseHashFields = true },
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -4722,7 +4722,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { TrackingMode = mode, CoalesceConcurrentMisses = coalesce },
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);
@@ -5016,7 +5016,7 @@ public partial class SentinelRoutingTests
     private static RespireOptions Options(int sentinelPort) => new()
     {
         Endpoints = [new("127.0.0.1", sentinelPort)], SentinelPrimaryName = "mymaster",
-        Connections = 1, ConnectTimeout = Limit, CommandTimeout = Limit, Protocol = RespProtocol.Resp2,
+        Connections = 1, ConnectTimeout = Limit, CommandTimeout = Limit, Protocol = RespireProtocol.Resp2,
     };
 
     private static FakeRespServer Primary(Func<int, string, byte[]?>? reply = null, int maxConnections = 8)

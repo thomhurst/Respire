@@ -565,7 +565,7 @@ public partial class StandaloneCircuitDispatchTests
         await using var source = QueueServer();
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
         var (sourceCircuit, _) = await Prepare(client, source);

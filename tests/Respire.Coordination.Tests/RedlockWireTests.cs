@@ -374,7 +374,7 @@ public class RedlockWireTests
                     // A gated command waits for the test, not the clock: disable the command timeout.
                     : await RespireClient.ConnectAsync(new RespireOptions
                     {
-                        Protocol = RespProtocol.Resp2,
+                        Protocol = RespireProtocol.Resp2,
                         Endpoints = { new RespireEndpoint("127.0.0.1", servers[i].Port) },
                         Connections = 1,
                         CommandTimeout = null,

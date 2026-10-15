@@ -38,7 +38,7 @@ public class FencedLockBenchmarks
         {
             Endpoints = [new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379"))],
-            Connections = 1, Protocol = RespProtocol.Resp3,
+            Connections = 1, Protocol = RespireProtocol.Resp3,
         });
         var tag = Guid.NewGuid().ToString("N");
         _key = $"{{{tag}}}:lease";

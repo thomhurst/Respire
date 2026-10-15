@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IKeyCommands",
+      "Type": "Respire.IRespireKeyCommands",
       "OwnerType": "Respire.KeyCommands",
       "Members": [
         "CopyAsync(RespireKey,RespireKey,bool,CancellationToken):ValueTask<bool>",
@@ -12,9 +12,9 @@
         "EncodingAsync(RespireKey,CancellationToken):ValueTask<string?>",
         "ExistsAsync(RespireKey,CancellationToken):ValueTask<bool>",
         "ExpireAsync(RespireKey,RespireExpiry,RespireExpireWhen,CancellationToken):ValueTask<bool>",
-        "ExpiryAsync(RespireKey,CancellationToken):ValueTask<RespireTtl>",
-        "ExpiryTimeAsync(RespireKey,CancellationToken):ValueTask<RespireExpiryTime>",
-        "ExpiryTimeAsync(RespireKey,ExpiryTimePrecision,CancellationToken):ValueTask<RespireExpiryTime>",
+        "ExpiryAsync(RespireKey,CancellationToken):ValueTask<RespireTtlResult>",
+        "ExpiryTimeAsync(RespireKey,CancellationToken):ValueTask<RespireExpiryTimeResult>",
+        "ExpiryTimeAsync(RespireKey,RespireExpiryTimePrecision,CancellationToken):ValueTask<RespireExpiryTimeResult>",
         "FrequencyAsync(RespireKey,CancellationToken):ValueTask<long?>",
         "IdleTimeAsync(RespireKey,CancellationToken):ValueTask<TimeSpan?>",
         "ReferenceCountAsync(RespireKey,CancellationToken):ValueTask<long?>",
@@ -40,9 +40,9 @@
         "EncodingAsync(RespireKey,CancellationToken):ValueTask<string?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExistsAsync(RespireKey,CancellationToken):ValueTask<bool>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ExpireAsync(RespireKey,RespireExpiry,RespireExpireWhen,CancellationToken):ValueTask<bool>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-        "ExpiryAsync(RespireKey,CancellationToken):ValueTask<RespireTtl>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-        "ExpiryTimeAsync(RespireKey,CancellationToken):ValueTask<RespireExpiryTime>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-        "ExpiryTimeAsync(RespireKey,ExpiryTimePrecision,CancellationToken):ValueTask<RespireExpiryTime>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExpiryAsync(RespireKey,CancellationToken):ValueTask<RespireTtlResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExpiryTimeAsync(RespireKey,CancellationToken):ValueTask<RespireExpiryTimeResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "ExpiryTimeAsync(RespireKey,RespireExpiryTimePrecision,CancellationToken):ValueTask<RespireExpiryTimeResult>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "FrequencyAsync(RespireKey,CancellationToken):ValueTask<long?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "IdleTimeAsync(RespireKey,CancellationToken):ValueTask<TimeSpan?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
         "ReferenceCountAsync(RespireKey,CancellationToken):ValueTask<long?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",

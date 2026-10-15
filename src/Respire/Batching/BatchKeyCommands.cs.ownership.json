@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchKeyCommands",
+      "Type": "Respire.IRespireBatchKeyCommands",
       "OwnerType": "Respire.BatchKeyCommands",
       "Members": [
         "Copy(RespireKey,RespireKey,bool):RespirePending<bool>",
@@ -10,9 +10,9 @@
         "Encoding(RespireKey):RespirePending<string?>",
         "Exists(RespireKey):RespirePending<bool>",
         "Expire(RespireKey,RespireExpiry,RespireExpireWhen):RespirePending<bool>",
-        "Expiry(RespireKey):RespirePending<RespireTtl>",
-        "ExpiryTime(RespireKey):RespirePending<RespireExpiryTime>",
-        "ExpiryTime(RespireKey,ExpiryTimePrecision):RespirePending<RespireExpiryTime>",
+        "Expiry(RespireKey):RespirePending<RespireTtlResult>",
+        "ExpiryTime(RespireKey):RespirePending<RespireExpiryTimeResult>",
+        "ExpiryTime(RespireKey,RespireExpiryTimePrecision):RespirePending<RespireExpiryTimeResult>",
         "Frequency(RespireKey):RespirePending<long?>",
         "IdleTime(RespireKey):RespirePending<TimeSpan?>",
         "ReferenceCount(RespireKey):RespirePending<long?>",

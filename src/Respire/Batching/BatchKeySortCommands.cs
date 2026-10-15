@@ -5,7 +5,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IBatchKeyCommands
+public partial interface IRespireBatchKeyCommands
 {
     /// <summary>Queues SORT/SORT_RO, preserving null external GET values.</summary>
     RespirePending<string?[]> Sort(RespireKey key, RespireSortOptions? options = null);

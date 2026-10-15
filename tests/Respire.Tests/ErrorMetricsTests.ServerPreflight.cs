@@ -47,7 +47,7 @@ public partial class ErrorMetricsTests
                 case "memory": await client.Server.MemoryUsageAsync("key", -1); break;
                 case "config-admin": await client.Server.SetConfigAsync("name", "value"); break;
                 case "flush-admin": await client.Server.FlushAllAsync(); break;
-                case "flush-mode": await client.Server.FlushDatabaseAsync((ServerFlushMode)999, default); break;
+                case "flush-mode": await client.Server.FlushDatabaseAsync((RespireServerFlushMode)999, default); break;
                 case "clients-filter": await client.Server.ClientsAsync(null!, default); break;
                 case "clients-fanout-filter": await client.Server.ClientsOnAllNodesAsync(null!, default); break;
                 case "kill-filter-admin": await client.Server.KillClientsAsync(new()); break;
@@ -77,7 +77,7 @@ public partial class ErrorMetricsTests
     public async Task ServerHandleAcquisitionPreservesCancellation(bool hotkeys)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", 6379)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", 6379)] });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         using var capture = new Capture(throwOnMeasurement: true);

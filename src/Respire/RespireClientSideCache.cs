@@ -1457,7 +1457,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             var response = entry.Value;
             var decoded = ResponseReader.StringOrNull(in response);
             if (decoded is null
-                || response.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
+                || response.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
                 return decoded;
             lock (_removalLock)
             {
@@ -1476,7 +1476,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
         public CacheEntry? Set(RespireKey key, in RespValue response, string? decodedText = null)
         {
-            if (!response.IsNull && response.Type is not RespDataType.BulkString and not RespDataType.SimpleString)
+            if (!response.IsNull && response.Type is not RespireDataType.BulkString and not RespireDataType.SimpleString)
             {
                 return null;
             }

@@ -429,7 +429,7 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     }
 
     private ValueTask<RespireClient> Connect(int protocol)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static async Task<List<T>> Collect<T>(IAsyncEnumerable<T> values)
     {

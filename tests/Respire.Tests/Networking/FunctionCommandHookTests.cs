@@ -303,7 +303,7 @@ public sealed class FunctionCommandHookTests
 
     private static RespireOptions Options(int port, Hook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], Protocol = RespProtocol.Resp2, Connections = 1,
+        Endpoints = [new("127.0.0.1", port)], Protocol = RespireProtocol.Resp2, Connections = 1,
         ThreadPoolMonitoring = false, ClusterTopologyRefreshInterval = null,
         CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
     };

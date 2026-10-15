@@ -16,7 +16,7 @@ internal static class HotKeysParser
 
     private static RespireHotKeysSnapshot Snapshot(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("HOTKEYS snapshot must contain field/value pairs.");
         var pairs = value.AsArray();
         if (pairs.Length % 2 != 0) throw new RespireProtocolException("HOTKEYS snapshot has an incomplete field.");
@@ -70,7 +70,7 @@ internal static class HotKeysParser
 
     internal static bool Ok(in RespValue value)
     {
-        if (value.Type != RespDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
             throw new RespireProtocolException("HOTKEYS mutation must return OK.");
         return true;
     }
@@ -83,7 +83,7 @@ internal static class HotKeysParser
 
     private static long Number(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("HOTKEYS measurement must be a nonnegative integer.");
         return value.AsInteger();
     }
@@ -115,7 +115,7 @@ internal static class HotKeysParser
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
     {
-        if (value.Type != RespDataType.Array) throw new RespireProtocolException("HOTKEYS value must be an array.");
+        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("HOTKEYS value must be an array.");
         return value.AsArray();
     }
 
@@ -127,7 +127,7 @@ internal static class HotKeysParser
 
     private static void RequireString(in RespValue value)
     {
-        if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
             throw new RespireProtocolException("HOTKEYS key or field name must be a string.");
     }
 }

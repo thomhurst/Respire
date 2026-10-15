@@ -33,6 +33,7 @@ const sidebars = {
       type: 'category',
       label: 'Core concepts',
       items: [
+        'fundamentals/api-naming',
         'guides/async-only',
         'fundamentals/connections',
         'guides/connection-hooks',

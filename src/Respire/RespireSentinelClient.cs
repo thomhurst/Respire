@@ -274,7 +274,7 @@ internal static class SentinelReply
     /// <summary>Copies a textual reply without coercing integers, nulls, or aggregates.</summary>
     internal static string Text(RespireResult value)
     {
-        if (value.Type is not (RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.VerbatimString))
             throw Invalid();
         return value.AsString();
     }
@@ -286,20 +286,20 @@ internal static class SentinelReply
     /// <summary>Reads an integer count or epoch and rejects negative values.</summary>
     internal static long NonnegativeInteger(RespireResult value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0) throw Invalid();
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0) throw Invalid();
         return value.AsInteger();
     }
 
     /// <summary>Requires positional array framing for row-oriented replies.</summary>
     private static void Array(RespireResult value)
     {
-        if (value.Type != RespDataType.Array) throw Invalid();
+        if (value.Type != RespireDataType.Array) throw Invalid();
     }
 
     /// <summary>Copies RESP2 pairs or RESP3 map entries, rejecting odd lengths and duplicate keys.</summary>
     internal static IReadOnlyDictionary<string, string> Fields(RespireResult value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map) || value.Count % 2 != 0) throw Invalid();
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map) || value.Count % 2 != 0) throw Invalid();
         Dictionary<string, string> fields = new(StringComparer.Ordinal);
         for (var index = 0; index < value.Count; index += 2)
             if (!fields.TryAdd(Text(value[index]), Text(value[index + 1]))) throw Invalid();
@@ -382,7 +382,7 @@ internal static class SentinelReply
     /// <summary>Flattens primary and replica INFO caches while preserving nullable text and server-reported ages.</summary>
     internal static RespireSentinelInfo[] InfoCache(RespireResult value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map) || value.Count % 2 != 0) throw Invalid();
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map) || value.Count % 2 != 0) throw Invalid();
         List<RespireSentinelInfo> result = [];
         for (var index = 0; index < value.Count; index += 2)
         {
@@ -406,7 +406,7 @@ internal static class SentinelReply
     /// <summary>Reads script scheduling fields, selecting runtime or delay according to the reported flags.</summary>
     private static RespireSentinelScript Script(RespireResult value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map) || value.Count % 2 != 0) throw Invalid();
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map) || value.Count % 2 != 0) throw Invalid();
         Dictionary<string, string> fields = new(StringComparer.Ordinal);
         string[]? arguments = null;
         for (var index = 0; index < value.Count; index += 2)

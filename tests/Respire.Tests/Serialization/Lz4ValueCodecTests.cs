@@ -14,7 +14,7 @@ public class Lz4ValueCodecTests
     [Test]
     public async Task ZeroThresholdHandlesEmptyAndTinyCompressionDestinations()
     {
-        var codec = new Lz4ValueCodec(new() { MinimumLength = 0 });
+        var codec = new RespireLz4ValueCodec(new() { MinimumLength = 0 });
         for (var length = 0; length <= 32; length++)
         {
             var payload = Enumerable.Range(0, length).Select(value => (byte)value).ToArray();
@@ -42,22 +42,22 @@ public class Lz4ValueCodecTests
         new Random(525).NextBytes(payload.AsSpan(0, 64));
         for (var offset = 64; offset < payload.Length; offset += 64)
             payload.AsSpan(0, 64).CopyTo(payload.AsSpan(offset));
-        var frame = new Lz4ValueCodec(level: level).Encode(payload);
+        var frame = new RespireLz4ValueCodec(level: level).Encode(payload);
         await Assert.That(frame[4]).IsEqualTo((byte)2);
         await Assert.That(frame[5]).IsEqualTo((byte)3);
         await Assert.That(frame.Length).IsLessThan(payload.Length);
         // The decoder uses no encoder-level state.
-        await Assert.That(new Lz4ValueCodec().Decode(frame)).IsEquivalentTo(payload);
+        await Assert.That(new RespireLz4ValueCodec().Decode(frame)).IsEquivalentTo(payload);
     }
 
     [Test]
     public async Task InvalidLevelsAndOptionsFailAtConstruction()
     {
         foreach (var level in new[] { int.MinValue, -1, 1, 2, 13, int.MaxValue })
-            await Assert.That(() => new Lz4ValueCodec(level: level)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => new RespireLz4ValueCodec(level: level)).Throws<ArgumentOutOfRangeException>();
         foreach (var options in new RespireValueCodecOptions[]
                  { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue } })
-            await Assert.That(() => new Lz4ValueCodec(options)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => new RespireLz4ValueCodec(options)).Throws<ArgumentOutOfRangeException>();
     }
 
     [Test]
@@ -65,7 +65,7 @@ public class Lz4ValueCodecTests
     {
         // Raw LZ4: one 'A', a 26-byte match at offset 1, then five terminal literals.
         byte[] block = [0x1f, 0x41, 1, 0, 7, 0x50, 0x41, 0x41, 0x41, 0x41, 0x41];
-        var codec = new Lz4ValueCodec();
+        var codec = new RespireLz4ValueCodec();
         await Assert.That(codec.Decode(Frame(block, 32))).IsEquivalentTo(Enumerable.Repeat((byte)'A', 32));
         foreach (var invalid in new[] { block[..^1], new byte[] { 0xff }, block.Concat(new byte[] { 0 }).ToArray() })
         {
@@ -77,10 +77,10 @@ public class Lz4ValueCodecTests
     [Test]
     public async Task DecodedSizeIsCheckedBeforeRequestingDestinationMemory()
     {
-        var codec = new Lz4ValueCodec(new() { MaximumDecodedLength = 64 });
-        var oversized = new Lz4ValueCodec().Encode(new byte[4096]);
+        var codec = new RespireLz4ValueCodec(new() { MaximumDecodedLength = 64 });
+        var oversized = new RespireLz4ValueCodec().Encode(new byte[4096]);
         await Assert.That(() => codec.Decode(oversized, new RejectingWriter())).Throws<InvalidDataException>();
-        var uncompressed = new BrotliValueCodec().Encode("abc"u8);
+        var uncompressed = new RespireBrotliValueCodec().Encode("abc"u8);
         await Assert.That(codec.Decode(uncompressed)).IsEquivalentTo("abc"u8.ToArray());
     }
 

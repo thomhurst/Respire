@@ -32,7 +32,7 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, replicas, cluster, policy));
         await using var originalClient = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", original.Port)], Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", original.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
         });
         var originalConnection = originalClient.Core.Multiplexer.GetConnection();
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -371,16 +371,16 @@ public class AvailabilityZoneRoutingTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    [Arguments(RespProtocol.Auto)]
-    public async Task PhysicalConnectionCapturesServerZone(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    [Arguments(RespireProtocol.Auto)]
+    public async Task PhysicalConnectionCapturesServerZone(RespireProtocol protocol)
     {
         await using var server = Node("primary", "zone-a", false);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new() { Protocol = protocol, DiscoverAvailabilityZone = true });
         await Assert.That(connection.AvailabilityZone).IsEqualTo("zone-a");
-        await Assert.That(server.ReceivedCommands.Contains("INFO SERVER")).IsEqualTo(protocol == RespProtocol.Resp2);
+        await Assert.That(server.ReceivedCommands.Contains("INFO SERVER")).IsEqualTo(protocol == RespireProtocol.Resp2);
     }
 
     [Test]
@@ -540,7 +540,7 @@ public class AvailabilityZoneRoutingTests
         server.ReplyOverride = (id, command) => command == "INFO SERVER"
             ? "-NOPERM INFO denied\r\n"u8.ToArray() : previous(id, command);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new() { Protocol = RespProtocol.Resp2, DiscoverAvailabilityZone = true, Database = 1 });
+            new() { Protocol = RespireProtocol.Resp2, DiscoverAvailabilityZone = true, Database = 1 });
         await Assert.That(connection.AvailabilityZone).IsNull();
         await Assert.That(server.ReceivedCommands.Contains("SELECT 1")).IsTrue();
     }
@@ -838,7 +838,7 @@ public class AvailabilityZoneRoutingTests
             return previous(id, command);
         };
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, policy)
-            with { Protocol = RespProtocol.Resp3 });
+            with { Protocol = RespireProtocol.Resp3 });
         using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"])
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(reply.AsString()).IsEqualTo("replica");
@@ -867,7 +867,7 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(
             Options(useSentinel ? sentinel : primary, useSentinel ? [] : [first, second], false, policy) with
             {
-                Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
+                Protocol = RespireProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = OpenStreamAsync,
             });
         using var caller = new CancellationTokenSource();
@@ -940,7 +940,7 @@ public class AvailabilityZoneRoutingTests
         var connecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, policy) with
         {
-            Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
         using var caller = new CancellationTokenSource();
@@ -1015,7 +1015,7 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with
         {
-            Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
         var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
@@ -1051,7 +1051,7 @@ public class AvailabilityZoneRoutingTests
             var rentals = 0;
             await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, RespireReadFrom.Replica) with
             {
-                Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+                Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
                 ClusterTopologyRefreshInterval = null,
             });
             using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
@@ -1092,7 +1092,7 @@ public class AvailabilityZoneRoutingTests
         var importingConnections = 0;
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, RespireReadFrom.AzAffinity) with
         {
-            Protocol = RespProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
         var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
@@ -1134,7 +1134,7 @@ public class AvailabilityZoneRoutingTests
             return previous(id, command);
         };
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false, policy)
-            with { Protocol = RespProtocol.Resp3, SentinelPrimaryName = "primary" });
+            with { Protocol = RespireProtocol.Resp3, SentinelPrimaryName = "primary" });
         var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                 ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionException>();
@@ -1514,7 +1514,7 @@ public class AvailabilityZoneRoutingTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = cluster ? [] : replicas.Select(node => new RespireEndpoint("127.0.0.1", node.Port)).ToArray(),
-            UseCluster = cluster, Protocol = RespProtocol.Resp2, Connections = 1,
+            UseCluster = cluster, Protocol = RespireProtocol.Resp2, Connections = 1,
             ClientAvailabilityZone = "local", ReadFrom = policy,
             ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(5),
         };

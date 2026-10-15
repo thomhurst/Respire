@@ -13,7 +13,7 @@ public readonly record struct RespireRestoreOptions
     public byte? Frequency { get; init; }
 }
 
-public partial interface IKeyCommands
+public partial interface IRespireKeyCommands
 {
     /// <summary>Returns an owned Redis-serialized payload, or null for a missing key. Does not include expiry. Redis: DUMP.</summary>
     ValueTask<byte[]?> DumpAsync(RespireKey key, CancellationToken cancellationToken = default);

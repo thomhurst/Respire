@@ -41,17 +41,17 @@ public sealed partial class RespireSearchClient
         // Redis 8.10 RESP2 is [name, value, ..., profile], with exactly one unlabelled profile tail.
         // Extra unlabelled tails violate the preceding field/value pairs; report that layout explicitly.
         // RESP3 instead adds a named Profile field to the normal hybrid result map.
-        if (reply.Type == RespDataType.Array && (reply.Count & 1) != 0 && reply.Count >= 3)
+        if (reply.Type == RespireDataType.Array && (reply.Count & 1) != 0 && reply.Count >= 3)
         {
             for (var i = 0; i < reply.Count - 1; i += 2)
             {
-                if (reply[i].IsNull || reply[i].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+                if (reply[i].IsNull || reply[i].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
                     throw RespireSearchReply.Unexpected("FT.PROFILE",
                         $"an unsupported HYBRID profile layout (type {reply.Type}, element count {reply.Count}); expected field/value pairs and one profile tail");
             }
             return new(RespireSearchResult.ParseHybrid(reply, reply.Count - 1), RespireSearchProfileNode.Parse(reply[^1]));
         }
-        if (reply.Type == RespDataType.Map && TryReadProfileField(reply, "Profile", out var profile) &&
+        if (reply.Type == RespireDataType.Map && TryReadProfileField(reply, "Profile", out var profile) &&
             !TryReadProfileField(reply, "Results", out _))
             return new(RespireSearchResult.ParseHybrid(reply), RespireSearchProfileNode.Parse(profile));
         var parts = ReadProfileEnvelope(reply);
@@ -62,9 +62,9 @@ public sealed partial class RespireSearchClient
 
     private static (RespireResult Result, RespireSearchProfileNode Profile) ReadProfileEnvelope(RespireResult reply)
     {
-        if (reply.Type == RespDataType.Array && reply.Count == 2)
+        if (reply.Type == RespireDataType.Array && reply.Count == 2)
             return (reply[0], RespireSearchProfileNode.Parse(reply[1]));
-        if (reply.Type == RespDataType.Map && TryReadProfileField(reply, "Results", out var result) &&
+        if (reply.Type == RespireDataType.Map && TryReadProfileField(reply, "Results", out var result) &&
             TryReadProfileField(reply, "Profile", out var profile))
             return (result, RespireSearchProfileNode.Parse(profile));
         throw RespireSearchReply.Unexpected("FT.PROFILE",
@@ -78,7 +78,7 @@ public sealed partial class RespireSearchClient
         var found = false;
         for (var i = 0; i < reply.Count; i += 2)
         {
-            if (reply[i].IsNull || reply[i].Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+            if (reply[i].IsNull || reply[i].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
                 throw RespireSearchReply.Unexpected("FT.PROFILE", "a non-string envelope field");
             if (reply[i].AsString() != name) continue;
             if (found) throw RespireSearchReply.Unexpected("FT.PROFILE", "a duplicate envelope field " + name);

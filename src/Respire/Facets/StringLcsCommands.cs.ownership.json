@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IStringCommands",
+      "Type": "Respire.IRespireStringCommands",
       "OwnerType": "Respire.StringCommands",
       "Members": [
         "LcsIndexAsync(RespireKey,RespireKey,RespireLcsOptions?,CancellationToken):ValueTask<RespireLcsIndexResult>"

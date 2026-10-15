@@ -24,7 +24,7 @@ public class ValkeySlotMigrationIntegrationTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [cluster.Endpoint(0)], AllowAdmin = true,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromSeconds(5),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -58,11 +58,11 @@ public class ValkeySlotMigrationIntegrationTests
         // FLUSHSLOT removes only keys in the selected slot, not ownership or adjacent data.
         var neighbour = KeyInSlot(2);
         await cluster.CommandAsync(1, token, "SET", neighbour, "keep");
-        await target.ClusterFlushSlotAsync(0, ServerFlushMode.Sync, token);
+        await target.ClusterFlushSlotAsync(0, RespireServerFlushMode.Sync, token);
         (await cluster.CommandAsync(1, token, "EXISTS", key)).Trim().Should().Be("0");
         (await cluster.CommandAsync(1, token, "GET", neighbour)).Trim().Should().Be("keep");
         await cluster.CommandAsync(1, token, "SET", key, "still-owned");
-        await target.ClusterFlushSlotAsync(0, ServerFlushMode.Async, token);
+        await target.ClusterFlushSlotAsync(0, RespireServerFlushMode.Async, token);
         (await cluster.CommandAsync(1, token, "EXISTS", key)).Trim().Should().Be("0");
         await target.ClusterFlushSlotAsync(2, cancellationToken: token);
         (await cluster.CommandAsync(1, token, "EXISTS", neighbour)).Trim().Should().Be("0");

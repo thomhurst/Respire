@@ -80,9 +80,9 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task GetAsyncDeserializesJsonAndPrefixesGeneratedCommandKey(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task GetAsyncDeserializesJsonAndPrefixesGeneratedCommandKey(RespireProtocol protocol)
     {
         var jsonReply = "$9\r\n{\"Age\":1}\r\n"u8.ToArray();
         await using var server = new FakeRespServer(1, FakeRespServer.OkReply)
@@ -98,7 +98,7 @@ public partial class RespireJsonClientTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = protocol,
-            MaintenanceNotifications = protocol == RespProtocol.Resp3
+            MaintenanceNotifications = protocol == RespireProtocol.Resp3
                 ? RespireMaintenanceNotificationMode.Enabled
                 : RespireMaintenanceNotificationMode.Disabled,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },

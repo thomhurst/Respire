@@ -121,7 +121,7 @@ internal sealed partial class KeyCommands
                 ? Encoding.UTF8.GetBytes(match) : null;
             foreach (ref readonly var key in raw)
             {
-                if (key.Type != RespDataType.BulkString || key.IsNull)
+                if (key.Type != RespireDataType.BulkString || key.IsNull)
                     throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
                 if (state.Completed[ClusterHash.GetSlot(key.AsSpan())]) continue;
                 if (prefix is null) keys.Add(key.AsString());

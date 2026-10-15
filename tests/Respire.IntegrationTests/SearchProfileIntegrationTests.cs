@@ -25,7 +25,7 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
     public async Task AllProfileFormsKeepResultsAndServerTrees(int protocol, bool limited)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(HybridServer.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(HybridServer.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var search = client.Search;
         var index = "profile:" + Guid.NewGuid().ToString("N");
         await search.CreateIndexAsync(index, new()
@@ -134,7 +134,7 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
         await using var server = new SearchProfileCacheContainer();
         await server.InitializeAsync();
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(server.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var index = "profile:" + Guid.NewGuid().ToString("N");
         await client.Search.CreateIndexAsync(index, new()
         {
@@ -166,7 +166,7 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(
-        RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static IEnumerable<RespireSearchProfileNode> Descendants(RespireSearchProfileNode root)
     {

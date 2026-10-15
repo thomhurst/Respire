@@ -31,7 +31,7 @@ public class FakeServerFaultTests
     public async Task RejectionConsumesExactlyOneBatchReply(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1, Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol });
         using var fault = server.InjectFault("SET", RespireFakeFault.Loading());
         using var batch = client.CreateBatch();
         var rejected = batch.Strings.Set("rejected", "bad");
@@ -51,7 +51,7 @@ public class FakeServerFaultTests
     public async Task RulesMatchOwnedBinaryArgumentsInRegistrationOrderAndReset(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         byte[] key = [0, 255, 65];
         using var first = server.InjectFault("sEt", RespireFakeFault.Loading(), firstArgument: key);
         using var repeated = server.InjectFault("SET", RespireFakeFault.ReadOnly(), occurrences: null, firstArgument: key);
@@ -83,7 +83,7 @@ public class FakeServerFaultTests
     public async Task GateDefinesExecutionBoundaryAndCancellationDoesNotUndoAcceptedCommands(bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Connections = 1, Protocol = (RespProtocol)protocol };
+        var options = server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         await using var observer = await RespireClient.ConnectAsync(options);
         var gate = new RespireFakeGate();
@@ -112,7 +112,7 @@ public class FakeServerFaultTests
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions() with
         {
-            Connections = 1, Protocol = (RespProtocol)protocol,
+            Connections = 1, Protocol = (RespireProtocol)protocol,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -197,7 +197,7 @@ public class FakeServerFaultTests
     public async Task MovedIsAnExplicitRejectionWithoutFakeClusterRouting(int protocol)
     {
         await using var server = new RespireFakeServer();
-        var options = server.CreateOptions() with { Connections = 1, Protocol = (RespProtocol)protocol };
+        var options = server.CreateOptions() with { Connections = 1, Protocol = (RespireProtocol)protocol };
         await using var client = await RespireClient.ConnectAsync(options);
         var destination = new RespireEndpoint("other-fake.invalid", 6380);
         using var fault = server.InjectFault("SET", RespireFakeFault.Moved(42, destination));

@@ -1,16 +1,16 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IListCommands",
+      "Type": "Respire.IRespireListCommands",
       "OwnerType": "Respire.ListCommands",
       "Members": [
-        "MoveManyAsync(RespireKey,RespireKey,TimeSpan?,long,RespireListSide,RespireListSide,ListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>",
-        "MoveManyAsync(RespireKey,RespireKey,long,RespireListSide,RespireListSide,ListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>"
+        "MoveManyAsync(RespireKey,RespireKey,TimeSpan?,long,RespireListSide,RespireListSide,RespireListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>",
+        "MoveManyAsync(RespireKey,RespireKey,long,RespireListSide,RespireListSide,RespireListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner. These migrated entries retain the failure-only dispatch owner through preflight, conversion and cleanup; synchronous construction failure completes its Fail boundary.",
       "Overrides": {
-        "MoveManyAsync(RespireKey,RespireKey,TimeSpan?,long,RespireListSide,RespireListSide,ListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
-        "MoveManyAsync(RespireKey,RespireKey,long,RespireListSide,RespireListSide,ListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
+        "MoveManyAsync(RespireKey,RespireKey,TimeSpan?,long,RespireListSide,RespireListSide,RespireListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
+        "MoveManyAsync(RespireKey,RespireKey,long,RespireListSide,RespireListSide,RespireListMoveCountMode,RespireListMoveOrder,CancellationToken):ValueTask<string[]?>": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult"
       }
     }
   ],

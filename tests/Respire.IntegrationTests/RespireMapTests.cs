@@ -43,10 +43,10 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         var writes = 0;
         await using var map = Create(client, UniqueKey(), new()
         {
-            Loader = (key, _) => { loads++; return ValueTask.FromResult(new RespireGet<int>(key == 1, 0)); },
+            Loader = (key, _) => { loads++; return ValueTask.FromResult(new RespireGetResult<int>(key == 1, 0)); },
             Writer = (_, _) => { writes++; return ValueTask.CompletedTask; },
         });
-        (await map.GetAsync(1)).Should().Be(new RespireGet<int>(true, 0));
+        (await map.GetAsync(1)).Should().Be(new RespireGetResult<int>(true, 0));
         (await map.GetAsync(1)).Found.Should().BeTrue();
         (await map.GetAsync(2)).Found.Should().BeFalse();
         loads.Should().Be(2);
@@ -86,7 +86,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         await client.Hashes.SetAsync(hash, "1", (RespireValue)"10");
         await using var map = Create(client, hash, new()
         {
-            Loader = (key, _) => ValueTask.FromResult(new RespireGet<int>(true, key * 10)),
+            Loader = (key, _) => ValueTask.FromResult(new RespireGetResult<int>(true, key * 10)),
         });
         await map.PreloadAsync();
         var misses = client.ClientSideCache!.GetStatistics().Misses;
@@ -164,7 +164,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     public async Task WriteBehindDeleteIsPersistedBeforeLoading(bool preload)
     {
         await using var client = await ConnectAsync();
-        var stored = new RespireGet<int>(true, 10);
+        var stored = new RespireGetResult<int>(true, 10);
         var writes = 0;
         var loads = 0;
         var hash = UniqueKey();
@@ -191,7 +191,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     public async Task WriteBehindExpiredSetIsPersistedBeforeLoading()
     {
         await using var client = await ConnectAsync();
-        var stored = new RespireGet<int>(true, 10);
+        var stored = new RespireGetResult<int>(true, 10);
         var writes = new List<int>();
         var hash = UniqueKey();
         await using var map = Create(client, hash, new()
@@ -222,7 +222,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     public async Task WriteBehindFlushFailurePreventsLoaderAndRetainsChangesForRetry()
     {
         await using var client = await ConnectAsync();
-        var stored = new RespireGet<int>(true, 10);
+        var stored = new RespireGetResult<int>(true, 10);
         var fail = true;
         var loads = 0;
         var attempts = 0;
@@ -275,7 +275,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
         }
         batches.Select(batch => batch.Length).Should().Equal(2, 1);
         batches.SelectMany(batch => batch).Select(change => change.Entry).Should().Equal(
-            new RespireGet<int>(true, 10), new RespireGet<int>(true, 20), default);
+            new RespireGetResult<int>(true, 10), new RespireGetResult<int>(true, 20), default);
         var disposedWrite = () => map.SetAsync(2, 30).AsTask();
         await disposedWrite.Should().ThrowAsync<ObjectDisposedException>();
         await map.DisposeAsync();
@@ -388,7 +388,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
             Loader = (key, _) =>
             {
                 loaded.Add(key);
-                return ValueTask.FromResult(new RespireGet<int>(true, key * 10));
+                return ValueTask.FromResult(new RespireGetResult<int>(true, key * 10));
             },
         });
         Task? dispose = null;
@@ -490,7 +490,7 @@ public class RespireMapTests(ModernRedisTestContainer fixture)
     private ValueTask<RespireClient> ConnectAsync(RespireClientTrackingMode mode = RespireClientTrackingMode.OptIn, string? prefix = null)
         => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = RespProtocol.Resp3, Connections = 1,
+            Protocol = RespireProtocol.Resp3, Connections = 1,
             ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = prefix is null ? [] : [(RespireKey)prefix] },
         });
 

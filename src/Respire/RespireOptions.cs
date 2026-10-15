@@ -116,7 +116,7 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 }
 
 /// <summary>RESP protocol selection or automatic negotiation policy.</summary>
-public enum RespProtocol
+public enum RespireProtocol
 {
     /// <summary>Prefer RESP3; use RESP2 only when the server rejects HELLO as unsupported.</summary>
     Auto = 0,
@@ -129,7 +129,7 @@ public enum RespProtocol
 }
 
 /// <summary>What happens when a subscription's buffer is full because the consumer is slow.</summary>
-public enum SubscriptionOverflow
+public enum RespireSubscriptionOverflow
 {
     /// <summary>Drop the oldest buffered message to admit the new one (default).</summary>
     DropOldest,
@@ -290,7 +290,7 @@ public sealed record RespireOptions
     /// <summary>Protocol negotiation policy. Auto prefers RESP3 and falls back to RESP2 only for unsupported HELLO.</summary>
     /// <remarks>Explicit Resp2 skips HELLO; explicit Resp3 requires RESP3. Authentication, transport, timeout,
     /// and malformed-reply failures never cause fallback. Client-side caching always requires RESP3.</remarks>
-    public RespProtocol Protocol { get; init; } = RespProtocol.Auto;
+    public RespireProtocol Protocol { get; init; } = RespireProtocol.Auto;
 
     /// <summary>Opt-in RESP3 maintenance notifications. Disabled by default; Auto tolerates an unsupported server.</summary>
     public RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
@@ -509,7 +509,7 @@ public sealed record RespireOptions
     public int SubscriptionBufferSize { get; init; } = 1024;
 
     /// <summary>Policy used when a subscription consumer falls behind.</summary>
-    public SubscriptionOverflow SubscriptionOverflow { get; init; } = SubscriptionOverflow.DropOldest;
+    public RespireSubscriptionOverflow SubscriptionOverflow { get; init; } = RespireSubscriptionOverflow.DropOldest;
 
     // Advanced wire tuning — the defaults are right for almost everyone.
 
@@ -576,10 +576,10 @@ public sealed record RespireOptions
                 "Use RespireClient.ConnectAnyAsync for connection-time fallback between standalone deployments.");
         }
 
-        Require(Protocol is RespProtocol.Auto or RespProtocol.Resp2 or RespProtocol.Resp3, nameof(Protocol), "must be Auto, Resp2, or Resp3");
-        var effectiveProtocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3;
+        Require(Protocol is RespireProtocol.Auto or RespireProtocol.Resp2 or RespireProtocol.Resp3, nameof(Protocol), "must be Auto, Resp2, or Resp3");
+        var effectiveProtocol = ClientSideCache is null ? Protocol : RespireProtocol.Resp3;
         Require(Enum.IsDefined(MaintenanceNotifications), nameof(MaintenanceNotifications), "must be Disabled, Auto, or Enabled");
-        Require(MaintenanceNotifications != RespireMaintenanceNotificationMode.Enabled || effectiveProtocol != RespProtocol.Resp2,
+        Require(MaintenanceNotifications != RespireMaintenanceNotificationMode.Enabled || effectiveProtocol != RespireProtocol.Resp2,
             nameof(MaintenanceNotifications), "requires RESP3 when Enabled");
         Require(MaintenanceRelaxedTimeout >= TimeSpan.FromMilliseconds(1) && MaintenanceRelaxedTimeout <= TimeSpan.FromDays(1),
             nameof(MaintenanceRelaxedTimeout), "must be between one millisecond and one day");
@@ -728,7 +728,7 @@ public sealed record RespireOptions
     // BUSY permits AUTH but can block all other setup. Construct control options from
     // transport/authentication fields only, so new ordinary setup is not inherited.
     internal RespireConnectionOptions ToControlConnectionOptions()
-        => ToTransportConnectionOptions() with { Protocol = RespProtocol.Resp2 };
+        => ToTransportConnectionOptions() with { Protocol = RespireProtocol.Resp2 };
 
     private RespireConnectionOptions ToTransportConnectionOptions()
         => new()
@@ -866,7 +866,7 @@ public sealed record RespireOptions
         TimeSpan? commandTimeout = DefaultCommandTimeout;
         TimeSpan? responseTimeout = null;
         TimeSpan? gatheredWriteStallTimeout = null;
-        var protocol = RespProtocol.Auto;
+        var protocol = RespireProtocol.Auto;
         var mode = new ConnectionStringMode();
         var allowAdmin = false;
 
@@ -1031,12 +1031,12 @@ public sealed record RespireOptions
         return result;
     }
 
-    private static RespProtocol ParseProtocolOption(string name, string value)
+    private static RespireProtocol ParseProtocolOption(string name, string value)
         => value.ToLowerInvariant() switch
         {
-            "auto" => RespProtocol.Auto,
-            "2" or "resp2" => RespProtocol.Resp2,
-            "3" or "resp3" => RespProtocol.Resp3,
+            "auto" => RespireProtocol.Auto,
+            "2" or "resp2" => RespireProtocol.Resp2,
+            "3" or "resp3" => RespireProtocol.Resp3,
             _ => throw new ArgumentException(
                 $"Option '{name}' requires 'auto', '2', 'resp2', '3', or 'resp3'.", ConnectionStringParameterName),
         };
@@ -1086,7 +1086,7 @@ public sealed record RespireOptions
         var connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? asyncTimeout = null;
         TimeSpan? syncTimeout = null;
-        var protocol = RespProtocol.Auto;
+        var protocol = RespireProtocol.Auto;
         var allowAdmin = false;
         var mode = new ConnectionStringMode();
         SslClientAuthenticationOptions? tlsOptions = null;
@@ -1253,7 +1253,7 @@ public sealed record RespireOptions
         var defaultPort = mode.ServiceName is not null ? 26379 : effectiveUseTls ? 6380 : 6379;
         var endpoints = endpointTexts.Select(endpoint => RespireEndpoint.Parse(endpoint, defaultPort)).ToList();
 
-        if (maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespProtocol.Resp2)
+        if (maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespireProtocol.Resp2)
             throw new RespireConfigurationException("Option 'maintNotifications=Enabled' requires RESP3; protocol=2 is incompatible.");
 
         return new RespireOptions

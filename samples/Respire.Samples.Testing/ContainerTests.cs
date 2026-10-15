@@ -6,11 +6,11 @@ namespace Respire.Samples.Testing;
 public class ContainerTests
 {
     [Test]
-    [Arguments(RespireContainerServer.Redis, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Redis, RespProtocol.Resp3)]
-    [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp2)]
-    [Arguments(RespireContainerServer.Valkey, RespProtocol.Resp3)]
-    public async Task SharedClientScenarios(RespireContainerServer server, RespProtocol protocol)
+    [Arguments(RespireContainerServer.Redis, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Redis, RespireProtocol.Resp3)]
+    [Arguments(RespireContainerServer.Valkey, RespireProtocol.Resp2)]
+    [Arguments(RespireContainerServer.Valkey, RespireProtocol.Resp3)]
+    public async Task SharedClientScenarios(RespireContainerServer server, RespireProtocol protocol)
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {

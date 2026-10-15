@@ -44,7 +44,7 @@ public class ClusterRetirementTests
     {
         await using var standalone = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new RespireEndpoint("seed.invalid")],
         });
         await Assert.That(standalone.GetClusterRetirementSnapshot()).IsNull();
@@ -1956,7 +1956,7 @@ public class ClusterRetirementTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             UseCluster = true,
             Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -2104,7 +2104,7 @@ public class ClusterRetirementTests
             ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray() : FakeRespServer.OkReply;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             ClientSideCache = new(),
             Endpoints = { new("127.0.0.1", oldServer.Port) },
@@ -2139,7 +2139,7 @@ public class ClusterRetirementTests
         await using var replacementServer = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             Endpoints = { new("127.0.0.1", oldServer.Port) },
@@ -2221,7 +2221,7 @@ public class ClusterRetirementTests
         await using var server = new FakeRespServer(8, ":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             CommandTimeout = TimeSpan.FromMilliseconds(200),
         });
@@ -2271,7 +2271,7 @@ public class ClusterRetirementTests
     private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null, int maxInflightCommands = 16384,
         bool allowAdmin = false, RespireReconnectPolicy? reconnectPolicy = null) => RespireClient.Create(new RespireOptions
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
         LoggerFactory = loggerFactory,
         MaxInflightCommands = maxInflightCommands,

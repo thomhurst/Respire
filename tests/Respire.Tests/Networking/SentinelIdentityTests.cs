@@ -120,7 +120,7 @@ public class SentinelIdentityTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var selected = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,

@@ -183,7 +183,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
             return;
         }
 
-        if (result.Type == RespDataType.Null)
+        if (result.Type == RespireDataType.Null)
         {
             result.Dispose();
             _core.SetResult(null);

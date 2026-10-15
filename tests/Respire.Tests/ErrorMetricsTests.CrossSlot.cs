@@ -14,7 +14,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer("-CROSSSLOT injected reply\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = local, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = local, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             IncludeCrossSlotKeyContext = true,
         });

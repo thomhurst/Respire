@@ -14,13 +14,13 @@ public class GeoCommandTests
         var add = new GeoAddCommand(
             RespireCommands.Geo.GEOADD.Verb,
             "geo-key",
-            SetWhen.Always,
+            RespireSetWhen.Always,
             changed: false,
             []);
         var search = new GeoSearchCommand(
             RespireCommands.Geo.GEOSEARCH.Verb,
             "source-key",
-            GeoSearchOrigin.FromCoordinates(0, 0),
+            RespireGeoSearchOrigin.FromCoordinates(0, 0),
             RespireGeoSearchShape.Circle(1),
             default,
             destination: null,
@@ -28,7 +28,7 @@ public class GeoCommandTests
         var store = new GeoSearchCommand(
             RespireCommands.Geo.GEOSEARCHSTORE.Verb,
             "source-key",
-            GeoSearchOrigin.FromCoordinates(0, 0),
+            RespireGeoSearchOrigin.FromCoordinates(0, 0),
             RespireGeoSearchShape.Circle(1),
             default,
             destination: "destination-key",
@@ -65,7 +65,7 @@ public class GeoCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Geo.AddAsync(
-            "places", new GeoAddOptions { When = SetWhen.NotExists, Changed = true },
+            "places", new RespireGeoAddOptions { When = RespireSetWhen.NotExists, Changed = true },
             new RespireGeoEntry(1.5, 2.5, "cafe"), new RespireGeoEntry(3.5, 4.5, "park"))).IsEqualTo(2);
         await Assert.That(await client.Geo.DistanceAsync("places", "cafe", "park", RespireGeoUnit.Kilometers))
             .IsEqualTo(12.5);
@@ -74,7 +74,7 @@ public class GeoCommandTests
         await Assert.That(await client.Geo.PositionAsync("places", "cafe", "missing"))
             .IsEquivalentTo(new RespireGeoPosition?[] { new(-1.5, 2.5), null });
 
-        var options = new GeoSearchOptions
+        var options = new RespireGeoSearchOptions
         {
             Count = 2,
             Any = true,
@@ -83,15 +83,15 @@ public class GeoCommandTests
             IncludeCoordinates = true,
         };
         var search = await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers), options);
+            "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers), options);
         await Assert.That(search).IsEquivalentTo(new[]
         {
-            new GeoSearchResult("cafe", 1.5, 123, new RespireGeoPosition(2.5, 3.5)),
+            new RespireGeoSearchResult("cafe", 1.5, 123, new RespireGeoPosition(2.5, 3.5)),
         });
         await Assert.That(await client.Geo.SearchStoreAsync(
-            "nearby", "places", GeoSearchOrigin.FromCoordinates(1.5, 2.5),
+            "nearby", "places", RespireGeoSearchOrigin.FromCoordinates(1.5, 2.5),
             RespireGeoSearchShape.Box(10, 20, RespireGeoUnit.Miles),
-            new GeoSearchOptions { Sort = GeoSortOrder.Descending, Count = 3 }, storeDistance: true)).IsEqualTo(4);
+            new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Descending, Count = 3 }, storeDistance: true)).IsEqualTo(4);
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
@@ -117,7 +117,7 @@ public class GeoCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var results = await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("origin"), RespireGeoSearchShape.Circle(1));
+            "places", RespireGeoSearchOrigin.FromMember("origin"), RespireGeoSearchShape.Circle(1));
 
         await Assert.That(results).Count().IsEqualTo(1);
         await Assert.That(results[0].Member).IsEqualTo("café");
@@ -142,10 +142,10 @@ public class GeoCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var compact = await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("origin"), RespireGeoSearchShape.Circle(1));
+            "places", RespireGeoSearchOrigin.FromMember("origin"), RespireGeoSearchShape.Circle(1));
         var detailed = await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("origin"), RespireGeoSearchShape.Circle(1),
-            new GeoSearchOptions { IncludeDistance = true });
+            "places", RespireGeoSearchOrigin.FromMember("origin"), RespireGeoSearchShape.Circle(1),
+            new RespireGeoSearchOptions { IncludeDistance = true });
 
         await Assert.That(compact[0].MemberBytes.Span.SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
         await Assert.That(detailed[0].MemberBytes.Span.SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
@@ -154,7 +154,7 @@ public class GeoCommandTests
     [Test]
     public async Task GeoSearchResult_CopyWithMember_RefreshesMemberBytes()
     {
-        var result = new GeoSearchResult("old") with { Member = "new" };
+        var result = new RespireGeoSearchResult("old") with { Member = "new" };
 
         await Assert.That(result.Member).IsEqualTo("new");
         await Assert.That(result.MemberBytes.Span.SequenceEqual("new"u8)).IsTrue();
@@ -167,40 +167,40 @@ public class GeoCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(async () => await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
-            new GeoSearchOptions { Any = true })).Throws<ArgumentException>();
+            "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
+            new RespireGeoSearchOptions { Any = true })).Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
-            new GeoSearchOptions { Count = 1, Any = true, Sort = GeoSortOrder.Ascending }))
+            "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
+            new RespireGeoSearchOptions { Count = 1, Any = true, Sort = RespireGeoSortOrder.Ascending }))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.SearchStoreAsync(
-            "dest", "places", GeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
-            new GeoSearchOptions { IncludeDistance = true })).Throws<ArgumentException>();
+            "dest", "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
+            new RespireGeoSearchOptions { IncludeDistance = true })).Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.AddAsync(
             "places", new RespireGeoEntry(181, 0, "bad"))).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.DistanceAsync(
             "places", "a", "b", (RespireGeoUnit)42)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromCoordinates(0, 86), RespireGeoSearchShape.Circle(1)))
+            "places", RespireGeoSearchOrigin.FromCoordinates(0, 86), RespireGeoSearchShape.Circle(1)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
             "places", default, RespireGeoSearchShape.Circle(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("cafe"), default))
+            "places", RespireGeoSearchOrigin.FromMember("cafe"), default))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(double.NaN)))
+            "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(double.NaN)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
-            "places", GeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(double.PositiveInfinity)))
+            "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(double.PositiveInfinity)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchStoreAsync(
-            "dest", "places", GeoSearchOrigin.FromMember("cafe"),
+            "dest", "places", RespireGeoSearchOrigin.FromMember("cafe"),
             RespireGeoSearchShape.Box(double.NaN, 1)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchStoreAsync(
-            "dest", "places", GeoSearchOrigin.FromMember("cafe"),
+            "dest", "places", RespireGeoSearchOrigin.FromMember("cafe"),
             RespireGeoSearchShape.Box(1, double.PositiveInfinity)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
@@ -215,7 +215,7 @@ public class GeoCommandTests
             new GeoSearchCommand(
                 RespireCommands.Geo.GEOSEARCH.Verb,
                 "places",
-                GeoSearchOrigin.FromMember(member),
+                RespireGeoSearchOrigin.FromMember(member),
                 RespireGeoSearchShape.Circle(1),
                 default,
                 destination: null,

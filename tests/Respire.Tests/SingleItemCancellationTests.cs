@@ -58,9 +58,9 @@ public class SingleItemCancellationTests
         IRespireClient client = connection.WithKeyPrefix("tenant:");
         using var cancellation = new CancellationTokenSource();
 
-        RespireTtl scalar = await client.Hashes.ExpiryAsync("hash", "field", cancellation.Token);
-        RespireTtl binary = await client.Hashes.ExpiryAsync("hash", (RespireKey)"field", cancellation.Token);
-        RespireTtl[] collection = await client.Hashes.ExpiryAsync("hash", (ReadOnlySpan<string>)["field"], cancellation.Token);
+        RespireTtlResult scalar = await client.Hashes.ExpiryAsync("hash", "field", cancellation.Token);
+        RespireTtlResult binary = await client.Hashes.ExpiryAsync("hash", (RespireKey)"field", cancellation.Token);
+        RespireTtlResult[] collection = await client.Hashes.ExpiryAsync("hash", (ReadOnlySpan<string>)["field"], cancellation.Token);
 
         await Assert.That(scalar).IsEqualTo(binary);
         await Assert.That(collection).IsEquivalentTo([scalar]);
@@ -104,7 +104,7 @@ public class SingleItemCancellationTests
         await Assert.That(compileControl).IsNotNull();
     }
 
-    private static void CompileSortedSetPopCalls(ISortedSetCommands commands, CancellationToken token)
+    private static void CompileSortedSetPopCalls(IRespireSortedSetCommands commands, CancellationToken token)
     {
         ValueTask<RespireSortedSetEntry?> scalar = commands.PopAsync("key", default);
         ValueTask<RespireSortedSetEntry<int>?> typedScalar = commands.PopAsync<int>("key", default);
@@ -161,7 +161,7 @@ public class SingleItemCancellationTests
         await Assert.That(await client.Sets.UnionStoreAsync("dest", "key", token)).IsEqualTo(1);
         await Assert.That(await client.SortedSets.IntersectCountAsync("key", token)).IsEqualTo(1);
         await Assert.That(await client.HyperLogLog.CountAsync("key", token)).IsEqualTo(1);
-        await Assert.That(await client.Bitmaps.OperateAsync(BitOperation.Or, "dest", "key", token)).IsEqualTo(1);
+        await Assert.That(await client.Bitmaps.OperateAsync(RespireBitOperation.Or, "dest", "key", token)).IsEqualTo(1);
         await Assert.That(await client.Lists.LeftPushAsync("key", "value", token)).IsEqualTo(1);
         await Assert.That(await client.Hashes.RemoveAsync("key", "field", token)).IsEqualTo(1);
         using var result = await client.ExecuteAsync("DEL", token, "key");

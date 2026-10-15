@@ -5,7 +5,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IStringCommands
+public partial interface IRespireStringCommands
 {
     /// <summary>Sets a raw value only when the comparison succeeds, returning whether it was written. Redis: SET with a comparison condition.</summary>
     /// <remarks>Binary value buffers must remain unchanged until completion. A failed comparison preserves the old value and expiry.</remarks>

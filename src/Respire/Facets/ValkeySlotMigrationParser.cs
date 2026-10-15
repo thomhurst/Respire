@@ -6,7 +6,7 @@ internal static class ValkeySlotMigrationParser
 {
     internal static RespireValkeySlotMigration[] Parse(in RespValue value)
     {
-        if (value.Type != RespDataType.Array)
+        if (value.Type != RespireDataType.Array)
             throw new RespireProtocolException("Valkey slot migrations must be an array.");
         var rows = value.AsArray();
         var result = new RespireValkeySlotMigration[rows.Length];
@@ -23,7 +23,7 @@ internal static class ValkeySlotMigrationParser
 
     private static RespireValkeySlotMigration Row(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("Migration fields must be a map or array of pairs.");
         var pairs = value.AsArray();
         if (pairs.Length % 2 != 0) throw new RespireProtocolException("Incomplete migration field/value pair.");

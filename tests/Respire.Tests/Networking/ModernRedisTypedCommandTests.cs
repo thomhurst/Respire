@@ -30,10 +30,10 @@ public class ModernRedisTypedCommandTests
         var deferredAbsolute = batch.Hashes.Expire("hash", absolute, when, "field");
         await batch.ExecuteAsync();
 
-        await Assert.That(immediateRelative[0]).IsEqualTo(HashFieldExpiryResult.Applied);
-        await Assert.That(immediateAbsolute[0]).IsEqualTo(HashFieldExpiryResult.Applied);
-        await Assert.That(deferredRelative.Result[0]).IsEqualTo(HashFieldExpiryResult.Applied);
-        await Assert.That(deferredAbsolute.Result[0]).IsEqualTo(HashFieldExpiryResult.Applied);
+        await Assert.That(immediateRelative[0]).IsEqualTo(RespireHashFieldExpiryResult.Applied);
+        await Assert.That(immediateAbsolute[0]).IsEqualTo(RespireHashFieldExpiryResult.Applied);
+        await Assert.That(deferredRelative.Result[0]).IsEqualTo(RespireHashFieldExpiryResult.Applied);
+        await Assert.That(deferredAbsolute.Result[0]).IsEqualTo(RespireHashFieldExpiryResult.Applied);
         await AssertCommands(server.ReceivedCommands,
             $"HPEXPIRE hash 2000{condition} FIELDS 1 field",
             $"HPEXPIREAT hash 123456789{condition} FIELDS 1 field",
@@ -80,10 +80,10 @@ public class ModernRedisTypedCommandTests
             "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)), "c");
         var getPersist = await client.Hashes.GetAndExpireAsync("hash", RespireExpiry.Persist, "a");
         var setExpire = await client.Hashes.SetExpireAsync(
-            "hash", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"), ("b", "two"));
+            "hash", TimeSpan.FromSeconds(2), RespireSetWhen.NotExists, ("a", "one"), ("b", "two"));
         var setExpireAt = await client.Hashes.SetExpireAsync(
             "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)),
-            SetWhen.Exists, ("a", "next"));
+            RespireSetWhen.Exists, ("a", "next"));
 
         await Assert.That(expiries[0].Exists).IsTrue();
         await Assert.That(expiries[0].HasExpiry).IsTrue();
@@ -94,20 +94,20 @@ public class ModernRedisTypedCommandTests
         await Assert.That(expireResults).IsEquivalentTo(
             new[]
             {
-                HashFieldExpiryResult.Applied,
-                HashFieldExpiryResult.ConditionNotMet,
-                HashFieldExpiryResult.NoSuchField,
-                HashFieldExpiryResult.Deleted,
+                RespireHashFieldExpiryResult.Applied,
+                RespireHashFieldExpiryResult.ConditionNotMet,
+                RespireHashFieldExpiryResult.NoSuchField,
+                RespireHashFieldExpiryResult.Deleted,
             },
             CollectionOrdering.Matching);
         await Assert.That(expireAtResults).IsEquivalentTo(
-            new[] { HashFieldExpiryResult.Applied }, CollectionOrdering.Matching);
+            new[] { RespireHashFieldExpiryResult.Applied }, CollectionOrdering.Matching);
         await Assert.That(persistResults).IsEquivalentTo(
             new[]
             {
-                HashFieldExpiryResult.Applied,
-                HashFieldExpiryResult.NoExpiry,
-                HashFieldExpiryResult.NoSuchField,
+                RespireHashFieldExpiryResult.Applied,
+                RespireHashFieldExpiryResult.NoExpiry,
+                RespireHashFieldExpiryResult.NoSuchField,
             },
             CollectionOrdering.Matching);
         await Assert.That(deleted).IsEquivalentTo(new string?[] { "hello", null }, CollectionOrdering.Matching);
@@ -142,10 +142,10 @@ public class ModernRedisTypedCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var setExpire = await client.Strings.SetManyExpireAsync(
-            TimeSpan.FromSeconds(3), SetWhen.Exists, ("a", "1"), ("b", "2"));
+            TimeSpan.FromSeconds(3), RespireSetWhen.Exists, ("a", "1"), ("b", "2"));
         var setExpireAt = await client.Strings.SetManyExpireAsync(
             RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(1111111111)), pairs: ("c", "3"));
-        var keepExpiry = await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, SetWhen.NotExists, ("d", "4"));
+        var keepExpiry = await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, RespireSetWhen.NotExists, ("d", "4"));
         var lcs = await client.Strings.LcsAsync("a", "b");
         var lcsLength = await client.Strings.LcsLengthAsync("a", "b");
 
@@ -238,7 +238,7 @@ public class ModernRedisTypedCommandTests
         await Assert.That(async () => await client.Hashes.SetExpireAsync("hash", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Hashes.SetExpireAsync(
-            "hash", TimeSpan.FromSeconds(1), (SetWhen)42, ("field", "value")))
+            "hash", TimeSpan.FromSeconds(1), (RespireSetWhen)42, ("field", "value")))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Keys.ExpireAsync("key", RespireExpiry.None))
             .Throws<ArgumentException>();
@@ -259,7 +259,7 @@ public class ModernRedisTypedCommandTests
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
-        await Assert.That(async () => await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, (SetWhen)42, ("key", "value")))
+        await Assert.That(async () => await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, (RespireSetWhen)42, ("key", "value")))
             .Throws<ArgumentOutOfRangeException>();
 
         await Assert.That(server.ReceivedCommands).IsEmpty();

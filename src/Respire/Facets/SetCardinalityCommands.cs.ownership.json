@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.ISetCommands",
+      "Type": "Respire.IRespireSetCommands",
       "OwnerType": "Respire.SetCommands",
       "Members": [
         "DifferenceCountAsync(ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",

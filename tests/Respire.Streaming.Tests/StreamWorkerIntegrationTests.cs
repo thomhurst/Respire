@@ -24,9 +24,9 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             : null;
         var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
             : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };
-        await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer(clock: null, modern);
-        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         foreach (var count in new[] { 0, 3 })
         {
             var key = "progress-" + count;
@@ -69,10 +69,10 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             : null;
         var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
             : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };
-        await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var createsEmptyConsumers = await CreatesEmptyConsumersAsync(real);
         await using var server = new RespireFakeServer(clock: null, createsEmptyConsumers);
-        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         async Task<long> ReadEmptyGroupAsync(IRespireClient client)
         {
             await client.Streams.CreateGroupAsync("empty", "group", RespireStreamId.Beginning);
@@ -91,7 +91,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task HostedConsumerAcknowledgesSuccessAndRetainsNackOnRedis(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         await view.Streams.AddAsync("events", ("payload", "nack"));
         await view.Streams.AddAsync("events", ("payload", "ack"));
@@ -124,7 +124,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task StableConsumerReplaysOnlyItsOwnPendingOnRedis(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         for (var i = 1; i <= 3; i++)
             await view.Streams.AddAsync("resume", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", "ack"));
@@ -172,9 +172,9 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task FakePendingAndGroupMetadataMatchRedis(int protocol, string start = "0", bool unicodeConsumers = false)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer(clock: null, await CreatesEmptyConsumersAsync(real));
-        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         async Task<(RespireStreamPendingSummary Summary, RespireStreamPendingEntry[] Pending, RespireStreamGroupInfo Group)> ReadState(IRespireClient client)
         {
             var first = unicodeConsumers ? "\U00010000" : "a";
@@ -187,7 +187,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             await client.Streams.ReadGroupOnceAsync("s", "g", second, new() { Count = 1 });
             await client.Streams.AcknowledgeAsync("s", "g", ["2-0"]);
             return (await client.Streams.PendingSummaryAsync("s", "g"),
-                await client.Streams.PendingAsync(new StreamPendingOptions { Start = "(0-0" }, "s", "g"),
+                await client.Streams.PendingAsync(new RespireStreamPendingOptions { Start = "(0-0" }, "s", "g"),
                 (await client.Streams.GroupInfoAsync("s")).Single());
         }
         var expected = await ReadState(real);

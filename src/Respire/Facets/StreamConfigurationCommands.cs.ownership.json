@@ -1,10 +1,10 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IStreamCommands",
+      "Type": "Respire.IRespireStreamCommands",
       "OwnerType": "Respire.StreamCommands",
       "Members": [
-        "ConfigureAsync(RespireKey,StreamConfigurationOptions,CancellationToken):ValueTask<bool>"
+        "ConfigureAsync(RespireKey,RespireStreamConfigurationOptions,CancellationToken):ValueTask<bool>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

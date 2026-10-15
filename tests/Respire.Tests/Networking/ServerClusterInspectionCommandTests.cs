@@ -108,7 +108,7 @@ public class ServerClusterInspectionCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var results = await client.Server.ClusterShardsOnAllNodesAsync();
@@ -157,7 +157,7 @@ public class ServerClusterInspectionCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = new(),
         });
         var cache = client.Core.ClientCache!;

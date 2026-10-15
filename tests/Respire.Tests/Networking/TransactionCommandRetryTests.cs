@@ -481,7 +481,7 @@ public class TransactionCommandRetryTests
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespProtocol.Resp2,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };

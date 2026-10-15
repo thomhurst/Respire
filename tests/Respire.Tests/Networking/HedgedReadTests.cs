@@ -39,7 +39,7 @@ public class HedgedReadTests
 
     private static RespireOptions Options(FakeRespServer primary, params FakeRespServer[] replicas) => new()
     {
-        Protocol = RespProtocol.Resp2, Connections = 1,
+        Protocol = RespireProtocol.Resp2, Connections = 1,
         Endpoints = [new("127.0.0.1", primary.Port)],
         ReplicaEndpoints = replicas.Select(replica => new RespireEndpoint("127.0.0.1", replica.Port)).ToArray(),
         ReadFrom = RespireReadFrom.ReplicaPreferred,
@@ -61,7 +61,7 @@ public class HedgedReadTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
             ReadFrom = RespireReadFrom.ReplicaPreferred,
@@ -230,9 +230,9 @@ public class HedgedReadTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ClusterHedgeUsesSlotTopologyAndReadonlyHandshake(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ClusterHedgeUsesSlotTopologyAndReadonlyHandshake(RespireProtocol protocol)
     {
         await using var replica = Replica(holdReads: true);
         await using var primary = new FakeRespServer(16, FakeRespServer.OkReply);

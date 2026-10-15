@@ -64,15 +64,15 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Parse Simple String")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public RespDataType ParseSimpleString() => ParseAndDispose(_simpleStringData);
+    public RespireDataType ParseSimpleString() => ParseAndDispose(_simpleStringData);
 
     [Benchmark(Description = "Parse Bulk String")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public RespDataType ParseBulkString() => ParseAndDispose(_bulkStringData);
+    public RespireDataType ParseBulkString() => ParseAndDispose(_bulkStringData);
 
     [Benchmark(Baseline = true, Description = "Receive bulk string (reparse header)")]
     [BenchmarkCategory("BulkReceive")]
-    public RespDataType ReceiveBulkString_ReparseHeader()
+    public RespireDataType ReceiveBulkString_ReparseHeader()
     {
         var pos = 0;
         RespParser.TryPeekBulkHeader(_bulkStringData, pos, out _, out _, out _);
@@ -84,7 +84,7 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Receive bulk string (reuse header)")]
     [BenchmarkCategory("BulkReceive")]
-    public RespDataType ReceiveBulkString_ReuseHeader()
+    public RespireDataType ReceiveBulkString_ReuseHeader()
     {
         var pos = 0;
         RespParser.TryPeekBulkHeader(
@@ -97,27 +97,27 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Parse Integer")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public RespDataType ParseInteger() => ParseAndDispose(_integerData);
+    public RespireDataType ParseInteger() => ParseAndDispose(_integerData);
 
     [Benchmark(Description = "Parse Command Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespDataType ParseCommandArray() => ParseAndDispose(_arrayData);
+    public RespireDataType ParseCommandArray() => ParseAndDispose(_arrayData);
 
     [Benchmark(Description = "Parse Large Array (100 ints)")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespDataType ParseLargeArray() => ParseAndDispose(_largeArrayData);
+    public RespireDataType ParseLargeArray() => ParseAndDispose(_largeArrayData);
 
     [Benchmark(Description = "Parse Nested Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespDataType ParseNestedArray() => ParseAndDispose(_nestedArrayData);
+    public RespireDataType ParseNestedArray() => ParseAndDispose(_nestedArrayData);
 
     [Benchmark(Description = "Parse Mixed Types Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespDataType ParseMixedTypesArray() => ParseAndDispose(_mixedTypesData);
+    public RespireDataType ParseMixedTypesArray() => ParseAndDispose(_mixedTypesData);
 
     [Benchmark(Description = "Fragmented array (restart parser)")]
     [BenchmarkCategory("FragmentedParsing")]
-    public RespDataType ParseFragmentedArray_Restart()
+    public RespireDataType ParseFragmentedArray_Restart()
     {
         RespValue value = default;
         for (var end = 32; end < _fragmentedArrayData.Length; end += 32)
@@ -135,7 +135,7 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Fragmented array (resumable parser)")]
     [BenchmarkCategory("FragmentedParsing")]
-    public RespDataType ParseFragmentedArray_Resume()
+    public RespireDataType ParseFragmentedArray_Resume()
     {
         RespValue value = default;
         var pos = 0;
@@ -152,7 +152,7 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Complete simple reply (restart parser)")]
     [BenchmarkCategory("CompleteReceive")]
-    public RespDataType ReceiveCompleteSimple_Restart()
+    public RespireDataType ReceiveCompleteSimple_Restart()
     {
         var pos = 0;
         _ = RespParser.TryPeekBulkHeader(_simpleStringData, pos, out _, out _, out _);
@@ -164,11 +164,11 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Complete simple reply (resumable parser)")]
     [BenchmarkCategory("CompleteReceive")]
-    public RespDataType ReceiveCompleteSimple_Resume()
+    public RespireDataType ReceiveCompleteSimple_Resume()
     {
         if (!_parseState.IsIdle)
         {
-            return RespDataType.None;
+            return RespireDataType.None;
         }
 
         var pos = 0;
@@ -181,7 +181,7 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Complete array reply (restart parser)")]
     [BenchmarkCategory("CompleteReceive")]
-    public RespDataType ReceiveCompleteArray_Restart()
+    public RespireDataType ReceiveCompleteArray_Restart()
     {
         var pos = 0;
         _ = RespParser.TryPeekBulkHeader(_largeArrayData, pos, out _, out _, out _);
@@ -193,11 +193,11 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Complete array reply (resumable parser)")]
     [BenchmarkCategory("CompleteReceive")]
-    public RespDataType ReceiveCompleteArray_Resume()
+    public RespireDataType ReceiveCompleteArray_Resume()
     {
         if (!_parseState.IsIdle)
         {
-            return RespDataType.None;
+            return RespireDataType.None;
         }
 
         var pos = 0;
@@ -208,7 +208,7 @@ public class ProtocolBenchmarks
         return type;
     }
 
-    private static RespDataType ParseAndDispose(ReadOnlySpan<byte> data)
+    private static RespireDataType ParseAndDispose(ReadOnlySpan<byte> data)
     {
         var pos = 0;
         RespParser.TryParseValue(data, ref pos, out var value);

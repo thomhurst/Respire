@@ -63,12 +63,12 @@ await using var client = await RespireClient.ConnectAsync("redis://localhost:637
 var read = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true);
 var digest = await client.Scripts.LoadAsync(read);
 var present = await client.Scripts.ExistsAsync(digest, read.Sha1);
-await client.Scripts.FlushAsync(ScriptFlushMode.Sync);
+await client.Scripts.FlushAsync(RespireScriptFlushMode.Sync);
 ```
 
 - `LoadAsync` sends `SCRIPT LOAD` and returns the SHA1.
 - `ExistsAsync` returns one Boolean per digest, in input order, including duplicates. The cancellable overload takes a span then a `CancellationToken`. Pass at least one nonblank digest; an unknown string returns `false`.
-- `FlushAsync` clears scripts, not keys. `ScriptFlushMode.Default` follows the server's `lazyfree-lazy-user-flush` setting. `Sync` and `Async` require Redis 6.2+.
+- `FlushAsync` clears scripts, not keys. `RespireScriptFlushMode.Default` follows the server's `lazyfree-lazy-user-flush` setting. `Sync` and `Async` require Redis 6.2+.
 
 The cache can change at any time, so execution still handles `NOSCRIPT` after `ExistsAsync` returns `true`.
 
@@ -157,7 +157,7 @@ Other loading rules:
 | --- | --- | --- |
 | `LoadAsync(source, replace)`, `LoadAsync(library)` | FUNCTION LOAD | All discovered primaries. Returns the library name. |
 | `DeleteAsync(name)` | FUNCTION DELETE | All discovered primaries. |
-| `FlushAsync(FunctionFlushMode)` | FUNCTION FLUSH | All discovered primaries. |
+| `FlushAsync(RespireFunctionFlushMode)` | FUNCTION FLUSH | All discovered primaries. |
 | `RestoreAsync(payload, policy)` | FUNCTION RESTORE | All discovered primaries. |
 | `ListAsync(libraryPattern, withCode)` | FUNCTION LIST | One routing node. |
 | `DumpAsync()` | FUNCTION DUMP | One routing node. |
@@ -165,7 +165,7 @@ Other loading rules:
 
 - `ListAsync` returns library and function metadata, flags, and optionally source. Patterns use Redis glob syntax.
 - `FlushAsync` accepts `Default`, `Sync`, or `Async`.
-- `DumpAsync` returns binary library data. `RestoreAsync` accepts `FunctionRestorePolicy.Append` (default; collisions fail), `Flush`, or `Replace`. Do not change the payload bytes until the call completes.
+- `DumpAsync` returns binary library data. `RestoreAsync` accepts `RespireFunctionRestorePolicy.Append` (default; collisions fail), `Flush`, or `Replace`. Do not change the payload bytes until the call completes.
 - `StatsAsync` returns the running function, if any, and per-engine library and function counts for one server.
 
 Fan-out operations are not atomic. Cancellation or failure can leave some nodes changed, and the exception does not list per-node outcomes. A failover during the call can leave a newly promoted primary without the library. To inspect divergent state, connect to each primary directly.
@@ -205,7 +205,7 @@ The `valkey/valkey:9.1.0-alpine` image allows `MODULE UNLOAD lua` when module ad
 
 ## Custom implementations
 
-In `IScriptCommands` and `IBatchScriptCommands`, the cache members (`ExistsAsync` with cancellation, `FlushAsync`, `Load`, `Exists`, `Flush`) are required implementations, as are `IRespireClient.Functions` and `IRespireCommandQueue.Functions`. Custom implementations and decorators must implement or forward them; omitting them is a compile error. Convenience overloads that forward to required members remain available. See [interface compatibility](../intro.md#interface-compatibility) for the versioning policy.
+In `IRespireScriptCommands` and `IRespireBatchScriptCommands`, the cache members (`ExistsAsync` with cancellation, `FlushAsync`, `Load`, `Exists`, `Flush`) are required implementations, as are `IRespireClient.Functions` and `IRespireCommandQueue.Functions`. Custom implementations and decorators must implement or forward them; omitting them is a compile error. Convenience overloads that forward to required members remain available. See [interface compatibility](../intro.md#interface-compatibility) for the versioning policy.
 
 ## Redis references
 

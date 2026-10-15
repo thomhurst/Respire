@@ -266,7 +266,7 @@ public sealed class StreamingCommandHookTests
     private static FakeRespServer Server() => new(64, FakeRespServer.OkReply);
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
     };
     private static async Task<Exception> Failure(Func<Task> action)

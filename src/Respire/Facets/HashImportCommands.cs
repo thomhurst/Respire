@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Respire;
 
-public partial interface IHashCommands
+public partial interface IRespireHashCommands
 {
     /// <summary>Opens a dedicated Redis 8.10 hash-import connection. Cluster callers must supply a routing key.</summary>
     [Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]

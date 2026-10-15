@@ -162,5 +162,5 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
 
     private Task<RespireClient> ConnectAsync(int protocol)
         => RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol }).AsTask();
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol }).AsTask();
 }

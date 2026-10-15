@@ -4,7 +4,7 @@ using Respire.Internal;
 namespace Respire;
 
 /// <summary>Memory reclamation mode for FLUSHDB and FLUSHALL. All modes remove keys logically before replying.</summary>
-public enum ServerFlushMode
+public enum RespireServerFlushMode
 {
     /// <summary>Uses the server's configured default.</summary>
     Default,
@@ -23,7 +23,7 @@ internal sealed partial class ServerCommands
     private static readonly Verb FlushAllSyncVerb = new(-1, "FLUSHALL", "SYNC");
     private static readonly Verb FlushAllAsyncVerb = new(-1, "FLUSHALL", "ASYNC");
 
-    public ValueTask FlushDatabaseAsync(ServerFlushMode mode, CancellationToken cancellationToken)
+    public ValueTask FlushDatabaseAsync(RespireServerFlushMode mode, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
@@ -34,7 +34,7 @@ internal sealed partial class ServerCommands
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    public ValueTask FlushAllAsync(ServerFlushMode mode, CancellationToken cancellationToken)
+    public ValueTask FlushAllAsync(RespireServerFlushMode mode, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<bool>.Start();
         var observation = owner.Observation;
@@ -54,14 +54,14 @@ internal sealed partial class ServerCommands
             : DispatchResponseSource.Await(FlushClusterAsync(operation, command, cancellationToken, observation: observation));
     }
 
-    internal static Verb FlushVerb(bool allDatabases, ServerFlushMode mode) => (allDatabases, mode) switch
+    internal static Verb FlushVerb(bool allDatabases, RespireServerFlushMode mode) => (allDatabases, mode) switch
     {
-        (false, ServerFlushMode.Default) => FlushDbVerb,
-        (false, ServerFlushMode.Sync) => FlushDbSyncVerb,
-        (false, ServerFlushMode.Async) => FlushDbAsyncVerb,
-        (true, ServerFlushMode.Default) => FlushAllVerb,
-        (true, ServerFlushMode.Sync) => FlushAllSyncVerb,
-        (true, ServerFlushMode.Async) => FlushAllAsyncVerb,
+        (false, RespireServerFlushMode.Default) => FlushDbVerb,
+        (false, RespireServerFlushMode.Sync) => FlushDbSyncVerb,
+        (false, RespireServerFlushMode.Async) => FlushDbAsyncVerb,
+        (true, RespireServerFlushMode.Default) => FlushAllVerb,
+        (true, RespireServerFlushMode.Sync) => FlushAllSyncVerb,
+        (true, RespireServerFlushMode.Async) => FlushAllAsyncVerb,
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown flush mode."),
     };
 }

@@ -21,7 +21,7 @@ public class TypedSerializationAllocationTests
     [Arguments(true)]
     public async Task GenericJsonInt32AvoidsBoxingAndWriterAllocations(bool generated)
     {
-        var serializer = generated ? SystemTextJsonSerializer.FromContext(TestJsonContext.Default) : new SystemTextJsonSerializer();
+        var serializer = generated ? RespireSystemTextJsonSerializer.FromContext(TestJsonContext.Default) : new RespireSystemTextJsonSerializer();
         var destination = new ArrayBufferWriter<byte>(256);
         _ = MeasureJson(serializer, destination, false);
         _ = MeasureJson(serializer, destination, true);
@@ -40,7 +40,7 @@ public class TypedSerializationAllocationTests
         PausedWriteStream? transport = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
@@ -121,7 +121,7 @@ public class TypedSerializationAllocationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long MeasureJson(SystemTextJsonSerializer serializer, ArrayBufferWriter<byte> destination, bool allocate)
+    private static long MeasureJson(RespireSystemTextJsonSerializer serializer, ArrayBufferWriter<byte> destination, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < Count; index++)

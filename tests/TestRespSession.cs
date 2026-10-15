@@ -35,7 +35,7 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         try
         {
             // These parity fixtures support RESP3; Auto requests the preferred wire protocol.
-            var protocol = options.Protocol == RespProtocol.Auto ? RespProtocol.Resp3 : options.Protocol;
+            var protocol = options.Protocol == RespireProtocol.Auto ? RespireProtocol.Resp3 : options.Protocol;
             using var hello = await session.CommandAsync(deadline.Token, "HELLO", ((int)protocol).ToString());
             if (hello.IsError) throw new IOException(hello.GetErrorMessage());
             if (options.Database != 0)

@@ -30,7 +30,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, Serializer = serializer,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Serializer = serializer,
         });
         var view = client.WithKeyPrefix($"codec:{Guid.NewGuid():N}:");
         var small = new Payload("small");
@@ -116,10 +116,10 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
 
     private static RespireValueCodec CreateCodec(string algorithm) => algorithm switch
     {
-        "brotli" => new BrotliValueCodec(),
-        "deflate" => new DeflateValueCodec(),
-        "lz4" => new Lz4ValueCodec(),
-        "zstd" => new ZstdValueCodec(),
+        "brotli" => new RespireBrotliValueCodec(),
+        "deflate" => new RespireDeflateValueCodec(),
+        "lz4" => new RespireLz4ValueCodec(),
+        "zstd" => new RespireZstdValueCodec(),
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
     };
 

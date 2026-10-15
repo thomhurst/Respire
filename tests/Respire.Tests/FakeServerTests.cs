@@ -13,7 +13,7 @@ public class FakeServerTests
     public async Task RealClientPreservesBinaryValuesLargeRepliesAndOwnership(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         byte[] key = [0, 255, 128, 13, 10];
         var value = Enumerable.Range(0, 150_000).Select(index => (byte)index).ToArray();
         using var stored = await client.ExecuteAsync(RespireCommands.String.SET, key, value);
@@ -35,7 +35,7 @@ public class FakeServerTests
     {
         await using var server = new RespireFakeServer();
         await using var otherServer = new RespireFakeServer();
-        var options = server.CreateOptions() with { Protocol = (RespProtocol)protocol, Connections = 2 };
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol, Connections = 2 };
         await using var first = await RespireClient.ConnectAsync(options);
         await using var second = await RespireClient.ConnectAsync(options);
         await using var isolated = await RespireClient.ConnectAsync(otherServer.CreateOptions());
@@ -204,13 +204,13 @@ public class FakeServerTests
         var options = server.CreateOptions();
         foreach (var unsupported in new[]
         {
-            options with { Protocol = RespProtocol.Resp3, Password = "secret" },
+            options with { Protocol = RespireProtocol.Resp3, Password = "secret" },
             options with { Database = 1 },
         })
             await Assert.That(async () => await RespireClient.ConnectAsync(unsupported)).Throws<RespireException>();
         await Assert.That(async () => await RespireClient.ConnectAsync(options with { UseTls = true })).Throws<NotSupportedException>();
         await Assert.That(async () => await RespireClient.ConnectAsync(options with { Endpoints = [new("localhost", 1)] })).Throws<NotSupportedException>();
-        await using var working = await RespireClient.ConnectAsync(options with { ClientName = "test-client", Protocol = RespProtocol.Resp3 });
+        await using var working = await RespireClient.ConnectAsync(options with { ClientName = "test-client", Protocol = RespireProtocol.Resp3 });
         await Assert.That(await working.SetAsync("after-failed-handshake", "ok")).IsTrue();
     }
 
@@ -298,7 +298,7 @@ public class FakeServerTests
             _ => new InvalidOperationException("clock failure"),
         };
         var server = new RespireFakeServer(new ThrowingClock(expected));
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespProtocol.Resp2 });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespireProtocol.Resp2 });
         await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
         var failure = await Assert.That(async () => await Task.Run(async () => await server.DisposeAsync())
             .WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
@@ -336,7 +336,7 @@ public class FakeServerTests
         {
             for (var index = 0; index < 3; index++)
             {
-                await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespProtocol.Resp2 });
+                await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespireProtocol.Resp2 });
                 await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
             }
             // Wait for server-loop cleanup after the client observes EOF. Inspect only the

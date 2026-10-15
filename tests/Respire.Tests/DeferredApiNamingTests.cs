@@ -17,7 +17,10 @@ public class DeferredApiNamingTests
                     || type == typeof(RespireWatchedTransaction)
                     || type == typeof(RespireTransactionBase)
                     || type == typeof(IRespireCommandQueue)
-                    || type.IsInterface && type.Name.StartsWith("IBatch", StringComparison.Ordinal)));
+                    || type.IsInterface && type.Name.StartsWith("IRespireBatch", StringComparison.Ordinal)))
+            .ToArray();
+
+        await Assert.That(apiTypes.Contains(typeof(IRespireBatchStringCommands))).IsTrue();
 
         var offenders = apiTypes
             .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance))

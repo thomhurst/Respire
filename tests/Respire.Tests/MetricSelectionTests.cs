@@ -109,7 +109,7 @@ public class MetricSelectionTests
         await Assert.That(RespireMetrics.Configuration.Groups).IsEqualTo(RespireMetricGroups.Default);
         EmitCounters();
         RespireTelemetry.StartOperation("GET", "metric.example", 6379, 0).Complete("GET", "metric.example", 6379, 0);
-        RespireTelemetry.RecordSubscriptionGap(SubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
+        RespireTelemetry.RecordSubscriptionGap(RespireSubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
         await Assert.That(capture.Items.Count(item => item.Name.StartsWith("redis.", StringComparison.Ordinal))).IsEqualTo(2);
         await Assert.That(capture.Items.Any(item => item.Name == "db.client.operation.duration")).IsFalse();
         await Assert.That(capture.Items.Any(item => item.Name == "respire.pubsub.delivery.gaps")).IsTrue();
@@ -438,7 +438,7 @@ public class MetricSelectionTests
             await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, ClientName = "metric-selection",
             });
             var acquisitions = 0;
@@ -515,7 +515,7 @@ public class MetricSelectionTests
             };
             await using var client = RespireClient.Create(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+                Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], ClientName = "cluster-metric-selection",
             });
             using var capture = new Capture();
@@ -590,7 +590,7 @@ public class MetricSelectionTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+                Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)],
             });
             using var capture = new Capture(trace);
@@ -665,7 +665,7 @@ public class MetricSelectionTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], ClientName = "script-sampling",
         });
         var sampled = new ConcurrentQueue<Dictionary<string, object?>>();

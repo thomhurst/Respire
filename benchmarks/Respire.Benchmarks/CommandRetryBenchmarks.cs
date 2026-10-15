@@ -28,7 +28,7 @@ public class CommandRetryBenchmarks
         {
             Endpoints = { new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var port) ? port : 6379) },
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
         RespireRetryPolicy? policy = Policy switch

@@ -168,7 +168,7 @@ public class StringLcsIndexTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var client = root.WithKeyPrefix("tenant:");
@@ -198,7 +198,7 @@ public class StringLcsIndexTests
         await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes(topology), "-ERR wrong route\r\n"u8.ToArray());
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var client = root.WithKeyPrefix("tenant:{same}:");

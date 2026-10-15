@@ -8,7 +8,7 @@ namespace Respire;
 /// <param name="Approximate">Requests an estimated cardinality instead of an exact count.</param>
 public readonly record struct RespireSetUnionCountOptions(long Limit = 0, bool Approximate = false);
 
-public partial interface ISetCommands
+public partial interface IRespireSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> DifferenceCountAsync(RespireKey key, CancellationToken cancellationToken);

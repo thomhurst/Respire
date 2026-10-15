@@ -463,7 +463,7 @@ public class ClientCacheStringPublicationTests
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce, MaxSizeBytes = maxSizeBytes },
             CommandTimeout = Limit, ConnectTimeout = Limit,
-            Serializer = serializer ?? new SystemTextJsonSerializer(),
+            Serializer = serializer ?? new RespireSystemTextJsonSerializer(),
         });
 
     private sealed record Payload(string Text);

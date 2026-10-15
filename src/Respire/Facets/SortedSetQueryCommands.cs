@@ -6,7 +6,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface ISortedSetCommands
+public partial interface IRespireSortedSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> IntersectCountAsync(RespireKey key, CancellationToken cancellationToken);

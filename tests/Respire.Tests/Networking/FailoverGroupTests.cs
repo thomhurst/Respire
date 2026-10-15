@@ -85,13 +85,13 @@ public class FailoverGroupTests
         await using var unused = new FakeRespServer(FakeRespServer.PongReply);
         var duplicateSeeds = new RespireFailoverCandidate(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", unused.Port), new("127.0.0.1", unused.Port)],
             SentinelPrimaryName = "mymaster",
         });
         var singleSeed = new RespireFailoverCandidate(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", unused.Port)],
             SentinelPrimaryName = "mymaster",
         });
@@ -1043,7 +1043,7 @@ public class FailoverGroupTests
             new RespireFailoverCandidate(new RespireOptions
             {
                 UseCluster = true,
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 Connections = 1,
                 ConnectTimeout = TimeSpan.FromMilliseconds(200),
                 CommandTimeout = TimeSpan.FromMilliseconds(300),
@@ -1187,7 +1187,7 @@ public class FailoverGroupTests
     private static RespireFailoverCandidate Candidate(FakeRespServer server, int priority)
         => new(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(2),
             CommandTimeout = TimeSpan.FromSeconds(2),
@@ -1200,7 +1200,7 @@ public class FailoverGroupTests
     private static RespireFailoverCandidate SentinelCandidateWithSeeds(FakeRespServer[] sentinels, int priority = 0)
         => new(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ConnectTimeout = TimeSpan.FromMilliseconds(200),
             CommandTimeout = TimeSpan.FromMilliseconds(300),

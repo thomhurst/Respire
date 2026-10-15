@@ -23,7 +23,7 @@ public class MGetAllocationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = cluster,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = cluster,
             Endpoints = [new("127.0.0.1", server.Port)], ClientSideCache = new(),
         });
         RespireKey[] keys = ["{mget}:a", "{mget}:b"];

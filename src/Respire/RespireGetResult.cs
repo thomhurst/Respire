@@ -17,7 +17,7 @@ namespace Respire;
 /// var (found, hits) = await client.TryGetAsync&lt;int&gt;("page:hits");
 /// </code>
 /// </example>
-public readonly record struct RespireGet<T>(bool Found, T? Value)
+public readonly record struct RespireGetResult<T>(bool Found, T? Value)
 {
     /// <summary>The value when present, otherwise <paramref name="fallback"/>.</summary>
     public T? GetValueOrDefault(T? fallback) => Found ? Value : fallback;

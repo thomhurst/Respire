@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IKeyCommands",
+      "Type": "Respire.IRespireKeyCommands",
       "OwnerType": "Respire.KeyCommands",
       "Members": [
         "MoveAsync(RespireKey,int,CancellationToken):ValueTask<bool>",

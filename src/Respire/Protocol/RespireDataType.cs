@@ -1,7 +1,7 @@
 namespace Respire.Protocol;
 
 /// <summary>The RESP2/RESP3 wire type represented by a <see cref="RespireResult"/>.</summary>
-public enum RespDataType : byte
+public enum RespireDataType : byte
 {
     /// <summary>No parsed value.</summary>
     None = 0,

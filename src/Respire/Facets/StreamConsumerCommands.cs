@@ -3,27 +3,27 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IStreamCommands
+public partial interface IRespireStreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
+    ValueTask<RespireStreamEntry[]> ClaimAsync(RespireStreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
+    ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireStreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken);
 
     /// <summary>Lists pending entries with optional idle, consumer, and ID filters. Redis: XPENDING.</summary>
-    ValueTask<RespireStreamPendingEntry[]> PendingAsync(StreamPendingOptions options, RespireKey key,
+    ValueTask<RespireStreamPendingEntry[]> PendingAsync(RespireStreamPendingOptions options, RespireKey key,
         string group, CancellationToken cancellationToken = default);
 
     /// <summary>Transfers pending entries with optional delivery metadata changes. Redis: XCLAIM.</summary>
-    ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group,
+    ValueTask<RespireStreamEntry[]> ClaimAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Transfers pending entries with optional delivery metadata changes and cancellation. Redis: XCLAIM.</summary>
-    ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group,
+    ValueTask<RespireStreamEntry[]> ClaimAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Transfers pending IDs without incrementing delivery counters. Redis: XCLAIM JUSTID.</summary>
@@ -36,11 +36,11 @@ public partial interface IStreamCommands
 
     /// <summary>Transfers pending IDs and applies optional metadata changes. Redis: XCLAIM JUSTID.</summary>
     /// <remarks>Delivery counters do not increase automatically; RetryCount can explicitly set them.</remarks>
-    ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group,
+    ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Transfers pending IDs with optional metadata changes and cancellation. Redis: XCLAIM JUSTID.</summary>
-    ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group,
+    ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Scans and transfers pending IDs without incrementing delivery counters. Redis: XAUTOCLAIM JUSTID (6.2+).</summary>
@@ -51,7 +51,7 @@ public partial interface IStreamCommands
 internal sealed partial class StreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(RespireStreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
         => ClaimAsync(options, key, group, consumer, minIdle, [ids], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -59,15 +59,15 @@ internal sealed partial class StreamCommands
         => ClaimIdsAsync(key, group, consumer, minIdle, [ids], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
+    public ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireStreamClaimOptions options, RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
         => ClaimIdsAsync(options, key, group, consumer, minIdle, [ids], cancellationToken);
 
 
-    public ValueTask<RespireStreamPendingEntry[]> PendingAsync(StreamPendingOptions options, RespireKey key,
+    public ValueTask<RespireStreamPendingEntry[]> PendingAsync(RespireStreamPendingOptions options, RespireKey key,
         string group, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(group);
-        var count = options.Count ?? StreamPendingOptions.DefaultCount;
+        var count = options.Count ?? RespireStreamPendingOptions.DefaultCount;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count, nameof(options.Count));
         var idle = options.GetMinIdleMilliseconds();
         var args = new RespireValue[5 + (idle.HasValue ? 2 : 0) + (options.Consumer is null ? 0 : 1)];
@@ -87,11 +87,11 @@ internal sealed partial class StreamCommands
             static (StreamCommands _, in RespValue value) => ParsePendingEntries(in value));
     }
 
-    public ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group,
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, params ReadOnlySpan<RespireStreamId> ids)
         => ClaimAsync(options, key, group, consumer, minIdle, ids, CancellationToken.None);
 
-    public ValueTask<RespireStreamEntry[]> ClaimAsync(StreamClaimOptions options, RespireKey key, string group,
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         var resolvedKey = client.Key(in key);
@@ -107,17 +107,17 @@ internal sealed partial class StreamCommands
         TimeSpan minIdle, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
         => ClaimIdsAsync(default, key, group, consumer, minIdle, ids, cancellationToken);
 
-    public ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group,
+    public ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, params ReadOnlySpan<RespireStreamId> ids)
         => ClaimIdsAsync(options, key, group, consumer, minIdle, ids, CancellationToken.None);
 
-    public ValueTask<RespireStreamId[]> ClaimIdsAsync(StreamClaimOptions options, RespireKey key, string group,
+    public ValueTask<RespireStreamId[]> ClaimIdsAsync(RespireStreamClaimOptions options, RespireKey key, string group,
         string consumer, TimeSpan minIdle, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
         => client.ConvertResponseAsync("XCLAIM",
             BuildClaimCommand(options, client.Key(in key), group, consumer, minIdle, ids, justIds: true),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ParseStreamIds(in value));
 
-    private static Cmd1N BuildClaimCommand(StreamClaimOptions options, RespireValue key, string group,
+    private static Cmd1N BuildClaimCommand(RespireStreamClaimOptions options, RespireValue key, string group,
         string consumer, TimeSpan minIdle, ReadOnlySpan<RespireStreamId> ids, bool justIds)
     {
         ArgumentNullException.ThrowIfNull(group);

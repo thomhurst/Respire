@@ -164,5 +164,5 @@ public class SearchSpellCheckIntegrationTests(ModernRedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(int protocol, ModernRedisTestContainer? server = null, bool cache = false)
         => RespireClient.ConnectAsync(RespireOptions.Parse((server ?? fixture).ConnectionString) with
-        { Protocol = (RespProtocol)protocol, ClientSideCache = cache ? new() : null });
+        { Protocol = (RespireProtocol)protocol, ClientSideCache = cache ? new() : null });
 }

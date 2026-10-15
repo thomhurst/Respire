@@ -1,7 +1,7 @@
 namespace Respire;
 
 /// <summary>The resolution requested from an absolute expiry-time command.</summary>
-public enum ExpiryTimePrecision
+public enum RespireExpiryTimePrecision
 {
     /// <summary>Preserve millisecond resolution (PEXPIRETIME/HPEXPIRETIME).</summary>
     Milliseconds,
@@ -15,13 +15,13 @@ public enum ExpiryTimePrecision
 /// The default value represents a missing key or field.
 /// </summary>
 /// <remarks>
-/// This result preserves the server's absolute deadline. <see cref="RespireTtl"/> instead reports a
+/// This result preserves the server's absolute deadline. <see cref="RespireTtlResult"/> instead reports a
 /// remaining duration; converting it with the client's clock would lose the original deadline.
 /// Use <see cref="RespireExpiry"/> for command inputs.
 /// </remarks>
-public readonly struct RespireExpiryTime
+public readonly struct RespireExpiryTimeResult
 {
-    private RespireExpiryTime(bool exists, long? unixTimeMilliseconds)
+    private RespireExpiryTimeResult(bool exists, long? unixTimeMilliseconds)
     {
         Exists = exists;
         UnixTimeMilliseconds = unixTimeMilliseconds;
@@ -62,14 +62,14 @@ public readonly struct RespireExpiryTime
         return false;
     }
 
-    internal static RespireExpiryTime FromRedis(long timestamp, ExpiryTimePrecision precision)
+    internal static RespireExpiryTimeResult FromRedis(long timestamp, RespireExpiryTimePrecision precision)
         => timestamp switch
         {
-            -2 => new RespireExpiryTime(exists: false, unixTimeMilliseconds: null),
-            -1 => new RespireExpiryTime(exists: true, unixTimeMilliseconds: null),
-            > long.MaxValue / 1000 when precision == ExpiryTimePrecision.Seconds
+            -2 => new RespireExpiryTimeResult(exists: false, unixTimeMilliseconds: null),
+            -1 => new RespireExpiryTimeResult(exists: true, unixTimeMilliseconds: null),
+            > long.MaxValue / 1000 when precision == RespireExpiryTimePrecision.Seconds
                 => throw new RespireProtocolException($"Expiry timestamp cannot be represented in milliseconds: {timestamp}."),
-            >= 0 => new RespireExpiryTime(exists: true, precision == ExpiryTimePrecision.Seconds
+            >= 0 => new RespireExpiryTimeResult(exists: true, precision == RespireExpiryTimePrecision.Seconds
                 ? checked(timestamp * 1000) : timestamp),
             _ => throw new RespireProtocolException($"Unexpected expiry timestamp: {timestamp}."),
         };

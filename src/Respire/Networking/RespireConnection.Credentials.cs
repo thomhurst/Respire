@@ -284,7 +284,7 @@ internal sealed partial class RespireConnection
                 PublishCacheMetrics(InvalidateCache());
                 using var sequence = await connection.AcquireCredentialSequenceAsync(authCancellation.Token).ConfigureAwait(false);
                 using var reply = await connection.SendCredentialRenewalAsync(next, authCancellation.Token).ConfigureAwait(false);
-                if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
+                if (reply.Type != RespireDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
                     throw new RespireAuthenticationException($"Credential renewal was rejected by {connection.Host}:{connection.Port}.");
                 outcome = RenewalOutcome.Renewed;
             }

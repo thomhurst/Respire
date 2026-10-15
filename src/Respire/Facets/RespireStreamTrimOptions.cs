@@ -3,7 +3,7 @@ using System.Globalization;
 namespace Respire;
 
 /// <summary>Options for XTRIM. Exactly one of MaxLength and MinId must be set.</summary>
-public readonly record struct StreamTrimOptions
+public readonly record struct RespireStreamTrimOptions
 {
     /// <summary>Maximum number of entries to retain. Must be non-negative.</summary>
     public long? MaxLength { get; init; }
@@ -19,7 +19,7 @@ public readonly record struct StreamTrimOptions
     public long? Limit { get; init; }
 
     /// <summary>Redis 8.2+ consumer-group reference handling. Null omits the option for older servers.</summary>
-    public StreamReferencePolicy? ReferencePolicy { get; init; }
+    public RespireStreamReferencePolicy? ReferencePolicy { get; init; }
 
     internal int ValidateAndCountArguments(bool requireThreshold, string parameterName)
     {

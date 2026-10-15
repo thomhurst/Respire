@@ -21,16 +21,16 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
         private const int DatabaseShift = 32;
         private readonly ulong _bits = bits;
 
-        internal ChannelMetadata(SubscriptionKind kind, RespireChannelRoutingScope scope, int? database, int? slot)
+        internal ChannelMetadata(RespireSubscriptionKind kind, RespireChannelRoutingScope scope, int? database, int? slot)
             : this((byte)kind | ((ulong)(byte)scope << ScopeShift)
                 | ((ulong)(slot is { } value ? checked((ushort)(value + 1)) : (ushort)0) << SlotShift)
                 | ((ulong)(database is { } number ? (uint)number + 1 : 0) << DatabaseShift)) { }
 
-        internal SubscriptionKind Kind => (SubscriptionKind)(byte)_bits;
+        internal RespireSubscriptionKind Kind => (RespireSubscriptionKind)(byte)_bits;
         internal RespireChannelRoutingScope Scope => (RespireChannelRoutingScope)(byte)(_bits >> ScopeShift);
         internal int? Slot => (ushort)(_bits >> SlotShift) is 0 ? null : (ushort)(_bits >> SlotShift) - 1;
         internal int? Database => (uint)(_bits >> DatabaseShift) is 0 ? null : (int)((uint)(_bits >> DatabaseShift) - 1);
-        internal ChannelMetadata WithKind(SubscriptionKind kind) => new((_bits & ~0xffUL) | (byte)kind);
+        internal ChannelMetadata WithKind(RespireSubscriptionKind kind) => new((_bits & ~0xffUL) | (byte)kind);
     }
 
     /// <summary>Creates a literal channel from valid UTF-16 text, encoded as UTF-8.</summary>
@@ -45,7 +45,7 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     public RespireChannel(ReadOnlyMemory<byte> value)
         => _bytes = value.IsEmpty ? [] : value.ToArray();
 
-    private RespireChannel(byte[]? bytes, SubscriptionKind kind, RespireChannelRoutingScope routingScope = default,
+    private RespireChannel(byte[]? bytes, RespireSubscriptionKind kind, RespireChannelRoutingScope routingScope = default,
         int? notificationDatabase = null, int? routingSlot = null)
     {
         _bytes = bytes;
@@ -58,7 +58,7 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>The explicit subscription command family. Reserved names do not change this value.</summary>
     /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
-    public SubscriptionKind Kind => _metadata.Kind;
+    public RespireSubscriptionKind Kind => _metadata.Kind;
 
     /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
     public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
@@ -73,13 +73,13 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
 
     /// <summary>Marks a channel for SUBSCRIBE, without changing its bytes.</summary>
-    public static RespireChannel Literal(RespireChannel value) => value.WithKind(SubscriptionKind.Channel);
+    public static RespireChannel Literal(RespireChannel value) => value.WithKind(RespireSubscriptionKind.Channel);
 
     /// <summary>Marks a channel pattern for PSUBSCRIBE, without changing its bytes.</summary>
-    public static RespireChannel Pattern(RespireChannel value) => value.WithKind(SubscriptionKind.Pattern);
+    public static RespireChannel Pattern(RespireChannel value) => value.WithKind(RespireSubscriptionKind.Pattern);
 
     /// <summary>Marks a channel for SSUBSCRIBE and SPUBLISH, without changing its bytes.</summary>
-    public static RespireChannel Sharded(RespireChannel value) => value.WithKind(SubscriptionKind.Sharded);
+    public static RespireChannel Sharded(RespireChannel value) => value.WithKind(RespireSubscriptionKind.Sharded);
 
     /// <summary>Encodes valid UTF-16 text as an owned UTF-8 channel.</summary>
     /// <exception cref="ArgumentNullException">The text is null.</exception>
@@ -124,7 +124,7 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     internal ReadOnlySpan<byte> Span => _bytes;
 
-    internal RespireChannel WithKind(SubscriptionKind kind)
+    internal RespireChannel WithKind(RespireSubscriptionKind kind)
     {
         if (IsNotification && kind != Kind)
             throw new ArgumentException("Notification descriptors retain their subscription kind; construct an ordinary channel to override it.", nameof(kind));

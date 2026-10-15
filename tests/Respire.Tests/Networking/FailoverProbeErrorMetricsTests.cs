@@ -123,7 +123,7 @@ public class FailoverProbeErrorMetricsTests
 
     private static RespireOptions Options(int port) => new()
     {
-        Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)],
+        Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)],
         CommandTimeout = TimeSpan.FromSeconds(2),
     };
 

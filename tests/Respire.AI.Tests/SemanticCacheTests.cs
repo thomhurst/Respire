@@ -259,7 +259,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         {
             var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
             {
-                Username = username, Password = "test-password", Protocol = (RespProtocol)protocol,
+                Username = username, Password = "test-password", Protocol = (RespireProtocol)protocol,
             });
             await using var scenario = new Scenario(redis, new()
             {
@@ -398,7 +398,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
 
     private async Task<Scenario> Create(int protocol, RespireSemanticCacheOptions? options = null)
     {
-        var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        var redis = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         return new(redis, (options ?? new() { Dimensions = 2 }) with { CacheName = Guid.NewGuid().ToString("N") });
     }
 

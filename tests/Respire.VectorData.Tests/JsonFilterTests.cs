@@ -13,7 +13,7 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task CollectionFiltersRespectTightModelDepth(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "json-filter-depth:" + Guid.NewGuid().ToString("N"));
         var context = new JsonFilterContext(new System.Text.Json.JsonSerializerOptions { MaxDepth = 2 });
         store.RegisterMapper(new JsonTypedFilterMapper(context.JsonTypedFilterRecord));
@@ -36,7 +36,7 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task NestedOrdinalStringsFilterRetrievalKnnAndHybrid(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "json-filters:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new JsonMovieMapper());
         using var collection = store.GetJsonCollection<JsonMovie>("movies");
@@ -68,7 +68,7 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task JsonNumericBooleanCollectionAndMissingSemantics(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "json-filter-types:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new JsonTypedFilterMapper());
         using var collection = store.GetJsonCollection<JsonTypedFilterRecord>("records");

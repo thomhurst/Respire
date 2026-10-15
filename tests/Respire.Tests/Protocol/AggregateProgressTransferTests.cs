@@ -151,10 +151,10 @@ public class AggregateProgressTransferTests
     }
 
     [Test]
-    [Arguments('$', RespDataType.BulkString)]
-    [Arguments('=', RespDataType.VerbatimString)]
-    [Arguments('!', RespDataType.BulkError)]
-    public async Task TransferredNestedPrefixCompletesWithDirectFill(char marker, RespDataType type)
+    [Arguments('$', RespireDataType.BulkString)]
+    [Arguments('=', RespireDataType.VerbatimString)]
+    [Arguments('!', RespireDataType.BulkError)]
+    public async Task TransferredNestedPrefixCompletesWithDirectFill(char marker, RespireDataType type)
     {
         using var parser = new RespParseState(8);
         var input = Encoding.ASCII.GetBytes($"*2\r\n+saved\r\n*2\r\n:1\r\n{marker}10\r\n");

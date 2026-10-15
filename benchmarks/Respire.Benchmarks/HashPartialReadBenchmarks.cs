@@ -46,7 +46,7 @@ public class HashPartialReadBenchmarks
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new(host, port) }, Connections = 1,
-            Protocol = RespProtocol.Resp3, ClientSideCache = cache,
+            Protocol = RespireProtocol.Resp3, ClientSideCache = cache,
         });
         foreach (var key in _keys)
             foreach (var field in _fields)

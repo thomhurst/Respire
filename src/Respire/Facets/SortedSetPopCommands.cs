@@ -7,7 +7,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface ISortedSetCommands
+public partial interface IRespireSortedSetCommands
 {
     /// <summary>Pops from one key using ZMPOP or BZMPOP. Omit waitFor to return immediately; null waits indefinitely.</summary>
     ValueTask<RespireSortedSetPopManyResult?> PopManyAsync(RespireKey key, long count, bool descending, TimeSpan? waitFor, CancellationToken cancellationToken = default);
@@ -269,7 +269,7 @@ internal sealed partial class SortedSetCommands
 
     private static void ValidatePopEntries(in RespValue entries)
     {
-        if (entries.Type != RespDataType.Array || entries.AsArray().IsEmpty)
+        if (entries.Type != RespireDataType.Array || entries.AsArray().IsEmpty)
             throw new RespireProtocolException("Unexpected sorted-set pop entries shape.");
         foreach (ref readonly var pair in entries.AsArray())
             _ = PopReplyElements(in pair, 2);
@@ -277,7 +277,7 @@ internal sealed partial class SortedSetCommands
 
     private static ReadOnlySpan<RespValue> PopReplyElements(in RespValue reply, int count)
     {
-        if (reply.Type != RespDataType.Array || reply.AsArray().Length != count)
+        if (reply.Type != RespireDataType.Array || reply.AsArray().Length != count)
             throw new RespireProtocolException("Unexpected sorted-set pop reply shape.");
         return reply.AsArray();
     }

@@ -15,7 +15,7 @@ public class FakeStreamConfigurationTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "10000-0" }, ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
-        var options = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("p", "message") };
+        var options = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("p", "message") };
         var first = await client.Streams.AddAsync("s", options, ("f", "first"));
         clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(await client.Streams.AddAsync("s", options, ("f", "duplicate"))).IsEqualTo(first);
@@ -29,13 +29,13 @@ public class FakeStreamConfigurationTests
     public async Task ConfigurationAndDeduplicationPreserveBoundedReadsAndGroups(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyMaxSize = 2 });
-        var options = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("p", "message") };
+        var options = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("p", "message") };
         var first = await client.Streams.AddAsync("s", options, ("f", "first"));
         await Assert.That(await client.Streams.AddAsync("s", options, ("f", "duplicate"))).IsEqualTo(first);
-        var entries = await client.Streams.ReadAsync(new StreamReadOptions { MaxCount = 2 }, "s");
+        var entries = await client.Streams.ReadAsync(new RespireStreamReadOptions { MaxCount = 2 }, "s");
         await Assert.That(entries.Length).IsEqualTo(2);
         await Assert.That(entries[0].Id).IsEqualTo((RespireStreamId)"1-0");
         await client.Streams.CreateGroupAsync("s", "g", "0");
@@ -59,10 +59,10 @@ public class FakeStreamConfigurationTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
-        var identity = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("producer", "message") };
+        var identity = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("producer", "message") };
         var first = await client.Streams.AddAsync("s", identity, ("f", "first"));
 
         clock.Advance(TimeSpan.FromMilliseconds(999));
@@ -90,9 +90,9 @@ public class FakeStreamConfigurationTests
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1 });
         for (var index = 0; index < 64; index++)
-            await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual($"producer-{index}", "message") }, ("f", "v"));
+            await client.Streams.AddAsync("s", new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual($"producer-{index}", "message") }, ("f", "v"));
         clock.Advance(TimeSpan.FromMilliseconds(500));
-        var live = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("live", "message") };
+        var live = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("live", "message") };
         var liveId = await client.Streams.AddAsync("s", live, ("f", "v"));
         await Assert.That(ProducerCount(server)).IsEqualTo(65);
         clock.Advance(TimeSpan.FromMilliseconds(501));
@@ -128,8 +128,8 @@ public class FakeStreamConfigurationTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
-        var identity = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual("p", "i") };
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+        var identity = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual("p", "i") };
         await client.Streams.AddAsync("s", ("f", "seed"));
         await client.Streams.ConfigureAsync("s", new() { IdempotencyDurationSeconds = 1, IdempotencyMaxSize = 1 });
         var first = await client.Streams.AddAsync("s", identity, ("f", "first"));
@@ -144,7 +144,7 @@ public class FakeStreamConfigurationTests
         clock.Advance(TimeSpan.FromMilliseconds(1001));
         var expired = await client.Streams.AddAsync("s", identity, ("f", "expired"));
         await Assert.That(expired).IsNotEqualTo(first);
-        await client.Streams.AddAsync("s", identity with { Idempotency = StreamIdempotency.Manual("q", "i") }, ("f", "other producer"));
+        await client.Streams.AddAsync("s", identity with { Idempotency = RespireStreamIdempotency.Manual("q", "i") }, ("f", "other producer"));
         await Assert.That(await client.Streams.AddAsync("s", identity, ("f", "duplicate"))).IsEqualTo(expired);
         using (var expiry = await client.ExecuteAsync("PEXPIRE", "s", 1000)) { }
         await client.Streams.ConfigureAsync("s", new() { IdempotencyMaxSize = 2 });
@@ -159,7 +159,7 @@ public class FakeStreamConfigurationTests
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
-        RespireStreamAddOptions[] unsupported = [new() { MaxLength = 10 }, new() { Idempotency = StreamIdempotency.Automatic("p") }];
+        RespireStreamAddOptions[] unsupported = [new() { MaxLength = 10 }, new() { Idempotency = RespireStreamIdempotency.Automatic("p") }];
         foreach (var option in unsupported)
             await Assert.That(async () => await client.Streams.AddAsync("s", option, ("f", "v"))).Throws<RespireServerException>();
         await Assert.That(await client.Keys.ExistsAsync("s")).IsFalse();

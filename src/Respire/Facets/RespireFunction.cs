@@ -103,7 +103,7 @@ public sealed class RespireFunctionLibrary
 }
 
 /// <summary>How FUNCTION FLUSH releases memory.</summary>
-public enum FunctionFlushMode
+public enum RespireFunctionFlushMode
 {
     /// <summary>Use the server lazy-free setting.</summary>
     Default,
@@ -113,7 +113,7 @@ public enum FunctionFlushMode
     Async
 }
 /// <summary>How FUNCTION RESTORE handles existing libraries. Append is Redis's default.</summary>
-public enum FunctionRestorePolicy
+public enum RespireFunctionRestorePolicy
 {
     /// <summary>Append libraries; reject collisions.</summary>
     Append,

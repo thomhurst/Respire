@@ -36,7 +36,7 @@ await scores.RemoveAsync(42);
 The key formatter must be stable and give each distinct key a distinct field name. Supply
 byte codecs for values; source-generated JSON codecs can support records and Native AOT.
 Codecs must return independent values on decode, and keys must remain immutable while in use.
-Stored `default(TValue)` is distinct from an absent field through `RespireGet<TValue>.Found`.
+Stored `default(TValue)` is distinct from an absent field through `RespireGetResult<TValue>.Found`.
 
 ## Loading and persistence
 

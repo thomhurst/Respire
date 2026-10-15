@@ -192,7 +192,7 @@ public class ScriptBlockingCommandHookTests
         using var cancellation = new CancellationTokenSource();
         var hook = new RecordingHook();
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
-        await using var enumerator = client.Streams.ReadGroupAsync(new StreamReadOptions(), "stream", "group", "consumer",
+        await using var enumerator = client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer",
             cancellationToken: cancellation.Token).GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
         var commands = server.CommandsSeen;
@@ -377,16 +377,16 @@ public class ScriptBlockingCommandHookTests
             case "blocking-move": _ = await client.Lists.MoveManyAsync("source", "destination", TimeSpan.FromSeconds(1), cancellationToken: token); break;
             case "move": _ = await client.Lists.MoveManyAsync("source", "destination", cancellationToken: token); break;
             case "stream-group": await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", cancellationToken: token)) { } break;
-            case "stream-group-options": await foreach (var _ in client.Streams.ReadGroupAsync(new StreamReadOptions(), "stream", "group", "consumer", cancellationToken: token)) { } break;
+            case "stream-group-options": await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer", cancellationToken: token)) { } break;
             case "stream-group-pending": await foreach (var _ in client.Streams.ReadGroupAsync("stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
-            case "stream-group-options-pending": await foreach (var _ in client.Streams.ReadGroupAsync(new StreamReadOptions(), "stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
+            case "stream-group-options-pending": await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "stream", "group", "consumer", RespireStreamId.Beginning, cancellationToken: token)) { } break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
     };
 

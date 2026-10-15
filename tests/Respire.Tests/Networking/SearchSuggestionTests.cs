@@ -179,7 +179,7 @@ public class SearchSuggestionTests
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
         Endpoints = { new("127.0.0.1", server.Port) },
-        Protocol = (RespProtocol)protocol,
+        Protocol = (RespireProtocol)protocol,
         ThreadPoolMonitoring = false,
     };
 }

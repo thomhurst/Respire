@@ -27,7 +27,7 @@ public partial class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
         await WaitForInitialSentinelValidationAsync(client, sentinel);

@@ -257,11 +257,11 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         options.EntryLimit = 2;
         var clock = new Clock();
         var state = new DashboardState(client, options, clock);
-        await client.Streams.ReadGroupOnceAsync("{dash}:source", "g", "worker", new StreamReadOptions { Count = 1 });
+        await client.Streams.ReadGroupOnceAsync("{dash}:source", "g", "worker", new RespireStreamReadOptions { Count = 1 });
         var initial = await state.ReadAsync(default);
         var first = initial.Streams[0];
         await Assert.That(first.DeliveriesPerSecond).IsNull();
-        await client.Streams.ReadGroupOnceAsync("{dash}:source", "g", "worker", new StreamReadOptions { Count = 5 });
+        await client.Streams.ReadGroupOnceAsync("{dash}:source", "g", "worker", new RespireStreamReadOptions { Count = 5 });
         var shared = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => state.ReadAsync(default)));
         await Assert.That(shared.All(snapshot => ReferenceEquals(initial, snapshot))).IsTrue();
         clock.Advance(TimeSpan.FromSeconds(2));

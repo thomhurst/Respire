@@ -28,7 +28,7 @@ public class HashImportTests
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
-            Protocol = (RespProtocol)protocol, MaxInflightCommands = 2,
+            Protocol = (RespireProtocol)protocol, MaxInflightCommands = 2,
             CommandTimeout = TimeSpan.FromSeconds(2),
         });
         await using var session = await client.Hashes.CreateImportSessionAsync();
@@ -99,7 +99,7 @@ public class HashImportTests
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
         {
-            Protocol = (RespProtocol)protocol, CommandTimeout = TimeSpan.FromSeconds(2),
+            Protocol = (RespireProtocol)protocol, CommandTimeout = TimeSpan.FromSeconds(2),
         });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
@@ -132,7 +132,7 @@ public class HashImportTests
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
-            { Protocol = (RespProtocol)protocol, Connections = 3 });
+            { Protocol = (RespireProtocol)protocol, Connections = 3 });
         await using var first = await client.Hashes.CreateImportSessionAsync();
         await using var second = await client.Hashes.CreateImportSessionAsync();
         await first.PrepareAsync("schema", "z", "a");
@@ -160,7 +160,7 @@ public class HashImportTests
     public async Task QueuesSnapshotBinaryArgumentsAndApplyOnlyKeyPrefix(bool transaction, int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var root = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix("tenant:");
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = transaction ? null : session.CreateBatch();
@@ -197,7 +197,7 @@ public class HashImportTests
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
-            { MaxInflightCommands = capacity, Protocol = (RespProtocol)protocol });
+            { MaxInflightCommands = capacity, Protocol = (RespireProtocol)protocol });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         using var batch = session.CreateBatch();
         for (var index = 0; index < 32; index++)
@@ -245,7 +245,7 @@ public class HashImportTests
                 ? "-READONLY demoted primary\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
         await using var client = RespireClient.Create(new RespireOptions
-            { UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+            { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
         await session.PrepareAsync("schema", "field");
         if (mode == "immediate")
@@ -357,7 +357,7 @@ public class HashImportTests
             return inMulti ? "-NOPERM HIMPORT SET denied\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = (RespProtocol)protocol, Endpoints = [new("127.0.0.1", server.Port)] });
+            { Protocol = (RespireProtocol)protocol, Endpoints = [new("127.0.0.1", server.Port)] });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var transaction = session.CreateTransaction();
@@ -399,7 +399,7 @@ public class HashImportTests
             ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 128,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 128,
             Endpoints = [new("127.0.0.1", server.Port)], CredentialProvider = provider,
             CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
@@ -488,7 +488,7 @@ public class HashImportTests
         server.SuppressReply = command => command == "AUTH user second";
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
             CredentialProvider = provider, CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
@@ -539,7 +539,7 @@ public class HashImportTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
             CredentialProvider = provider, CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
@@ -610,7 +610,7 @@ public class HashImportTests
     public async Task ValidationAndServerErrorsPreserveExistingFieldsets(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await Assert.That(async () => await session.PrepareAsync("schema", "duplicate", "duplicate")).Throws<ArgumentException>();
@@ -671,7 +671,7 @@ public class HashImportTests
     public async Task DisconnectedImportsNeverReplay(string mode, bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         using var fault = server.InjectFault(mode == "transaction" ? "EXEC" : "HIMPORT",
@@ -732,7 +732,7 @@ public class HashImportTests
         await using var server = new FakeRespServer(20, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
             CircuitBreaker = circuits ? new() : null,
         });
         await using var session = await client.Hashes.CreateImportSessionAsync();
@@ -829,7 +829,7 @@ public class HashImportTests
     public async Task CancellationAfterSendExpiresSessionAndNeverReplays(string mode, bool afterExecution, int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         var gate = new RespireFakeGate();
@@ -885,7 +885,7 @@ public class HashImportTests
         server.ReplyOverride = (_, command) => command.StartsWith("HIMPORT DISCARD", StringComparison.Ordinal)
             ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply;
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+            { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
         await using var session = await root.WithKeyPrefix("prefix:").Hashes.CreateImportSessionAsync();
         byte[] name = [0, 255];
         byte[] field = [128, 0];
@@ -926,7 +926,7 @@ public class HashImportTests
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n");
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
         await using var root = RespireClient.Create(new RespireOptions
-            { UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+            { UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         var client = root.WithKeyPrefix("tenant:");
         await Assert.That(async () => await client.Hashes.CreateImportSessionAsync()).Throws<InvalidOperationException>();
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
@@ -1024,7 +1024,7 @@ public class HashImportTests
         server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1,
+            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var session = await client.Hashes.CreateImportSessionAsync("{one}:anchor");
@@ -1076,7 +1076,7 @@ public class HashImportTests
             return inMulti ? "+QUEUED\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+            { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         await session.PrepareAsync("schema", "field");
         await using var multi = session.CreateTransaction();
@@ -1100,7 +1100,7 @@ public class HashImportTests
     {
         await using var server = new FakeRespServer(20, Encoding.ASCII.GetBytes(reply));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
+            { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
         await using var session = await client.Hashes.CreateImportSessionAsync();
         async Task Send()
         {

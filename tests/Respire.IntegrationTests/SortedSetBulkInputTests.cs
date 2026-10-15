@@ -21,7 +21,7 @@ public class SortedSetBulkInputTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var key = $"sorted:binary:{Guid.NewGuid():N}";
         byte[] first = [0xff, 0x00, 0x80];
         byte[] second = [0xfe, 0x00, 0x80];

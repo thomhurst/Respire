@@ -298,13 +298,13 @@ public readonly record struct RespireStreamAddOptions
     public long? Limit { get; init; }
 
     /// <summary>Redis 8.2+ reference handling when trimming. Null preserves the legacy wire format.</summary>
-    public StreamReferencePolicy? ReferencePolicy { get; init; }
+    public RespireStreamReferencePolicy? ReferencePolicy { get; init; }
 
     /// <summary>Redis 8.6+ producer deduplication. Requires an automatically generated entry ID; null omits it.</summary>
-    public StreamIdempotency? Idempotency { get; init; }
+    public RespireStreamIdempotency? Idempotency { get; init; }
 
     /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
-    /// <remarks>Unlike XADD, <see cref="StreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
+    /// <remarks>Unlike XADD, <see cref="RespireStreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
     public bool ApproximateTrim
     {
         get => _approximateTrim ?? true;
@@ -318,7 +318,7 @@ public readonly record struct RespireStreamAddOptions
         init => _createStream = value;
     }
 
-    internal StreamTrimOptions ToTrimOptions() => new()
+    internal RespireStreamTrimOptions ToTrimOptions() => new()
     {
         MaxLength = MaxLength, MinId = MinId, Approximate = ApproximateTrim, Limit = Limit,
         ReferencePolicy = ReferencePolicy,
@@ -344,7 +344,7 @@ public readonly record struct RespireStreamAddOptions
 /// Stream commands. Collection cardinality uses <see cref="CountAsync"/>. Group reading is
 /// exposed as an endless async stream of entries.
 /// </summary>
-public partial interface IStreamCommands
+public partial interface IRespireStreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<RespireStreamId> AddAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken);
@@ -416,7 +416,7 @@ public partial interface IStreamCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Trims by MAXLEN or MINID; returns the number removed. Redis: XTRIM.</summary>
-    ValueTask<long> TrimAsync(RespireKey key, StreamTrimOptions options, CancellationToken cancellationToken = default);
+    ValueTask<long> TrimAsync(RespireKey key, RespireStreamTrimOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a consumer group (and, by default, the stream itself if missing). Returns false
@@ -492,7 +492,7 @@ public partial interface IStreamCommands
         string group,
         RespireStreamId? start = null,
         RespireStreamId? end = null,
-        int count = StreamPendingOptions.DefaultCount,
+        int count = RespireStreamPendingOptions.DefaultCount,
         string? consumer = null,
         CancellationToken cancellationToken = default);
 
@@ -558,7 +558,7 @@ public partial interface IStreamCommands
         int batchSize = 64, CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class StreamCommands(RespireClient client) : IStreamCommands
+internal sealed partial class StreamCommands(RespireClient client) : IRespireStreamCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<RespireStreamId> AddAsync(RespireKey key, (string Field, RespireValue Value) field, CancellationToken cancellationToken)
@@ -661,7 +661,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             || !client.Core.TryGetStreamProducerId(out var producerId)) return false;
         var messageId = new byte[16];
         _ = Guid.NewGuid().TryWriteBytes(messageId);
-        attached = options with { Idempotency = StreamIdempotency.Owned(producerId, messageId) };
+        attached = options with { Idempotency = RespireStreamIdempotency.Owned(producerId, messageId) };
         return true;
     }
 
@@ -872,10 +872,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
                 "XTRIM", new Cmd3(XTrim, client.Key(in key), "MAXLEN", maxLength), cancellationToken);
     }
 
-    public ValueTask<long> TrimAsync(RespireKey key, StreamTrimOptions options, CancellationToken cancellationToken = default)
+    public ValueTask<long> TrimAsync(RespireKey key, RespireStreamTrimOptions options, CancellationToken cancellationToken = default)
         => client.IntegerAsync("XTRIM", BuildTrimCommand(client, key, options), cancellationToken);
 
-    internal static Cmd1N BuildTrimCommand(RespireClient client, RespireKey key, StreamTrimOptions options)
+    internal static Cmd1N BuildTrimCommand(RespireClient client, RespireKey key, RespireStreamTrimOptions options)
     {
         var args = new RespireValue[options.ValidateAndCountArguments(requireThreshold: true, nameof(options))];
         options.CopyArgumentsTo(args);
@@ -1032,10 +1032,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         string group,
         RespireStreamId? start = null,
         RespireStreamId? end = null,
-        int count = StreamPendingOptions.DefaultCount,
+        int count = RespireStreamPendingOptions.DefaultCount,
         string? consumer = null,
         CancellationToken cancellationToken = default)
-        => PendingAsync(new StreamPendingOptions { Start = start, End = end, Count = count, Consumer = consumer },
+        => PendingAsync(new RespireStreamPendingOptions { Start = start, End = end, Count = count, Consumer = consumer },
             key, group, cancellationToken);
 
     public ValueTask<RespireStreamEntry[]> ClaimAsync(
@@ -1178,7 +1178,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
             return [];
         }
 
-        if (reply.Type == RespDataType.Map)
+        if (reply.Type == RespireDataType.Map)
         {
             // Flattened pairs: [key, entries, key, entries, …]; single stream requested.
             return ParseEntries(in streams[1], client, resolvedKey, group);
@@ -1469,7 +1469,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
 
     private static long ReadInteger(in RespValue value)
     {
-        if (value.Type == RespDataType.Integer)
+        if (value.Type == RespireDataType.Integer)
         {
             return value.AsInteger();
         }

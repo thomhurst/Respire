@@ -4,7 +4,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IStringCommands
+public partial interface IRespireStringCommands
 {
     /// <summary>Returns inclusive byte ranges and total subsequence length. Redis: LCS IDX (7.0+).</summary>
     /// <remarks>Both keys must share a Cluster slot after prefixing. Filtering does not change the total length.</remarks>
@@ -62,7 +62,7 @@ internal sealed partial class StringCommands
     internal static RespireLcsIndexResult ParseLcsIndex(in RespValue value)
     {
         var fields = value.AsArray();
-        if (value.Type is not (RespDataType.Array or RespDataType.Map) || fields.Length != 4)
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map) || fields.Length != 4)
             throw new RespireProtocolException("An LCS IDX reply must contain matches and len fields.");
         RespireLcsMatch[]? matches = null;
         long? length = null;
@@ -82,14 +82,14 @@ internal sealed partial class StringCommands
 
     private static RespireLcsMatch[] ParseLcsMatches(in RespValue value)
     {
-        if (value.Type != RespDataType.Array)
+        if (value.Type != RespireDataType.Array)
             throw new RespireProtocolException("LCS matches must be an array.");
         var entries = value.AsArray();
         var matches = new RespireLcsMatch[entries.Length];
         for (var i = 0; i < entries.Length; i++)
         {
             var match = entries[i].AsArray();
-            if (entries[i].Type != RespDataType.Array || match.Length is not (2 or 3))
+            if (entries[i].Type != RespireDataType.Array || match.Length is not (2 or 3))
                 throw new RespireProtocolException("An LCS match must contain two ranges and an optional length.");
             matches[i] = new(ParseLcsRange(in match[0]), ParseLcsRange(in match[1]),
                 match.Length == 3 ? LcsNonnegativeInteger(in match[2]) : null);
@@ -100,7 +100,7 @@ internal sealed partial class StringCommands
     private static RespireLcsRange ParseLcsRange(in RespValue value)
     {
         var pair = value.AsArray();
-        if (value.Type != RespDataType.Array || pair.Length != 2)
+        if (value.Type != RespireDataType.Array || pair.Length != 2)
             throw new RespireProtocolException("An LCS range must contain exactly two offsets.");
         var start = LcsNonnegativeInteger(in pair[0]);
         var end = LcsNonnegativeInteger(in pair[1]);
@@ -110,7 +110,7 @@ internal sealed partial class StringCommands
 
     private static long LcsNonnegativeInteger(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("LCS offsets and lengths must be nonnegative integers.");
         return value.AsInteger();
     }

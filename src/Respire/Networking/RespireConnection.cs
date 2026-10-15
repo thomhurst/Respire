@@ -664,7 +664,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
     }
 
-    private async ValueTask<RespProtocol> NegotiatePreferredProtocolAsync(RespireConnectionOptions options,
+    private async ValueTask<RespireProtocol> NegotiatePreferredProtocolAsync(RespireConnectionOptions options,
         CancellationToken cancellationToken, bool armCommandDeadline)
     {
         using var hello = await SendAsync(new Commands.HelloCommand(options.Username, options.Password),
@@ -684,12 +684,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 throw CreateHandshakeException(in hello, "HELLO", hint);
             }
             _logger?.HelloResp2Fallback(Host, Port);
-            return RespProtocol.Resp2;
+            return RespireProtocol.Resp2;
         }
         ValidateHelloProtocol(in hello);
         CaptureHelloAvailabilityZone(in hello);
         _logger?.HelloResp3Negotiated(Host, Port);
-        return RespProtocol.Resp3;
+        return RespireProtocol.Resp3;
     }
 
     /// <summary>
@@ -701,20 +701,20 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         // Automatic negotiation must finish before setup commands: an unsupported HELLO
         // may require RESP2 AUTH before SELECT, SETNAME, or capability discovery can succeed.
-        var requestedProtocol = options.Protocol == RespProtocol.Auto && options.EnableClientTracking
-            ? RespProtocol.Resp3 : options.Protocol;
-        var negotiatedProtocol = requestedProtocol == RespProtocol.Auto
+        var requestedProtocol = options.Protocol == RespireProtocol.Auto && options.EnableClientTracking
+            ? RespireProtocol.Resp3 : options.Protocol;
+        var negotiatedProtocol = requestedProtocol == RespireProtocol.Auto
             ? await NegotiatePreferredProtocolAsync(options, cancellationToken, armCommandDeadline).ConfigureAwait(false)
             : requestedProtocol;
 
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
         // Auto already sent HELLO above; only explicitly requested RESP3 enters this branch.
-        if (requestedProtocol == RespProtocol.Resp3)
+        if (requestedProtocol == RespireProtocol.Resp3)
         {
             (pending ??= new(3)).Add(("HELLO", SendAsync(
                 new Commands.HelloCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
-        else if (negotiatedProtocol == RespProtocol.Resp2 && options.Password is not null)
+        else if (negotiatedProtocol == RespireProtocol.Resp2 && options.Password is not null)
         {
             (pending ??= new(3)).Add(("AUTH", SendAsync(
                 new Commands.AuthCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
@@ -726,7 +726,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 new Commands.ClientSetNameCommand(options.ClientName), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
-        if (options.RequireClusterDatabaseSupport || options.DiscoverAvailabilityZone && negotiatedProtocol == RespProtocol.Resp2)
+        if (options.RequireClusterDatabaseSupport || options.DiscoverAvailabilityZone && negotiatedProtocol == RespireProtocol.Resp2)
         {
             // HELLO reports a Redis compatibility version on Valkey. INFO identifies the
             // actual implementation/version, independently for every new physical socket.
@@ -894,13 +894,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void ValidateHelloProtocol(in RespValue reply)
     {
-        if (reply.Type == RespDataType.Map)
+        if (reply.Type == RespireDataType.Map)
         {
             var fields = reply.AsArray();
             for (var i = 0; i + 1 < fields.Length; i += 2)
             {
                 if (fields[i].AsSpan().SequenceEqual("proto"u8)
-                    && fields[i + 1].Type == RespDataType.Integer
+                    && fields[i + 1].Type == RespireDataType.Integer
                     && fields[i + 1].AsInteger() == 3)
                 {
                     return;
@@ -916,12 +916,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void CaptureHelloAvailabilityZone(in RespValue reply)
     {
-        if (reply.Type != RespDataType.Map) return;
+        if (reply.Type != RespireDataType.Map) return;
         var fields = reply.AsArray();
         for (var index = 0; index + 1 < fields.Length; index += 2)
-            if (fields[index].Type is (RespDataType.BulkString or RespDataType.SimpleString)
+            if (fields[index].Type is (RespireDataType.BulkString or RespireDataType.SimpleString)
                 && fields[index].AsSpan().SequenceEqual("availability_zone"u8)
-                && fields[index + 1].Type is RespDataType.BulkString or RespDataType.SimpleString)
+                && fields[index + 1].Type is RespireDataType.BulkString or RespireDataType.SimpleString)
             {
                 var zone = fields[index + 1].AsString();
                 AvailabilityZone = string.IsNullOrWhiteSpace(zone) ? null : zone;
@@ -931,7 +931,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     private void CaptureInfoAvailabilityZone(in RespValue reply)
     {
-        if (reply.Type is not (RespDataType.BulkString or RespDataType.SimpleString)) return;
+        if (reply.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) return;
         foreach (var line in reply.AsString()!.Split('\n'))
             if (line.StartsWith("availability_zone:", StringComparison.Ordinal))
             {
@@ -2791,7 +2791,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         }
 
                         if (hasBulkHeader
-                            && bulkType == RespDataType.BulkString
+                            && bulkType == RespireDataType.BulkString
                             && _inflight.TryPeek(out var pending)
                             && pending is BulkStreamPendingResponseSource streamSource
                             && streamSource.IsFinalReply)
@@ -2912,7 +2912,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                             _completions.Flush();
                             // Only a top-level bulk string belongs to the FIFO head. Nested values,
                             // pushes, attributes, and errors must retain their normal parser semantics.
-                            var responseSource = parser.IsIdle && directFill.Type == RespDataType.BulkString
+                            var responseSource = parser.IsIdle && directFill.Type == RespireDataType.BulkString
                                 && _inflight.TryPeek(out var directHead) ? directHead : null;
                             var filled = await ReceiveLargeBulkAsync(
                                     receiveBuffer, start, end, directFill.Type, directFill.PayloadLength, responseSource)
@@ -3251,7 +3251,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
-        ReceiveBuffer receiveBuffer, int start, int end, RespDataType type, int payloadLength,
+        ReceiveBuffer receiveBuffer, int start, int end, RespireDataType type, int payloadLength,
         PendingResponse? responseSource)
     {
         var buffer = receiveBuffer.Array;
@@ -3410,10 +3410,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// incomplete or malformed frame, or a head source of another type.
     /// </summary>
     private bool TryCompleteBulkDirect(
-        ReadOnlySpan<byte> buffer, RespDataType type, long payloadLength, int headerEnd, out int frameEnd)
+        ReadOnlySpan<byte> buffer, RespireDataType type, long payloadLength, int headerEnd, out int frameEnd)
     {
         frameEnd = 0;
-        if (type != RespDataType.BulkString || !_inflight.TryPeek(out var head))
+        if (type != RespireDataType.BulkString || !_inflight.TryPeek(out var head))
         {
             return false;
         }
@@ -3601,8 +3601,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </summary>
     private bool TryRoutePush(in RespValue value)
     {
-        var isPushFrame = value.Type == RespDataType.Push;
-        if (!isPushFrame && (value.Type != RespDataType.Array || _pushHandler is null))
+        var isPushFrame = value.Type == RespireDataType.Push;
+        if (!isPushFrame && (value.Type != RespireDataType.Array || _pushHandler is null))
         {
             return false;
         }
@@ -4504,7 +4504,7 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Requested wire protocol. Auto permits only explicit unsupported-HELLO fallback.</summary>
     /// <remarks>Low-level connections retain their RESP2 default; RespireOptions supplies the client preference.</remarks>
-    public RespProtocol Protocol { get; init; } = RespProtocol.Resp2;
+    public RespireProtocol Protocol { get; init; } = RespireProtocol.Resp2;
 
     /// <summary>Initial size of the pooled parse buffer the receive loop reads into.</summary>
     public int ReceiveBufferSize { get; init; } = 64 * 1024;

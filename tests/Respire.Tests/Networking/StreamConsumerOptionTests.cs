@@ -20,7 +20,7 @@ public class StreamConsumerOptionTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = Create(server.Port);
         var minimum = TimeSpan.FromTicks(ticks);
-        var options = new StreamClaimOptions { IdleTime = TimeSpan.FromTicks(10001) };
+        var options = new RespireStreamClaimOptions { IdleTime = TimeSpan.FromTicks(10001) };
         await client.Streams.ClaimIdsAsync(options, "events", "g", "c", minimum, ["1-0"], cancellationToken: CancellationToken.None);
         await client.Streams.ClaimAsync(options, "events", "g", "c", minimum, ["1-0"], CancellationToken.None);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -62,7 +62,7 @@ public class StreamConsumerOptionTests
     {
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = Create(server.Port);
-        await client.Streams.PendingAsync(new StreamPendingOptions { MinIdle = TimeSpan.FromTicks(ticks) }, "events", "g");
+        await client.Streams.PendingAsync(new RespireStreamPendingOptions { MinIdle = TimeSpan.FromTicks(ticks) }, "events", "g");
         await Assert.That(server.ReceivedCommands).Contains($"XPENDING events g IDLE {milliseconds} - + 10");
     }
 
@@ -78,7 +78,7 @@ public class StreamConsumerOptionTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = Create(server.Port);
         await client.Streams.ReadGroupOnceAsync("events", "g", "c",
-            new StreamReadOptions { ClaimMinIdle = TimeSpan.FromTicks(ticks) });
+            new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.FromTicks(ticks) });
         await Assert.That(server.ReceivedCommands).Contains(
             $"XREADGROUP GROUP g c CLAIM {milliseconds} STREAMS events >");
     }
@@ -89,7 +89,7 @@ public class StreamConsumerOptionTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), "*0\r\n"u8.ToArray());
         await using var client = Create(server.Port);
         await client.Streams.PendingAsync("events", "g");
-        await client.Streams.PendingAsync(default(StreamPendingOptions), "events", "g");
+        await client.Streams.PendingAsync(default(RespireStreamPendingOptions), "events", "g");
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             Enumerable.Repeat("XPENDING events g - + 10", 2), CollectionOrdering.Matching);
     }
@@ -116,7 +116,7 @@ public class StreamConsumerOptionTests
         var client = owner.WithKeyPrefix("tenant:");
         byte[] key = "{s}:one"u8.ToArray();
         (RespireKey Key, RespireStreamId After)[] streams = [(key, ">"), ("{s}:two", ">")];
-        var options = new StreamReadOptions { Count = 2, NoAck = true, ClaimMinIdle = TimeSpan.FromMilliseconds(500) };
+        var options = new RespireStreamReadOptions { Count = 2, NoAck = true, ClaimMinIdle = TimeSpan.FromMilliseconds(500) };
         RespireStreamReadResult[] result;
         if (surface == 0)
         {
@@ -172,7 +172,7 @@ public class StreamConsumerOptionTests
         var client = owner.WithKeyPrefix("tenant:");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        var options = new StreamReadOptions
+        var options = new RespireStreamReadOptions
         {
             Count = 1, NoAck = true, ClaimMinIdle = TimeSpan.FromMilliseconds(500),
             WaitFor = Timeout.InfiniteTimeSpan,
@@ -204,12 +204,12 @@ public class StreamConsumerOptionTests
         await using var server = new FakeRespServer(empty, empty, empty, empty);
         await using var owner = Create(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
-        await client.Streams.PendingAsync(new StreamPendingOptions
+        await client.Streams.PendingAsync(new RespireStreamPendingOptions
         { MinIdle = TimeSpan.FromMilliseconds(250), Start = "(1-0", End = "9-0", Count = 3, Consumer = "c" }, "events", "g");
-        await client.Streams.ClaimAsync(new StreamClaimOptions
+        await client.Streams.ClaimAsync(new RespireStreamClaimOptions
         { IdleTime = TimeSpan.FromMilliseconds(1250), RetryCount = 7, Force = true, LastId = "9-0" },
             "events", "g", "c", TimeSpan.FromMilliseconds(500), "1-0", "2-0");
-        await client.Streams.ClaimIdsAsync(new StreamClaimOptions
+        await client.Streams.ClaimIdsAsync(new RespireStreamClaimOptions
         { DeliveryTime = DateTimeOffset.FromUnixTimeMilliseconds(123456), RetryCount = 0, Force = true, LastId = "10-0" },
             "events", "g", "c", TimeSpan.Zero, ["1-0"], CancellationToken.None);
         await client.Streams.ClaimIdsAsync("events", "g", "c", TimeSpan.Zero, "2-0");
@@ -247,19 +247,19 @@ public class StreamConsumerOptionTests
         await using var client = Create(server.Port);
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
-        foreach (var options in new StreamReadOptions[] { new() { NoAck = true }, new() { ClaimMinIdle = TimeSpan.Zero } })
+        foreach (var options in new RespireStreamReadOptions[] { new() { NoAck = true }, new() { ClaimMinIdle = TimeSpan.Zero } })
         {
             await Assert.That(async () => await client.Streams.ReadAsync(options, "events")).Throws<ArgumentException>();
             foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
                 await Assert.That(() => queue.Streams.Read(options, "events")).Throws<ArgumentException>();
         }
-        var negative = new StreamReadOptions { ClaimMinIdle = TimeSpan.FromTicks(-1) };
+        var negative = new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.FromTicks(-1) };
         await Assert.That(async () => await client.Streams.ReadGroupOnceAsync("events", "g", "c", negative)).Throws<ArgumentException>();
         foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
             await Assert.That(() => queue.Streams.ReadGroup("events", "g", "c", negative)).Throws<ArgumentException>();
-        foreach (var options in new StreamPendingOptions[] { new() { Count = 0 }, new() { MinIdle = TimeSpan.FromTicks(-1) } })
+        foreach (var options in new RespireStreamPendingOptions[] { new() { Count = 0 }, new() { MinIdle = TimeSpan.FromTicks(-1) } })
             await Assert.That(async () => await client.Streams.PendingAsync(options, "events", "g")).Throws<ArgumentException>();
-        StreamClaimOptions[] invalid = [new() { IdleTime = TimeSpan.FromTicks(-1) }, new() { RetryCount = -1 },
+        RespireStreamClaimOptions[] invalid = [new() { IdleTime = TimeSpan.FromTicks(-1) }, new() { RetryCount = -1 },
             new() { DeliveryTime = DateTimeOffset.UnixEpoch.AddMilliseconds(-1) },
             new() { IdleTime = TimeSpan.Zero, DeliveryTime = DateTimeOffset.UnixEpoch }];
         foreach (var options in invalid)
@@ -294,7 +294,7 @@ public class StreamConsumerOptionTests
             "*1\r\n*2\r\n$6\r\nevents\r\n*1\r\n*3\r\n$3\r\n1-0\r\n*0\r\n:100\r\n"u8.ToArray());
         await using var client = Create(server.Port);
         await Assert.That(async () => await client.Streams.ReadGroupOnceAsync("events", "g", "c",
-            new StreamReadOptions { ClaimMinIdle = TimeSpan.Zero })).Throws<RespireProtocolException>();
+            new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.Zero })).Throws<RespireProtocolException>();
     }
 
     [Test]
@@ -308,7 +308,7 @@ public class StreamConsumerOptionTests
         await using var client = Create(server.Port);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-        var options = new StreamReadOptions
+        var options = new RespireStreamReadOptions
         { NoAck = noAck, ClaimMinIdle = TimeSpan.Zero, WaitFor = Timeout.InfiniteTimeSpan };
         var pending = client.Streams.ReadGroupOnceAsync("events", "g", "c", options, cancellationToken: cancel.Token).AsTask();
         await received.Task.WaitAsync(timeout.Token);
@@ -319,5 +319,5 @@ public class StreamConsumerOptionTests
     }
 
     private static RespireClient Create(int port) => RespireClient.Create(new RespireOptions
-    { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)] });
+    { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)] });
 }

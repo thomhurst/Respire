@@ -207,13 +207,13 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             "ExecuteLeaseAsync" or "ExecuteLeaseSpanAsync" => containingType is "Respire.RespireClient"
                 or "Respire.IRespireClient"
                 or "Respire.ScriptCommands"
-                or "Respire.IScriptCommands"
+                or "Respire.IRespireScriptCommands"
                 or "Respire.FunctionCommands"
-                or "Respire.IFunctionCommands",
+                or "Respire.IRespireFunctionCommands",
             "GetLeaseAsync" => containingType is "Respire.RespireClient"
                 or "Respire.IRespireClient"
                 or "Respire.StringCommands"
-                or "Respire.IStringCommands",
+                or "Respire.IRespireStringCommands",
             _ => false,
         };
     }

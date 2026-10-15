@@ -4,7 +4,7 @@ using Record = VectorData.ConformanceTests.CollectionManagementTests<string>.Rec
 
 namespace Respire.VectorData.Conformance.Tests;
 
-internal sealed class LifecycleTestStore(RedisServerFixture server, RespProtocol protocol, bool json) : TestStore
+internal sealed class LifecycleTestStore(RedisServerFixture server, RespireProtocol protocol, bool json) : TestStore
 {
     private RespireClient? _client;
 

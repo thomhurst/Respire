@@ -4,7 +4,7 @@
       "Type": "Respire.RespireBatch",
       "OwnerType": "Respire.RespireBatch",
       "Members": [
-        "ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgement>",
+        "ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgementResult>",
         "ExecuteAndWaitForReplicationAsync(int,TimeSpan,CancellationToken):ValueTask<long>"
       ],
       "Contract": "Start ownership before argument validation and acknowledgement construction. Release the dedicated connection and cache fence before final publication. Successful sends use each pending default failure-only lease; transparent retries retain the pending owner."
@@ -14,8 +14,8 @@
     {
       "Name": "durability-aof",
       "Role": "final",
-      "Member": "Respire.RespireBatch.ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgement>",
-      "Owner": "Respire.RespireBatch.ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgement>",
+      "Member": "Respire.RespireBatch.ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgementResult>",
+      "Owner": "Respire.RespireBatch.ExecuteAndWaitForAofAsync(bool,int,TimeSpan,CancellationToken):ValueTask<RespireAofAcknowledgementResult>",
       "Contract": "Start ownership before argument validation and acknowledgement construction. Release the dedicated connection and cache fence before final publication. Successful sends use each pending default failure-only lease; transparent retries retain the pending owner."
     },
     {

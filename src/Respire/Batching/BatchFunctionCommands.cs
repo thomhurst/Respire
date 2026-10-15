@@ -8,7 +8,7 @@ namespace Respire;
 
 /// <summary>Deferred Redis Functions. Calls never reload or replay individually; eligible transactions can replay
 /// the complete unit under <see cref="RespireOptions.RetryPolicy"/>. Administration affects only the execution node.</summary>
-public interface IBatchFunctionCommands
+public interface IRespireBatchFunctionCommands
 {
     /// <summary>Queues FCALL/FCALL_RO. Results own GC storage; unread results retain no pooled buffers. Dispose invalidates nested views.</summary>
     RespirePending<RespireResult> Execute(RespireFunction function, RespireKey[]? keys = null, RespireValue[]? args = null);
@@ -35,16 +35,16 @@ public interface IBatchFunctionCommands
     /// <summary>Queues FUNCTION DELETE; true on OK.</summary>
     RespirePending<bool> Delete(string libraryName);
     /// <summary>Queues FUNCTION FLUSH; true on OK.</summary>
-    RespirePending<bool> Flush(FunctionFlushMode mode = FunctionFlushMode.Default);
+    RespirePending<bool> Flush(RespireFunctionFlushMode mode = RespireFunctionFlushMode.Default);
     /// <summary>Queues FUNCTION DUMP; the returned binary payload owns its storage.</summary>
     RespirePending<byte[]> Dump();
     /// <summary>Queues FUNCTION RESTORE; true on OK. Keep payload bytes unchanged until execution completes.</summary>
-    RespirePending<bool> Restore(ReadOnlyMemory<byte> payload, FunctionRestorePolicy policy = FunctionRestorePolicy.Append);
+    RespirePending<bool> Restore(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy = RespireFunctionRestorePolicy.Append);
     /// <summary>Queues FUNCTION STATS; metadata owns its storage.</summary>
     RespirePending<RespireFunctionStats> Stats();
 }
 
-internal sealed class BatchFunctionCommands(IPendingSink sink) : IBatchFunctionCommands
+internal sealed class BatchFunctionCommands(IPendingSink sink) : IRespireBatchFunctionCommands
 {
     public RespirePending<RespireResult> Execute(RespireFunction function, RespireKey[]? keys = null, RespireValue[]? args = null)
         => ExecuteSpan(function, keys.AsSpan(), args.AsSpan());
@@ -76,11 +76,11 @@ internal sealed class BatchFunctionCommands(IPendingSink sink) : IBatchFunctionC
         ArgumentException.ThrowIfNullOrWhiteSpace(libraryName);
         return sink.Add<Cmd1, bool>("FUNCTION DELETE", new Cmd1(FunctionVerbs.Delete, libraryName), static (_, value) => ResponseReader.Ok(in value));
     }
-    public RespirePending<bool> Flush(FunctionFlushMode mode = FunctionFlushMode.Default)
+    public RespirePending<bool> Flush(RespireFunctionFlushMode mode = RespireFunctionFlushMode.Default)
         => sink.Add<CmdN, bool>("FUNCTION FLUSH", FunctionCommands.FlushCommand(mode), static (_, value) => ResponseReader.Ok(in value));
     public RespirePending<byte[]> Dump()
         => sink.Add<Cmd, byte[]>("FUNCTION DUMP", new Cmd(FunctionVerbs.Dump), static (_, value) => value.AsSpan().ToArray());
-    public RespirePending<bool> Restore(ReadOnlyMemory<byte> payload, FunctionRestorePolicy policy = FunctionRestorePolicy.Append)
+    public RespirePending<bool> Restore(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy = RespireFunctionRestorePolicy.Append)
         => sink.Add<CmdN, bool>("FUNCTION RESTORE", FunctionCommands.RestoreCommand(payload, policy), static (_, value) => ResponseReader.Ok(in value));
     public RespirePending<RespireFunctionStats> Stats()
         => sink.Add<Cmd, RespireFunctionStats>("FUNCTION STATS", new Cmd(FunctionVerbs.Stats), static (_, value) => FunctionResponseReader.Stats(in value));

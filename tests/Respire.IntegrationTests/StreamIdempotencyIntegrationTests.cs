@@ -13,16 +13,16 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
     public async Task DuplicatesReturnOriginalOwnedIdsAcrossSurfaces([Matrix(2, 3)] int protocol, [Matrix(0, 1, 2)] int surface)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"production:{Guid.NewGuid():N}:");
         try
         {
             byte[] producer = [0, 255, 32], message = [254, 0];
-            var manual = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Manual(producer, message) };
-            var automatic = new RespireStreamAddOptions { Idempotency = StreamIdempotency.Automatic(producer) };
+            var manual = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual(producer, message) };
+            var automatic = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Automatic(producer) };
             Array.Fill(producer, (byte)'x'); Array.Fill(message, (byte)'x');
-            RespireStreamAddOptions[] options = [manual, manual, manual with { Idempotency = StreamIdempotency.Manual(new byte[] { 0, 255, 32 }, "distinct") },
-                manual with { Idempotency = StreamIdempotency.Manual("other-producer", new byte[] { 254, 0 }) }, automatic, automatic, automatic];
+            RespireStreamAddOptions[] options = [manual, manual, manual with { Idempotency = RespireStreamIdempotency.Manual(new byte[] { 0, 255, 32 }, "distinct") },
+                manual with { Idempotency = RespireStreamIdempotency.Manual("other-producer", new byte[] { 254, 0 }) }, automatic, automatic, automatic];
             string[] values = ["first", "ignored", "first", "first", "auto", "auto", "changed"];
             List<RespireStreamId?> ids = [];
             using var batch = surface == 1 ? view.CreateBatch() : null;
@@ -66,11 +66,11 @@ public class LegacyStreamIdempotencyIntegrationTests(RedisTestContainer fixture)
     public async Task OlderServersRejectWithoutWriteFallback(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"production-legacy:{Guid.NewGuid():N}";
         try
         {
-            foreach (var mode in new[] { StreamIdempotency.Automatic("p"), StreamIdempotency.Manual("p", "i") })
+            foreach (var mode in new[] { RespireStreamIdempotency.Automatic("p"), RespireStreamIdempotency.Manual("p", "i") })
             {
                 Func<Task> write = async () => await client.Streams.AddAsync(key, new RespireStreamAddOptions { Idempotency = mode }, ("f", "v"));
                 await write.Should().ThrowAsync<RespireServerException>();

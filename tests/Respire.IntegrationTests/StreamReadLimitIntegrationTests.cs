@@ -12,9 +12,9 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
     public async Task AcknowledgingAbsentGroupMatchesRedis(int protocol)
     {
         await using var fake = new Respire.Testing.RespireFakeServer();
-        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var redisClient = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var key = $"ack-absent:{Guid.NewGuid():N}";
         foreach (var client in new[] { fakeClient, redisClient })
         {
@@ -33,11 +33,11 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
     {
         var name = $"limits-block-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol, Connections = 1, ClientName = name });
+            with { Protocol = (RespireProtocol)protocol, Connections = 1, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         if (group) await client.Streams.CreateGroupAsync(name, "g", "0");
-        var options = new StreamReadOptions { MaxCount = 1, MaxSize = 1, WaitFor = Timeout.InfiniteTimeSpan };
+        var options = new RespireStreamReadOptions { MaxCount = 1, MaxSize = 1, WaitFor = Timeout.InfiniteTimeSpan };
         var read = (group ? client.Streams.ReadGroupOnceAsync(name, "g", "c", options, cancellationToken: timeout.Token)
             : client.Streams.ReadAsync(options, name, cancellationToken: timeout.Token)).AsTask();
         await WaitForBlockedAsync();
@@ -75,9 +75,9 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
     public async Task FakeMatchesRedisAcrossReplyBudgets(int protocol)
     {
         await using var fake = new Respire.Testing.RespireFakeServer();
-        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var redisClient = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var prefix = $"parity:{Guid.NewGuid():N}:";
         var clients = new[] { fakeClient.WithKeyPrefix(prefix), redisClient.WithKeyPrefix(prefix) };
         foreach (var client in clients)
@@ -86,7 +86,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
                     await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", new string('x', 50)));
         foreach (var budget in new[] { 1, 50, 100, 120, 160, 200, 250, 300, 400, 500, 1000 })
         {
-            var options = new StreamReadOptions { Count = 2, MaxCount = 3, MaxSize = budget };
+            var options = new RespireStreamReadOptions { Count = 2, MaxCount = 3, MaxSize = budget };
             foreach (var group in new[] { false, true })
             {
                 var results = new List<string[]>();
@@ -117,7 +117,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
     public async Task CumulativeLimitsApplyAcrossStreamsAndQueues(int protocol, int surface, bool group)
     {
         await using var owner = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var client = owner.WithKeyPrefix($"limits:{Guid.NewGuid():N}:");
         foreach (var key in new[] { "one", "two" })
         {
@@ -126,7 +126,7 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
             if (group) await client.Streams.CreateGroupAsync(key, "g", "0");
         }
         (RespireKey Key, RespireStreamId After)[] streams = [("one", group ? ">" : "0"), ("two", group ? ">" : "0")];
-        var options = new StreamReadOptions { Count = 2, MaxCount = 3, MaxSize = 100_000 };
+        var options = new RespireStreamReadOptions { Count = 2, MaxCount = 3, MaxSize = 100_000 };
         RespireStreamReadResult[] result;
         if (surface == 0) result = group ? await client.Streams.ReadGroupAsync(streams, "g", "c", options)
             : await client.Streams.ReadAsync(options, streams);
@@ -143,14 +143,14 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
         result.SelectMany(x => x.Entries).Should().HaveCount(3);
         result[0].Entries.Should().HaveCount(2);
         result[1].Entries.Should().ContainSingle();
-        var tiny = new StreamReadOptions { MaxSize = 1 };
+        var tiny = new RespireStreamReadOptions { MaxSize = 1 };
         var oversized = group
             ? await client.Streams.ReadGroupAsync([("one", "0"), ("two", "0")], "g", "c", tiny)
             : await client.Streams.ReadAsync(tiny, streams);
         oversized.SelectMany(x => x.Entries).Should().ContainSingle();
         if (group)
         {
-            var remaining = await client.Streams.ReadGroupAsync(streams, "g", "c", new StreamReadOptions { MaxCount = 1 });
+            var remaining = await client.Streams.ReadGroupAsync(streams, "g", "c", new RespireStreamReadOptions { MaxCount = 1 });
             remaining.SelectMany(x => x.Entries).Should().ContainSingle();
             await remaining[0].Entries[0].AckAsync();
         }

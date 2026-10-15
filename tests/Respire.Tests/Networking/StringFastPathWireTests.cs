@@ -237,7 +237,7 @@ public class StringFastPathWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
+            Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -788,7 +788,7 @@ public class StringFastPathWireTests
         TimeSpan commandTimeout)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = commandTimeout

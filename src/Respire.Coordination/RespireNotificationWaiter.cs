@@ -73,6 +73,6 @@ internal static class RespireNotificationWaiter
 internal interface IRespireNotificationWaitTarget<TResult>
 {
     ValueTask TrackAsync(CancellationToken cancellationToken);
-    ValueTask<RespireTtl> GetTimeToLiveAsync(CancellationToken cancellationToken);
+    ValueTask<RespireTtlResult> GetTimeToLiveAsync(CancellationToken cancellationToken);
     ValueTask<(bool Succeeded, TResult Result)> TryAsync(CancellationToken cancellationToken);
 }

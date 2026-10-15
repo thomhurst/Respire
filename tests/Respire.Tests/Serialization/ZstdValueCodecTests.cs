@@ -26,7 +26,7 @@ public class ZstdValueCodecTests
         // large workspaces. Each resulting frame must match a completely fresh context.
         foreach (var level in new[] { 3, 10, -1, 0, 22, 1, -131072, 3 })
         {
-            var codec = new ZstdValueCodec(new() { MinimumLength = 0 }, level);
+            var codec = new RespireZstdValueCodec(new() { MinimumLength = 0 }, level);
             foreach (var payload in new[] { random, repeated, boundary, large, repeated })
             {
                 using var fresh = new Compressor(level);
@@ -34,7 +34,7 @@ public class ZstdValueCodecTests
                 var frame = codec.Encode(payload);
                 var expected = compressed.Length < payload.Length ? compressed : payload;
                 await Assert.That(frame.AsSpan(RespireValueCodec.HeaderLength).SequenceEqual(expected)).IsTrue();
-                await Assert.That(new ZstdValueCodec().Decode(frame).AsSpan().SequenceEqual(payload)).IsTrue();
+                await Assert.That(new RespireZstdValueCodec().Decode(frame).AsSpan().SequenceEqual(payload)).IsTrue();
             }
             byte[] block = [0x28, 0xb5, 0x2f, 0xfd, 0x20, 64, 0x03, 0x02, 0, 0x41];
             foreach (var invalidLength in new[] { 63, 65 })
@@ -51,7 +51,7 @@ public class ZstdValueCodecTests
         await Task.WhenAll(Enumerable.Range(0, 16).Select(worker => Task.Run(async () =>
         {
             var level = (worker % 4) switch { 0 => -1, 1 => 0, 2 => 3, _ => 10 };
-            var codec = new ZstdValueCodec(new() { MinimumLength = 0 }, level);
+            var codec = new RespireZstdValueCodec(new() { MinimumLength = 0 }, level);
             var payload = Enumerable.Range(0, 16384).Select(index => (byte)((index + worker) % 127)).ToArray();
             using var fresh = new Compressor(level);
             var expected = fresh.Wrap(payload).ToArray();
@@ -67,8 +67,8 @@ public class ZstdValueCodecTests
     [Test]
     public async Task PoolEvictionAndTrimmingDisposeContextMemory()
     {
-        using var compressors = new ObjectPool<Compressor, ZstdValueCodec.CompressorPolicy>(1);
-        using var decompressors = new ObjectPool<Decompressor, ZstdValueCodec.DecompressorPolicy>(1);
+        using var compressors = new ObjectPool<Compressor, RespireZstdValueCodec.CompressorPolicy>(1);
+        using var decompressors = new ObjectPool<Decompressor, RespireZstdValueCodec.DecompressorPolicy>(1);
         var firstCompressor = compressors.Rent();
         var secondCompressor = compressors.Rent();
         var firstDecompressor = decompressors.Rent();
@@ -111,24 +111,24 @@ public class ZstdValueCodecTests
     {
         foreach (var level in new[] { -131072, -1, 0, 1, 3, 10, 22 })
         {
-            var codec = new ZstdValueCodec(new() { MinimumLength = 0 }, level);
+            var codec = new RespireZstdValueCodec(new() { MinimumLength = 0 }, level);
             foreach (var length in new[] { 0, 1, 2, 16, 64, 4096 })
             {
                 var payload = Enumerable.Repeat((byte)'A', length).ToArray();
                 var frame = codec.Encode(payload);
-                await Assert.That(new ZstdValueCodec().Decode(frame)).IsEquivalentTo(payload);
+                await Assert.That(new RespireZstdValueCodec().Decode(frame)).IsEquivalentTo(payload);
                 await Assert.That(frame.Length).IsLessThanOrEqualTo(length + RespireValueCodec.HeaderLength);
                 if (length <= 2) await Assert.That(frame[5]).IsEqualTo((byte)0);
             }
         }
-        await Assert.That(new ZstdValueCodec().Encode(new byte[4096])[5]).IsEqualTo((byte)4);
+        await Assert.That(new RespireZstdValueCodec().Encode(new byte[4096])[5]).IsEqualTo((byte)4);
     }
 
     [Test]
     public async Task InvalidLevelsFailAtConstruction()
     {
         foreach (var level in new[] { int.MinValue, -131073, 23, int.MaxValue })
-            await Assert.That(() => new ZstdValueCodec(level: level)).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => new RespireZstdValueCodec(level: level)).Throws<ArgumentOutOfRangeException>();
     }
 
     [Test]
@@ -136,7 +136,7 @@ public class ZstdValueCodecTests
     {
         // Standard magic, single-segment descriptor, content size 64, final RLE block of 64 'A's.
         byte[] block = [0x28, 0xb5, 0x2f, 0xfd, 0x20, 64, 0x03, 0x02, 0, 0x41];
-        var codec = new ZstdValueCodec();
+        var codec = new RespireZstdValueCodec();
         await Assert.That(codec.Decode(Frame(block, 64))).IsEquivalentTo(Enumerable.Repeat((byte)'A', 64));
         // An empty ordinary frame and a zero-length skippable frame are valid Zstandard
         // stream suffixes, but our algorithm ID requires exactly one ordinary frame.
@@ -164,8 +164,8 @@ public class ZstdValueCodecTests
     [Test]
     public async Task OversizedFrameIsRejectedBeforeDestinationAllocation()
     {
-        var codec = new ZstdValueCodec(new() { MaximumDecodedLength = 64 });
-        var oversized = new ZstdValueCodec().Encode(new byte[4096]);
+        var codec = new RespireZstdValueCodec(new() { MaximumDecodedLength = 64 });
+        var oversized = new RespireZstdValueCodec().Encode(new byte[4096]);
         await Assert.That(() => codec.Decode(oversized, new RejectingWriter())).Throws<InvalidDataException>();
     }
 
