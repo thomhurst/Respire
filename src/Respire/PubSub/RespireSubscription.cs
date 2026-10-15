@@ -198,7 +198,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         }
     }
 
-    private async ValueTask DisposeUnhookedAsync()
+    internal async ValueTask DisposeUnhookedAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {

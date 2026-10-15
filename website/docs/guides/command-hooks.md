@@ -16,7 +16,7 @@ streaming results, subscription setup/teardown, specialized server operations, c
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
 explicit pipeline/transaction members, WATCH setup, immediate hash imports,
 import-session acquisition and explicit health-probe rounds.
-Managed locks, semaphores and the tracked coordination leases described below are also covered.
+Managed locks, semaphores, countdown latches and the tracked coordination leases described below are also covered.
 This is **not a client-wide command-blocking policy**. Remaining composite coverage and
 the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
 :::
@@ -267,6 +267,8 @@ Use the names in this table when applying a policy to these APIs.
 | Read/write lock verification, renewal, release, disposal | `LOCK VERIFY READWRITE`, `LOCK RENEW READWRITE`, `LOCK RELEASE READWRITE`, `LOCK DISPOSE READWRITE` |
 | Hash-field lease immediate acquisition; notification-assisted waiting | `COORDINATION LEASE ACQUIRE`; `COORDINATION LEASE WAIT` |
 | Hash-field lease verification, renewal, release, disposal | `COORDINATION LEASE VERIFY`, `COORDINATION LEASE RENEW`, `COORDINATION LEASE RELEASE`, `COORDINATION LEASE DISPOSE` |
+| Countdown latch creation, joining and reset | `LATCH CREATE`, `LATCH JOIN`, `LATCH RESET` |
+| Countdown latch signal and wait | `LATCH COUNTDOWN`, `LATCH WAIT` |
 
 Fenced lock handles delegate to managed locks and use their `LOCK` names for subsequent
 operations. Admission precedes tracked connection setup, mutation fences, ownership changes
@@ -290,11 +292,30 @@ The acquisition scope ends when it returns the handle, not at the end of the lea
 Application calls from callbacks still receive independent scopes. Coordination coverage applies
 to a concrete `RespireClient`; custom `IRespireClient` decorators retain their own dispatch behavior.
 
-This is the tracked-owner inventory for [#1755](https://github.com/thomhurst/Respire/issues/1755).
-Countdown latch operations (including notification waits and compatibility fallback), rate
-limiters and multi-client Redlock groups still require their own composite boundaries in
-the [#1708 audit](https://github.com/thomhurst/Respire/issues/1708). Their lower-level hooks do
-not establish a once-only outer operation contract.
+Countdown latch admission precedes script dispatch and notification setup. Creation and
+joining complete when the handle (or a missing-generation null result) is returned; they
+do not span the generation's lifetime. Reset and count-down include the selected script's
+result handling. Joining and waiting include state validation and compatibility fallback
+on servers without read-only script commands. Invalid state or count conversion completes
+as `Failed`, rather than reporting a successful script leg.
+
+One `LATCH WAIT` scope includes repeated state reads, notification subscription, periodic
+resynchronization and foreground subscription/enumerator teardown. Reaching zero or finding
+a replaced/removed generation completes as `Succeeded` with the existing boolean result.
+Cancellation completes as `Canceled` after teardown. The wait's script, SUBSCRIBE and
+UNSUBSCRIBE legs do not invoke hooks: rejecting a separate application unsubscribe cannot
+prevent the wait from cleaning up its own subscription. Callback-initiated application
+commands still have independent scopes. Initially canceled calls are admitted before
+cancellation is reported, without sending commands. These boundaries apply to concrete
+clients and their views; opaque custom client decorators retain their own dispatch behavior.
+`CountdownLatchCommandHookTests` covers no-wire rejection for all five owners, final
+conversion, compatibility fallback, wait teardown, cancellation and application reentrancy.
+
+This extends the tracked-owner inventory for [#1755](https://github.com/thomhurst/Respire/issues/1755)
+with [#1767](https://github.com/thomhurst/Respire/issues/1767). Rate limiters
+([#1768](https://github.com/thomhurst/Respire/issues/1768)) and multi-client Redlock groups
+([#1769](https://github.com/thomhurst/Respire/issues/1769)) still require their own composite
+boundaries. Their lower-level hooks do not establish a once-only outer operation contract.
 
 The following paths also do not yet have a complete hook contract:
 remaining custom facet conversions and composite helpers.

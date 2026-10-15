@@ -21,10 +21,14 @@ public sealed class RespireCountdownLatch
     public string Generation => _generation;
 
     /// <summary>Atomically decrements this generation. Returns remaining count, or -1 if reset replaced it.</summary>
-    public async ValueTask<long> CountDownAsync(CancellationToken cancellationToken = default)
+    public ValueTask<long> CountDownAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LATCH COUNTDOWN", cancellationToken,
+            (Latch: this, Token: cancellationToken), static s => s.Latch.CountDownUnhookedAsync(s.Token));
+
+    private async ValueTask<long> CountDownUnhookedAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var result = await _client.Scripts.ExecuteLeaseAsync(RespireCoordination.CountDownLatch,
+        using var result = await CoordinationCommandHooks.ExecuteAsync(_client, RespireCoordination.CountDownLatch,
             [_key], [_generation, _channel], cancellationToken).ConfigureAwait(false);
         return long.TryParse(result.AsString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var remaining)
             ? remaining
@@ -33,14 +37,22 @@ public sealed class RespireCountdownLatch
 
     /// <summary>Waits until this generation reaches zero. Returns false if reset replaced it or the latch key was removed.</summary>
     /// <remarks>Pub/Sub notifications wake the waiter early. The waiter also re-reads Redis periodically, so a lost notification delays completion but cannot block it.</remarks>
-    public async ValueTask<bool> WaitAsync(CancellationToken cancellationToken = default)
+    public ValueTask<bool> WaitAsync(CancellationToken cancellationToken = default)
+        => CoordinationCommandHooks.RunAsync(_client, "LATCH WAIT", cancellationToken,
+            (Latch: this, Token: cancellationToken), static s => s.Latch.WaitUnhookedAsync(s.Token));
+
+    private async ValueTask<bool> WaitUnhookedAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var initialState = await ReadStateAsync(cancellationToken).ConfigureAwait(false);
         if (initialState.Generation != _generation) return false;
         if (initialState.Remaining == 0) return true;
 
-        var subscription = await _client.SubscribeAsync(new RespireChannel(_channel), cancellationToken: cancellationToken).ConfigureAwait(false);
+        // The wait owns this subscription. Its admission and owed teardown are internal
+        // legs, while opaque custom clients retain their existing dispatch behavior.
+        var subscription = await (_client is RespireClient concrete
+            ? concrete.SubscribeUnhookedAsync(new RespireChannel(_channel), cancellationToken)
+            : _client.SubscribeAsync(new RespireChannel(_channel), cancellationToken: cancellationToken)).ConfigureAwait(false);
         var messages = subscription.GetAsyncEnumerator(cancellationToken);
         Task<bool>? pending = null;
         try
@@ -82,7 +94,10 @@ public sealed class RespireCountdownLatch
             try
             {
                 // Completing the subscription first ends any outstanding MoveNextAsync before the enumerator is disposed.
-                await subscription.DisposeAsync().ConfigureAwait(false);
+                if (_client is RespireClient)
+                    await subscription.DisposeUnhookedAsync().ConfigureAwait(false);
+                else
+                    await subscription.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {
