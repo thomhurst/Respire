@@ -17,30 +17,32 @@ public sealed partial class RespireSearchClient
         string option = "*", CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(option);
-        using var result = await _commands.ConfigGetAsync(option, cancellationToken).ConfigureAwait(false);
-        const string command = "FT.CONFIG GET";
-        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
-        if (result.Type == RespireDataType.Map)
+        return await ExecuteAsync<IReadOnlyDictionary<string, string?>>(RespireSearchCommands.ConfigGet, [option], cancellationToken, result =>
         {
-            RespireSearchReply.RequirePairs(result, command);
-            for (var i = 0; i < result.Count; i += 2) AddConfigurationPair(result[i], result[i + 1], values);
-        }
-        else if (result.Type == RespireDataType.Array)
-        {
-            for (var i = 0; i < result.Count; i++)
+            const string command = "FT.CONFIG GET";
+            var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+            if (result.Type == RespireDataType.Map)
             {
-                var pair = result[i];
-                if (pair.Type != RespireDataType.Array || pair.Count != 2)
-                    throw RespireSearchReply.Unexpected(command, "an entry that is not a two-element array");
-                AddConfigurationPair(pair[0], pair[1], values);
+                RespireSearchReply.RequirePairs(result, command);
+                for (var i = 0; i < result.Count; i += 2) AddConfigurationPair(result[i], result[i + 1], values);
             }
-        }
-        else
-        {
-            throw RespireSearchReply.Unexpected(command, "a value that is not an array or map");
-        }
+            else if (result.Type == RespireDataType.Array)
+            {
+                for (var i = 0; i < result.Count; i++)
+                {
+                    var pair = result[i];
+                    if (pair.Type != RespireDataType.Array || pair.Count != 2)
+                        throw RespireSearchReply.Unexpected(command, "an entry that is not a two-element array");
+                    AddConfigurationPair(pair[0], pair[1], values);
+                }
+            }
+            else
+            {
+                throw RespireSearchReply.Unexpected(command, "a value that is not an array or map");
+            }
 
-        return new ReadOnlyDictionary<string, string?>(values);
+            return new ReadOnlyDictionary<string, string?>(values);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Sets one Search configuration option on one selected node.</summary>
@@ -57,9 +59,12 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(option);
         ArgumentNullException.ThrowIfNull(value);
-        using var result = await _commands.ConfigSetAsync(option, value, cancellationToken).ConfigureAwait(false);
-        if (result.Type != RespireDataType.SimpleString || result.AsString() != "OK")
-            throw RespireSearchReply.Unexpected("FT.CONFIG SET", "a value other than the simple string OK");
+        await ExecuteAsync(RespireSearchCommands.ConfigSet, [option, value], cancellationToken, result =>
+        {
+            if (result.Type != RespireDataType.SimpleString || result.AsString() != "OK")
+                throw RespireSearchReply.Unexpected("FT.CONFIG SET", "a value other than the simple string OK");
+            return true;
+        }).ConfigureAwait(false);
     }
 
     private static void AddConfigurationPair(

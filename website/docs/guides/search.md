@@ -13,6 +13,7 @@ Requirements and setup:
 - Search is built into Redis Open Source 8 and later. Older deployments need Redis Stack or the RediSearch module.
 - With C# 14 or later, use `client.Search` on `RespireClient` or `IRespireClient` (namespace `Respire.Search`). It does no I/O, reuses one wrapper per client and leaves client ownership with you. On earlier C# versions, use `new RespireSearchClient(client)`.
 - Key-prefixed views from `WithKeyPrefix` reject all Search commands, because index names are not keys. Put the prefix in the index definition's `Prefixes` instead.
+- With a concrete `RespireClient`, [command hooks](command-hooks.md#typed-search-operations) cover the final typed result, including parsing, hybrid capability probes and orphan-cursor cleanup. Cursor enumeration admits each page separately; early-exit cleanup has no separate hook. External decorators keep public interface dispatch and their own hook boundaries.
 
 ```csharp
 using Respire;

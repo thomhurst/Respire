@@ -46,28 +46,34 @@ public sealed partial class RespireSearchClient
         var arguments = CreateSuggestionArguments(
             [increment ? (RespireValue?)"INCR" : null],
             "PAYLOAD", payload is { } bytes ? (RespireValue?)bytes : null);
-        using var result = await _commands.AddSuggestionAsync(key, suggestion, score, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadIntegerCount(result, "FT.SUGADD");
+        return await ExecuteAsync<long>(RespireSearchCommands.AddSuggestion, [key, suggestion, score, .. arguments], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadIntegerCount(result, "FT.SUGADD");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Deletes a suggestion with FT.SUGDEL. Returns false when the dictionary or suggestion is absent.</summary>
     public async ValueTask<bool> DeleteSuggestionAsync(RespireKey key, string suggestion, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(suggestion);
-        using var result = await _commands.DeleteSuggestionAsync(key, suggestion, cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadIntegerCount(result, "FT.SUGDEL") switch
+        return await ExecuteAsync<bool>(RespireSearchCommands.DeleteSuggestion, [key, suggestion], cancellationToken, result =>
         {
-            0 => false,
-            1 => true,
-            _ => throw RespireSearchReply.Unexpected("FT.SUGDEL", "a deletion flag other than 0 or 1"),
-        };
+            return RespireSearchReply.ReadIntegerCount(result, "FT.SUGDEL") switch
+            {
+                0 => false,
+                1 => true,
+                _ => throw RespireSearchReply.Unexpected("FT.SUGDEL", "a deletion flag other than 0 or 1"),
+            };
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Returns a suggestion dictionary's entry count with FT.SUGLEN, or zero when absent.</summary>
     public async ValueTask<long> GetSuggestionCountAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.GetSuggestionCountAsync(key, cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadIntegerCount(result, "FT.SUGLEN");
+        return await ExecuteAsync<long>(RespireSearchCommands.GetSuggestionCount, [key], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadIntegerCount(result, "FT.SUGLEN");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned autocomplete suggestions from FT.SUGGET. An empty prefix is allowed.</summary>
@@ -85,24 +91,26 @@ public sealed partial class RespireSearchClient
             withScores ? (RespireValue?)"WITHSCORES" : null,
             withPayloads ? (RespireValue?)"WITHPAYLOADS" : null],
             "MAX", options?.Max is { } max ? (RespireValue?)max : null);
-        using var result = await _commands.GetSuggestionsAsync(key, prefix, arguments, cancellationToken).ConfigureAwait(false);
-        if (result.Type != RespireDataType.Array || result.IsNull)
-            throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
-        var width = 1 + (withScores ? 1 : 0) + (withPayloads ? 1 : 0);
-        if (result.Count % width != 0)
-            throw RespireSearchReply.Unexpected("FT.SUGGET", "an incomplete suggestion entry");
-        var suggestions = new RespireSearchSuggestion[result.Count / width];
-        for (var i = 0; i < suggestions.Length; i++)
+        return await ExecuteAsync<IReadOnlyList<RespireSearchSuggestion>>(RespireSearchCommands.GetSuggestions, [key, prefix, .. arguments], cancellationToken, result =>
         {
-            var offset = i * width;
-            var text = ReadSuggestionString(result[offset++]).AsString();
-            double? score = withScores ? ReadSuggestionScore(result[offset++]) : null;
-            ReadOnlyMemory<byte>? payload = null;
-            if (withPayloads && !result[offset].IsNull)
-                payload = ReadSuggestionString(result[offset]).AsBytes();
-            suggestions[i] = new(text, score, payload);
-        }
-        return suggestions;
+            if (result.Type != RespireDataType.Array || result.IsNull)
+                throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
+            var width = 1 + (withScores ? 1 : 0) + (withPayloads ? 1 : 0);
+            if (result.Count % width != 0)
+                throw RespireSearchReply.Unexpected("FT.SUGGET", "an incomplete suggestion entry");
+            var suggestions = new RespireSearchSuggestion[result.Count / width];
+            for (var i = 0; i < suggestions.Length; i++)
+            {
+                var offset = i * width;
+                var text = ReadSuggestionString(result[offset++]).AsString();
+                double? score = withScores ? ReadSuggestionScore(result[offset++]) : null;
+                ReadOnlyMemory<byte>? payload = null;
+                if (withPayloads && !result[offset].IsNull)
+                    payload = ReadSuggestionString(result[offset]).AsBytes();
+                suggestions[i] = new(text, score, payload);
+            }
+            return suggestions;
+        }).ConfigureAwait(false);
     }
 
     private static RespireValue[] CreateSuggestionArguments(

@@ -1,4 +1,5 @@
 using Respire;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire.Search;
@@ -26,11 +27,10 @@ namespace Respire.Search;
 /// </remarks>
 public sealed partial class RespireSearchClient
 {
-    private static readonly string[] DeleteDocumentsOption = ["DD"];
-    private static readonly string[] NoOptions = [];
+    private static readonly RespireValue[] DeleteDocumentsOption = ["DD"];
+    private static readonly RespireValue[] NoOptions = [];
 
     private readonly IRespireClient _client;
-    private readonly RespireSearchCommandsImplementation _commands;
     // Set once a COMMAND INFO probe has shown that the server knows FT.HYBRID, so later
     // FT.HYBRID errors are passed through without probing again.
     private volatile bool _hybridConfirmed;
@@ -40,14 +40,15 @@ public sealed partial class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
-        _commands = new RespireSearchCommandsImplementation(client);
     }
 
     /// <summary>Returns owned index names from FT._LIST on the selected node, without cluster fan-out.</summary>
     public async ValueTask<IReadOnlyList<string>> ListIndexesAsync(CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadStringCollection(result, "FT._LIST", "an index name");
+        return await ExecuteAsync<IReadOnlyList<string>>(RespireSearchCommands.ListIndexes, [], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadStringCollection(result, "FT._LIST", "an index name");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Creates an alias for an existing index with FT.ALIASADD.</summary>
@@ -55,14 +56,14 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(alias);
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
-        using var result = await _commands.AddAliasAsync(alias, index, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.AddAlias, [alias, index], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Deletes an alias with FT.ALIASDEL, leaving the index and its documents intact.</summary>
     public async ValueTask DeleteAliasAsync(string alias, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(alias);
-        using var result = await _commands.DeleteAliasAsync(alias, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.DeleteAlias, [alias], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Atomically points an alias at an existing index with FT.ALIASUPDATE, creating the alias if absent.</summary>
@@ -70,15 +71,17 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(alias);
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
-        using var result = await _commands.UpdateAliasAsync(alias, index, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.UpdateAlias, [alias, index], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned alias names for one index with FT.ALIASLIST. Requires Redis 8.10 or later.</summary>
     public async ValueTask<IReadOnlyList<string>> ListAliasesAsync(string index, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
-        using var result = await _commands.ListAliasesAsync(index, cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadStringCollection(result, "FT.ALIASLIST", "an alias name");
+        return await ExecuteAsync<IReadOnlyList<string>>(RespireSearchCommands.ListAliases, [index], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadStringCollection(result, "FT.ALIASLIST", "an alias name");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Creates a search index.</summary>
@@ -86,14 +89,15 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(definition);
-        using var result = await _commands.CreateAsync(name, definition.ToArguments(), cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.Create, [name, .. definition.ToArguments()], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Drops an index, optionally deleting indexed documents.</summary>
     public async ValueTask DropIndexAsync(string name, bool deleteDocuments = false, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        using var result = await _commands.DropAsync(name, deleteDocuments ? DeleteDocumentsOption : NoOptions, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.Drop,
+            [name, .. (deleteDocuments ? DeleteDocumentsOption : NoOptions)], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Adds a field to an existing index schema.</summary>
@@ -103,14 +107,16 @@ public sealed partial class RespireSearchClient
         ArgumentNullException.ThrowIfNull(field);
         var args = new List<RespireValue> { "SCHEMA", "ADD" };
         field.AddArguments(args);
-        using var result = await _commands.AlterAsync(name, [.. args], cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.Alter, [name, .. args], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Returns parsed FT.INFO details: name, document count, schema attributes, and every reported property.</summary>
     public async ValueTask<RespireSearchIndexInfo> GetIndexInfoAsync(string name, CancellationToken cancellationToken = default)
     {
-        using var result = await _commands.InfoAsync(RequireName(name), cancellationToken).ConfigureAwait(false);
-        return RespireSearchIndexInfo.Parse(result);
+        return await ExecuteAsync<RespireSearchIndexInfo>(RespireSearchCommands.Info, [RequireName(name)], cancellationToken, result =>
+        {
+            return RespireSearchIndexInfo.Parse(result);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Searches an index with a typed query and response model.</summary>
@@ -118,8 +124,10 @@ public sealed partial class RespireSearchClient
     {
         ArgumentNullException.ThrowIfNull(query);
         var options = query.Options ?? RespireSearchQueryOptions.Default;
-        using var result = await _commands.SearchAsync(RequireName(index), query.Expression.Value, options.ToArguments(), cancellationToken).ConfigureAwait(false);
-        return RespireSearchResult.Parse(result, options);
+        return await ExecuteAsync<RespireSearchResult>(RespireSearchCommands.Search, [RequireName(index), query.Expression.Value, .. options.ToArguments()], cancellationToken, result =>
+        {
+            return RespireSearchResult.Parse(result, options);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Runs an ordered aggregation pipeline. Each row contains named values.</summary>
@@ -127,8 +135,10 @@ public sealed partial class RespireSearchClient
     {
         expression.RequireValid(nameof(expression));
         var arguments = (options ?? RespireSearchAggregateOptions.Default).ToArguments();
-        using var result = await _commands.AggregateAsync(RequireName(index), expression.Value, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireSearchAggregateResult.Parse(result);
+        return await ExecuteAsync<RespireSearchAggregateResult>(RespireSearchCommands.Aggregate, [RequireName(index), expression.Value, .. arguments], cancellationToken, result =>
+        {
+            return RespireSearchAggregateResult.Parse(result);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -143,19 +153,12 @@ public sealed partial class RespireSearchClient
         expression.RequireValid(nameof(expression));
         var name = RequireName(index);
         var arguments = (options ?? RespireSearchAggregateOptions.Default).ToArguments(cursor ?? new RespireSearchCursorOptions());
-        using var result = await _commands.AggregateAsync(name, expression.Value, arguments, cancellationToken).ConfigureAwait(false);
-        try
+        return await ExecuteAsync<RespireSearchAggregateCursorPage>(RespireSearchCommands.Aggregate,
+            [name, expression.Value, .. arguments], cancellationToken, async (response, owner) =>
         {
-            return RespireSearchAggregateCursorPage.Parse(result, "FT.AGGREGATE", name);
-        }
-        catch
-        {
-            // The caller never receives the cursor ID when the first page cannot be parsed, so
-            // release it here instead of leaving it to MAXIDLE, then report the parse failure.
-            if (RespireSearchAggregateCursorPage.ReadCursorId(result) is var orphan and > 0)
-                await TryDeleteCursorAsync(name, orphan).ConfigureAwait(false);
-            throw;
-        }
+            using var result = await response.ConfigureAwait(false);
+            return await ParseCursorPageAsync(result, "FT.AGGREGATE", name, owner).ConfigureAwait(false);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -209,9 +212,13 @@ public sealed partial class RespireSearchClient
         if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
         if (count is <= 0) throw new ArgumentOutOfRangeException(nameof(count));
         var name = RequireName(index);
-        using var result = await _commands.CursorReadAsync(name, cursorId,
-            count is { } ? ["COUNT", count.Value] : [], cancellationToken).ConfigureAwait(false);
-        return RespireSearchAggregateCursorPage.Parse(result, "FT.CURSOR READ", name);
+        RespireValue[] arguments = count is { } ? [name, cursorId, "COUNT", count.Value] : [name, cursorId];
+        return await ExecuteAsync<RespireSearchAggregateCursorPage>(RespireSearchCommands.CursorRead,
+            arguments, cancellationToken, async (response, owner) =>
+        {
+            using var result = await response.ConfigureAwait(false);
+            return await ParseCursorPageAsync(result, "FT.CURSOR READ", name, owner).ConfigureAwait(false);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Deletes the cursor behind <paramref name="page"/> with <c>FT.CURSOR DEL</c>. A complete page has no cursor left to delete.</summary>
@@ -225,21 +232,39 @@ public sealed partial class RespireSearchClient
     public async ValueTask DeleteCursorAsync(string index, long cursorId, CancellationToken cancellationToken = default)
     {
         if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
-        using var result = await _commands.CursorDeleteAsync(RequireName(index), cursorId, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(RespireSearchCommands.CursorDelete, [RequireName(index), cursorId], cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask TryDeleteCursorAsync(string index, long cursorId)
+    private async ValueTask<RespireSearchAggregateCursorPage> ParseCursorPageAsync(RespireResult result,
+        string command, string index, RespireTelemetry.ErrorObservation owner)
+    {
+        try
+        {
+            return RespireSearchAggregateCursorPage.Parse(result, command, index);
+        }
+        catch
+        {
+            // The caller never receives an orphan ID from a malformed page. Cleanup belongs
+            // to this page, including a cursor read that returns a different ID.
+            if (RespireSearchAggregateCursorPage.ReadCursorId(result) is var orphan and > 0)
+                await TryDeleteCursorAsync(index, orphan, owner).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async ValueTask TryDeleteCursorAsync(string index, long cursorId, RespireTelemetry.ErrorObservation owner = default)
     {
         try
         {
             // Cleanup runs during unwinding, possibly after the caller's token was cancelled.
-            await DeleteCursorAsync(index, cursorId, CancellationToken.None).ConfigureAwait(false);
+            using var result = await ExecuteBorrowedAsync(RespireSearchCommands.CursorDelete,
+                [index, cursorId], CancellationToken.None, owner).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is RespireException or ObjectDisposedException or OperationCanceledException)
+        catch (Exception)
         {
-            // Best effort: the cursor may already have expired, or the connection may be gone. The
-            // server still frees it after MAXIDLE, and a cleanup failure must not hide the error or
-            // early exit that ended the enumeration.
+            // Best effort: the cursor may have expired, the connection may be gone, or a decorator
+            // may reject cleanup. The server still frees it after MAXIDLE, and cleanup must not
+            // hide the original failure or turn an early enumeration exit into an error.
         }
     }
 
@@ -249,12 +274,14 @@ public sealed partial class RespireSearchClient
     /// ("ERR unknown command ...") is used only when the probe itself is unavailable, for example
     /// when an ACL denies <c>COMMAND</c> or a proxy does not implement it.
     /// </summary>
-    private async ValueTask<bool> IsHybridMissingAsync(RespireServerException error, CancellationToken cancellationToken)
+    private async ValueTask<bool> IsHybridMissingAsync(RespireServerException error, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation owner)
     {
         if (_hybridConfirmed || error.Code != RespireErrorCodes.Err) return false;
         try
         {
-            using var info = await _client.ExecuteLeaseAsync(RespireCommands.Server.COMMAND_INFO, ["FT.HYBRID"], cancellationToken: cancellationToken).ConfigureAwait(false);
+            using var info = await ExecuteBorrowedAsync(RespireCommands.Server.COMMAND_INFO,
+                ["FT.HYBRID"], cancellationToken, owner).ConfigureAwait(false);
             if (info.Type is RespireDataType.Array or RespireDataType.Set && info.Count == 1)
             {
                 if (info[0].IsNull) return true;
@@ -319,8 +346,10 @@ public sealed partial class RespireSearchClient
         };
         var arguments = selected.ToArguments(
             new KeyValuePair<string, RespireValue>(RespireVectorSearchRequest.VectorParameterName, vector.Vector));
-        using var result = await _commands.SearchAsync(RequireName(index), vector.Expression.Value, arguments, cancellationToken).ConfigureAwait(false);
-        return RespireSearchResult.Parse(result, selected);
+        return await ExecuteAsync<RespireSearchResult>(RespireSearchCommands.Search, [RequireName(index), vector.Expression.Value, .. arguments], cancellationToken, result =>
+        {
+            return RespireSearchResult.Parse(result, selected);
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Runs an FT.HYBRID query. Redis Open Source 8.4.0 or later is required.</summary>
@@ -330,27 +359,29 @@ public sealed partial class RespireSearchClient
         ArgumentNullException.ThrowIfNull(query);
         var name = RequireName(index);
         var arguments = query.ToArguments();
-        RespireResult result;
-        try
+        return await ExecuteAsync<RespireSearchResult>(RespireSearchCommands.Hybrid,
+            [name, .. arguments], cancellationToken, async (response, owner) =>
         {
-            result = await _commands.HybridAsync(name, arguments, cancellationToken).ConfigureAwait(false);
-        }
-        catch (RespireServerException ex)
-        {
-            if (await IsHybridMissingAsync(ex, cancellationToken).ConfigureAwait(false))
+            RespireResult result;
+            try
             {
-                throw new NotSupportedException(
-                    "The server does not support FT.HYBRID, which requires Redis Open Source 8.4.0 or later with Redis Search. Server error: " + ex.Message,
-                    ex);
+                result = await response.ConfigureAwait(false);
             }
-
-            throw;
-        }
-
-        using (result)
-        {
-            return RespireSearchResult.ParseHybrid(result);
-        }
+            catch (RespireServerException ex)
+            {
+                if (await IsHybridMissingAsync(ex, cancellationToken, owner).ConfigureAwait(false))
+                {
+                    throw new NotSupportedException(
+                        "The server does not support FT.HYBRID, which requires Redis Open Source 8.4.0 or later with Redis Search. Server error: " + ex.Message,
+                        ex);
+                }
+                throw;
+            }
+            using (result)
+            {
+                return RespireSearchResult.ParseHybrid(result);
+            }
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Returns the server query plan text.</summary>
@@ -359,16 +390,17 @@ public sealed partial class RespireSearchClient
         expression.RequireValid(nameof(expression));
         var selected = options ?? RespireSearchExplainOptions.Default;
         RespireSearchDialect.Validate(selected.Dialect, requiresParameters: false);
-        string[] arguments = selected.Dialect is { } dialect
+        RespireValue[] arguments = selected.Dialect is { } dialect
             ? ["DIALECT", dialect.ToString(System.Globalization.CultureInfo.InvariantCulture)]
             : NoOptions;
-        using var result = selected.Cli
-            ? await _commands.ExplainCliAsync(RequireName(index), expression.Value, arguments, cancellationToken).ConfigureAwait(false)
-            : await _commands.ExplainAsync(RequireName(index), expression.Value, arguments, cancellationToken).ConfigureAwait(false);
-        if (!selected.Cli) return result.AsString();
-        var lines = new string[result.Count];
-        for (var i = 0; i < result.Count; i++) lines[i] = result[i].AsString();
-        return string.Join(Environment.NewLine, lines);
+        return await ExecuteAsync(selected.Cli ? RespireSearchCommands.ExplainCli : RespireSearchCommands.Explain,
+            [RequireName(index), expression.Value, .. arguments], cancellationToken, result =>
+        {
+            if (!selected.Cli) return result.AsString();
+            var lines = new string[result.Count];
+            for (var i = 0; i < result.Count; i++) lines[i] = result[i].AsString();
+            return string.Join(Environment.NewLine, lines);
+        }).ConfigureAwait(false);
     }
 
     private static string RequireName(string name)

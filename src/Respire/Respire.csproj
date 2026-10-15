@@ -32,6 +32,7 @@
     <InternalsVisibleTo Include="Respire.Json" />
     <!-- Typed probabilistic results own hooks through conversion and result cleanup. -->
     <InternalsVisibleTo Include="Respire.Probabilistic" />
+    <InternalsVisibleTo Include="Respire.Search" />
     <InternalsVisibleTo Include="Respire.IntegrationTests" />
     <InternalsVisibleTo Include="Respire.Benchmarks" />
     <!-- The optional package implements reserved value-codec algorithm ID 3. -->

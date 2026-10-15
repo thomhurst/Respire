@@ -15,7 +15,7 @@ APIs, function calls and mutations, script execution, dedicated blocking convert
 streaming results, subscription setup/teardown, specialized server operations, cluster scan pages,
 multi-key and partial hash cache reads, cache-aside factories, distributed-cache operations,
 explicit pipeline/transaction members, WATCH setup, immediate hash imports,
-import-session acquisition, explicit health-probe rounds, typed RedisJSON and Probabilistic operations.
+import-session acquisition, explicit health-probe rounds, typed RedisJSON, Probabilistic and Search operations.
 Managed locks, semaphores, countdown latches and the tracked coordination leases described below are also covered.
 This is **not a client-wide command-blocking policy**. Remaining composite coverage and
 the final policy audit are tracked in [#1708](https://github.com/thomhurst/Respire/issues/1708).
@@ -117,11 +117,48 @@ does not promise their outer typed result or composite lifetime:
 | Module | Result owner and remaining work |
 | --- | --- |
 | JSON | Typed deserialization, cardinality, text/numeric conversion, serialization and buffer cleanup are covered above; `Commands` transfers raw results. |
-| Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery: [#1777](https://github.com/thomhurst/Respire/issues/1777). |
+| Search | Typed query/profile/aggregation parsing, hybrid capability discovery and cursor recovery are covered below. |
 | TimeSeries | Typed reads/writes and chunked `MultiAddAsync` partial-progress conversion: [#1778](https://github.com/thomhurst/Respire/issues/1778). |
 | Probabilistic | Typed boolean/numeric/array and dump-chunk conversion and owned cleanup are covered above; Info and Top-K List transfer raw results. |
 
 This inventory does not establish a client-wide blocking policy; the final audit remains
+[#1708](https://github.com/thomhurst/Respire/issues/1708).
+
+### Typed Search operations
+
+With a concrete `RespireClient`, `RespireSearchClient` owns each command through typed
+reply parsing and disposal. Admission runs before dispatch; completion reports the final
+typed result, including conversion failures, cancellation and rejection, exactly once.
+Argument validation and command preflight precede admission. A rejected command sends
+nothing and cannot invalidate the client-side cache. With no hook configured, no hook
+context is created; parsing, recovery and normal dispatch remain available.
+
+Supported names are `FT.SEARCH` (also vector search), `FT.AGGREGATE` (including the first
+cursor page), `FT.HYBRID`, `FT.PROFILE` (all three profiling modes), `FT.INFO`, `FT.EXPLAIN`,
+`FT.EXPLAINCLI`, `FT._LIST`, `FT.ALIASLIST`, `FT.ALIASADD`, `FT.ALIASDEL`, `FT.ALIASUPDATE`,
+`FT.CREATE`, `FT.ALTER`, `FT.DROPINDEX`, `FT.CONFIG GET`, `FT.CONFIG SET`, `FT.CURSOR READ`,
+`FT.CURSOR DEL`, `FT.DICTADD`, `FT.DICTDEL`, `FT.DICTDUMP`, `FT.SPELLCHECK`, `FT.SUGADD`,
+`FT.SUGDEL`, `FT.SUGGET`, `FT.SUGLEN`, `FT.SYNUPDATE`, `FT.SYNDUMP` and `FT.TAGVALS`.
+
+The `COMMAND INFO` probe used to classify an `FT.HYBRID` failure belongs to the hybrid
+call. Its hook completes after probing and error translation; the probe creates no extra
+admission or completion. Likewise, when a malformed cursor page exposes an orphan cursor
+ID, best-effort deletion belongs to that page and finishes before its failure completion.
+Cleanup does not use the canceled caller token and preserves the original parse failure.
+
+`AggregatePagesAsync` has **page-level ownership**, with one `FT.AGGREGATE` owner and one
+`FT.CURSOR READ` owner for each requested continuation. Each completes before its page is
+yielded. Consumer processing and the enumeration lifetime are outside those owners.
+Early-exit or failed-read cleanup sends a best-effort cursor delete without another hook.
+Explicit application cursor deletes still have their own `FT.CURSOR DEL` owner; deleting
+an already complete page is a no-op and creates no owner.
+
+Hooks can start independent application commands, including probes and cursor deletes,
+which retain their own admission and completion. Suppression is never ambient. External
+`IRespireClient` decorators receive all dispatch, probes and cleanup through their public
+interface; Respire does not unwrap them. Their underlying client's raw-command hooks may
+therefore complete before the outer Search parser and observe recovery as separate calls.
+This does not establish a client-wide blocking policy; the final audit remains in
 [#1708](https://github.com/thomhurst/Respire/issues/1708).
 
 ### Cache operation owners

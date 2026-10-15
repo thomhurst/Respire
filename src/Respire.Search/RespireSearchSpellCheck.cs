@@ -91,24 +91,30 @@ public sealed partial class RespireSearchClient
     public async ValueTask<long> AddDictionaryTermsAsync(string dictionary, IReadOnlyList<string> terms, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionary);
-        using var result = await _commands.DictionaryAddAsync(dictionary, CopyDictionaryTerms(terms), cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadIntegerCount(result, "FT.DICTADD");
+        return await ExecuteAsync<long>(RespireSearchCommands.DictionaryAdd, [dictionary, .. (CopyDictionaryTerms(terms)).Select(static value => (RespireValue)value)], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadIntegerCount(result, "FT.DICTADD");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Deletes dictionary terms with FT.DICTDEL and returns the number removed.</summary>
     public async ValueTask<long> DeleteDictionaryTermsAsync(string dictionary, IReadOnlyList<string> terms, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionary);
-        using var result = await _commands.DictionaryDeleteAsync(dictionary, CopyDictionaryTerms(terms), cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadIntegerCount(result, "FT.DICTDEL");
+        return await ExecuteAsync<long>(RespireSearchCommands.DictionaryDelete, [dictionary, .. (CopyDictionaryTerms(terms)).Select(static value => (RespireValue)value)], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadIntegerCount(result, "FT.DICTDEL");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned dictionary terms with FT.DICTDUMP. Term order is unspecified.</summary>
     public async ValueTask<IReadOnlyList<string>> DumpDictionaryAsync(string dictionary, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionary);
-        using var result = await _commands.DictionaryDumpAsync(dictionary, cancellationToken).ConfigureAwait(false);
-        return RespireSearchReply.ReadStringCollection(result, "FT.DICTDUMP");
+        return await ExecuteAsync<IReadOnlyList<string>>(RespireSearchCommands.DictionaryDump, [dictionary], cancellationToken, result =>
+        {
+            return RespireSearchReply.ReadStringCollection(result, "FT.DICTDUMP");
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Returns owned spelling corrections with FT.SPELLCHECK (Search 1.4 or later).</summary>
@@ -118,8 +124,11 @@ public sealed partial class RespireSearchClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
         ArgumentNullException.ThrowIfNull(query);
-        using var result = await _commands.SpellCheckAsync(index, query, options?.ToArguments() ?? [], cancellationToken).ConfigureAwait(false);
-        return ParseSpellCheck(result);
+        return await ExecuteAsync<IReadOnlyList<RespireSearchSpellingCorrection>>(RespireSearchCommands.SpellCheck,
+            [index, query, .. (options?.ToArguments() ?? [])], cancellationToken, result =>
+        {
+            return ParseSpellCheck(result);
+        }).ConfigureAwait(false);
     }
 
     private static string[] CopyDictionaryTerms(IReadOnlyList<string> terms)
