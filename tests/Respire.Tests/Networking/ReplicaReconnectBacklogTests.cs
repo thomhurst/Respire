@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -13,6 +14,102 @@ public class ReplicaReconnectBacklogTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
     private static readonly byte[] Value = "$5\r\nvalue\r\n"u8.ToArray();
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_sharedGate")]
+    private static extern ref SemaphoreSlim SharedCursorGate(ReadCursorAffinity cursors);
+
+    [Test]
+    [Arguments(RespireReadFrom.Replica)]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    public async Task QueuedFreshRawCursorPreservesHealthySharedPin(RespireReadFrom policy)
+    {
+        await using var primary = Server();
+        await using var first = Server();
+        await using var second = Server();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        await using var view = client.WithReadFrom(policy);
+        using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"])) { }
+        await Assert.That(router.Cursors.TryGetShared(policy, out var original)).IsTrue();
+        var issuer = original!.Replica!.Endpoint.Port == first.Port ? first : second;
+        var other = ReferenceEquals(issuer, first) ? second : first;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // All read-policy views share the queue. A primary head holds admission without
+        // changing the replica selector's next candidate.
+        var head = router.EnqueueAsync(RespireReadFrom.Primary, async (_, token) =>
+        {
+            entered.TrySetResult();
+            await resume.Task.WaitAsync(token);
+            return true;
+        }, default, default).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            var fresh = view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]).AsTask();
+            await Assert.That(fresh.IsCompleted).IsFalse();
+            resume.TrySetResult();
+            await head.WaitAsync(Limit);
+            using (await fresh.WaitAsync(Limit)) { }
+            using (await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"])) { }
+            await Assert.That(router.Cursors.TryGetShared(policy, out var current)).IsTrue();
+            await Assert.That(ReferenceEquals(current, original)).IsTrue();
+            await Assert.That(issuer.ReceivedCommands.Count(command => command == "SCAN 0")).IsEqualTo(2);
+            await Assert.That(issuer.ReceivedCommands.Contains("SCAN 7")).IsTrue();
+            await Assert.That(other.ReceivedCommands.Any(command => command.StartsWith("SCAN ", StringComparison.Ordinal))).IsFalse();
+        }
+        finally { resume.TrySetResult(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task QueuedCursorReselectionRechecksSharedPinUnderGate(bool rejectedPin)
+    {
+        await using var primary = Server();
+        await using var first = Server();
+        await using var second = Server();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null, ConnectTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
+        });
+        var router = client.Core.ReadRouter;
+        var original = new ReadAffinity();
+        await router.GetCursorConnectionAsync(RespireReadFrom.Replica, original, false, default, default);
+        var replacement = new ReadAffinity();
+        var expected = await router.GetCursorConnectionAsync(RespireReadFrom.Replica, replacement, false, default, default);
+        if (rejectedPin)
+        {
+            router.Cursors.PinShared(RespireReadFrom.Replica, original);
+            router.FailedReplicaCooldown = TimeSpan.FromMinutes(1);
+            original.Replica!.MarkFailed();
+        }
+        var gate = SharedCursorGate(router.Cursors);
+        await gate.WaitAsync();
+        Task<Respire.Networking.RespireConnection> pending;
+        try
+        {
+            pending = router.GetCursorConnectionAsync(RespireReadFrom.Replica, null, false, default, default,
+                reselectSharedCursor: true).AsTask();
+            await Assert.That(pending.IsCompleted).IsFalse();
+            // Model another publisher winning the gate before this request. It has
+            // already issued a cursor on the replacement, which must remain pinned.
+            router.Cursors.PinShared(RespireReadFrom.Replica, replacement);
+        }
+        finally { gate.Release(); }
+        await Assert.That(ReferenceEquals(await pending.WaitAsync(Limit), expected)).IsTrue();
+        await Assert.That(router.Cursors.TryGetShared(RespireReadFrom.Replica, out var current)).IsTrue();
+        await Assert.That(ReferenceEquals(current, replacement)).IsTrue();
+    }
 
     [Test]
     [Arguments("string")]

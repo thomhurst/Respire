@@ -48,8 +48,11 @@ internal sealed class ReadCursorAffinity
             return first.Connection;
         }
 
-        ReadAffinity? shared;
-        if ((!reselectSharedCursor || isContinuation) && _shared.TryGetValue(readFrom, out shared))
+        // Queue admission alone does not invalidate a raw scan's issuing server.
+        // Only a fresh queued cursor may bypass a cooling pin to recover elsewhere.
+        var bypassCoolingPin = reselectSharedCursor && !isContinuation;
+        if (_shared.TryGetValue(readFrom, out var shared)
+            && (!bypassCoolingPin || shared.Replica is not { IsCoolingDown: true }))
         {
             if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
                 return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
@@ -68,7 +71,10 @@ internal sealed class ReadCursorAffinity
         else await _sharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!reselectSharedCursor && _shared.TryGetValue(readFrom, out shared))
+            // Another publisher may have replaced the rejected pin while we waited.
+            // Recheck the current pin under the gate before selecting and publishing.
+            if (_shared.TryGetValue(readFrom, out shared)
+                && (!bypassCoolingPin || shared.Replica is not { IsCoolingDown: true }))
             {
                 if (await IsPinCurrentAsync(router, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false))
                     return await GetSharedPinnedConnectionAsync(router, readFrom, shared, cancellationToken, observation, readyOnly).ConfigureAwait(false);
