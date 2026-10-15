@@ -1,8 +1,16 @@
+using System.Text;
+
 namespace Respire.Streaming;
 
 /// <summary>Scheduling settings for one enqueue. Durations use the Redis server clock.</summary>
 public sealed record RespireJobEnqueueOptions
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
+    /// <summary>Optional application group identity. Null means ungrouped; non-null values must be nonblank valid Unicode.</summary>
+    /// <remarks>Stored as envelope metadata, independently of the Redis consumer group. Does not impose scheduling or limits.</remarks>
+    public string? Group { get; init; }
+
     /// <summary>Delay before the job becomes eligible. Defaults to zero.</summary>
     public TimeSpan Delay { get; init; }
     /// <summary>Higher values run first within each bounded batch of due jobs. Defaults to zero.</summary>
@@ -14,6 +22,11 @@ public sealed record RespireJobEnqueueOptions
 
     internal void Validate()
     {
+        if (Group is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(Group);
+            _ = StrictUtf8.GetByteCount(Group);
+        }
         JobQueueScheduling.ValidateDuration(Delay, nameof(Delay), allowZero: true);
         if (TimeToLive is { } ttl) JobQueueScheduling.ValidateDuration(ttl, nameof(TimeToLive));
         JobQueueScheduling.ValidateDuration(DeduplicationWindow, nameof(DeduplicationWindow));

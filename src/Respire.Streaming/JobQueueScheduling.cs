@@ -80,6 +80,9 @@ internal static class JobQueueScheduling
         local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2],
             '_respire.job.priority', ARGV[5], '_respire.job.expires', tostring(expires),
             '_respire.job.attempts', '0'}
+        if ARGV[9] and ARGV[9] ~= '' then
+            table.insert(fields, '_respire.job.group'); table.insert(fields, ARGV[9])
+        end
         if ARGV[7] and ARGV[7] ~= '' then
             table.insert(fields, 'traceparent'); table.insert(fields, ARGV[7])
             if ARGV[8] and ARGV[8] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[8]) end
