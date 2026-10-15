@@ -126,6 +126,39 @@ public class RateLimiterCommandHookTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DifferentDenyListClientRetainsAdmissionEvenForCachedReads(bool cached)
+    {
+        await using var listServer = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var limiterServer = Server(false);
+        var listHook = new RecordingHook();
+        var limiterHook = new RecordingHook();
+        await using var listClient = await Connect(listServer, listHook);
+        await using var limiterClient = await Connect(limiterServer, limiterHook);
+        var list = new RespireRateLimitDenyList(listClient, "deny", TimeSpan.FromMinutes(1));
+        if (cached) await list.IsDeniedAsync("user");
+        listHook.Completed.Clear();
+        await using var limiter = limiterClient.Coordination.RateLimiters.WithDenyList(list, "user")
+            .FixedWindow("limit", 1, TimeSpan.FromSeconds(1));
+
+        listHook.Before = _ => throw new InvalidOperationException("Denied by list client");
+        await Assert.That(async () => await limiter.AcquireAsync()).Throws<InvalidOperationException>();
+        await Assert.That(listServer.CommandsSeen).IsEqualTo(cached ? 1 : 0);
+        await Assert.That(limiterServer.CommandsSeen).IsEqualTo(0);
+        await Assert.That(listHook.Completed.Single()).IsEqualTo(("RATE LIMIT DENY LIST READ", RespireCommandOutcome.Rejected));
+        await Assert.That(limiterHook.Completed.Single()).IsEqualTo(("RATE LIMIT ACQUIRE", RespireCommandOutcome.Failed));
+
+        listHook.Before = null;
+        using var lease = await limiter.AcquireAsync();
+        await Assert.That(lease.IsAcquired).IsFalse();
+        await Assert.That(listHook.Completed.Last()).IsEqualTo(("RATE LIMIT DENY LIST READ", RespireCommandOutcome.Succeeded));
+        await Assert.That(limiterHook.Completed.Last()).IsEqualTo(("RATE LIMIT ACQUIRE", RespireCommandOutcome.Succeeded));
+        await Assert.That(listServer.CommandsSeen).IsEqualTo(1);
+        await Assert.That(limiterServer.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task CoalescedReadCancellationCompletesEachCallerIndependently()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());

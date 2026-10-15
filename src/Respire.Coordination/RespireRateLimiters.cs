@@ -385,7 +385,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
     private async ValueTask<RateLimitLease> AcquireCoreAsync(int permitCount, CancellationToken cancellationToken)
     {
         var settingsVersion = Volatile.Read(ref _settingsVersion);
-        if (DenyList is not null && await DenyList.IsDeniedCoreAsync(Identity!, cancellationToken).ConfigureAwait(false))
+        if (DenyList is not null && await DenyList.IsDeniedForAcquisitionAsync(_coordination.Client,
+            Identity!, cancellationToken).ConfigureAwait(false))
             return new RedisRateLimitLease(false, null, denyList: true);
         if (permitCount == 0) return await AcquireFromRedisAsync(0, cancellationToken, checkDenyList: false).ConfigureAwait(false);
         if (Volatile.Read(ref _queuedPermits) != 0)
@@ -403,7 +404,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         bool checkDenyList = true)
     {
         if (checkDenyList && DenyList is not null
-            && await DenyList.IsDeniedCoreAsync(Identity!, cancellationToken).ConfigureAwait(false))
+            && await DenyList.IsDeniedForAcquisitionAsync(_coordination.Client,
+                Identity!, cancellationToken).ConfigureAwait(false))
             return new RedisRateLimitLease(false, null, denyList: true);
         await EnterRedisAttemptAsync(cancellationToken).ConfigureAwait(false);
         var attempt = ExecuteRegisteredAttemptAsync(permitCount, cancellationToken);

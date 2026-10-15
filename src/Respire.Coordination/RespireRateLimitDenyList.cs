@@ -79,8 +79,14 @@ public sealed class RespireRateLimitDenyList
                 (List: this, Identity: identity, Token: cancellationToken),
                 static s => s.List.IsDeniedCoreAsync(s.Identity, s.Token));
 
-    // Acquisitions own admission across cache reads and every queued retry.
-    internal async ValueTask<bool> IsDeniedCoreAsync(string identity, CancellationToken cancellationToken)
+    // Only a shared concrete client has already admitted this policy boundary.
+    internal ValueTask<bool> IsDeniedForAcquisitionAsync(IRespireClient acquisitionClient,
+        string identity, CancellationToken cancellationToken)
+        => _client is RespireClient && ReferenceEquals(_client, acquisitionClient)
+            ? IsDeniedCoreAsync(identity, cancellationToken)
+            : IsDeniedAsync(identity, cancellationToken);
+
+    private async ValueTask<bool> IsDeniedCoreAsync(string identity, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(identity);
         cancellationToken.ThrowIfCancellationRequested();
