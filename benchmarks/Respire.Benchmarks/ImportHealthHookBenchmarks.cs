@@ -56,6 +56,9 @@ public class ImportHealthHookBenchmarks
 
     // Acquisition includes its mandatory connection close; no leases accumulate between invocations.
     [Benchmark]
+    // Bound socket churn like ConnectionEstablishmentBenchmarks: pilot calibration otherwise
+    // opens thousands of connections per iteration and can exhaust runner Docker/NAT resources.
+    [InvocationCount(64)]
     public async ValueTask OpenAndDisposeSession()
     {
         await using var session = await _client.Hashes.CreateImportSessionAsync();
