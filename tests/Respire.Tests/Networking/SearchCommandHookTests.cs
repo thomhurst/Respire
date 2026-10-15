@@ -284,10 +284,71 @@ public class SearchCommandHookTests
         await Assert.That(proxy.Commands.ToArray()).IsEquivalentTo(["FT.HYBRID", "COMMAND INFO"]);
     }
 
+    [Test]
+    [Arguments("cursor", false)]
+    [Arguments("cursor", true)]
+    [Arguments("read", false)]
+    [Arguments("read", true)]
+    public async Task DecoratorCleanupFailurePreservesMalformedPageError(string route, bool synchronousFailure)
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command switch
+        {
+            _ when command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal) || command.StartsWith("FT.CURSOR READ", StringComparison.Ordinal)
+                => "*2\r\n+bad\r\n:42\r\n"u8.ToArray(),
+            "FT.CURSOR DEL idx 42" => FakeRespServer.OkReply,
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server, null));
+        var expected = await Failure(() => Call(client.Search, route));
+        var decorated = DispatchProxy.Create<IRespireClient, ForwardingClient>();
+        var proxy = (ForwardingClient)decorated;
+        proxy.Inner = client;
+        proxy.CursorCleanupError = new InvalidOperationException("decorator rejects cleanup");
+        proxy.FailCleanupSynchronously = synchronousFailure;
+
+        var error = await Failure(() => Call(new RespireSearchClient(decorated), route));
+
+        await Assert.That(error.GetType()).IsEqualTo(expected.GetType());
+        await Assert.That(error.Message).IsEqualTo(expected.Message);
+        await Assert.That(proxy.Commands.ToArray()).IsEquivalentTo(
+            [route == "cursor" ? "FT.AGGREGATE" : "FT.CURSOR READ", "FT.CURSOR DEL"]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DecoratorCleanupFailureDoesNotFailEarlyEnumerationExit(bool synchronousFailure)
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command.StartsWith("FT.AGGREGATE", StringComparison.Ordinal)
+            ? "*2\r\n*1\r\n:0\r\n:42\r\n"u8.ToArray() : null;
+        await using var client = await RespireClient.ConnectAsync(Options(server, null));
+        var decorated = DispatchProxy.Create<IRespireClient, ForwardingClient>();
+        var proxy = (ForwardingClient)decorated;
+        proxy.Inner = client;
+        proxy.CursorCleanupError = new InvalidOperationException("decorator rejects cleanup");
+        proxy.FailCleanupSynchronously = synchronousFailure;
+
+        var pages = 0;
+        await foreach (var page in new RespireSearchClient(decorated).AggregatePagesAsync("idx", RespireSearchExpression.FromRaw("*")))
+        {
+            pages++;
+            break;
+        }
+
+        await Assert.That(pages).IsEqualTo(1);
+        await Assert.That(proxy.Commands.ToArray()).IsEquivalentTo(["FT.AGGREGATE", "FT.CURSOR DEL"]);
+        var error = await Failure(() => new RespireSearchClient(decorated).DeleteCursorAsync("idx", 42).AsTask());
+        await Assert.That(error).IsSameReferenceAs(proxy.CursorCleanupError);
+    }
+
     public class ForwardingClient : DispatchProxy
     {
         public IRespireClient Inner = null!;
         public bool FailHybridSynchronously;
+        public Exception? CursorCleanupError;
+        public bool FailCleanupSynchronously;
         public readonly List<string> Commands = [];
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
@@ -296,6 +357,11 @@ public class SearchCommandHookTests
                 Commands.Add(((RespireCommand)args![0]!).Name);
                 if (FailHybridSynchronously && Commands[^1] == "FT.HYBRID")
                     throw new RespireServerException("ERR unknown command 'FT.HYBRID'");
+                if (CursorCleanupError is { } cleanupError && Commands[^1] == "FT.CURSOR DEL")
+                {
+                    if (FailCleanupSynchronously) throw cleanupError;
+                    return ValueTask.FromException<RespireResult>(cleanupError);
+                }
             }
             return targetMethod.Invoke(Inner, args);
         }

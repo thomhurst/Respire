@@ -260,11 +260,11 @@ public sealed partial class RespireSearchClient
             using var result = await ExecuteBorrowedAsync(RespireSearchCommands.CursorDelete,
                 [index, cursorId], CancellationToken.None, owner).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is RespireException or ObjectDisposedException or OperationCanceledException)
+        catch (Exception)
         {
-            // Best effort: the cursor may already have expired, or the connection may be gone. The
-            // server still frees it after MAXIDLE, and a cleanup failure must not hide the error or
-            // early exit that ended the enumeration.
+            // Best effort: the cursor may have expired, the connection may be gone, or a decorator
+            // may reject cleanup. The server still frees it after MAXIDLE, and cleanup must not
+            // hide the original failure or turn an early enumeration exit into an error.
         }
     }
 
