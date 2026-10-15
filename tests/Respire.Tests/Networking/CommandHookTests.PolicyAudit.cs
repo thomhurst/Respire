@@ -194,6 +194,48 @@ public partial class CommandHookTests
         }
     }
 
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ArrayScanCancellationAfterLastEntryDoesNotAdmitAnotherPage(bool typed, bool finalPage)
+    {
+        foreach (var policy in new[] { "absent", "observe", "reject" })
+        {
+            await using var server = new FakeRespServer("*1\r\n*2\r\n:0\r\n$1\r\n1\r\n"u8.ToArray());
+            using var cancellation = new CancellationTokenSource();
+            var hook = new RecordingHook();
+            await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
+            {
+                CommandHook = policy == "absent" ? null : hook,
+            });
+            ulong end = finalPage ? 0UL : 10UL;
+            if (typed) await Check(client.Arrays.ScanAsync<int>("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
+            else await Check(client.Arrays.ScanAsync("key", 0, end, pageSize: 1, cancellationToken: cancellation.Token));
+
+            async Task Check<T>(IAsyncEnumerable<T> sequence)
+            {
+                await using var iterator = sequence.GetAsyncEnumerator();
+                await Assert.That(await iterator.MoveNextAsync()).IsTrue();
+                var baseline = server.CommandsSeen;
+                if (policy == "reject") hook.Before = _ => throw new InvalidOperationException("No new admission allowed");
+                cancellation.Cancel();
+                if (finalPage) await Assert.That(await iterator.MoveNextAsync()).IsFalse();
+                else
+                {
+                    var error = await Failure(async () => await iterator.MoveNextAsync());
+                    await Assert.That(error is OperationCanceledException).IsTrue();
+                    await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
+                }
+                await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+                await Assert.That(hook.Entered.Count).IsEqualTo(policy == "absent" ? 0 : 1);
+                await Assert.That(hook.Completed.Count).IsEqualTo(policy == "absent" ? 0 : 1);
+                if (policy != "absent") await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+            }
+        }
+    }
+
     public class PolicyForwarder : DispatchProxy
     {
         internal IRespireClient Inner = null!;

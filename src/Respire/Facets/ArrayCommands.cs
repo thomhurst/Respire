@@ -421,9 +421,11 @@ internal sealed class ArrayCommands(RespireClient client) : IRespireArrayCommand
         ArrayCommandArguments.ValidateIndex(end);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
         var reverse = start > end;
+        var admitFirstPage = client.Core.Options.CommandHook is not null;
         while (true)
         {
-            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+            if (!admitFirstPage) cancellationToken.ThrowIfCancellationRequested();
+            admitFirstPage = false;
             var page = await ScanPageAsync(key, start, end, pageSize, cancellationToken).ConfigureAwait(false);
             if (page.Length == 0) yield break;
             foreach (var item in page) { cancellationToken.ThrowIfCancellationRequested(); yield return item; }
@@ -442,9 +444,11 @@ internal sealed class ArrayCommands(RespireClient client) : IRespireArrayCommand
         ArrayCommandArguments.ValidateIndex(end);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
         var reverse = start > end;
+        var admitFirstPage = client.Core.Options.CommandHook is not null;
         while (true)
         {
-            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+            if (!admitFirstPage) cancellationToken.ThrowIfCancellationRequested();
+            admitFirstPage = false;
             var page = await ScanPageAsync<T>(key, start, end, pageSize, cancellationToken).ConfigureAwait(false);
             if (page.Length == 0) yield break;
             foreach (var item in page) { cancellationToken.ThrowIfCancellationRequested(); yield return item; }
