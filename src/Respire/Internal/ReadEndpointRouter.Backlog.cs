@@ -71,6 +71,9 @@ internal sealed partial class ReadEndpointRouter
         }
         return backlog.EnqueueAsync(dispatch, token, async wait =>
         {
+            // A resolver bounds candidates within one round, not the number of rounds.
+            // Each queued Sentinel read owns its retry budget, as the primary backlog does.
+            var discoveryBudget = core.Sentinel is null ? null : new SentinelRetryBudget(core.Options.ReconnectPolicy);
             while (true)
             {
                 ThrowIfDisposed();
@@ -78,10 +81,21 @@ internal sealed partial class ReadEndpointRouter
                 try { return await SelectBacklogHeadAsync(readFrom, wait, observation, cursorRead, affinity).ConfigureAwait(false); }
                 catch (Exception error) when (IsUnavailable(error, wait))
                 {
+                    wait.ThrowIfCancellationRequested();
+                    ThrowIfDisposed();
                     ThrowIfTerminal(readFrom, error);
+                    var delay = TimeSpan.FromMilliseconds(BacklogRetryDelayMilliseconds);
+                    if (discoveryBudget is not null)
+                    {
+                        if (!discoveryBudget.TryStartRetry())
+                            throw new RespireReconnectLimitException("Sentinel read backlog recovery exhausted its configured attempts.", error)
+                            { Endpoint = error is RespireException failure ? failure.Endpoint : null, HasAmbiguousEndpoint = true };
+                        var retryDelay = discoveryBudget.GetDelay();
+                        if (retryDelay > delay) delay = retryDelay;
+                    }
                     // The selector owns discovery throttling, ROLE freshness, cooldown and
                     // fallback. Bound demand retries without pinning a retired generation.
-                    await Task.Delay(BacklogRetryDelayMilliseconds, wait).ConfigureAwait(false);
+                    await Task.Delay(delay, wait).ConfigureAwait(false);
                 }
             }
         });

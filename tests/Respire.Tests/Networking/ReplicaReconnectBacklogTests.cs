@@ -284,6 +284,49 @@ public class ReplicaReconnectBacklogTests
     }
 
     [Test]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    [Arguments(RespireReadFrom.AzAffinity)]
+    public async Task BackgroundValidationChecksTheSelectedSocket(RespireReadFrom policy)
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        var validated = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
+        var bothSockets = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replica.ReplyOverride = (id, command) =>
+        {
+            if (command != "ROLE") return Value;
+            validated.TryAdd(id, 0);
+            if (validated.Count == 2) bothSockets.TrySetResult();
+            return ReplicaRole;
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", primary.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 2, CommandTimeout = Limit,
+            ReplicaRefreshInterval = TimeSpan.FromMinutes(5),
+        });
+        var router = client.Core.ReadRouter;
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        await Assert.That(validated.Count).IsEqualTo(1);
+        // Force ROLE I/O even if the background helper incorrectly reselects the first
+        // socket; otherwise a synchronous fresh hit can hide the extra rotation.
+        router.RoleRevalidationInterval = TimeSpan.Zero;
+        var resumeValidation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replica.GateCommand("ROLE", resumeValidation.Task);
+        // This selects the other socket. Background validation must retain that selection,
+        // rather than rotating back to the already validated socket.
+        try { await router.SelectForDispatchAsync(policy, default, default).AsTask().WaitAsync(Limit); }
+        finally { resumeValidation.TrySetResult(); }
+        await bothSockets.Task.WaitAsync(Limit);
+        router.RoleRevalidationInterval = TimeSpan.FromMinutes(5);
+        // Wait for the ROLE response to be consumed before checking ready-only routing.
+        await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        for (var index = 0; index < 4; index++)
+            await Assert.That((await router.SelectForDispatchAsync(policy, default, default))?.Port).IsEqualTo(replica.Port);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task ColdPrimaryUsesPermittedReadyReplica()
     {
         await using var primary = Server();

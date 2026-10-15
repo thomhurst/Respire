@@ -215,10 +215,11 @@ public class AvailabilityZoneRoutingTests
         await using var second = Node("second", local ? "local" : "remote", true);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica, second], false, RespireReadFrom.AzAffinity)
             with { ReplicaRefreshInterval = TimeSpan.FromMinutes(5) });
-        // Warm both round-robin endpoints before asserting synchronous, allocation-free selection.
-        await client.GetStringAsync("key");
-        await client.GetStringAsync("key");
         var router = client.Core.ReadRouter!;
+        // Ready-only public dispatch may use a fallback while a cold candidate validates.
+        // Prepare each endpoint explicitly before measuring the synchronous selector.
+        foreach (var server in new[] { replica, second })
+            await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", server.Port)], default, default);
         var counter = AvailabilityZoneTelemetry.ForZone("local");
         MeasureSelection(router, counter, false);
         MeasureSelection(router, counter, true);
@@ -735,6 +736,12 @@ public class AvailabilityZoneRoutingTests
         ConfigureTopology(primary, replica);
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+        if (!cluster)
+        {
+            // Validate both physical replica sockets before asserting steady-state preference.
+            await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+            await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
+        }
         for (var index = 0; index < 8; index++)
             await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("replica");
         await Assert.That(primary.ReceivedCommands.Count(command => command == "INFO SERVER")).IsEqualTo(2);

@@ -863,13 +863,12 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             => (await GetConnectionCoreAsync(cancellationToken, preferredZone, sampler: null, readyOnly).ConfigureAwait(false))!;
 
         private async ValueTask<RespireConnection?> GetConnectionCoreAsync(CancellationToken cancellationToken,
-            string? preferredZone, ReadLatencySampler<RespireConnection>? sampler, bool readyOnly = false)
+            string? preferredZone, ReadLatencySampler<RespireConnection>? sampler, bool readyOnly = false,
+            RespireConnection? selected = null, RespireConnectionMultiplexer? selectedFrom = null)
         {
             // Fast path: a recently validated connection needs no lock and no extra round trip.
-            RespireConnection? selected = null;
-            RespireConnectionMultiplexer? selectedFrom = null;
             var interval = router.RoleRevalidationInterval;
-            if (!_closed && Volatile.Read(ref _multiplexer) is { } current)
+            if (selected is null && !_closed && Volatile.Read(ref _multiplexer) is { } current)
             {
                 selectedFrom = current;
                 // Check and return the same physical socket. Exclusion lasts for this selection
@@ -885,7 +884,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 if (readyOnly && selected.IsAcceptingCommands)
                 {
                     if (Interlocked.CompareExchange(ref _backgroundValidation, 1, 0) == 0)
-                        _ = RevalidateInBackgroundAsync(sampler);
+                        _ = RevalidateInBackgroundAsync(sampler, selected, current);
                     if (selected.IsAcceptingCommands && _health.Check(selected, interval) != ReplicaValidation.Required)
                         return selected;
                 }
@@ -992,9 +991,13 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
 
         private int _backgroundValidation;
 
-        private async Task RevalidateInBackgroundAsync(ReadLatencySampler<RespireConnection>? sampler)
+        private async Task RevalidateInBackgroundAsync(ReadLatencySampler<RespireConnection>? sampler,
+            RespireConnection? selected = null, RespireConnectionMultiplexer? selectedFrom = null)
         {
-            try { await GetConnectionCoreAsync(router._lifetime.Token, null, sampler).ConfigureAwait(false); }
+            // A ready-only miss already selected its socket. Reuse it under the validation
+            // gate, whose identity/acceptance checks handle retirement while waiting.
+            try { await GetConnectionCoreAsync(router._lifetime.Token, null, sampler,
+                selected: selected, selectedFrom: selectedFrom).ConfigureAwait(false); }
             catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException))
             {
                 if (!router._lifetime.IsCancellationRequested) router.TryRecordFailure(this, error, nearest: sampler is not null);
