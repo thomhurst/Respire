@@ -21,6 +21,13 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ## Available now
 
+The previous release-gate, API, onboarding, and feature epics are complete
+([#1567](https://github.com/thomhurst/Respire/issues/1567),
+[#1576](https://github.com/thomhurst/Respire/issues/1576),
+[#1585](https://github.com/thomhurst/Respire/issues/1585), and
+[#1594](https://github.com/thomhurst/Respire/issues/1594)). Their implemented features
+are described in the guides below; the remaining pre-release work is tracked separately.
+
 - [Consistent native public type names](fundamentals/api-naming.md): `Respire` prefixes,
   `IRespire` interfaces, and `Result` suffixes for command outcome wrappers.
 
@@ -131,8 +138,9 @@ Public interface compatibility and the post-2.0 extension policy are described i
   [hash codecs](guides/generated-hash-codecs.md), and
   [Search schemas](guides/generated-search-schemas.md), with a
   [Native AOT sample](guides/generated-hash-codecs.md#native-aot-conformance-sample) for .NET 8 and .NET 10.
-- [Generated typed Search queries](guides/generated-search-schemas.md#typed-queries) for hash and JSON
+- [LINQ-style generated Search queries](guides/generated-search-schemas.md#typed-queries) for hash and JSON
   models: filters, sorting, paging, field selection, aggregation, and filtered KNN without reflection.
+  Selectors use generated fields rather than an `IQueryable` provider.
 
 ### Caching, integration, and testing
 
@@ -244,13 +252,20 @@ consistency contract. See the [field-level caching decision](guides/keyspace-not
 
 ## Planned work
 
-These epics track the 2.0 release scope described above. They are not release commitments.
+The current pre-release epics target **2.0.0**, as recorded in the
+[release naming decision](https://github.com/thomhurst/Respire/issues/1796).
+They track remaining work, not release commitments.
 
-- [2.0 release gate](https://github.com/thomhurst/Respire/issues/1567)
-- [API breaks before 2.0](https://github.com/thomhurst/Respire/issues/1576)
-- [Onboarding, docs, and developer experience](https://github.com/thomhurst/Respire/issues/1585)
-- [Features from other Redis clients](https://github.com/thomhurst/Respire/issues/1594),
-  including a [reliable job queue on `Respire.Streaming`](https://github.com/thomhurst/Respire/issues/1595)
+- [Release hygiene before 2.0](https://github.com/thomhurst/Respire/issues/1815):
+  release naming, package compatibility validation, and the remaining Orleans and
+  Cluster replica recovery checks.
+- [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
+  job groups and queue controls, batch callbacks, transactional enqueue, dashboard history,
+  cross-slot command splitting, additional tracking modes, adaptive dedicated pools,
+  serializer packages, client-side encryption, coordination APIs, and testing support.
+  The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),
+  [typed queries](guides/generated-search-schemas.md#typed-queries), and
+  [near-cache map](guides/near-cache-map.md) are already available.
 
 ## Validation and performance follow-ups
 
@@ -268,12 +283,17 @@ These epics track the 2.0 release scope described above. They are not release co
   enabled retries allocate and add work even when commands succeed. The audit documents
   remaining acceptance gaps and targets for future optimization; its closure does not
   establish universal performance acceptance.
-- [Retry-owner lifetime races and reclamation](https://github.com/thomhurst/Respire/issues/1694):
-  audit coverage beyond existing cancellation, disposal, and reuse tests; retention snapshots
-  alone do not prove every race is safe.
-- [Orleans silo lifecycle and recovery](https://github.com/thomhurst/Respire/issues/1695):
-  provider conformance is covered, while full silo activation, provider-owned shutdown,
-  Cluster, and failover still need validation.
+- [Completed retry-owner lifetime audit](guides/command-retries.md#lifetime-validation)
+  ([#1694](https://github.com/thomhurst/Respire/issues/1694)) maps cancellation, disposal,
+  replacement, late-reply, and reuse coverage. Its bounded tests and quiescent reference
+  checks do not prove complete heap reclamation or every scheduler/topology combination.
+- [Remaining Orleans topology validation](https://github.com/thomhurst/Respire/issues/1799):
+  Cluster resharding, replica promotion/failover, abrupt silo death, and multi-host partitions. The completed
+  [silo lifecycle suite](guides/orleans-compatibility.md#silo-lifecycle-and-redis-recovery)
+  covers activation, provider-owned shutdown, stable Cluster routing, socket reconnect,
+  and Sentinel promotion; it does not establish support for every failure scenario.
+- [Cluster availability-zone replica fallback timeout](https://github.com/thomhurst/Respire/issues/1749):
+  investigate the failure under concurrent test load and validate recovery.
 
 See [Coming from StackExchange.Redis](./stackexchange-redis) for a feature comparison and the
 [introduction](./intro.md#design-bets) for the design bets. Report issues on
