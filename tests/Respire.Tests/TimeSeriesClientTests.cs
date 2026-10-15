@@ -21,38 +21,41 @@ public class TimeSeriesClientTests
     [Test]
     public async Task CommandsDeclareCacheMutationBehavior()
     {
-        var commands = typeof(RespireTimeSeriesClient).Assembly
-            .GetType("Respire.TimeSeries.IRespireTimeSeriesCommands", throwOnError: true)!;
+        var commands = typeof(RespireTimeSeriesClient)
+            .GetFields(BindingFlags.Static | BindingFlags.NonPublic)
+            .Where(field => field.FieldType == typeof(RespireCommand))
+            .Select(field => (RespireCommand)field.GetValue(null)!)
+            .ToDictionary(command => command.Name);
         var expected = new Dictionary<string, RespireCacheMutation>
         {
-            ["CreateAsync"] = RespireCacheMutation.SingleKey,
-            ["AlterAsync"] = RespireCacheMutation.SingleKey,
-            ["AddAsync"] = RespireCacheMutation.Unknown,
-            ["MultiAddAsync"] = RespireCacheMutation.Unknown,
-            ["IncrementByAsync"] = RespireCacheMutation.Unknown,
-            ["DecrementByAsync"] = RespireCacheMutation.Unknown,
-            ["GetAsync"] = RespireCacheMutation.ReadOnly,
-            ["MultiGetAsync"] = RespireCacheMutation.ReadOnly,
-            ["RangeAsync"] = RespireCacheMutation.ReadOnly,
-            ["ReverseRangeAsync"] = RespireCacheMutation.ReadOnly,
-            ["MultiRangeAsync"] = RespireCacheMutation.ReadOnly,
-            ["MultiReverseRangeAsync"] = RespireCacheMutation.ReadOnly,
-            ["DeleteRangeAsync"] = RespireCacheMutation.Unknown,
-            ["CreateRuleAsync"] = RespireCacheMutation.MultiKey,
-            ["DeleteRuleAsync"] = RespireCacheMutation.MultiKey,
-            ["InfoAsync"] = RespireCacheMutation.ReadOnly,
-            ["QueryIndexAsync"] = RespireCacheMutation.ReadOnly,
-            ["QueryLabelsAsync"] = RespireCacheMutation.ReadOnly,
-            ["RangeKeysAsync"] = RespireCacheMutation.ReadOnly,
-            ["ReverseRangeKeysAsync"] = RespireCacheMutation.ReadOnly,
-            ["ReadAsync"] = RespireCacheMutation.ReadOnly,
+            ["TS.CREATE"] = RespireCacheMutation.SingleKey,
+            ["TS.ALTER"] = RespireCacheMutation.SingleKey,
+            ["TS.ADD"] = RespireCacheMutation.Unknown,
+            ["TS.MADD"] = RespireCacheMutation.Unknown,
+            ["TS.INCRBY"] = RespireCacheMutation.Unknown,
+            ["TS.DECRBY"] = RespireCacheMutation.Unknown,
+            ["TS.GET"] = RespireCacheMutation.ReadOnly,
+            ["TS.MGET"] = RespireCacheMutation.ReadOnly,
+            ["TS.RANGE"] = RespireCacheMutation.ReadOnly,
+            ["TS.REVRANGE"] = RespireCacheMutation.ReadOnly,
+            ["TS.MRANGE"] = RespireCacheMutation.ReadOnly,
+            ["TS.MREVRANGE"] = RespireCacheMutation.ReadOnly,
+            ["TS.DEL"] = RespireCacheMutation.Unknown,
+            ["TS.CREATERULE"] = RespireCacheMutation.MultiKey,
+            ["TS.DELETERULE"] = RespireCacheMutation.MultiKey,
+            ["TS.INFO"] = RespireCacheMutation.ReadOnly,
+            ["TS.QUERYINDEX"] = RespireCacheMutation.ReadOnly,
+            ["TS.QUERYLABELS"] = RespireCacheMutation.ReadOnly,
+            ["TS.NRANGE"] = RespireCacheMutation.ReadOnly,
+            ["TS.NREVRANGE"] = RespireCacheMutation.ReadOnly,
+            ["TS.READ"] = RespireCacheMutation.ReadOnly,
         };
-        foreach (var (method, mutation) in expected)
+        await Assert.That(commands.Count).IsEqualTo(expected.Count);
+        foreach (var (name, mutation) in expected)
         {
-            var attribute = commands.GetMethod(method)!.GetCustomAttribute<RespireCommandAttribute>()!;
-            await Assert.That(attribute.Mutation).IsEqualTo(mutation).Because(method);
+            await Assert.That(commands[name].CacheMutation).IsEqualTo(mutation).Because(name);
             if (mutation == RespireCacheMutation.SingleKey)
-                await Assert.That(RawCommandKeyLayouts.HasSingleFirstKeyLayout(attribute.Name)).IsTrue().Because(method);
+                await Assert.That(RawCommandKeyLayouts.HasSingleFirstKeyLayout(name)).IsTrue().Because(name);
         }
     }
 
