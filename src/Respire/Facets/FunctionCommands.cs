@@ -167,6 +167,22 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation observation)
     {
         var command = CallCommand(client, function, keys.AsSpan(), args.AsSpan(), deferred: false);
+        if (client.Core.Options.CommandHook is { } hook)
+            return await CommandHookScope.RunAsync(hook, function.Operation, cancellationToken,
+                (Commands: this, Function: function, Command: command, Token: cancellationToken, Convert: convert, Observation: observation),
+                static state => state.Commands.ExecuteConvertedUnhookedAsync(state.Function, state.Command,
+                    state.Token, state.Convert, state.Observation)).ConfigureAwait(false);
+        using var result = await ExecuteWithRetriesAsync(function, command, cancellationToken, observation)
+            .ConfigureAwait(false);
+        return convert(result);
+    }
+
+    // Only configured typed callers enter this wrapper. Keep conversion and disposal inside
+    // the hook without introducing another async frame on the unconfigured path.
+    private async ValueTask<TResult> ExecuteConvertedUnhookedAsync<TResult>(RespireFunction function,
+        BatchScriptCommand command, CancellationToken cancellationToken,
+        Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation observation)
+    {
         using var result = await ExecuteWithRetriesAsync(function, command, cancellationToken, observation)
             .ConfigureAwait(false);
         return convert(result);
@@ -199,6 +215,14 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         try
         {
             var command = CallCommand(client, function, keys, args, deferred: false);
+            if (client.Core.Options.CommandHook is { } hook)
+                return owner.Attach(CommandHookScope.RunAsync(hook, function.Operation, cancellationToken,
+                    (Commands: this, Function: function, Command: command, Token: cancellationToken, Owned: owned, Observation: owner.Observation),
+                    static state =>
+                    {
+                        var response = state.Commands.ExecuteWithRetriesAsync(state.Function, state.Command, state.Token, state.Observation);
+                        return state.Owned ? RespireResult.MaterializeAsync(response) : response;
+                    }));
             var response = ExecuteWithRetriesAsync(function, command, cancellationToken, owner.Observation);
             return owner.Attach(owned ? RespireResult.MaterializeAsync(response) : response);
         }
@@ -453,15 +477,25 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             _ => throw new ArgumentOutOfRangeException(nameof(policy))
         }]);
 
+    private ValueTask<T> MutateAsync<TCommand, T>(string operation, TCommand command,
+        ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Commands: this, Operation: operation, Command: command, Convert: convert, Token: cancellationToken, Observation: observation),
+                static state => state.Commands.MutateUnhookedAsync(state.Operation, state.Command,
+                    state.Convert, state.Token, state.Observation))
+            : MutateUnhookedAsync(operation, command, convert, cancellationToken, observation);
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<T> MutateAsync<TCommand, T>(string operation, TCommand command,
+    private async ValueTask<T> MutateUnhookedAsync<TCommand, T>(string operation, TCommand command,
         ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
     {
         if (client.Core.Cluster is not { } cluster)
-            return await client.ConvertResponseAsync(operation, command, cancellationToken, this, convert,
+            return await client.ConvertResponseUnhookedAsync(operation, command, cancellationToken, this, convert,
                 observation: observation).ConfigureAwait(false);
         var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
         if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
