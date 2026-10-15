@@ -133,6 +133,10 @@ hook boundary.
 Dedicated blocking list, sorted-set, and stream commands that use the blocking converted
 response helper complete after reply conversion and dedicated connection cleanup. Their
 internal connection setup and cancellation control commands do not create hook events.
+Continuous `ReadGroupAsync` enumerations admit each requested page before observing
+cancellation. With a configured hook, cancellation between batches admits the next page
+and throws `OperationCanceledException`; without a hook, the single-stream overload that
+accepts `startAt` can instead end the enumeration quietly at that boundary.
 
 Ordinary `Keys.ScanAsync` and collection SSCAN/HSCAN/ZSCAN enumerations admit each
 requested page separately. Completion includes parsing that page, before its items are
