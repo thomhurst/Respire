@@ -14,8 +14,11 @@ if (args is ["--codecs-only"])
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
 {
+    // Each conformance pass needs a separate connection configured for its protocol.
+#pragma warning disable RESP010
     await using var client = await RespireClient.ConnectAsync(
         RespireOptions.Parse(endpoint) with { Protocol = protocol });
+#pragma warning restore RESP010
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
     var run = Guid.NewGuid().ToString("N");
     await VerifyHashAsync(client, run, deadline.Token);

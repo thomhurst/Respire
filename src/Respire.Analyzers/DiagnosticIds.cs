@@ -30,5 +30,14 @@ public static class DiagnosticIds
     /// <summary>A Respire task is synchronously consumed instead of awaited.</summary>
     public const string SyncOverAsync = "RESP009";
 
+    /// <summary>A client is created with a short operation-scoped lifetime.</summary>
+    public const string ShortLivedClient = "RESP010";
+
+    /// <summary>A collection read can return an unbounded number of items.</summary>
+    public const string UnboundedRead = "RESP011";
+
+    /// <summary>A subscription consumer blocks its processing thread.</summary>
+    public const string BlockingSubscriptionHandler = "RESP012";
+
     internal const string Category = "Respire";
 }

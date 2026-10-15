@@ -8,7 +8,10 @@ using Respire.Probabilistic;
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
 foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
 {
+    // Each protocol needs its own connection for this package conformance check.
+#pragma warning disable RESP010
     await using var client = await RespireClient.ConnectAsync($"redis://{endpoint}?protocol={(int)protocol}");
+#pragma warning restore RESP010
     await RunProbabilisticSmokeAsync(client);
     var commands = new ISmokeCommandsImplementation(client);
     var key = "respire:generator-smoke:" + Guid.NewGuid().ToString("N");
