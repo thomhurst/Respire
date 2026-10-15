@@ -62,7 +62,7 @@ public class GeneratedCommandTests
                 : command.StartsWith("CLIENT ", StringComparison.Ordinal) ? FakeRespServer.OkReply : reply(command),
         };
 
-    private static ValueTask<RespireClient> Connect(FakeRespServer server, RespProtocol protocol, bool cache = false)
+    private static ValueTask<RespireClient> Connect(FakeRespServer server, RespireProtocol protocol, bool cache = false)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = protocol,
@@ -70,14 +70,14 @@ public class GeneratedCommandTests
         });
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task GeneratedArgumentsPreserveOrderBinaryValuesAndDefaults(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task GeneratedArgumentsPreserveOrderBinaryValuesAndDefaults(RespireProtocol protocol)
     {
         await using var server = Server(command => command.StartsWith("JSON.GET", StringComparison.Ordinal)
             ? "$7\r\n{\"x\":1}\r\n"u8.ToArray() : "*3\r\n$1\r\na\r\n$-1\r\n$1\r\nb\r\n"u8.ToArray());
         await using var client = await Connect(server, protocol);
-        var module = new IGeneratedModuleImplementation(client);
+        var module = new GeneratedModuleImplementation(client);
         await Assert.That(await module.JsonGet("key with spaces")).IsEqualTo("{\"x\":1}");
         byte[] binary = [0xff, 0, 0x80];
         var result = await module.Strings(binary, 42, "two words", binary);
@@ -93,18 +93,18 @@ public class GeneratedCommandTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ScalarRepliesHandleBothProtocolsAndCheckedOverflow(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ScalarRepliesHandleBothProtocolsAndCheckedOverflow(RespireProtocol protocol)
     {
         await using var server = Server(command => command switch
         {
-            "CUSTOM.NUMBER" => protocol == RespProtocol.Resp3 ? ",1.25\r\n"u8.ToArray() : "$4\r\n1.25\r\n"u8.ToArray(),
-            "CUSTOM.BOOL" => protocol == RespProtocol.Resp3 ? "#t\r\n"u8.ToArray() : ":1\r\n"u8.ToArray(),
+            "CUSTOM.NUMBER" => protocol == RespireProtocol.Resp3 ? ",1.25\r\n"u8.ToArray() : "$4\r\n1.25\r\n"u8.ToArray(),
+            "CUSTOM.BOOL" => protocol == RespireProtocol.Resp3 ? "#t\r\n"u8.ToArray() : ":1\r\n"u8.ToArray(),
             _ => ":2147483648\r\n"u8.ToArray(),
         });
         await using var client = await Connect(server, protocol);
-        var module = new IGeneratedModuleImplementation(client);
+        var module = new GeneratedModuleImplementation(client);
         await Assert.That(await module.Number()).IsEqualTo(1.25);
         await Assert.That(await module.Boolean()).IsTrue();
         await Assert.That(async () => await module.Integer()).Throws<OverflowException>();
@@ -113,15 +113,15 @@ public class GeneratedCommandTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task NullableRepliesAndCopiedByteArraysSurviveLaterCommands(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task NullableRepliesAndCopiedByteArraysSurviveLaterCommands(RespireProtocol protocol)
     {
         await using var server = Server(command => command == "CUSTOM.BYTES"
             ? "*2\r\n$3\r\nabc\r\n$-1\r\n"u8.ToArray()
-            : protocol == RespProtocol.Resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray());
+            : protocol == RespireProtocol.Resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray());
         await using var client = await Connect(server, protocol);
-        var module = new IGeneratedModuleImplementation(client);
+        var module = new GeneratedModuleImplementation(client);
         var bytes = await module.Bytes();
         await Assert.That(await module.JsonGet("key")).IsNull();
         await Assert.That(await module.Number()).IsNull();
@@ -131,17 +131,17 @@ public class GeneratedCommandTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task RawResultsTransferOwnershipAndExposeProtocolShapes(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task RawResultsTransferOwnershipAndExposeProtocolShapes(RespireProtocol protocol)
     {
-        await using var server = Server(_ => protocol == RespProtocol.Resp3
+        await using var server = Server(_ => protocol == RespireProtocol.Resp3
             ? "%1\r\n$1\r\nk\r\n:7\r\n"u8.ToArray() : "*2\r\n$1\r\nk\r\n:7\r\n"u8.ToArray());
         await using var client = await Connect(server, protocol);
-        var module = new IGeneratedModuleImplementation(client);
+        var module = new GeneratedModuleImplementation(client);
         var result = await module.Raw();
         await Assert.That(result.IsDisposed).IsFalse();
-        await Assert.That(result.Type).IsEqualTo(protocol == RespProtocol.Resp3 ? RespDataType.Map : RespDataType.Array);
+        await Assert.That(result.Type).IsEqualTo(protocol == RespireProtocol.Resp3 ? RespireDataType.Map : RespireDataType.Array);
         var nested = result[1];
         await Assert.That(nested.AsInteger()).IsEqualTo(7);
         result.Dispose();
@@ -151,15 +151,15 @@ public class GeneratedCommandTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task NullableObliviousDeclarationsAcceptNullReplies(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task NullableObliviousDeclarationsAcceptNullReplies(RespireProtocol protocol)
     {
-        var nullReply = protocol == RespProtocol.Resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray();
+        var nullReply = protocol == RespireProtocol.Resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray();
         await using var server = Server(command => command == "CUSTOM.ARRAY"
             ? "*2\r\n$1\r\na\r\n$-1\r\n"u8.ToArray() : nullReply);
         await using var client = await Connect(server, protocol);
-        var module = new IObliviousGeneratedModuleImplementation(client);
+        var module = new ObliviousGeneratedModuleImplementation(client);
         await Assert.That(await module.Text()).IsNull();
         await Assert.That(await module.Bytes()).IsNull();
         await Assert.That(await module.Strings()).IsEquivalentTo(new[] { "a", null });
@@ -169,11 +169,11 @@ public class GeneratedCommandTests
     public async Task SafetyChecksRejectAffinityPrefixAndUnsupportedFlagsBeforeWriting()
     {
         await using var server = Server(_ => FakeRespServer.OkReply);
-        await using var client = await Connect(server, RespProtocol.Resp2);
-        var module = new IGeneratedModuleImplementation(client);
+        await using var client = await Connect(server, RespireProtocol.Resp2);
+        var module = new GeneratedModuleImplementation(client);
         await Assert.That(async () => await module.Authenticate("secret")).Throws<NotSupportedException>();
         await Assert.That(async () => { using var result = await module.Raw((RespireCommandFlags)128); }).Throws<ArgumentOutOfRangeException>();
-        var prefixed = new IGeneratedModuleImplementation(client.WithKeyPrefix("prefix:"));
+        var prefixed = new GeneratedModuleImplementation(client.WithKeyPrefix("prefix:"));
         await prefixed.JsonGet("key");
         await Assert.That(server.ReceivedCommands).Contains("JSON.GET prefix:key $");
     }
@@ -182,8 +182,8 @@ public class GeneratedCommandTests
     public async Task ErrorsAndCancellationPropagate()
     {
         await using var server = Server(_ => "-ERR module failure\r\n"u8.ToArray());
-        await using var client = await Connect(server, RespProtocol.Resp2);
-        var module = new IGeneratedModuleImplementation(client);
+        await using var client = await Connect(server, RespireProtocol.Resp2);
+        var module = new GeneratedModuleImplementation(client);
         await Assert.That(async () => await module.Error()).Throws<RespireServerException>();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -208,8 +208,8 @@ public class GeneratedCommandTests
         var reads = 0;
         await using var server = Server(command => command == "GET key"
             ? Encoding.UTF8.GetBytes($"$1\r\n{Interlocked.Increment(ref reads)}\r\n") : FakeRespServer.OkReply);
-        await using var client = await Connect(server, RespProtocol.Resp3, cache: true);
-        var module = new IGeneratedModuleImplementation(client);
+        await using var client = await Connect(server, RespireProtocol.Resp3, cache: true);
+        var module = new GeneratedModuleImplementation(client);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("1");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("1");
         await module.Write("key", "value");

@@ -42,15 +42,15 @@ public class TypedFacetObservationTests
             switch (route)
             {
                 case "string-value": await client.Strings.SetAsync("key", default(RespireValue)); break;
-                case "string-expiry": await client.Strings.SetAsync("key", "value", when: (SetWhen)999); break;
+                case "string-expiry": await client.Strings.SetAsync("key", "value", when: (RespireSetWhen)999); break;
                 case "string-offset": await client.Strings.SetRangeAsync("key", -1, "value"); break;
                 case "string-stream": await client.Strings.SetAsync("key", Stream.Null, -1); break;
-                case "hash-condition": await client.Hashes.SetAsync("key", "field", "value", (SetWhen)999); break;
+                case "hash-condition": await client.Hashes.SetAsync("key", "field", "value", (RespireSetWhen)999); break;
                 case "hash-fields": await client.Hashes.ExpiryTimeAsync("key", Array.Empty<string>()); break;
-                case "hash-precision": await client.Hashes.ExpiryTimeAsync("key", (ExpiryTimePrecision)999, "field"); break;
+                case "hash-precision": await client.Hashes.ExpiryTimeAsync("key", (RespireExpiryTimePrecision)999, "field"); break;
                 case "key-condition": await client.Keys.ExpireAsync("key", RespireExpiry.Persist, RespireExpireWhen.NotExists); break;
                 case "key-database": await client.Keys.CopyAsync("key", "other", -1); break;
-                case "key-precision": await client.Keys.ExpiryTimeAsync("key", (ExpiryTimePrecision)999); break;
+                case "key-precision": await client.Keys.ExpiryTimeAsync("key", (RespireExpiryTimePrecision)999); break;
                 case "list-rank": await client.Lists.PositionAsync("key", "value", rank: 0); break;
                 case "list-count": await client.Lists.LeftPopManyAsync("key", -1); break;
                 case "list-values": await client.Lists.LeftPushIfExistsAsync("key", Array.Empty<RespireValue>()); break;
@@ -117,7 +117,7 @@ public class TypedFacetObservationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await Assert.That(await client.Strings.GetStringAsync("key")).IsEqualTo("value");
@@ -169,7 +169,7 @@ public class TypedFacetObservationTests
         } : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", source.Port)],
         });
         using var capture = new Capture(throwOnMeasurement: true);
@@ -252,7 +252,7 @@ public class TypedFacetObservationTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Serializer = new ThrowingSerializer(expected),
+            Protocol = RespireProtocol.Resp2, Connections = 1, Serializer = new ThrowingSerializer(expected),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var capture = new Capture(throwOnMeasurement: true);

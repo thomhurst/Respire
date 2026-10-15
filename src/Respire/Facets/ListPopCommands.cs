@@ -4,7 +4,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IListCommands
+public partial interface IRespireListCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<RespireListPopManyResult?> PopManyAsync(RespireKey key, TimeSpan? waitFor, long count = 1, RespireListSide side = RespireListSide.Left, CancellationToken cancellationToken = default);

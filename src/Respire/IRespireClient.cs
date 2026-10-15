@@ -28,39 +28,39 @@ public interface IRespireClient : IAsyncDisposable
 
     // Typed convenience facets, grouped by data type.
     /// <summary>String commands.</summary>
-    IStringCommands Strings { get; }
+    IRespireStringCommands Strings { get; }
     /// <summary>Generic key commands.</summary>
-    IKeyCommands Keys { get; }
+    IRespireKeyCommands Keys { get; }
     /// <summary>Distributed lock commands.</summary>
-    ILockCommands Locks { get; }
+    IRespireLockCommands Locks { get; }
     /// <summary>Hash commands.</summary>
-    IHashCommands Hashes { get; }
+    IRespireHashCommands Hashes { get; }
     /// <summary>List commands.</summary>
-    IListCommands Lists { get; }
+    IRespireListCommands Lists { get; }
 
     /// <summary>Redis sparse array commands.</summary>
-    IArrayCommands Arrays { get; }
+    IRespireArrayCommands Arrays { get; }
     /// <summary>Set commands.</summary>
-    ISetCommands Sets { get; }
+    IRespireSetCommands Sets { get; }
     /// <summary>Sorted-set commands.</summary>
-    ISortedSetCommands SortedSets { get; }
+    IRespireSortedSetCommands SortedSets { get; }
     /// <summary>Stream commands.</summary>
-    IStreamCommands Streams { get; }
+    IRespireStreamCommands Streams { get; }
     /// <summary>Bitmap commands.</summary>
-    IBitmapCommands Bitmaps { get; }
+    IRespireBitmapCommands Bitmaps { get; }
     /// <summary>HyperLogLog commands.</summary>
-    IHyperLogLogCommands HyperLogLog { get; }
+    IRespireHyperLogLogCommands HyperLogLog { get; }
     /// <summary>Geospatial commands.</summary>
-    IGeoCommands Geo { get; }
+    IRespireGeoCommands Geo { get; }
     /// <summary>Redis vector-set commands.</summary>
-    IVectorSetCommands VectorSets { get; }
+    IRespireVectorSetCommands VectorSets { get; }
     /// <summary>Lua script commands.</summary>
-    IScriptCommands Scripts { get; }
+    IRespireScriptCommands Scripts { get; }
 
     /// <summary>Redis Functions (Redis 7+).</summary>
-    IFunctionCommands Functions { get; }
+    IRespireFunctionCommands Functions { get; }
     /// <summary>Server administration and introspection commands.</summary>
-    IServerCommands Server { get; }
+    IRespireServerCommands Server { get; }
 
     // Root shortcuts for the most common operations.
     /// <summary>Gets a UTF-8 string, or null when the key is absent. Redis: GET.</summary>
@@ -76,7 +76,7 @@ public interface IRespireClient : IAsyncDisposable
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Reads a tracked value, or computes and conditionally stores it with a server expiry. Requires Redis 7+ and ClientSideCache.</summary>
     /// <remarks>
@@ -112,7 +112,7 @@ public interface IRespireClient : IAsyncDisposable
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>Serializes and sets a value with optional expiry and condition. Redis: SET.</summary>
@@ -122,7 +122,7 @@ public interface IRespireClient : IAsyncDisposable
         RespireKey key,
         T value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>Deletes keys and returns how many existed. Redis: DEL.</summary>

@@ -1,11 +1,11 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchStringCommands",
+      "Type": "Respire.IRespireBatchStringCommands",
       "OwnerType": "Respire.BatchStringCommands",
       "Members": [
-        "IncrementExtended(RespireKey,double,FloatIncrementOptions):RespirePending<RespireIncrementResult<double>>",
-        "IncrementExtended(RespireKey,long,IntegerIncrementOptions):RespirePending<RespireIncrementResult<long>>"
+        "IncrementExtended(RespireKey,double,RespireFloatIncrementOptions):RespirePending<RespireIncrementResult<double>>",
+        "IncrementExtended(RespireKey,long,RespireIntegerIncrementOptions):RespirePending<RespireIncrementResult<long>>"
       ],
       "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
     }

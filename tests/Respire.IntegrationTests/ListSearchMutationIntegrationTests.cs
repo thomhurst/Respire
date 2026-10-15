@@ -23,7 +23,7 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var view = client.WithKeyPrefix("tenant:");
         byte[] binary = [0xff, 0, 0x42];
@@ -57,7 +57,7 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var view = client.WithKeyPrefix("tenant:");
         byte[] binary = [0xff, 0, 0x42];
@@ -96,7 +96,7 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.SetAsync("wrong", "string");
         await client.Lists.RightPushAsync("list", "value");
@@ -121,7 +121,7 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
         await outOfRange.Should().ThrowAsync<RespireServerException>();
     }
 
-    private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode, Func<IListCommands, ValueTask<T>> immediate, Func<IBatchListCommands, RespirePending<T>> deferred)
+    private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode, Func<IRespireListCommands, ValueTask<T>> immediate, Func<IRespireBatchListCommands, RespirePending<T>> deferred)
     {
         if (mode == ExecutionMode.Immediate)
             return await immediate(client.Lists);

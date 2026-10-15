@@ -7,13 +7,13 @@ internal static class VectorSetParser
 {
     internal static bool Flag(in RespValue value)
     {
-        if (value.Type == RespDataType.Boolean) return value.AsBoolean();
-        if (value.Type == RespDataType.Integer && value.AsInteger() is 0 or 1) return value.AsInteger() == 1;
+        if (value.Type == RespireDataType.Boolean) return value.AsBoolean();
+        if (value.Type == RespireDataType.Integer && value.AsInteger() is 0 or 1) return value.AsInteger() == 1;
         throw Invalid("expected a boolean or 0/1 integer");
     }
 
     internal static long Number(in RespValue value)
-        => value.Type == RespDataType.Integer && value.AsInteger() >= 0 ? value.AsInteger()
+        => value.Type == RespireDataType.Integer && value.AsInteger() >= 0 ? value.AsInteger()
             : throw Invalid("expected a nonnegative integer");
 
     internal static byte[]? NullableBytes(in RespValue value) => value.IsNull ? null : Bytes(in value);
@@ -50,7 +50,7 @@ internal static class VectorSetParser
     {
         var scores = options.IncludeScores;
         var attributes = options.IncludeAttributes;
-        var map = value.Type == RespDataType.Map;
+        var map = value.Type == RespireDataType.Map;
         if (map && !scores && !attributes) throw Invalid("unexpected search map without details");
         var entries = map ? value.AsArray() : Array(in value);
         var stride = map ? 2 : 1 + (scores ? 1 : 0) + (attributes ? 1 : 0);
@@ -92,7 +92,7 @@ internal static class VectorSetParser
     internal static RespireVectorSetInfo? Info(in RespValue value)
     {
         if (value.IsNull) return null;
-        if (value.Type is not (RespDataType.Array or RespDataType.Map)) throw Invalid("expected an info map");
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map)) throw Invalid("expected an info map");
         var entries = value.AsArray();
         if (entries.Length % 2 != 0) throw Invalid("incomplete info field");
         var fields = new Dictionary<string, RespValue>(StringComparer.Ordinal);
@@ -119,18 +119,18 @@ internal static class VectorSetParser
 
     private static double Double(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Double or RespDataType.Integer or RespDataType.BulkString or RespDataType.SimpleString))
+        if (value.Type is not (RespireDataType.Double or RespireDataType.Integer or RespireDataType.BulkString or RespireDataType.SimpleString))
             throw Invalid("expected a numeric value");
         var result = ResponseReader.Double(in value);
         return double.IsFinite(result) ? result : throw Invalid("expected a finite numeric value");
     }
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
-        => value.Type == RespDataType.Array ? value.AsArray() : throw Invalid("expected an array");
+        => value.Type == RespireDataType.Array ? value.AsArray() : throw Invalid("expected an array");
 
     internal static void RequireString(in RespValue value)
     {
-        if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
             throw Invalid("expected a string");
     }
 

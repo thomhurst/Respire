@@ -200,7 +200,7 @@ public class GeneratedSearchSchemaTests
         server.SuppressReply = _ => { received.TrySetResult(); return true; };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = TimeSpan.FromMilliseconds(200), ThreadPoolMonitoring = false,
         });
@@ -261,6 +261,6 @@ public class GeneratedSearchSchemaTests
     };
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespProtocol)protocol, ThreadPoolMonitoring = false,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespireProtocol)protocol, ThreadPoolMonitoring = false,
     };
 }

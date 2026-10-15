@@ -4,12 +4,12 @@ using System.IO.Compression;
 namespace Respire.Compression;
 
 /// <summary>Brotli value compression using versioned Respire frames and algorithm ID 1.</summary>
-public sealed class BrotliValueCodec : RespireValueCodec
+public sealed class RespireBrotliValueCodec : RespireValueCodec
 {
     private readonly int _quality;
 
     /// <summary>Creates a thread-safe codec. Quality ranges from 0 through 11; the default is 4.</summary>
-    public BrotliValueCodec(RespireValueCodecOptions? options = null, int quality = 4) : base(1, options, allowReservedAlgorithm: true)
+    public RespireBrotliValueCodec(RespireValueCodecOptions? options = null, int quality = 4) : base(1, options, allowReservedAlgorithm: true)
     {
         if (quality is < 0 or > 11) throw new ArgumentOutOfRangeException(nameof(quality));
         _quality = quality;

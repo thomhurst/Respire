@@ -86,7 +86,7 @@ public sealed partial class RespireSearchClient
             withPayloads ? (RespireValue?)"WITHPAYLOADS" : null],
             "MAX", options?.Max is { } max ? (RespireValue?)max : null);
         using var result = await _commands.GetSuggestionsAsync(key, prefix, arguments, cancellationToken).ConfigureAwait(false);
-        if (result.Type != RespDataType.Array || result.IsNull)
+        if (result.Type != RespireDataType.Array || result.IsNull)
             throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
         var width = 1 + (withScores ? 1 : 0) + (withPayloads ? 1 : 0);
         if (result.Count % width != 0)
@@ -126,14 +126,14 @@ public sealed partial class RespireSearchClient
 
     private static RespireResult ReadSuggestionString(RespireResult result)
     {
-        if (result.IsNull || result.Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+        if (result.IsNull || result.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
             throw RespireSearchReply.Unexpected("FT.SUGGET", "a string was expected");
         return result;
     }
 
     private static double ReadSuggestionScore(RespireResult result)
     {
-        if (result.Type == RespDataType.Double) return result.AsDouble();
+        if (result.Type == RespireDataType.Double) return result.AsDouble();
         var text = ReadSuggestionString(result).AsString();
         // Redis uses inf tokens, which invariant double.TryParse does not accept as Infinity.
         if (text.Equals("inf", StringComparison.OrdinalIgnoreCase) || text.Equals("+inf", StringComparison.OrdinalIgnoreCase))

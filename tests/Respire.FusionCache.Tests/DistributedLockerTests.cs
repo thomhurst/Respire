@@ -290,7 +290,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
 
     private Task<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
     {
-        Protocol = (RespProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     }).AsTask();
 
     internal static ValueTask<object?> AcquireAsync(RespireFusionCacheDistributedLocker locker, string cacheName, TimeSpan timeout,

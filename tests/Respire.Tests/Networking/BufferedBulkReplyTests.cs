@@ -22,7 +22,7 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2, ReceiveBufferSize = bufferSize,
+                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = bufferSize,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -53,7 +53,7 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2, ReceiveBufferSize = 1024,
+                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = 1024,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -90,7 +90,7 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2, ReceiveBufferSize = bufferSize,
+                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = bufferSize,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -155,7 +155,7 @@ public class BufferedBulkReplyTests
             await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
                 new RespireConnectionOptions
                 {
-                    Protocol = RespProtocol.Resp2, ReceiveBufferSize = 64 * 1024,
+                    Protocol = RespireProtocol.Resp2, ReceiveBufferSize = 64 * 1024,
                     TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
                 });
             var command = new Cmd1(Verbs.Get, "key");
@@ -214,7 +214,7 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");
@@ -244,7 +244,7 @@ public class BufferedBulkReplyTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var command = new Cmd1(Verbs.Get, "key");

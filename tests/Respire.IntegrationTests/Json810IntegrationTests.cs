@@ -16,7 +16,7 @@ public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
     public async Task MergePatchAndArrayLengthPreserveReplyShapes(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var json = client.WithKeyPrefix($"json810:{Guid.NewGuid():N}:").Json;
         await json.SetJsonAsync("doc", """{"keep":1,"remove":2,"nested":{"old":3},"items":[1,2]}""");
         var patch = JsonSerializer.Deserialize("""{"remove":null,"nested":{"new":4},"items":[5]}""", Json810Context.Default.JsonElement);
@@ -53,7 +53,7 @@ public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
     public async Task PowerAndProjectionReplies(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var json = client.WithKeyPrefix($"json810:{Guid.NewGuid():N}:").Json;
         await json.SetJsonAsync("doc", """{"n":3,"items":[1,2]}""");
         using (var power = await json.Commands.NumberPowerByAsync("doc", "$.n", 2))
@@ -106,7 +106,7 @@ public partial class Json810IntegrationTests(ModernRedisTestContainer fixture)
     public async Task CollectionProjectionsPreserveOneTypedArray(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var json = client.WithKeyPrefix($"json810:{Guid.NewGuid():N}:").Json;
         await json.SetJsonAsync("doc", """{"obj":{"x":1,"y":2},"items":[1,2]}""");
         var keysPath = RespireJsonPath.DirectArray("$.obj.keys()");

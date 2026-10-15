@@ -150,7 +150,7 @@ Review these before you switch; they can change application behavior.
 - **Batch results throw before the batch runs.** Reading `RespirePending<T>.Result` before
   `ExecuteAsync` throws instead of deadlocking.
 - **RESP3 changes raw reply shapes.** Typed methods hide the difference. Raw `RespireResult`
-  callers can receive maps, sets, and doubles. Set `Protocol = RespProtocol.Resp2` if raw callers
+  callers can receive maps, sets, and doubles. Set `Protocol = RespireProtocol.Resp2` if raw callers
   need RESP2 shapes. Client-side caching always uses RESP3, so use a separate client without
   `ClientSideCache` for those callers. See [protocol negotiation](./fundamentals/connections#protocol-negotiation).
 - **One database per client.** Create one client per database index, or use key prefixes.
@@ -202,8 +202,8 @@ for mappings and explicit rejections. URIs such as `rediss://user:pass@cache-a:6
 | `RedisResult` | `RespireResult` — GC-owned by default; dispose results from explicit lease APIs |
 | `RedisChannel` | `RespireChannel` |
 | `TimeSpan? expiry` | `RespireExpiry` (implicit from `TimeSpan` and `DateTimeOffset`) |
-| `When.NotExists`, `When.Exists` | `SetWhen.NotExists`, `SetWhen.Exists` |
-| `KeyTimeToLive` result `TimeSpan?` | `RespireTtl`, which separates a missing key from a key without expiry |
+| `When.NotExists`, `When.Exists` | `RespireSetWhen.NotExists`, `RespireSetWhen.Exists` |
+| `KeyTimeToLive` result `TimeSpan?` | `RespireTtlResult`, which separates a missing key from a key without expiry |
 
 ## Commands
 
@@ -225,12 +225,12 @@ TimeSpan? ttl = await db.KeyTimeToLiveAsync("user:1:name");
 
 ```csharp
 // Respire
-await redis.SetAsync("user:1:name", "Ada", TimeSpan.FromMinutes(5), SetWhen.NotExists);
+await redis.SetAsync("user:1:name", "Ada", TimeSpan.FromMinutes(5), RespireSetWhen.NotExists);
 string? name = await redis.GetStringAsync("user:1:name");
 long visits = await redis.IncrementAsync("visits");
 await redis.Hashes.SetAsync("user:1", "email", "ada@example.com");
 await redis.SortedSets.AddAsync("leaderboard", "ada", 42);
-RespireTtl ttl = await redis.Keys.ExpiryAsync("user:1:name");
+RespireTtlResult ttl = await redis.Keys.ExpiryAsync("user:1:name");
 ```
 
 | StackExchange.Redis | Respire |
@@ -258,7 +258,7 @@ Hash field names, stream field names, and scanned keys are always strings; use r
 **Stream consumer groups.** StackExchange.Redis `StreamReadGroupAsync` returns one batch; the equivalent
 is `Streams.ReadGroupOnceAsync`. The single-key `Streams.ReadGroupAsync` reads continuously on a
 dedicated connection until its cancellation token is cancelled. The multi-stream `Streams.ReadGroupAsync`
-overload returns one page across streams. `StreamReadOptions` supports Redis 8.10 reply limits,
+overload returns one page across streams. `RespireStreamReadOptions` supports Redis 8.10 reply limits,
 `NoAck`, and Redis 8.4 `ClaimMinIdle`.
 
 See [strings and keys](./commands/strings-and-keys), [collections](./commands/collections), and

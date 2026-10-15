@@ -12,7 +12,7 @@ public static class RespireServerNodeExtensions
     /// <remarks>Supported by Respire's server facet. Third-party implementations can provide their own extension.
     /// Each operation uses an independent, short-lived connection to this endpoint. Mutations require AllowAdmin.
     /// The endpoint is never replaced by routing, failover, redirects, or replay.</remarks>
-    public static RespireServerNode OnNode(this IServerCommands server, RespireEndpoint endpoint)
+    public static RespireServerNode OnNode(this IRespireServerCommands server, RespireEndpoint endpoint)
     {
         ArgumentNullException.ThrowIfNull(server);
         return server is ServerCommands commands ? commands.CreateNode(endpoint)
@@ -384,7 +384,7 @@ public sealed partial class RespireServerNode
     }
 
     /// <summary>Returns physical binary keys matching a pattern. Redis: KEYS.</summary>
-    /// <remarks>Debugging only: KEYS scans the entire database and blocks the server. Use IKeyCommands.ScanAsync for production iteration.</remarks>
+    /// <remarks>Debugging only: KEYS scans the entire database and blocks the server. Use IRespireKeyCommands.ScanAsync for production iteration.</remarks>
     public ValueTask<byte[][]> KeysAsync(RespireValue pattern, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<byte[][]>.Start();

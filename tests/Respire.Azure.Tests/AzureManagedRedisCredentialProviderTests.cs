@@ -13,12 +13,12 @@ public class AzureManagedRedisCredentialProviderTests
     {
         var expiry = DateTimeOffset.Parse("2030-01-02T03:04:05Z");
         var credential = new RecordingCredential(new AccessToken("access-token", expiry));
-        var provider = new AzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
+        var provider = new RespireAzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
 
         var credentials = await provider.GetCredentialsAsync();
 
         await Assert.That(credential.RequestContext!.Value.Scopes[0])
-            .IsEqualTo(AzureManagedRedisCredentialProvider.Scope);
+            .IsEqualTo(RespireAzureManagedRedisCredentialProvider.Scope);
         await Assert.That(credentials.Username).IsEqualTo("redis-user-object-id");
         await Assert.That(credentials.Password).IsEqualTo("access-token");
         await Assert.That(credentials.ExpiresAt).IsEqualTo(expiry);
@@ -32,7 +32,7 @@ public class AzureManagedRedisCredentialProviderTests
         var credential = new RecordingCredential(
             new AccessToken("first-token", firstExpiry),
             new AccessToken("second-token", secondExpiry));
-        var provider = new AzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
+        var provider = new RespireAzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
 
         var first = await provider.GetCredentialsAsync();
         var second = await provider.GetCredentialsAsync();
@@ -53,7 +53,7 @@ public class AzureManagedRedisCredentialProviderTests
         {
             CancelOnRequest = true,
         };
-        var provider = new AzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
+        var provider = new RespireAzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
 
         var exception = await Assert.That(async () => await provider.GetCredentialsAsync(cancellation.Token))
             .Throws<OperationCanceledException>();
@@ -67,7 +67,7 @@ public class AzureManagedRedisCredentialProviderTests
     {
         var failure = new InvalidOperationException("credential unavailable");
         var credential = new RecordingCredential(failure);
-        var provider = new AzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
+        var provider = new RespireAzureManagedRedisCredentialProvider(credential, "redis-user-object-id");
 
         var thrown = await Assert.That(async () => await provider.GetCredentialsAsync())
             .Throws<InvalidOperationException>();
@@ -78,9 +78,9 @@ public class AzureManagedRedisCredentialProviderTests
     [Test]
     public async Task RequiresCredentialAndRedisUsername()
     {
-        await Assert.That(() => new AzureManagedRedisCredentialProvider(null!, "redis-user-object-id"))
+        await Assert.That(() => new RespireAzureManagedRedisCredentialProvider(null!, "redis-user-object-id"))
             .Throws<ArgumentNullException>();
-        await Assert.That(() => new AzureManagedRedisCredentialProvider(
+        await Assert.That(() => new RespireAzureManagedRedisCredentialProvider(
                 new RecordingCredential(new AccessToken("token", DateTimeOffset.UtcNow.AddMinutes(1))), " "))
             .Throws<ArgumentException>();
     }

@@ -38,7 +38,7 @@ public class CredentialProviderIntegrationTests
             {
                 CredentialProvider = data, SentinelCredentialProvider = discovery,
                 CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
-                CredentialRefreshRetryDelay = TimeSpan.FromSeconds(1), Protocol = RespProtocol.Resp3,
+                CredentialRefreshRetryDelay = TimeSpan.FromSeconds(1), Protocol = RespireProtocol.Resp3,
                 ClientName = "credential-rotation", Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(10),
                 ClientSideCache = new RespireClientSideCacheOptions(),
             };

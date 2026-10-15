@@ -32,7 +32,7 @@ public class BatchDurabilityIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(primary.Hostname, primary.GetMappedPublicPort(6379))], Connections = 3,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         await using var reader = await RespireClient.ConnectAsync($"redis://{replica.Hostname}:{replica.GetMappedPublicPort(6379)}?protocol={protocol}");
         var view = client.WithKeyPrefix("tenant:");
@@ -65,7 +65,7 @@ public class BatchDurabilityIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))], Connections = 2,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             ClientSideCache = protocol == 3 ? new() : null,
         });
         await client.SetAsync("first", "old");
@@ -77,7 +77,7 @@ public class BatchDurabilityIntegrationTests
         (await client.GetStringAsync("first")).Should().Be("one");
         using var persisted = client.CreateBatch();
         var second = persisted.Set("second", "two");
-        (await persisted.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromMilliseconds(50))).Should().Be(new RespireAofAcknowledgement(1, 0));
+        (await persisted.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromMilliseconds(50))).Should().Be(new RespireAofAcknowledgementResult(1, 0));
         second.Result.Should().BeTrue();
         (await client.GetStringAsync("second")).Should().Be("two");
         using var noReplicaRequirement = client.CreateBatch();
@@ -106,7 +106,7 @@ public class BatchDurabilityIntegrationTests
             using var withoutLocalRequirement = client.CreateBatch();
             _ = withoutLocalRequirement.Set("next", "written");
             (await withoutLocalRequirement.ExecuteAndWaitForAofAsync(false, 0, TimeSpan.Zero))
-                .Should().Be(new RespireAofAcknowledgement(0, 0));
+                .Should().Be(new RespireAofAcknowledgementResult(0, 0));
         }
     }
 }

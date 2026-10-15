@@ -24,17 +24,17 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
     // Parse scans and copies a large triplet list.
     internal static bool IsSlotMigrationPush(in RespValue value)
     {
-        if (value.Type != RespDataType.Push) return false;
+        if (value.Type != RespireDataType.Push) return false;
         var items = value.AsArray();
         return items.Length > 0 && IsString(items[0]) && items[0].AsSpan().SequenceEqual("SMIGRATED"u8);
     }
 
     internal static MaintenanceNotification? Parse(in RespValue value)
     {
-        if (value.Type != RespDataType.Push) return null;
+        if (value.Type != RespireDataType.Push) return null;
         var items = value.AsArray();
         if (items.Length < 2 || !IsString(items[0]) || !IsMaintenanceKind(items[0].AsSpan())
-            || items[1].Type != RespDataType.Integer) return null;
+            || items[1].Type != RespireDataType.Integer) return null;
         var kind = items[0].AsString();
         var sequence = items[1].AsInteger();
         if (sequence < 0) return null;
@@ -64,13 +64,13 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
                     if (!ValidSlots(items[i])) return null;
                 return new(kind, sequence);
             case "SMIGRATED":
-                if (items.Length != 3 || items[2].Type != RespDataType.Array) return null;
+                if (items.Length != 3 || items[2].Type != RespireDataType.Array) return null;
                 var triplets = items[2].AsArray();
                 if (triplets.Length is 0 or > 16384) return null;
                 var migrations = new MaintenanceSlotMigration[triplets.Length];
                 for (var i = 0; i < triplets.Length; i++)
                 {
-                    if (triplets[i].Type != RespDataType.Array) return null;
+                    if (triplets[i].Type != RespireDataType.Array) return null;
                     var triplet = triplets[i].AsArray();
                     if (triplet.Length != 3 || !TryEndpoint(triplet[0], out var source)
                         || !TryEndpoint(triplet[1], out var destination) || !ValidSlots(triplet[2])) return null;
@@ -83,7 +83,7 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
     }
 
     private static bool IsString(in RespValue value)
-        => value.Type is RespDataType.SimpleString or RespDataType.BulkString;
+        => value.Type is RespireDataType.SimpleString or RespireDataType.BulkString;
 
     private static bool IsMaintenanceKind(ReadOnlySpan<byte> kind)
         => kind.SequenceEqual("MOVING"u8)
@@ -96,16 +96,16 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
 
     private static bool TrySeconds(in RespValue value, out long seconds)
     {
-        seconds = value.Type == RespDataType.Integer ? value.AsInteger() : -1;
+        seconds = value.Type == RespireDataType.Integer ? value.AsInteger() : -1;
         return seconds >= 0;
     }
 
     private static bool ValidShards(in RespValue value)
     {
         if (IsString(value)) return true;
-        if (value.Type != RespDataType.Array) return false;
+        if (value.Type != RespireDataType.Array) return false;
         foreach (var shard in value.AsArray())
-            if (!IsString(shard) && shard.Type != RespDataType.Integer) return false;
+            if (!IsString(shard) && shard.Type != RespireDataType.Integer) return false;
         return true;
     }
 

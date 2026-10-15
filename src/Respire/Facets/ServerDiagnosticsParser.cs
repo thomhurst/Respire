@@ -6,27 +6,27 @@ internal static class ServerDiagnosticsParser
 {
     internal static string Text(in RespValue value)
     {
-        if (value.Type is not (RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.VerbatimString))
             throw new RespireProtocolException("Server diagnostic text must be a string.");
         return value.AsString();
     }
 
     internal static long NonnegativeInteger(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("Server diagnostic count must be a nonnegative integer.");
         return value.AsInteger();
     }
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
     {
-        if (value.Type != RespDataType.Array) throw new RespireProtocolException("Server diagnostic rows must be an array.");
+        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("Server diagnostic rows must be an array.");
         return value.AsArray();
     }
 
     private static ReadOnlySpan<RespValue> Pairs(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("Server diagnostic fields must be a map or an array of pairs.");
         var items = value.AsArray();
         if (items.Length % 2 != 0) throw new RespireProtocolException("Server diagnostic field/value pair is incomplete.");

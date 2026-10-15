@@ -13,9 +13,9 @@ namespace Respire.SignalR.Tests;
 public class DeliveryGapTests(RedisTestContainer fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ReconnectLogsGapBeforeSubsequentDelivery(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ReconnectLogsGapBeforeSubsequentDelivery(RespireProtocol protocol)
     {
         var name = Guid.NewGuid().ToString("N");
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)

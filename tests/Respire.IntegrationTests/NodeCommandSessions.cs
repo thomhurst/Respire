@@ -24,7 +24,7 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
             {
                 session = await TestRespSession.ConnectAsync(new RespireOptions
                 {
-                    Endpoints = [new(host, port)], Protocol = RespProtocol.Resp2,
+                    Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2,
                 }, cancellationToken);
                 _sessions.Add(port, session);
             }
@@ -54,10 +54,10 @@ internal sealed class NodeCommandSessions(string host) : IAsyncDisposable
         switch (value.Type)
         {
             // The sessions speak RESP2, so every aggregate is an array; nested items print one per line.
-            case RespDataType.Array:
+            case RespireDataType.Array:
                 foreach (var item in value.AsArray()) Render(item, text);
                 return;
-            case RespDataType.Integer:
+            case RespireDataType.Integer:
                 text.Append(value.AsInteger().ToString(CultureInfo.InvariantCulture)).Append('\n');
                 return;
             default:

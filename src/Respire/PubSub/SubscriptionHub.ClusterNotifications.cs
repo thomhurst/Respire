@@ -62,7 +62,7 @@ internal sealed partial class SubscriptionHub
         {
             if (!_clusterNotifications.Nodes.TryGetValue(endpoint, out node)) return false;
         }
-        DeliverNotification(node, Volatile.Read(ref node.Epoch), SubscriptionKind.Channel,
+        DeliverNotification(node, Volatile.Read(ref node.Epoch), RespireSubscriptionKind.Channel,
             channel, channel, false, payload);
         return true;
     }
@@ -175,7 +175,7 @@ internal sealed partial class SubscriptionHub
     // Removes a consumer from a node route. Returns true when that was the route's last
     // consumer and the route was removed. Requires _gate.
     private bool RemoveNotificationRouteLocked(
-        ClusterNotificationNode node, SubscriptionKind kind, RespireSubscription subscription, RespireChannel name)
+        ClusterNotificationNode node, RespireSubscriptionKind kind, RespireSubscription subscription, RespireChannel name)
         => _clusterNotifications.RemoveRoute(node, kind, subscription, name);
 
     // Retires a node so no stale push or watcher acts on it again. Returns false when it was
@@ -345,7 +345,7 @@ internal sealed partial class SubscriptionHub
     // node itself is not changed: candidate pushes are accepted through PendingEpoch, and on
     // failure the replacement is closed so the previous epoch's watcher stays in charge.
     // Returns the routes the server rejected; the socket stays healthy for the others.
-    private async ValueTask<(RespireConnection Connection, List<(SubscriptionKind Kind, RespireChannel Name)>? Rejected)>
+    private async ValueTask<(RespireConnection Connection, List<(RespireSubscriptionKind Kind, RespireChannel Name)>? Rejected)>
         ConnectAndReplayNotificationNodeAsync(ClusterNotificationNode node, long epoch, CancellationToken cancellationToken)
     {
         var endpoint = node.Endpoint;
@@ -359,7 +359,7 @@ internal sealed partial class SubscriptionHub
         var connection = await RespireConnection.ConnectAsync(endpoint.Host, endpoint.Port, options,
             core.Logger, connectCancellation.Token).ConfigureAwait(false);
         Volatile.Write(ref node.PendingEpoch, epoch);
-        List<(SubscriptionKind Kind, RespireChannel Name)>? rejected = null;
+        List<(RespireSubscriptionKind Kind, RespireChannel Name)>? rejected = null;
         try
         {
             foreach (var (kind, name) in SnapshotNotificationRoutes(node))
@@ -395,7 +395,7 @@ internal sealed partial class SubscriptionHub
     // reconciliation retries them for their owning subscriptions under the reconnect policy.
     private async ValueTask CommitNotificationReplacementAsync(
         ClusterNotificationNode node, RespireConnection connection, long epoch,
-        List<(SubscriptionKind Kind, RespireChannel Name)>? rejected)
+        List<(RespireSubscriptionKind Kind, RespireChannel Name)>? rejected)
     {
         bool retiredDuringReplay;
         RespireConnection? supersededConnection = null;
@@ -483,12 +483,12 @@ internal sealed partial class SubscriptionHub
         if (elements.Length < 3) return;
         var frame = elements[0].AsSpan();
         if (frame.SequenceEqual("message"u8))
-            DeliverNotification(node, epoch, SubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(), false, elements[2].AsSpan());
+            DeliverNotification(node, epoch, RespireSubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(), false, elements[2].AsSpan());
         else if (frame.SequenceEqual("pmessage"u8) && elements.Length >= 4)
-            DeliverNotification(node, epoch, SubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(), true, elements[3].AsSpan());
+            DeliverNotification(node, epoch, RespireSubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(), true, elements[3].AsSpan());
     }
 
-    private void DeliverNotification(ClusterNotificationNode node, long epoch, SubscriptionKind kind,
+    private void DeliverNotification(ClusterNotificationNode node, long epoch, RespireSubscriptionKind kind,
         ReadOnlySpan<byte> routeName, ReadOnlySpan<byte> channel, bool pattern, ReadOnlySpan<byte> payload)
     {
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
@@ -605,10 +605,10 @@ internal sealed partial class SubscriptionHub
     {
         RespireSubscription[] subscriptions;
         List<RespireConnection> close = [];
-        List<(ClusterNotificationNode Node, RespireConnection Connection, SubscriptionKind Kind, RespireChannel Name)> unsubscribe = [];
+        List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name)> unsubscribe = [];
         List<RespireEndpoint> collateralEndpoints = [];
         List<RespireEndpoint> recoveredEndpoints = [];
-        List<(ClusterNotificationNode Node, RespireConnection Connection, SubscriptionKind Kind, RespireChannel Name,
+        List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name,
             CancellationTokenSource Timeout, Task Ack)> cleanupAcks = [];
         await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
         try
@@ -744,13 +744,13 @@ internal sealed partial class SubscriptionHub
         foreach (var (subscription, gap) in gaps) subscription.NotifyGap(gap);
     }
 
-    private (SubscriptionKind Kind, RespireChannel Name)[] SnapshotNotificationRoutes(ClusterNotificationNode node)
+    private (RespireSubscriptionKind Kind, RespireChannel Name)[] SnapshotNotificationRoutes(ClusterNotificationNode node)
     {
         lock (_gate)
         {
-            var snapshot = new List<(SubscriptionKind, RespireChannel)>();
+            var snapshot = new List<(RespireSubscriptionKind, RespireChannel)>();
             for (var i = 0; i < node.Routes.Length; i++)
-                foreach (var name in node.Routes[i].Names) snapshot.Add(((SubscriptionKind)i, name));
+                foreach (var name in node.Routes[i].Names) snapshot.Add(((RespireSubscriptionKind)i, name));
             return [.. snapshot];
         }
     }

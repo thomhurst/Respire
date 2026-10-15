@@ -13,7 +13,7 @@ the stored format changes.
 using Respire.Compression;
 using Respire.Serialization;
 
-var codec = new BrotliValueCodec(new RespireValueCodecOptions
+var codec = new RespireBrotliValueCodec(new RespireValueCodecOptions
 {
     MinimumLength = 1024,
     MaximumDecodedLength = 16 * 1024 * 1024,
@@ -32,10 +32,10 @@ var profile = await compressed.GetAsync<Dictionary<string, string>>("profile");
 
 | Codec | Package | Default level |
 | --- | --- | --- |
-| `BrotliValueCodec` | `Respire` | Quality 4 (range 0–11) |
-| `DeflateValueCodec` (raw DEFLATE) | `Respire` | `CompressionLevel.Fastest` |
-| `Lz4ValueCodec` | `Respire.Compression.Lz4` | See [LZ4](#optional-lz4-package) |
-| `ZstdValueCodec` | `Respire.Compression.Zstd` | 3 |
+| `RespireBrotliValueCodec` | `Respire` | Quality 4 (range 0–11) |
+| `RespireDeflateValueCodec` (raw DEFLATE) | `Respire` | `CompressionLevel.Fastest` |
+| `RespireLz4ValueCodec` | `Respire.Compression.Lz4` | See [LZ4](#optional-lz4-package) |
+| `RespireZstdValueCodec` | `Respire.Compression.Zstd` | 3 |
 
 | `RespireValueCodecOptions` | Default | Meaning |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ It does not apply to:
 - Missing values, which return the normal missing result without calling a decoder.
 
 The decorator forwards both generic and runtime-type serializer methods, so it can wrap a custom
-binary serializer or `SystemTextJsonSerializer.FromContext(...)` without adding reflection. The
+binary serializer or `RespireSystemTextJsonSerializer.FromContext(...)` without adding reflection. The
 existing trim/AOT annotations apply. Custom serializers and codecs must support concurrent calls and
 must not retain input spans.
 
@@ -79,7 +79,7 @@ To compress raw bytes, call the codec yourself:
 ```csharp
 using Respire.Compression;
 
-IRespireValueCodec codec = new DeflateValueCodec();
+IRespireValueCodec codec = new RespireDeflateValueCodec();
 byte[] encoded = codec.Encode(new byte[] { 0, 255, 128 });
 await redis.SetAsync<byte[]>("binary", encoded);
 byte[]? stored = await redis.Strings.GetBytesAsync("binary");
@@ -117,7 +117,7 @@ byte[]? decoded = stored is null ? null : codec.Decode(stored);
 
 ## Optional LZ4 package
 
-Install `Respire.Compression.Lz4` to use `Lz4ValueCodec`. It implements the same contract as Brotli
+Install `Respire.Compression.Lz4` to use `RespireLz4ValueCodec`. It implements the same contract as Brotli
 and Deflate and keeps its K4os dependency out of the core package.
 
 ```csharp
@@ -125,7 +125,7 @@ using Respire.Compression;
 using Respire.Compression.Lz4;
 using Respire.Serialization;
 
-var codec = new Lz4ValueCodec(new RespireValueCodecOptions
+var codec = new RespireLz4ValueCodec(new RespireValueCodecOptions
 {
     MinimumLength = 1024,
     MaximumDecodedLength = 1024 * 1024
@@ -150,7 +150,7 @@ if (restored.Length != 4096) throw new InvalidOperationException("Round trip fai
 
 ## Optional Zstandard package
 
-Install `Respire.Compression.Zstd` to use `ZstdValueCodec` with the same codec and serializer
+Install `Respire.Compression.Zstd` to use `RespireZstdValueCodec` with the same codec and serializer
 contracts.
 
 ```csharp
@@ -158,7 +158,7 @@ using Respire.Compression;
 using Respire.Compression.Zstd;
 using Respire.Serialization;
 
-var codec = new ZstdValueCodec(new RespireValueCodecOptions
+var codec = new RespireZstdValueCodec(new RespireValueCodecOptions
 {
     MinimumLength = 1024,
     MaximumDecodedLength = 1024 * 1024

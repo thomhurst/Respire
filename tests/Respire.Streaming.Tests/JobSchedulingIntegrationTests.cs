@@ -586,7 +586,7 @@ public class JobSchedulingIntegrationTests(RedisTestContainer redis)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol = 3)
-        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        => RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { Protocol = (RespireProtocol)protocol });
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "schedule", Encoding.UTF8.GetBytes);
     private static string[] Keys(RespireJobQueue<string> queue) => [queue.StreamKey, queue.StreamKey + ":scheduled", queue.StreamKey + ":due"];
     internal static RespireScript Script(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly

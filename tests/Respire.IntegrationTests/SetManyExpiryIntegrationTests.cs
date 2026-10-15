@@ -5,7 +5,7 @@ namespace Respire.IntegrationTests;
 
 [Category(TestCategories.ProtocolIndependent)]
 /// <summary>
-/// MSETEX behaviour against a real server: <c>SetManyExpireAsync(RespireExpiry, SetWhen, …)</c>
+/// MSETEX behaviour against a real server: <c>SetManyExpireAsync(RespireExpiry, RespireSetWhen, …)</c>
 /// overload has to map each expiry form onto a shared, live TTL and keep the NX/XX gating.
 /// Runs on Redis 8 — MSETEX does not exist in the Redis 7 fixture the rest of the suite uses.
 /// </summary>
@@ -84,18 +84,18 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
         var client = root.WithKeyPrefix($"{Guid.NewGuid():N}:");
 
         (await client.Strings.SetManyExpireAsync(
-            TimeSpan.FromSeconds(30), SetWhen.NotExists, ("msetnx:a", "first"))).Should().BeTrue();
+            TimeSpan.FromSeconds(30), RespireSetWhen.NotExists, ("msetnx:a", "first"))).Should().BeTrue();
         (await client.Strings.SetManyExpireAsync(
-            TimeSpan.FromSeconds(30), SetWhen.NotExists, ("msetnx:a", "second"))).Should().BeFalse();
+            TimeSpan.FromSeconds(30), RespireSetWhen.NotExists, ("msetnx:a", "second"))).Should().BeFalse();
         (await client.GetStringAsync("msetnx:a")).Should().Be("first");
 
         (await client.Strings.SetManyExpireAsync(
-            RespireExpiry.Keep, SetWhen.Exists, ("msetnx:a", "third"))).Should().BeTrue();
+            RespireExpiry.Keep, RespireSetWhen.Exists, ("msetnx:a", "third"))).Should().BeTrue();
         (await client.GetStringAsync("msetnx:a")).Should().Be("third");
         (await client.Keys.ExpiryAsync("msetnx:a")).HasExpiry.Should().BeTrue();
 
         (await client.Strings.SetManyExpireAsync(
-            RespireExpiry.Keep, SetWhen.Exists, ("msetnx:missing", "value"))).Should().BeFalse();
+            RespireExpiry.Keep, RespireSetWhen.Exists, ("msetnx:missing", "value"))).Should().BeFalse();
         (await client.ExistsAsync("msetnx:missing")).Should().BeFalse();
     }
 }

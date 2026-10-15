@@ -14,8 +14,8 @@ namespace Respire.Caching.Tests;
 public class ValueCodecCacheTests(RedisTestContainer fixture)
 {
     private static RespireValueCodec CreateCodec(bool deflate = false) => deflate
-        ? new DeflateValueCodec(new() { MinimumLength = 64, MaximumDecodedLength = 8192 })
-        : new BrotliValueCodec(new() { MinimumLength = 64, MaximumDecodedLength = 8192 });
+        ? new RespireDeflateValueCodec(new() { MinimumLength = 64, MaximumDecodedLength = 8192 })
+        : new RespireBrotliValueCodec(new() { MinimumLength = 64, MaximumDecodedLength = 8192 });
 
     [Test]
     [Arguments(false, false)]
@@ -270,7 +270,7 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
 
     private sealed class DestinationCodec : IRespireValueCodec
     {
-        private readonly BrotliValueCodec _inner = new();
+        private readonly RespireBrotliValueCodec _inner = new();
         public int DestinationDecodes { get; private set; }
         public byte[] Encode(ReadOnlySpan<byte> payload) => _inner.Encode(payload);
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Buffer reads must use the destination overload.");

@@ -246,7 +246,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             resources.Client,
             async () => _ = await resources.Client.Bitmaps.GetAsync(key, 4),
             async () => _ = await resources.Client.Bitmaps.SetBitCountAsync(key),
-            async () => _ = await resources.Client.Bitmaps.SetBitCountAsync(key, 0, 7, BitIndexUnit.Bit),
+            async () => _ = await resources.Client.Bitmaps.SetBitCountAsync(key, 0, 7, RespireBitIndexUnit.Bit),
             async () => _ = await resources.Client.Bitmaps.PositionAsync(key, true),
             async () => _ = await resources.Client.Bitmaps.FieldReadOnlyAsync(
                 key, RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))));
@@ -273,7 +273,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             async () => _ = await resources.Client.Geo.PositionAsync(key, "london", "missing"),
             async () => _ = await resources.Client.Geo.SearchAsync(
                 key,
-                GeoSearchOrigin.FromMember("london"),
+                RespireGeoSearchOrigin.FromMember("london"),
                 RespireGeoSearchShape.Circle(400, Respire.RespireGeoUnit.Kilometers)));
 
         await resources.Database.GeoAddAsync(key, -3.1883, 55.9533, "london");

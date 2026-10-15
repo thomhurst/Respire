@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchSetCommands",
+      "Type": "Respire.IRespireBatchSetCommands",
       "OwnerType": "Respire.BatchSetCommands",
       "Members": [
         "DifferenceCount(long,params ReadOnlySpan<RespireKey>):RespirePending<long>",

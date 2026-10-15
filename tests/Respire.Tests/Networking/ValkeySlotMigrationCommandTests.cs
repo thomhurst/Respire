@@ -22,8 +22,8 @@ public class ValkeySlotMigrationCommandTests
         await node.ClusterCancelSlotMigrationsAsync();
         await Assert.That(await node.ClusterGetSlotMigrationsAsync()).IsEmpty();
         await node.ClusterFlushSlotAsync(0);
-        await node.ClusterFlushSlotAsync(1, ServerFlushMode.Sync);
-        await node.ClusterFlushSlotAsync(16383, ServerFlushMode.Async);
+        await node.ClusterFlushSlotAsync(1, RespireServerFlushMode.Sync);
+        await node.ClusterFlushSlotAsync(16383, RespireServerFlushMode.Async);
         string[][] expected =
         [
             ["CLUSTER", "MIGRATESLOTS", "SLOTSRANGE", "20", "30", "0", "10", "NODE", "target-a", "SLOTSRANGE", "16383", "16383", "NODE", "target-b"],
@@ -63,7 +63,7 @@ public class ValkeySlotMigrationCommandTests
             if (shape.StartsWith("flush-", StringComparison.Ordinal))
             {
                 await node.ClusterFlushSlotAsync(shape == "flush-negative" ? -1 : shape == "flush-large" ? 16384 : 0,
-                    shape == "flush-mode" ? (ServerFlushMode)99 : ServerFlushMode.Default);
+                    shape == "flush-mode" ? (RespireServerFlushMode)99 : RespireServerFlushMode.Default);
                 return;
             }
             RespireValkeySlotMigrationGroup[] groups = shape switch
@@ -185,7 +185,7 @@ public class ValkeySlotMigrationCommandTests
     private static RespireOptions Options(int port, int protocol) => new()
     {
         Endpoints = [new("127.0.0.1", port)], AllowAdmin = true, Connections = 1,
-        Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     };
 

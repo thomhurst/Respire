@@ -14,7 +14,7 @@ public class FakeListServerTests
     public async Task PushOwnsTheRequestKeyAndElementBuffers(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         byte[] key = [255, 0, 1], first = [254, 0, 2], second = [253, 0, 3];
         await Number(client, "LPUSH", key, first, second);
         System.Array.Fill(key, (byte)0);
@@ -33,7 +33,7 @@ public class FakeListServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Lists.RightPushAsync("list", "a", "b", "c");
         await Number(client, "PEXPIRE", "list", 1000);
         await client.Lists.LeftPushAsync("list", "first");

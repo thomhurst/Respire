@@ -175,7 +175,7 @@ public class FrameSerializationSelectionTests
                 ? Encoding.UTF8.GetBytes("+" + command[5..] + "\r\n") : null,
         };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { Protocol = RespProtocol.Resp2, CommandTimeout = null, MaxInflightCommands = 4 });
+            new RespireConnectionOptions { Protocol = RespireProtocol.Resp2, CommandTimeout = null, MaxInflightCommands = 4 });
         var binary = Enumerable.Range(0, 70_000).Select(index => (byte)index).ToArray();
         var text = new string('a', 35_000) + "é😀";
         var textBytes = Encoding.UTF8.GetBytes(text);
@@ -249,7 +249,7 @@ public class FrameSerializationSelectionTests
 
     private static Task<RespireConnection> ConnectAsync(FakeRespServer server)
         => RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { Protocol = RespProtocol.Resp2, CommandTimeout = null });
+            new RespireConnectionOptions { Protocol = RespireProtocol.Resp2, CommandTimeout = null });
 
     private readonly struct ObservedCommand(byte[] frame, int bound, Action hint, Action written) : IRespCommand
     {

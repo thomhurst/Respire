@@ -31,7 +31,7 @@ public class ClusterNodeIdentityTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             Endpoints = [new("127.0.0.1", server.Port)],
         };
@@ -63,7 +63,7 @@ public class ClusterNodeIdentityTests
         var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(10),
             ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -77,7 +77,7 @@ public class ClusterNodeIdentityTests
             });
         var connection = node.GetConnection();
         await using var payload = new PausedUploadStream();
-        var command = new StreamedSetCommand((RespireValue)"upload", payload, payload.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"upload", payload, payload.Length, default, RespireSetWhen.Always);
         var upload = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await payload.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
@@ -133,7 +133,7 @@ public class ClusterNodeIdentityTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
@@ -161,7 +161,7 @@ public class ClusterNodeIdentityTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
@@ -207,7 +207,7 @@ public class ClusterNodeIdentityTests
         var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
             CommandTimeout = null,
@@ -255,7 +255,7 @@ public class ClusterNodeIdentityTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
             CommandTimeout = null,
@@ -302,7 +302,7 @@ public class ClusterNodeIdentityTests
         server.DelayCommand("ECHO", 250);
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             // The explicit ECHO deadline below leaves 100 ms, while the maintenance
             // allowance adds two seconds. Setup keeps its independent five-second budget.
@@ -361,7 +361,7 @@ public class ClusterNodeIdentityTests
         var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(5),
             ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -1750,7 +1750,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var core = client.Core;
@@ -1807,7 +1807,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -1835,7 +1835,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -1877,7 +1877,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -1915,7 +1915,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -2013,7 +2013,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var router = client.Core.Cluster!;
@@ -2052,7 +2052,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -2107,7 +2107,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var core = client.Core;
@@ -2168,7 +2168,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var core = client.Core;
@@ -2553,7 +2553,7 @@ public class ClusterNodeIdentityTests
 
     private static RespireOptions Options(int seedPort) => new()
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         UseCluster = true,
         Endpoints = { new RespireEndpoint("127.0.0.1", seedPort) },
         Connections = 1,

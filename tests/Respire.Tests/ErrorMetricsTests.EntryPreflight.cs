@@ -27,7 +27,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -120,7 +120,7 @@ public partial class ErrorMetricsTests
                     break;
                 case "subscribe-null": await client.SubscribeAsync((string)null!); break;
                 default:
-                    RespireChannel[] mixed = [new("one"), new RespireChannel("two").WithKind(SubscriptionKind.Pattern)];
+                    RespireChannel[] mixed = [new("one"), new RespireChannel("two").WithKind(RespireSubscriptionKind.Pattern)];
                     await client.SubscribeAsync(mixed, cancellationToken: CancellationToken.None);
                     break;
             }

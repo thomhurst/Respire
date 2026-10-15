@@ -24,7 +24,7 @@ public class KeyMetadataTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var keys = client.WithKeyPrefix("tenant:").Keys;
         await Assert.That((await keys.ExpiryTimeAsync("key")).UnixTimeMilliseconds).IsEqualTo(1700000000123);
-        await Assert.That((await keys.ExpiryTimeAsync("key", ExpiryTimePrecision.Seconds)).UnixTimeMilliseconds).IsEqualTo(1700000000000);
+        await Assert.That((await keys.ExpiryTimeAsync("key", RespireExpiryTimePrecision.Seconds)).UnixTimeMilliseconds).IsEqualTo(1700000000000);
         var missing = await keys.ExpiryTimeAsync("missing");
         var persistent = await keys.ExpiryTimeAsync("persistent");
         await Assert.That(missing.Exists).IsFalse();
@@ -55,7 +55,7 @@ public class KeyMetadataTests
         byte[] raw = [0xff, 0, (byte)'x'];
         RespireKey key = raw;
         using var batch = client.WithKeyPrefix("p:").CreateBatch();
-        var expiry = batch.Keys.ExpiryTime(key, ExpiryTimePrecision.Seconds);
+        var expiry = batch.Keys.ExpiryTime(key, RespireExpiryTimePrecision.Seconds);
         var encoding = batch.Keys.Encoding(key);
         var idle = batch.Keys.IdleTime(key);
         var frequency = batch.Keys.Frequency(key);
@@ -76,13 +76,13 @@ public class KeyMetadataTests
     {
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        await Assert.That(async () => await client.Keys.ExpiryTimeAsync("key", (ExpiryTimePrecision)9)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Keys.ExpiryTimeAsync("key", (RespireExpiryTimePrecision)9)).Throws<ArgumentOutOfRangeException>();
         using var batch = client.CreateBatch();
-        _ = Assert.Throws<ArgumentOutOfRangeException>(() => batch.Keys.ExpiryTime("key", (ExpiryTimePrecision)9));
+        _ = Assert.Throws<ArgumentOutOfRangeException>(() => batch.Keys.ExpiryTime("key", (RespireExpiryTimePrecision)9));
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
         // A pre-cancelled lazy client never establishes a connection or submits a command.
-        await using var lazy = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) } });
+        await using var lazy = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) } });
         await Assert.That(async () => await lazy.Keys.EncodingAsync("key", cancelled.Token)).Throws<OperationCanceledException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }

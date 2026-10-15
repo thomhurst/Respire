@@ -21,7 +21,7 @@ public partial class ErrorMetricsTests
         var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [endpoint],
+            Protocol = RespireProtocol.Resp2, Endpoints = [endpoint],
             CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
         });
         var admission = client.Core.Circuits!.Acquire(endpoint, default);
@@ -71,7 +71,7 @@ public partial class ErrorMetricsTests
         var refusedPort = 0;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
@@ -126,7 +126,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(16, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var cancellation = new CancellationTokenSource();
@@ -160,7 +160,7 @@ public partial class ErrorMetricsTests
         listener.Stop();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", port)], ConnectTimeout = TimeSpan.FromSeconds(2),
         });
         using var capture = new Capture();
@@ -220,7 +220,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         // The unanswered GET fills the only in-flight slot, so the next command waits for capacity.
@@ -261,7 +261,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var connection = client.Core.Multiplexer.GetConnection();
@@ -313,7 +313,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var cancelled = new CancellationTokenSource();
@@ -374,7 +374,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "primary",
             ConnectTimeout = TimeSpan.FromSeconds(2),
         });
@@ -399,7 +399,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(16, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
@@ -442,7 +442,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(16, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var capture = new Capture();
@@ -466,7 +466,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
         using var capture = new Capture();
@@ -486,7 +486,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
         using var cancelled = new CancellationTokenSource();
@@ -524,7 +524,7 @@ public partial class ErrorMetricsTests
             "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
         // Models a failover: the shared pin records a primary multiplexer that has since been replaced.
@@ -547,7 +547,7 @@ public partial class ErrorMetricsTests
             "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
         await using var replaced = RespireConnectionMultiplexer.Create("127.0.0.1", 1);
@@ -572,7 +572,7 @@ public partial class ErrorMetricsTests
             "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
         var router = client.Core.ReadRouter;
@@ -597,7 +597,7 @@ public partial class ErrorMetricsTests
             "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)], ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
         var router = client.Core.ReadRouter;
@@ -624,7 +624,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(300), Endpoints = [new("127.0.0.1", server.Port)],
         });
         // The unanswered GET fills the only in-flight slot until the next command's deadline expires.
@@ -647,7 +647,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
@@ -667,7 +667,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = client.CreateTransaction();
@@ -691,7 +691,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         // The unanswered GET fills the only in-flight slot, so the fire-and-forget command waits for capacity.
@@ -715,7 +715,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = await client.CreateTransactionAsync(["balance"]);
         using var cancelled = new CancellationTokenSource();
@@ -743,7 +743,7 @@ public partial class ErrorMetricsTests
             : command.StartsWith("SET ", StringComparison.Ordinal) ? redirect : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         await using var stream = new ResetFailingStream([1, 2, 3]);
         using var capture = new Capture();
@@ -775,7 +775,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(16, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var batch = client.WithReadFrom(RespireReadFrom.Replica).CreateBatch();
@@ -814,7 +814,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(16, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var owner = ClusterHash.GetSlot(key) <= 8191 ? first : second;
@@ -839,7 +839,7 @@ public partial class ErrorMetricsTests
         listener.Stop();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             ClusterTopologyRefreshInterval = null, ConnectTimeout = TimeSpan.FromSeconds(2),
             Endpoints = [new("127.0.0.1", port)],
         });
@@ -870,7 +870,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var batch = client.CreateBatch();
         var queued = batch.Set("key", "value");
@@ -904,7 +904,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var capture = new Capture(serverPort: server.Port);
         // A listener for one client must ignore another node's measurement.

@@ -133,7 +133,7 @@ public class AggregatePayloadBenchmarks
     {
         long checksum = 0;
         foreach (var value in reply.AsArray())
-            checksum += value.Type == RespDataType.Integer ? value.AsInteger() : value.AsSpan().Length;
+            checksum += value.Type == RespireDataType.Integer ? value.AsInteger() : value.AsSpan().Length;
         return checksum;
     }
 

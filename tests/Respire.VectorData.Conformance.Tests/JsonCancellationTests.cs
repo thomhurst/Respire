@@ -9,9 +9,9 @@ namespace Respire.VectorData.Conformance.Tests;
 public sealed class JsonCancellationTests(RedisServerFixture server)
 {
     [Theory]
-    [InlineData(RespProtocol.Resp2)]
-    [InlineData(RespProtocol.Resp3)]
-    public async Task Cancelled_operations_preserve_cancellation_and_stored_record(RespProtocol protocol)
+    [InlineData(RespireProtocol.Resp2)]
+    [InlineData(RespireProtocol.Resp3)]
+    public async Task Cancelled_operations_preserve_cancellation_and_stored_record(RespireProtocol protocol)
     {
         var store = new JsonTestStore(server, protocol);
         await store.ReferenceCountingStartAsync();

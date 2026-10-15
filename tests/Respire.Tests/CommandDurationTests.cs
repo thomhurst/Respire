@@ -103,7 +103,7 @@ public class CommandDurationTests
         await using var server = new FakeRespServer { SuppressReply = command => command.StartsWith("GET ") || command.StartsWith("STRLEN ") };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -179,7 +179,7 @@ public class CommandDurationTests
         await using var server = new FakeRespServer { SuppressReply = command => command.StartsWith("GET ") || command.StartsWith("STRLEN ") };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = failure == "deadline" ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(10),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
@@ -224,7 +224,7 @@ public class CommandDurationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             CircuitBreaker = circuitEnabled ? new() : null,
         });
         using var capture = new DurationCapture(throwFromListener);
@@ -253,7 +253,7 @@ public class CommandDurationTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Database = 7, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Database = 7, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var listener = new MeterListener();

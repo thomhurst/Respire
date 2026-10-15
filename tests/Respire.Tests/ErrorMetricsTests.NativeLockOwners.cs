@@ -18,7 +18,7 @@ public partial class ErrorMetricsTests
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         await using var server = NativeLockMetricServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        ILockCommands wrapper = new ForwardingLockCommands(client.Locks);
+        IRespireLockCommands wrapper = new ForwardingLockCommands(client.Locks);
         using var capture = new Capture(throwOnMeasurement: true);
         await Assert.That(async () => await wrapper.AcquireAsync("key", TimeSpan.Zero, keepAlive))
             .Throws<ArgumentOutOfRangeException>();
@@ -34,27 +34,27 @@ public partial class ErrorMetricsTests
         await using var server = NativeLockMetricServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("key", TimeSpan.FromSeconds(30));
-        var starter = DispatchResponseSource<LockReleaseOutcome>.Start();
+        var starter = DispatchResponseSource<RespireLockReleaseOutcome>.Start();
         var starterObservation = starter.Observation;
         starterObservation.SetAttempts(3);
         var liveObservation = new CompletingReleaseObservation();
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         var attemptType = typeof(RespireLock).GetNestedType("ReleaseAttempt", BindingFlags.NonPublic)!;
-        var attempt = (TaskCompletionSource<LockReleaseOutcome>)Activator.CreateInstance(attemptType, flags,
+        var attempt = (TaskCompletionSource<RespireLockReleaseOutcome>)Activator.CreateInstance(attemptType, flags,
             binder: null, args: [new RespireTelemetry.ErrorObservation(liveObservation, 1)], culture: null)!;
         liveObservation.Read = () =>
         {
             // Complete and consume the starter between the joiner's live read and completion check.
             attemptType.GetField("RetryAttempts", flags)!.SetValue(attempt, starterObservation.Attempts);
-            attempt.TrySetResult(LockReleaseOutcome.Released);
-            _ = starter.Attach(new ValueTask<LockReleaseOutcome>(LockReleaseOutcome.Released)).GetAwaiter().GetResult();
+            attempt.TrySetResult(RespireLockReleaseOutcome.Released);
+            _ = starter.Attach(new ValueTask<RespireLockReleaseOutcome>(RespireLockReleaseOutcome.Released)).GetAwaiter().GetResult();
             return starterObservation.Attempts;
         };
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         using var capture = new Capture(throwOnMeasurement: true);
-        var joiner = DispatchResponseSource<LockReleaseOutcome>.Run(mutex,
-            (handle, observation) => (ValueTask<LockReleaseOutcome>)typeof(RespireLock)
+        var joiner = DispatchResponseSource<RespireLockReleaseOutcome>.Run(mutex,
+            (handle, observation) => (ValueTask<RespireLockReleaseOutcome>)typeof(RespireLock)
                 .GetMethod("JoinReleaseAsync", flags)!.Invoke(handle, [attempt, cancelled.Token, observation])!);
         await Assert.That(async () => await joiner).Throws<OperationCanceledException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -252,8 +252,8 @@ public partial class ErrorMetricsTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1000; i++)
         {
-            var owner = DispatchResponseSource<LockReleaseOutcome>.Start();
-            _ = owner.Attach(new ValueTask<LockReleaseOutcome>(LockReleaseOutcome.Released)).GetAwaiter().GetResult();
+            var owner = DispatchResponseSource<RespireLockReleaseOutcome>.Start();
+            _ = owner.Attach(new ValueTask<RespireLockReleaseOutcome>(RespireLockReleaseOutcome.Released)).GetAwaiter().GetResult();
             if (control) GC.KeepAlive(new byte[37]);
         }
         return GC.GetAllocatedBytesForCurrentThread() - before;
@@ -276,7 +276,7 @@ public partial class ErrorMetricsTests
         public void Retry(long generation) => throw new NotSupportedException();
     }
 
-    private sealed class ForwardingLockCommands(ILockCommands inner) : ILockCommands
+    private sealed class ForwardingLockCommands(IRespireLockCommands inner) : IRespireLockCommands
     {
         public ValueTask<RespireLockAttempt> AcquireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
             => inner.AcquireAsync(key, expiry, cancellationToken);

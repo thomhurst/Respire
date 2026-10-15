@@ -12,7 +12,7 @@ if (args is ["--codecs-only"])
 }
 
 var endpoint = args.Length > 0 ? args[0] : "127.0.0.1:6379";
-foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
 {
     // Each conformance pass needs a separate connection configured for its protocol.
 #pragma warning disable RESP010

@@ -4,7 +4,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Returns one node's CLUSTER INFO view. Redis 3+.</summary>
     ValueTask<RespireClusterInfo> ClusterInfoAsync(CancellationToken cancellationToken = default);

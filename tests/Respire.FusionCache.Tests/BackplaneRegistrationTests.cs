@@ -20,7 +20,7 @@ public class BackplaneRegistrationTests(RedisTestContainer fixture)
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         };
         await using var firstClient = await RespireClient.ConnectAsync(options);

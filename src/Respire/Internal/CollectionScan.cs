@@ -89,11 +89,11 @@ internal static class CollectionScan
 
     internal static ReadOnlySpan<RespValue> ParsePage(in RespValue reply, string operation, out ulong cursor)
     {
-        if (reply.Type != RespDataType.Array)
+        if (reply.Type != RespireDataType.Array)
             throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
         var parts = reply.AsArray();
         if (parts.Length != 2
-            || parts[1].Type != RespDataType.Array
+            || parts[1].Type != RespireDataType.Array
             || !ulong.TryParse(parts[0].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out cursor))
             throw new RespireProtocolException($"{operation} must return an unsigned cursor and an item array.");
         return parts;

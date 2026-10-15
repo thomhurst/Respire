@@ -1,3 +1,3 @@
 #nullable enable
-Respire.Compression.Lz4.Lz4ValueCodec
-Respire.Compression.Lz4.Lz4ValueCodec.Lz4ValueCodec(Respire.Compression.RespireValueCodecOptions? options = null, int level = 0) -> void
+Respire.Compression.Lz4.RespireLz4ValueCodec
+Respire.Compression.Lz4.RespireLz4ValueCodec.RespireLz4ValueCodec(Respire.Compression.RespireValueCodecOptions? options = null, int level = 0) -> void

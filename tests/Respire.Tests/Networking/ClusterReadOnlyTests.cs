@@ -48,7 +48,7 @@ public class ClusterReadOnlyTests
         var unavailablePort = unavailable.Port;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ConnectTimeout = RecoveryRound, CommandTimeout = null,
             ClusterRecoveryClock = clock,
             ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
@@ -96,7 +96,7 @@ public class ClusterReadOnlyTests
         {
             var options = new RespireOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 UseCluster = true,
                 ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
                 Connections = 1,
@@ -185,7 +185,7 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(SplitTopology(first.Port, replica.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ConnectTimeout = RecoveryRound, CommandTimeout = null,
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
@@ -360,7 +360,7 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, initial, Topology(replacement.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             ClientName = "recovery",
@@ -706,7 +706,7 @@ public class ClusterReadOnlyTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
@@ -735,7 +735,7 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(Topology(replica.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
             ClusterRecoveryClock = clock,
             Endpoints = [new("127.0.0.1", seed.Port)],
@@ -782,7 +782,7 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, Topology(replica.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ClientName = "joined-recovery",
             ConnectTimeout = TimeSpan.FromSeconds(30), CommandTimeout = null,
             ClusterRecoveryClock = clock,
@@ -834,7 +834,7 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(Topology(replica.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
             ClusterRecoveryClock = clock,
             ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
@@ -900,7 +900,7 @@ public class ClusterReadOnlyTests
         var slot = ClusterHash.GetSlot("key");
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             ClusterTopologyRefreshInterval = null,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
@@ -1078,7 +1078,7 @@ public class ClusterReadOnlyTests
         TimeProvider? recoveryClock = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             ConnectTimeout = connectTimeout ?? TimeSpan.FromSeconds(1),

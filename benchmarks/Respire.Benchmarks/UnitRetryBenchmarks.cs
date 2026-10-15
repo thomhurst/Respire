@@ -48,7 +48,7 @@ public class UnitRetryBenchmarks
         var options = new RespireOptions
         {
             Endpoints = [new(host, port)], Connections = 1, ThreadPoolMonitoring = false,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             SentinelPrimaryName = Owner == "Sentinel" ? "mymaster" : null,
             UseCluster = Owner == "Cluster",

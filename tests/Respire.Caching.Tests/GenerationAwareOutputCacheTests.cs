@@ -131,7 +131,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-            { Protocol = (RespProtocol)protocol, Username = username, Password = password });
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = password });
             var failing = new RespireOutputCacheStore(restricted, options);
             await Assert.That(async () => await failing.SetAsync("key", [2], ["orphan", "denied"], TimeSpan.FromMinutes(1)))
                 .Throws<RespireServerException>();
@@ -163,7 +163,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-            { Protocol = (RespProtocol)protocol, Username = username, Password = password });
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = password });
             await Assert.That(async () => await new RespireOutputCacheStore(restricted, options)
                 .SetAsync("key", [2], ["new"], TimeSpan.FromMinutes(1))).Throws<RespireServerException>();
             await AssertPayload(store, "key", 1);
@@ -265,7 +265,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     {
         await using var cluster = await RedisClusterTestContainer.StartAsync();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-        { UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new(cluster.Host, cluster.Port(0))] });
+        { UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new(cluster.Host, cluster.Port(0))] });
         var store = new RespireOutputCacheStore(client.WithKeyPrefix("tenant:"), Options());
         await store.SetAsync("key:{other-slot}", [1], ["old:{different-slot}"], TimeSpan.FromMinutes(1));
         await store.SetAsync("key:{other-slot}", [2], ["new:{third-slot}"], TimeSpan.FromMinutes(1));
@@ -306,7 +306,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
 
     private static (IRespireClient Client, ScriptBarrier Barrier) WrapScripts(IRespireClient client)
     {
-        var scripts = DispatchProxy.Create<IScriptCommands, ScriptBarrier>();
+        var scripts = DispatchProxy.Create<IRespireScriptCommands, ScriptBarrier>();
         var barrier = (ScriptBarrier)scripts;
         barrier.Inner = client.Scripts;
         var wrapped = DispatchProxy.Create<IRespireClient, ClientProxy>();
@@ -318,7 +318,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     public class ClientProxy : DispatchProxy
     {
         public IRespireClient Inner { get; set; } = null!;
-        public IScriptCommands Scripts { get; set; } = null!;
+        public IRespireScriptCommands Scripts { get; set; } = null!;
         protected override object? Invoke(MethodInfo? method, object?[]? arguments) =>
             method!.Name == "get_Scripts" ? Scripts : method.Invoke(Inner, arguments);
     }
@@ -326,7 +326,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     public class ScriptBarrier : DispatchProxy
     {
         private int _paused;
-        public IScriptCommands Inner { get; set; } = null!;
+        public IRespireScriptCommands Inner { get; set; } = null!;
         public bool PausePublication { get; set; }
         public bool LosePublicationReply { get; set; }
         public int PublicationCount { get; private set; }
@@ -334,10 +334,10 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
-            if (method!.Name == nameof(IScriptCommands.ExecuteIntegerAsync) && LosePublicationReply
+            if (method!.Name == nameof(IRespireScriptCommands.ExecuteIntegerAsync) && LosePublicationReply
                 && ((RespireScript)arguments![0]!).Source.Contains("'HSET'", StringComparison.Ordinal))
                 return ExecuteThenLoseReplyAsync(method, arguments);
-            if (method!.Name == nameof(IScriptCommands.ExecuteIntegerAsync)
+            if (method!.Name == nameof(IRespireScriptCommands.ExecuteIntegerAsync)
                 && ((RespireScript)arguments![0]!).Source.Contains(PausePublication ? "'HSET'" : "'HGET'", StringComparison.Ordinal)
                 && Interlocked.Exchange(ref _paused, 1) == 0)
                 return ExecuteAfterReleaseAsync(method, arguments);
@@ -375,7 +375,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     }
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(
-        RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
 
     private static RespireOutputCacheOptions Options() => new()
     {

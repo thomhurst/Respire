@@ -81,4 +81,4 @@ foreach (var result in results)
 ACL responses can contain password hashes and security details. Do not log rule arguments or credentials. Respire records operation names only; server error messages are kept intact.
 :::
 
-The 18 ACL methods (nine single-node methods and their all-node counterparts) are `IServerCommands` members. External implementations, decorators, and mocks must implement or forward them. They are immediate Server operations, not available in batches or transactions.
+The 18 ACL methods (nine single-node methods and their all-node counterparts) are `IRespireServerCommands` members. External implementations, decorators, and mocks must implement or forward them. They are immediate Server operations, not available in batches or transactions.

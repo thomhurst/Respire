@@ -127,7 +127,7 @@ public class TypedSearchQueryTests
 
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespProtocol)protocol, ThreadPoolMonitoring = false,
+        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespireProtocol)protocol, ThreadPoolMonitoring = false,
     };
 
     private static string Tokens(FakeRespServer server) => string.Join(" ", server.ReceivedArguments.Last().Select(Encoding.UTF8.GetString));

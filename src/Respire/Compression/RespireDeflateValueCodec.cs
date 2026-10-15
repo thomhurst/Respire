@@ -3,12 +3,12 @@ using System.IO.Compression;
 namespace Respire.Compression;
 
 /// <summary>Raw DEFLATE value compression using versioned Respire frames and algorithm ID 2.</summary>
-public sealed class DeflateValueCodec : RespireValueCodec
+public sealed class RespireDeflateValueCodec : RespireValueCodec
 {
     private readonly CompressionLevel _level;
 
     /// <summary>Creates a thread-safe codec using the specified compression level. The default is Fastest.</summary>
-    public DeflateValueCodec(RespireValueCodecOptions? options = null, CompressionLevel level = CompressionLevel.Fastest)
+    public RespireDeflateValueCodec(RespireValueCodecOptions? options = null, CompressionLevel level = CompressionLevel.Fastest)
         : base(2, options, allowReservedAlgorithm: true)
     {
         if (!Enum.IsDefined(level)) throw new ArgumentOutOfRangeException(nameof(level));

@@ -238,7 +238,7 @@ public class RespireHealthProbeContractTests
             server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.PongReply;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);

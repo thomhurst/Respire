@@ -107,4 +107,4 @@ Cancellation:
 - Cancellation during discovery throws; later cancellation is reported per node.
 - Cancelling a sent mutation cannot undo it. A lost reply leaves the outcome unknown; inspect before retrying.
 
-`GetHotKeysTrackerAsync` and the four `...HotKeysOnAllNodesAsync` methods are `IServerCommands` members. External implementations and mocks must implement or forward them. There are no batch or transaction HOTKEYS commands.
+`GetHotKeysTrackerAsync` and the four `...HotKeysOnAllNodesAsync` methods are `IRespireServerCommands` members. External implementations and mocks must implement or forward them. There are no batch or transaction HOTKEYS commands.

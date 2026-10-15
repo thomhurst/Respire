@@ -187,12 +187,12 @@ internal static class PrimitiveCodec
     {
         switch (value.Type)
         {
-            case RespDataType.Integer:
+            case RespireDataType.Integer:
                 return TryDeserializeInteger(value.AsInteger(), out result);
-            case RespDataType.Boolean when TypeCache<T>.Kind == PrimitiveKind.Boolean:
+            case RespireDataType.Boolean when TypeCache<T>.Kind == PrimitiveKind.Boolean:
                 result = Return<T, bool>(value.AsBoolean());
                 return true;
-            case RespDataType.Double:
+            case RespireDataType.Double:
                 return TryDeserializeDouble(value.AsDouble(), out result);
             default:
                 return TryDeserialize(value.AsSpan(), out result);

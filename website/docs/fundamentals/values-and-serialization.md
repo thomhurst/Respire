@@ -82,7 +82,7 @@ A missing key returns `null` from string, byte-array, reference-type, and nullab
 
 ## Missing keys versus stored defaults
 
-`TryGetAsync<T>` returns a `RespireGet<T>` that reports presence alongside the value, so you can tell a missing key from a stored `default(T)` in one round trip:
+`TryGetAsync<T>` returns a `RespireGetResult<T>` that reports presence alongside the value, so you can tell a missing key from a stored `default(T)` in one round trip:
 
 ```csharp
 var (found, hits) = await redis.TryGetAsync<int>("page:hits");
@@ -91,11 +91,11 @@ if (!found) { /* key is absent */ }
 else if (hits == 0) { /* key holds 0 */ }
 ```
 
-`RespireGet<T>` also has `GetValueOrDefault(fallback)`. The same method exists on `redis.Strings` and, per field, on `redis.Hashes`.
+`RespireGetResult<T>` also has `GetValueOrDefault(fallback)`. The same method exists on `redis.Strings` and, per field, on `redis.Hashes`.
 
 ## Object serialization
 
-`SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for objects. The default is `SystemTextJsonSerializer`. Supply an `IRespireSerializer` for another format:
+`SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for objects. The default is `RespireSystemTextJsonSerializer`. Supply an `IRespireSerializer` for another format:
 
 <!-- doc-test-ignore: MyMessagePackSerializer is the application's omitted IRespireSerializer implementation. -->
 ```csharp
@@ -137,7 +137,7 @@ using Respire.Serialization;
 var options = new RespireOptions
 {
     Endpoints = { new RespireEndpoint("localhost") },
-    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
+    Serializer = RespireSystemTextJsonSerializer.FromContext(AppJsonContext.Default),
 };
 
 await using var redis = await RespireClient.ConnectAsync(options);
@@ -236,10 +236,10 @@ if (value is not null)
 
 ## Expiry without sentinels
 
-Redis uses negative TTL values for missing and persistent keys. Respire returns `RespireTtl` instead:
+Redis uses negative TTL values for missing and persistent keys. Respire returns `RespireTtlResult` instead:
 
 ```csharp
-RespireTtl expiry = await redis.Keys.ExpiryAsync("session:42");
+RespireTtlResult expiry = await redis.Keys.ExpiryAsync("session:42");
 
 if (!expiry.Exists) { /* missing */ }
 else if (!expiry.HasExpiry) { /* persistent */ }

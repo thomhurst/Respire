@@ -14,7 +14,7 @@ public class FakeSetServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Sets.AddAsync("source", "move", "last");
         await client.Sets.AddAsync("destination", "existing");
         await Number(client, "PEXPIRE", "source", 1000);

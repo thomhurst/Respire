@@ -25,7 +25,7 @@ public class ServerClientIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Connections = 2, AllowAdmin = true, ClientName = "admin-test",
             ClientSideCache = caching ? new() : null,
         };
@@ -101,7 +101,7 @@ public class ServerClientIntegrationTests
         // Connection-scoped settings only, so the shared Redis 7 server is safe.
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis7.ConnectionString) with
         {
-            Connections = 1, AllowAdmin = true, Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Connections = 1, AllowAdmin = true, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         var connection = await client.Server.GetClientConnectionAsync();
         Func<Task> noTouch = async () => await connection.SetNoTouchAsync(true);
@@ -163,7 +163,7 @@ public class ServerClientClusterIntegrationTests(ClusterTransactionTestContainer
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Connections = 2,
-            Protocol = (RespProtocol)protocol, ClientName = $"cluster-admin-{protocol}",
+            Protocol = (RespireProtocol)protocol, ClientName = $"cluster-admin-{protocol}",
         });
         var handle = await client.Server.GetClientConnectionAsync();
         (await handle.InfoAsync()).Id.Should().Be(handle.Id);

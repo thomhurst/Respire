@@ -30,7 +30,7 @@ public class ServerClientCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         // Populate after obtaining the handle so each non-ID case isolates its own command.
@@ -114,7 +114,7 @@ public class ServerClientCommandTests
             Sequence(resp3 ? '%' : '*', fields), Bulk(binary)];
         if (resp3) replies = ["%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), .. replies];
         await using var server = new FakeRespServer(replies);
-        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2 });
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2 });
         var connection = await client.WithKeyPrefix("ignored:").Server.GetClientConnectionAsync();
         await Assert.That(connection.Id).IsEqualTo(42);
         await Assert.That(connection.Endpoint.Port).IsEqualTo(server.Port);
@@ -208,7 +208,7 @@ public class ServerClientCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
-            Connections = 2, Protocol = caching ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Connections = 2, Protocol = caching ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             ClientSideCache = caching ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -328,7 +328,7 @@ public class ServerClientCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
-            UseCluster = true, Protocol = RespProtocol.Resp3, ClientSideCache = caching ? new() : null,
+            UseCluster = true, Protocol = RespireProtocol.Resp3, ClientSideCache = caching ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         var connection = await client.Server.GetClientConnectionAsync();
@@ -362,7 +362,7 @@ public class ServerClientCommandTests
         await Assert.That(async () => await connection.TrackingInfoAsync()).ThrowsExactly<RespireProtocolException>();
     }
 
-    private static RespireOptions Options(int port) => new() { Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", port)] };
+    private static RespireOptions Options(int port) => new() { Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", port)] };
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
     private static byte[] Bulk(string value) => Bulk(Encoding.UTF8.GetBytes(value));
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];

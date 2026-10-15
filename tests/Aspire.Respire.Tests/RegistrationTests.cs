@@ -489,7 +489,7 @@ public class RegistrationTests
         IRespireCredentialProvider? provider = null;
         builder.AddRespireClient("cache", configureOptions: (services, options) => options with
         {
-            CredentialProvider = provider = new AzureManagedRedisCredentialProvider(services.GetRequiredService<TokenCredential>(), "object-id"),
+            CredentialProvider = provider = new RespireAzureManagedRedisCredentialProvider(services.GetRequiredService<TokenCredential>(), "object-id"),
         });
         using var host = builder.Build();
         _ = host.Services.GetRequiredService<IRespireClient>();

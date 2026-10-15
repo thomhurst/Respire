@@ -91,8 +91,8 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         const string key = "ttl:nx";
 
-        (await client.SetAsync(key, "first", TimeSpan.FromSeconds(30), SetWhen.NotExists)).Should().BeTrue();
-        (await client.SetAsync(key, "second", TimeSpan.FromSeconds(90), SetWhen.NotExists)).Should().BeFalse();
+        (await client.SetAsync(key, "first", TimeSpan.FromSeconds(30), RespireSetWhen.NotExists)).Should().BeTrue();
+        (await client.SetAsync(key, "second", TimeSpan.FromSeconds(90), RespireSetWhen.NotExists)).Should().BeFalse();
 
         (await client.GetStringAsync(key)).Should().Be("first");
         var expiry = await client.Keys.ExpiryAsync(key);
@@ -105,11 +105,11 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         const string key = "ttl:xx";
 
-        (await client.SetAsync(key, "first", TimeSpan.FromSeconds(30), SetWhen.Exists)).Should().BeFalse();
+        (await client.SetAsync(key, "first", TimeSpan.FromSeconds(30), RespireSetWhen.Exists)).Should().BeFalse();
         (await client.ExistsAsync(key)).Should().BeFalse();
 
         await client.SetAsync(key, "first", TimeSpan.FromSeconds(30));
-        (await client.SetAsync(key, "second", RespireExpiry.Keep, SetWhen.Exists)).Should().BeTrue();
+        (await client.SetAsync(key, "second", RespireExpiry.Keep, RespireSetWhen.Exists)).Should().BeTrue();
 
         (await client.GetStringAsync(key)).Should().Be("second");
         (await client.Keys.ExpiryAsync(key)).HasExpiry.Should().BeTrue();

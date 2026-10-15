@@ -11,13 +11,13 @@ public class ProtocolRegistrationTests
     [Test]
     [Arguments(false, null)]
     [Arguments(true, null)]
-    [Arguments(false, RespProtocol.Auto)]
-    [Arguments(true, RespProtocol.Auto)]
-    [Arguments(false, RespProtocol.Resp2)]
-    [Arguments(true, RespProtocol.Resp2)]
-    [Arguments(false, RespProtocol.Resp3)]
-    [Arguments(true, RespProtocol.Resp3)]
-    public async Task BuilderProtocol_ReachesResolvedClient(bool keyed, RespProtocol? protocol)
+    [Arguments(false, RespireProtocol.Auto)]
+    [Arguments(true, RespireProtocol.Auto)]
+    [Arguments(false, RespireProtocol.Resp2)]
+    [Arguments(true, RespireProtocol.Resp2)]
+    [Arguments(false, RespireProtocol.Resp3)]
+    [Arguments(true, RespireProtocol.Resp3)]
+    public async Task BuilderProtocol_ReachesResolvedClient(bool keyed, RespireProtocol? protocol)
     {
         var services = new ServiceCollection();
         void Configure(RespireOptionsBuilder options)

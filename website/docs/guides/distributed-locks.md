@@ -118,7 +118,7 @@ await RunReportAsync(keepAlive.CancellationToken);
 
 Disposing `mutex` is the normal release path; it suppresses connection, timeout, cancellation and
 disposed-client failures because expiry is the safety net. Call `ReleaseAsync` to observe the
-result: `LockReleaseOutcome.Released`, `AlreadyReleased` or `NotOwned`.
+result: `RespireLockReleaseOutcome.Released`, `AlreadyReleased` or `NotOwned`.
 
 If `ReleaseAsync` is cancelled or times out:
 

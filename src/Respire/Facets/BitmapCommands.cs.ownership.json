@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBitmapCommands",
+      "Type": "Respire.IRespireBitmapCommands",
       "OwnerType": "Respire.BitmapCommands",
       "Members": [
         "FieldAsync(RespireKey,RespireBitFieldOperation,CancellationToken):ValueTask<long?[]>",
@@ -11,13 +11,13 @@
         "FieldReadOnlyAsync(RespireKey,ReadOnlySpan<RespireBitFieldOperation>,CancellationToken):ValueTask<long?[]>",
         "FieldReadOnlyAsync(RespireKey,params ReadOnlySpan<RespireBitFieldOperation>):ValueTask<long?[]>",
         "GetAsync(RespireKey,long,CancellationToken):ValueTask<bool>",
-        "OperateAsync(BitOperation,RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
-        "OperateAsync(BitOperation,RespireKey,RespireKey,CancellationToken):ValueTask<long>",
-        "OperateAsync(BitOperation,RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
-        "PositionAsync(RespireKey,bool,long?,long?,BitIndexUnit,CancellationToken):ValueTask<long?>",
+        "OperateAsync(RespireBitOperation,RespireKey,ReadOnlySpan<RespireKey>,CancellationToken):ValueTask<long>",
+        "OperateAsync(RespireBitOperation,RespireKey,RespireKey,CancellationToken):ValueTask<long>",
+        "OperateAsync(RespireBitOperation,RespireKey,params ReadOnlySpan<RespireKey>):ValueTask<long>",
+        "PositionAsync(RespireKey,bool,long?,long?,RespireBitIndexUnit,CancellationToken):ValueTask<long?>",
         "SetAsync(RespireKey,long,bool,CancellationToken):ValueTask<bool>",
         "SetBitCountAsync(RespireKey,CancellationToken):ValueTask<long>",
-        "SetBitCountAsync(RespireKey,long,long,BitIndexUnit,CancellationToken):ValueTask<long>"
+        "SetBitCountAsync(RespireKey,long,long,RespireBitIndexUnit,CancellationToken):ValueTask<long>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

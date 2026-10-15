@@ -25,7 +25,7 @@ public class HashMultiReadCacheTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         await client.Hashes.GetStringAsync("hash", "a");
         await client.Hashes.GetManyAsync("hash", "a", "b");
@@ -194,7 +194,7 @@ public class HashMultiReadCacheTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Endpoints = { new("127.0.0.1", seed.Port) },
-            Connections = 1, Protocol = RespProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true }, CommandTimeout = Limit,
+            Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true }, CommandTimeout = Limit,
         });
         for (var read = 0; read < 2; read++)
             await Assert.That(await client.Hashes.GetManyAsync("hash", "a", "b"))
@@ -214,7 +214,7 @@ public class HashMultiReadCacheTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            Protocol = RespProtocol.Resp3, CommandTimeout = Limit,
+            Protocol = RespireProtocol.Resp3, CommandTimeout = Limit,
             ClientSideCache = new()
             {
                 ReuseHashFields = true,
@@ -252,7 +252,7 @@ public class HashMultiReadCacheTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true }, CommandTimeout = Limit,
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true }, CommandTimeout = Limit,
         });
         await client.GetStringAsync("{a}");
         await client.GetStringAsync("{b}");
@@ -356,7 +356,7 @@ public class HashMultiReadCacheTests
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce }, CommandTimeout = Limit, ConnectTimeout = Limit,
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce }, CommandTimeout = Limit, ConnectTimeout = Limit,
         });
 
     private static async Task WaitUntilAsync(Func<bool> condition)

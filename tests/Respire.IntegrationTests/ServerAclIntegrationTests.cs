@@ -57,7 +57,7 @@ public class ServerAclIntegrationTests
         await using (var restricted = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))], Connections = 1,
-            Protocol = protocol == 3 ? RespProtocol.Resp3 : RespProtocol.Resp2, Username = "reader", Password = "acl-test-password",
+            Protocol = protocol == 3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2, Username = "reader", Password = "acl-test-password",
         }))
         {
             (await restricted.Server.AclWhoAmIAsync()).Should().Equal("reader"u8.ToArray());

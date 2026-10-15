@@ -5,7 +5,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IBatchStringCommands
+public partial interface IRespireBatchStringCommands
 {
     /// <summary>Queues a raw SET with a value/digest comparison; returns whether the value was written.</summary>
     /// <remarks>Keep binary value buffers unchanged until execution completes. The condition owns its comparison operand.</remarks>

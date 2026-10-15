@@ -221,7 +221,7 @@ public class IndependentLeaseLifetimeWireTests
 
     private static Task<RespireClient> ConnectAsync(FakeRespServer server, int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Protocol = (RespProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+        Protocol = (RespireProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     }).AsTask();
 }

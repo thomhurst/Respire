@@ -12,7 +12,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     public async Task SortedSetSinglePop_RoundTripsImmediateBatchAndTransaction(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"sorted:single-pop:{Guid.NewGuid():N}";
         await client.SortedSets.AddAsync(key, 7, 1.5);
         await client.SortedSets.AddAsync(key, 9, 2.5);
@@ -44,7 +44,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     public async Task PopMany_RoundTripsImmediateBatchAndTransaction(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var setKey = $"set:many-pop:{Guid.NewGuid():N}";
         var sortedKey = $"sorted:many-pop:{Guid.NewGuid():N}";
         await client.Sets.AddAsync(setKey, "one", "two");
@@ -193,13 +193,13 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Bitmaps.SetAsync("bits", 4, true)).Should().BeFalse();
         (await client.Bitmaps.GetAsync("bits", 4)).Should().BeTrue();
         (await client.Bitmaps.SetBitCountAsync("bits")).Should().Be(1);
-        (await client.Bitmaps.SetBitCountAsync("bits", 4, 4, BitIndexUnit.Bit)).Should().Be(1);
+        (await client.Bitmaps.SetBitCountAsync("bits", 4, 4, RespireBitIndexUnit.Bit)).Should().Be(1);
         (await client.Bitmaps.PositionAsync("bits", true)).Should().Be(4);
         (await client.Bitmaps.PositionAsync("missing-bits", true)).Should().BeNull();
 
         await client.Bitmaps.SetAsync("left", 0, true);
         await client.Bitmaps.SetAsync("right", 1, true);
-        (await client.Bitmaps.OperateAsync(BitOperation.Or, "union", "left", "right")).Should().Be(1);
+        (await client.Bitmaps.OperateAsync(RespireBitOperation.Or, "union", "left", "right")).Should().Be(1);
         (await client.Bitmaps.SetBitCountAsync("union")).Should().Be(2);
 
         (await client.Bitmaps.FieldAsync(
@@ -417,14 +417,14 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 
         var results = await client.Geo.SearchAsync(
             "cities",
-            GeoSearchOrigin.FromMember("london"),
+            RespireGeoSearchOrigin.FromMember("london"),
             RespireGeoSearchShape.Circle(400, RespireGeoUnit.Kilometers),
-            new GeoSearchOptions { Sort = GeoSortOrder.Ascending, IncludeDistance = true });
+            new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Ascending, IncludeDistance = true });
         results.Select(static result => result.Member).Should().Equal("london", "paris");
         results[0].Distance.Should().BeApproximately(0, 0.001);
 
         (await client.Geo.SearchStoreAsync(
-            "nearby", "cities", GeoSearchOrigin.FromMember("london"),
+            "nearby", "cities", RespireGeoSearchOrigin.FromMember("london"),
             RespireGeoSearchShape.Circle(400, RespireGeoUnit.Kilometers))).Should().Be(2);
     }
 

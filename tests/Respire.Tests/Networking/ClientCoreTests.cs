@@ -66,7 +66,7 @@ public class ClientCoreTests
     [Test]
     public async Task StateChange_IncludesSourceEndpointAndError()
     {
-        await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        await using var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var endpoint = new RespireEndpoint("127.0.0.1", 6380);
         var node = core.Cluster!.GetMultiplexer(endpoint);
         var changes = new List<RespireConnectionStateChange>();
@@ -115,7 +115,7 @@ public class ClientCoreTests
     [Test]
     public async Task DisposeAsync_DisconnectsActualSubscriptionEndpoint()
     {
-        var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var subscriptionEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var changes = new List<RespireConnectionStateChange>();
         core.ConnectionStateChanged += changes.Add;
@@ -135,7 +135,7 @@ public class ClientCoreTests
     [Test]
     public async Task DisposeAsync_DisconnectsEveryActiveClusterEndpoint()
     {
-        var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var primaryEndpoint = core.Options.PrimaryEndpoint;
         var secondEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var secondNode = core.Cluster!.GetMultiplexer(secondEndpoint);
@@ -157,7 +157,7 @@ public class ClientCoreTests
     [Test]
     public async Task DisposeAsync_DisconnectsRetainedClusterNotificationEndpoint()
     {
-        var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var endpoint = new RespireEndpoint("retained-primary", 7000);
         var changes = new List<RespireConnectionStateChange>();
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -236,7 +236,7 @@ public class ClientCoreTests
     [Test]
     public async Task SubscriberState_UsesReportedEndpoint()
     {
-        await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        await using var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var endpoint = new RespireEndpoint("127.0.0.1", 6380);
         var changes = new List<RespireConnectionStateChange>();
         core.ConnectionStateChanged += changes.Add;
@@ -256,7 +256,7 @@ public class ClientCoreTests
     [Test]
     public async Task SubscriberRecoveryToNewEndpoint_ClearsPreviousEndpoint()
     {
-        await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        await using var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var previousEndpoint = core.Options.PrimaryEndpoint;
         var replacementEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var changes = new List<RespireConnectionStateChange>();
@@ -277,7 +277,7 @@ public class ClientCoreTests
     [Test]
     public async Task CommandRecovery_WaitsForEveryReconnectingSlot()
     {
-        await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 2 });
+        await using var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 2 });
         var states = new List<RespireConnectionState>();
         core.ConnectionStateChanged += change => states.Add(change.State);
 
@@ -296,7 +296,7 @@ public class ClientCoreTests
     [Test]
     public async Task ClusterRecovery_PublishesEachEndpointTransition()
     {
-        await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });
+        await using var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var primaryEndpoint = core.Options.PrimaryEndpoint;
         var secondEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var secondNode = core.Cluster!.GetMultiplexer(secondEndpoint);

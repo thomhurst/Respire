@@ -186,11 +186,11 @@ public class BytesResponseTests
     // ring's only consumer, as the receive loop would be.
     private static bool TryCompleteBulkDirect(
         RespireConnection connection, ReadOnlySpan<byte> buffer, int headerEnd, long length, out int frameEnd)
-        => TryCompleteBulkDirect(connection, buffer, RespDataType.BulkString, length, headerEnd, out frameEnd);
+        => TryCompleteBulkDirect(connection, buffer, RespireDataType.BulkString, length, headerEnd, out frameEnd);
 
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "TryCompleteBulkDirect")]
     private static extern bool TryCompleteBulkDirect(
-        RespireConnection connection, ReadOnlySpan<byte> buffer, RespDataType type, long payloadLength, int headerEnd, out int frameEnd);
+        RespireConnection connection, ReadOnlySpan<byte> buffer, RespireDataType type, long payloadLength, int headerEnd, out int frameEnd);
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_completions")]
     private static extern ref CompletionScheduler Completions(RespireConnection connection);
@@ -269,7 +269,7 @@ public class BytesResponseTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = cached ? new() : null,
@@ -305,7 +305,7 @@ public class BytesResponseTests
         await using var server = new FakeRespServer { SuppressReply = _ => true };
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             PushHandler = (in RespValue value) => pushed.TrySetResult(value.AsArray()[1].AsSpan().Length),
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -340,7 +340,7 @@ public class BytesResponseTests
         };
 
     private static Task<RespireConnection> Connect(FakeRespServer server)
-        => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new() { Protocol = RespProtocol.Resp2 });
+        => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new() { Protocol = RespireProtocol.Resp2 });
 
     private static async Task WaitForCommands(FakeRespServer server, int count, CancellationToken token)
     {

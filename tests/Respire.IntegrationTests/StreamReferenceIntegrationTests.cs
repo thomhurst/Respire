@@ -26,11 +26,11 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     [MatrixDataSource]
     public async Task DeletionPreservesPerIdResultsAndGroupReferences(
         [Matrix(2, 3)] int protocol, [Matrix(0, 1, 2)] int surface,
-        [Matrix(StreamReferencePolicy.KeepReferences, StreamReferencePolicy.DeleteReferences, StreamReferencePolicy.Acknowledged)] StreamReferencePolicy policy,
+        [Matrix(RespireStreamReferencePolicy.KeepReferences, RespireStreamReferencePolicy.DeleteReferences, RespireStreamReferencePolicy.Acknowledged)] RespireStreamReferencePolicy policy,
         [Matrix(false, true)] bool acknowledge)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"references:{Guid.NewGuid():N}:");
         try
         {
@@ -54,14 +54,14 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
                 else await batch!.ExecuteAsync();
                 results = pending.Result;
             }
-            var retained = policy == StreamReferencePolicy.Acknowledged;
+            var retained = policy == RespireStreamReferencePolicy.Acknowledged;
             results.Should().Equal(RespireStreamDeletionResult.Deleted, RespireStreamDeletionResult.NotFound,
                 RespireStreamDeletionResult.NotFound, retained ? RespireStreamDeletionResult.Retained : RespireStreamDeletionResult.Deleted);
             (await view.Streams.CountAsync("events")).Should().Be(retained ? 1 : 0);
             (await view.Streams.PendingSummaryAsync("events", "a")).Count.Should()
-                .Be(acknowledge || policy == StreamReferencePolicy.DeleteReferences ? 0 : 1);
+                .Be(acknowledge || policy == RespireStreamReferencePolicy.DeleteReferences ? 0 : 1);
             (await view.Streams.PendingSummaryAsync("events", "b")).Count.Should()
-                .Be(policy == StreamReferencePolicy.DeleteReferences ? 0 : 1);
+                .Be(policy == RespireStreamReferencePolicy.DeleteReferences ? 0 : 1);
             if (retained)
             {
                 await view.Streams.AcknowledgeAsync("events", "a", "2-0");
@@ -76,11 +76,11 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     [MatrixDataSource]
     public async Task TrimmingAppliesReferencePolicyOnAllSurfaces(
         [Matrix(2, 3)] int protocol, [Matrix(0, 1, 2)] int surface,
-        [Matrix(StreamReferencePolicy.KeepReferences, StreamReferencePolicy.DeleteReferences, StreamReferencePolicy.Acknowledged)] StreamReferencePolicy policy,
+        [Matrix(RespireStreamReferencePolicy.KeepReferences, RespireStreamReferencePolicy.DeleteReferences, RespireStreamReferencePolicy.Acknowledged)] RespireStreamReferencePolicy policy,
         [Matrix(false, true)] bool append)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"reference-trim:{Guid.NewGuid():N}:");
         try
         {
@@ -88,7 +88,7 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
             await view.Streams.AcknowledgeAsync("events", "a", "1-0", "2-0");
             await view.Streams.AcknowledgeAsync("events", "b", "1-0");
             var add = new RespireStreamAddOptions { Id = "4-0", MinId = "4-0", ApproximateTrim = false, ReferencePolicy = policy };
-            var trim = new StreamTrimOptions { MaxLength = 0, ReferencePolicy = policy };
+            var trim = new RespireStreamTrimOptions { MaxLength = 0, ReferencePolicy = policy };
             long removed = 0;
             if (surface == 0)
             {
@@ -107,11 +107,11 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
                 if (append) added!.Result.Should().Be((RespireStreamId)"4-0");
                 else removed = trimmed!.Result;
             }
-            var acknowledgedOnly = policy == StreamReferencePolicy.Acknowledged;
+            var acknowledgedOnly = policy == RespireStreamReferencePolicy.Acknowledged;
             if (!append) removed.Should().Be(acknowledgedOnly ? 1 : 3);
             (await view.Streams.CountAsync("events")).Should().Be((acknowledgedOnly ? 2 : 0) + (append ? 1 : 0));
-            (await view.Streams.PendingSummaryAsync("events", "a")).Count.Should().Be(policy == StreamReferencePolicy.DeleteReferences ? 0 : 1);
-            (await view.Streams.PendingSummaryAsync("events", "b")).Count.Should().Be(policy == StreamReferencePolicy.DeleteReferences ? 0 : 2);
+            (await view.Streams.PendingSummaryAsync("events", "a")).Count.Should().Be(policy == RespireStreamReferencePolicy.DeleteReferences ? 0 : 1);
+            (await view.Streams.PendingSummaryAsync("events", "b")).Count.Should().Be(policy == RespireStreamReferencePolicy.DeleteReferences ? 0 : 2);
         }
         finally { await view.Keys.DeleteAsync("events"); }
     }
@@ -122,21 +122,21 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     public async Task MissingPendingEntriesAndDanglingReferencesRemainDistinct(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"reference-missing:{Guid.NewGuid():N}:");
         try
         {
-            (await view.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
-            (await view.Streams.AcknowledgeAndRemoveAsync("events", "a", StreamReferencePolicy.KeepReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
+            (await view.Streams.RemoveAsync("events", RespireStreamReferencePolicy.KeepReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
+            (await view.Streams.AcknowledgeAndRemoveAsync("events", "a", RespireStreamReferencePolicy.KeepReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
             await SeedAsync(view, 2);
-            (await view.Streams.AcknowledgeAndRemoveAsync("events", "absent", StreamReferencePolicy.DeleteReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
+            (await view.Streams.AcknowledgeAndRemoveAsync("events", "absent", RespireStreamReferencePolicy.DeleteReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
             await view.Streams.AcknowledgeAsync("events", "a", "1-0");
-            (await view.Streams.AcknowledgeAndRemoveAsync("events", "a", StreamReferencePolicy.DeleteReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
+            (await view.Streams.AcknowledgeAndRemoveAsync("events", "a", RespireStreamReferencePolicy.DeleteReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
             (await view.Streams.CountAsync("events")).Should().Be(2);
             await view.Streams.RemoveAsync("events", "1-0", "2-0");
-            (await view.Streams.RemoveAsync("events", StreamReferencePolicy.DeleteReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
+            (await view.Streams.RemoveAsync("events", RespireStreamReferencePolicy.DeleteReferences, "1-0")).Should().Equal(RespireStreamDeletionResult.NotFound);
             (await view.Streams.PendingSummaryAsync("events", "b")).Count.Should().Be(1);
-            (await view.Streams.AcknowledgeAndRemoveAsync("events", "a", StreamReferencePolicy.DeleteReferences, "2-0")).Should().Equal(RespireStreamDeletionResult.Deleted);
+            (await view.Streams.AcknowledgeAndRemoveAsync("events", "a", RespireStreamReferencePolicy.DeleteReferences, "2-0")).Should().Equal(RespireStreamDeletionResult.Deleted);
             (await view.Streams.PendingSummaryAsync("events", "b")).Count.Should().Be(0);
         }
         finally { await view.Keys.DeleteAsync("events"); }
@@ -148,15 +148,15 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     public async Task AcknowledgedPolicyAllowsRemovalWhenNoGroupsExist(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"reference-no-groups:{Guid.NewGuid():N}";
         try
         {
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
-            (await client.Streams.RemoveAsync(key, StreamReferencePolicy.Acknowledged, "1-0"))
+            (await client.Streams.RemoveAsync(key, RespireStreamReferencePolicy.Acknowledged, "1-0"))
                 .Should().Equal(RespireStreamDeletionResult.Deleted);
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "v"));
-            (await client.Streams.TrimAsync(key, new() { MaxLength = 0, ReferencePolicy = StreamReferencePolicy.Acknowledged }))
+            (await client.Streams.TrimAsync(key, new() { MaxLength = 0, ReferencePolicy = RespireStreamReferencePolicy.Acknowledged }))
                 .Should().Be(1);
         }
         finally { await client.Keys.DeleteAsync(key); }
@@ -186,17 +186,17 @@ public class LegacyStreamReferenceIntegrationTests(RedisTestContainer fixture)
     public async Task UnsupportedOptionsDoNotSilentlyFallBackOrReplay(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"legacy-references:{Guid.NewGuid():N}";
         try
         {
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "v"));
             Func<Task>[] unsupported =
             [
-                async () => await client.Streams.RemoveAsync(key, StreamReferencePolicy.KeepReferences, "1-0"),
-                async () => await client.Streams.AcknowledgeAndRemoveAsync(key, "g", StreamReferencePolicy.DeleteReferences, "1-0"),
-                async () => await client.Streams.AddAsync(key, new RespireStreamAddOptions { ReferencePolicy = StreamReferencePolicy.KeepReferences }, ("f", "v")),
-                async () => await client.Streams.TrimAsync(key, new() { MaxLength = 0, ReferencePolicy = StreamReferencePolicy.KeepReferences }),
+                async () => await client.Streams.RemoveAsync(key, RespireStreamReferencePolicy.KeepReferences, "1-0"),
+                async () => await client.Streams.AcknowledgeAndRemoveAsync(key, "g", RespireStreamReferencePolicy.DeleteReferences, "1-0"),
+                async () => await client.Streams.AddAsync(key, new RespireStreamAddOptions { ReferencePolicy = RespireStreamReferencePolicy.KeepReferences }, ("f", "v")),
+                async () => await client.Streams.TrimAsync(key, new() { MaxLength = 0, ReferencePolicy = RespireStreamReferencePolicy.KeepReferences }),
             ];
             foreach (var action in unsupported) await action.Should().ThrowAsync<RespireServerException>();
             (await client.Streams.CountAsync(key)).Should().Be(1);

@@ -299,7 +299,7 @@ public class SearchConfigurationTests
     private static RespireOptions Options(FakeRespServer server, int protocol, bool allowAdmin = true) => new()
     {
         Endpoints = [new("127.0.0.1", server.Port)],
-        Protocol = (RespProtocol)protocol,
+        Protocol = (RespireProtocol)protocol,
         Connections = 1,
         ThreadPoolMonitoring = false,
         AllowAdmin = allowAdmin,

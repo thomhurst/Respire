@@ -160,7 +160,7 @@ public class RespireHealthCheckTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
@@ -195,7 +195,7 @@ public class RespireHealthCheckTests
             };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             Endpoints = [new("127.0.0.1", first.Port)],
         });
         await client.Core.Cluster!.GetMasterConnectionsAsync(CancellationToken.None, discovery: null, observation: default);
@@ -290,7 +290,7 @@ public class RespireHealthCheckTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(), Connections = 1,
         });
         var result = await new RespireHealthCheck(client, new() { IncludeClientSideCache = include }).CheckHealthAsync(Context());
@@ -382,7 +382,7 @@ public class RespireHealthCheckTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
         });
         var result = await new RespireHealthCheck(client, new() { ProbeAllNodes = true }).CheckHealthAsync(Context());
         await Assert.That(result.Status).IsEqualTo(HealthStatus.Healthy);

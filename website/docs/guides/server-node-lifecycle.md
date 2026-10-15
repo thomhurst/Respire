@@ -14,7 +14,7 @@ RespireCommandKeyFlags[] keys = await node.CommandGetKeysAndFlagsAsync("MGET", [
 - No command is redirected, replayed, or broadcast. The handle stops working when the client is disposed.
 - Methods are immediate, not queueable in batches or transactions.
 - Keys in arguments and results are **physical server keys**; `WithKeyPrefix` does not apply. Binary inputs are copied before I/O; binary results own their storage.
-- `OnNode` is not part of the `IServerCommands` interface contract. On a third-party implementation it throws `NotSupportedException`.
+- `OnNode` is not part of the `IRespireServerCommands` interface contract. On a third-party implementation it throws `NotSupportedException`.
 
 ## Read commands
 
@@ -178,7 +178,7 @@ Start, cancel, and flush need `AllowAdmin`; status does not. Server ACLs apply t
 ### FLUSHSLOT
 
 :::warning
-`ClusterFlushSlotAsync(slot, ServerFlushMode.Default/Sync/Async)` sends Valkey 9+ **FLUSHSLOT**, which deletes all keys in the slot across databases on that node. Use it only on a deliberately chosen endpoint.
+`ClusterFlushSlotAsync(slot, RespireServerFlushMode.Default/Sync/Async)` sends Valkey 9+ **FLUSHSLOT**, which deletes all keys in the slot across databases on that node. Use it only on a deliberately chosen endpoint.
 :::
 
 - It keeps slot ownership; **FLUSHSLOTS** (which clears ownership metadata) is a different command.

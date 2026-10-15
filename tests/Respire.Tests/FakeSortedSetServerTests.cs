@@ -14,7 +14,7 @@ public class FakeSortedSetServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
         using (var expiry = await client.ExecuteAsync("PEXPIRE", "key", 1000)) { }
         await client.SortedSets.AddAsync("key", "a", 3);

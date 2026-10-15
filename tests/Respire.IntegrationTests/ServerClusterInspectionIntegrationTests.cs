@@ -36,7 +36,7 @@ public class ServerClusterInspectionIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(container.Hostname, port)], Connections = 1, UseCluster = true,
-            Protocol = protocol == 3 ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Protocol = protocol == 3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
         });
         var view = client.WithKeyPrefix("tenant:");
         await view.SetAsync("key", "value");

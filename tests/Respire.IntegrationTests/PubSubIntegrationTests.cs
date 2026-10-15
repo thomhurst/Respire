@@ -27,15 +27,15 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Channel, false)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Channel, false)]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Pattern, false)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Pattern, false)]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Sharded, false)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Sharded, false)]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Channel, true)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Channel, true)]
-    public async Task BinaryChannels_RoundTrip(RespProtocol protocol, SubscriptionKind kind, bool useFake)
+    [Arguments(RespireProtocol.Resp2, RespireSubscriptionKind.Channel, false)]
+    [Arguments(RespireProtocol.Resp3, RespireSubscriptionKind.Channel, false)]
+    [Arguments(RespireProtocol.Resp2, RespireSubscriptionKind.Pattern, false)]
+    [Arguments(RespireProtocol.Resp3, RespireSubscriptionKind.Pattern, false)]
+    [Arguments(RespireProtocol.Resp2, RespireSubscriptionKind.Sharded, false)]
+    [Arguments(RespireProtocol.Resp3, RespireSubscriptionKind.Sharded, false)]
+    [Arguments(RespireProtocol.Resp2, RespireSubscriptionKind.Channel, true)]
+    [Arguments(RespireProtocol.Resp3, RespireSubscriptionKind.Channel, true)]
+    public async Task BinaryChannels_RoundTrip(RespireProtocol protocol, RespireSubscriptionKind kind, bool useFake)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
@@ -43,21 +43,21 @@ public class PubSubIntegrationTests
         RespireChannel channel = (byte[])[.. prefix, (byte)'x'];
         RespireChannel target = kind switch
         {
-            SubscriptionKind.Pattern => RespireChannel.Pattern((byte[])[.. prefix, (byte)'*']),
-            SubscriptionKind.Sharded => RespireChannel.Sharded(channel),
+            RespireSubscriptionKind.Pattern => RespireChannel.Pattern((byte[])[.. prefix, (byte)'*']),
+            RespireSubscriptionKind.Sharded => RespireChannel.Sharded(channel),
             _ => channel,
         };
         await using var subscription = await client.SubscribeAsync(target);
         var messageTask = ReadFirstAsync(subscription);
         byte[] payload = [0xfe, 0, 0xff];
-        var count = kind == SubscriptionKind.Sharded
+        var count = kind == RespireSubscriptionKind.Sharded
             ? await client.PublishShardedAsync(channel, payload)
             : await client.PublishAsync(channel, payload);
         count.Should().Be(1);
         var message = await messageTask.WaitAsync(TimeSpan.FromSeconds(5));
         message.Channel.Should().Be(channel);
         message.Payload.ToArray().Should().Equal(payload);
-        if (kind == SubscriptionKind.Pattern) message.Pattern.Should().Be(target);
+        if (kind == RespireSubscriptionKind.Pattern) message.Pattern.Should().Be(target);
         else message.Pattern.Should().BeNull();
     }
 
@@ -107,11 +107,11 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, false)]
-    [Arguments(RespProtocol.Resp3, false)]
-    [Arguments(RespProtocol.Resp2, true)]
-    [Arguments(RespProtocol.Resp3, true)]
-    public async Task SubscribeAsync_MultipleChannels_AllLiveOnReturn(RespProtocol protocol, bool useFake)
+    [Arguments(RespireProtocol.Resp2, false)]
+    [Arguments(RespireProtocol.Resp3, false)]
+    [Arguments(RespireProtocol.Resp2, true)]
+    [Arguments(RespireProtocol.Resp3, true)]
+    public async Task SubscribeAsync_MultipleChannels_AllLiveOnReturn(RespireProtocol protocol, bool useFake)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = Options(server, protocol);
@@ -129,11 +129,11 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, false)]
-    [Arguments(RespProtocol.Resp3, false)]
-    [Arguments(RespProtocol.Resp2, true)]
-    [Arguments(RespProtocol.Resp3, true)]
-    public async Task SubscribeAsync_Cancelled_LeavesNothingSubscribed(RespProtocol protocol, bool useFake)
+    [Arguments(RespireProtocol.Resp2, false)]
+    [Arguments(RespireProtocol.Resp3, false)]
+    [Arguments(RespireProtocol.Resp2, true)]
+    [Arguments(RespireProtocol.Resp3, true)]
+    public async Task SubscribeAsync_Cancelled_LeavesNothingSubscribed(RespireProtocol protocol, bool useFake)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = Options(server, protocol);
@@ -158,11 +158,11 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, false)]
-    [Arguments(RespProtocol.Resp3, false)]
-    [Arguments(RespProtocol.Resp2, true)]
-    [Arguments(RespProtocol.Resp3, true)]
-    public async Task Unsubscribe_StopsDelivery(RespProtocol protocol, bool useFake)
+    [Arguments(RespireProtocol.Resp2, false)]
+    [Arguments(RespireProtocol.Resp3, false)]
+    [Arguments(RespireProtocol.Resp2, true)]
+    [Arguments(RespireProtocol.Resp3, true)]
+    public async Task Unsubscribe_StopsDelivery(RespireProtocol protocol, bool useFake)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = Options(server, protocol);
@@ -192,7 +192,7 @@ public class PubSubIntegrationTests
         {
             Endpoints = { new RespireEndpoint(_fixture.Host, _fixture.Port) },
             Database = _fixture.Database,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Connections = 1,
         });
         await using var subscription = await resp3Client.SubscribeAsync(channel);
@@ -204,11 +204,11 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, false)]
-    [Arguments(RespProtocol.Resp3, false)]
-    [Arguments(RespProtocol.Resp2, true)]
-    [Arguments(RespProtocol.Resp3, true)]
-    public async Task MultipleSubscribers_AllReceive(RespProtocol protocol, bool useFake)
+    [Arguments(RespireProtocol.Resp2, false)]
+    [Arguments(RespireProtocol.Resp3, false)]
+    [Arguments(RespireProtocol.Resp2, true)]
+    [Arguments(RespireProtocol.Resp3, true)]
+    public async Task MultipleSubscribers_AllReceive(RespireProtocol protocol, bool useFake)
     {
         await using var server = useFake ? new RespireFakeServer() : null;
         var options = Options(server, protocol);
@@ -291,7 +291,7 @@ public class PubSubIntegrationTests
         }
     }
 
-    private RespireOptions Options(RespireFakeServer? server, RespProtocol protocol)
+    private RespireOptions Options(RespireFakeServer? server, RespireProtocol protocol)
         => (server?.CreateOptions() ?? RespireOptions.Parse(_fixture.ConnectionString)) with
         {
             Protocol = protocol,

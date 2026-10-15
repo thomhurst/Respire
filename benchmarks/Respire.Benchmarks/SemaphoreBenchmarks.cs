@@ -31,7 +31,7 @@ public class SemaphoreBenchmarks
         {
             Endpoints = [new(Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1",
                 int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379"))],
-            Connections = 1, Protocol = RespProtocol.Resp3,
+            Connections = 1, Protocol = RespireProtocol.Resp3,
         });
         _key = $"{{{Guid.NewGuid():N}}}:semaphore";
         _semaphore = new RespireSemaphore(_client, _key, capacity: 1);

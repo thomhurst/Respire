@@ -17,7 +17,7 @@ public class ProbabilisticClusterIntegrationTests(BloomRedisClusterFixture fixtu
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespProtocol)protocol,
+            UseCluster = true, Protocol = (RespireProtocol)protocol,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
         var prefix = $"probabilistic:{Guid.NewGuid():N}:";

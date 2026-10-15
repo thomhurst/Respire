@@ -1,12 +1,12 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchServerCommands",
+      "Type": "Respire.IRespireBatchServerCommands",
       "OwnerType": "Respire.BatchServerCommands",
       "Members": [
         "Clients(RespireClientFilterOptions):RespirePending<RespireServerClientInfo[]>",
-        "FlushAll(ServerFlushMode):RespirePending<bool>",
-        "FlushDatabase(ServerFlushMode):RespirePending<bool>",
+        "FlushAll(RespireServerFlushMode):RespirePending<bool>",
+        "FlushDatabase(RespireServerFlushMode):RespirePending<bool>",
         "KillClients(RespireClientFilterOptions):RespirePending<long>"
       ],
       "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."

@@ -44,7 +44,7 @@ public sealed class HashResp2KeyTypeTests(KeyTypeResp2Fixture fixture) : Support
 [Collection(RedisConformanceCollection.Name)]
 public sealed class HashResp3KeyTypeTests(KeyTypeResp3Fixture fixture) : SupportedKeyTypeTests(fixture), IClassFixture<KeyTypeResp3Fixture>;
 
-public abstract class DataTypeFixture(RedisServerFixture server, RespProtocol protocol) : PinnedTyped.DataTypeTests<string, DataRecord>.Fixture
+public abstract class DataTypeFixture(RedisServerFixture server, RespireProtocol protocol) : PinnedTyped.DataTypeTests<string, DataRecord>.Fixture
 {
     public override TestStore TestStore { get; } = new HashTestStore(server, protocol);
     public override IList<VectorStoreDataProperty> GetDataProperties()
@@ -62,19 +62,19 @@ public abstract class DataTypeFixture(RedisServerFixture server, RespProtocol pr
             || type == typeof(double) || type == typeof(string) || type == typeof(bool);
     }
 }
-public sealed class DataTypeResp2Fixture(RedisServerFixture server) : DataTypeFixture(server, RespProtocol.Resp2);
-public sealed class DataTypeResp3Fixture(RedisServerFixture server) : DataTypeFixture(server, RespProtocol.Resp3);
+public sealed class DataTypeResp2Fixture(RedisServerFixture server) : DataTypeFixture(server, RespireProtocol.Resp2);
+public sealed class DataTypeResp3Fixture(RedisServerFixture server) : DataTypeFixture(server, RespireProtocol.Resp3);
 
-public abstract class EmbeddingTypeFixture(RedisServerFixture server, RespProtocol protocol) : PinnedTyped.EmbeddingTypeTests<string>.Fixture
+public abstract class EmbeddingTypeFixture(RedisServerFixture server, RespireProtocol protocol) : PinnedTyped.EmbeddingTypeTests<string>.Fixture
 {
     public override TestStore TestStore { get; } = new HashTestStore(server, protocol);
 }
-public sealed class EmbeddingTypeResp2Fixture(RedisServerFixture server) : EmbeddingTypeFixture(server, RespProtocol.Resp2);
-public sealed class EmbeddingTypeResp3Fixture(RedisServerFixture server) : EmbeddingTypeFixture(server, RespProtocol.Resp3);
+public sealed class EmbeddingTypeResp2Fixture(RedisServerFixture server) : EmbeddingTypeFixture(server, RespireProtocol.Resp2);
+public sealed class EmbeddingTypeResp3Fixture(RedisServerFixture server) : EmbeddingTypeFixture(server, RespireProtocol.Resp3);
 
-public abstract class KeyTypeFixture(RedisServerFixture server, RespProtocol protocol) : PinnedTyped.KeyTypeTests.Fixture
+public abstract class KeyTypeFixture(RedisServerFixture server, RespireProtocol protocol) : PinnedTyped.KeyTypeTests.Fixture
 {
     public override TestStore TestStore { get; } = new HashTestStore(server, protocol);
 }
-public sealed class KeyTypeResp2Fixture(RedisServerFixture server) : KeyTypeFixture(server, RespProtocol.Resp2);
-public sealed class KeyTypeResp3Fixture(RedisServerFixture server) : KeyTypeFixture(server, RespProtocol.Resp3);
+public sealed class KeyTypeResp2Fixture(RedisServerFixture server) : KeyTypeFixture(server, RespireProtocol.Resp2);
+public sealed class KeyTypeResp3Fixture(RedisServerFixture server) : KeyTypeFixture(server, RespireProtocol.Resp3);

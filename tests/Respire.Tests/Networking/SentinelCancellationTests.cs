@@ -28,7 +28,7 @@ public class SentinelCancellationTests
         CancellationTokenSource? primaryTimeout = null;
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)],
             SentinelPrimaryName = "mymaster",
             CommandTimeout = primary ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(200),

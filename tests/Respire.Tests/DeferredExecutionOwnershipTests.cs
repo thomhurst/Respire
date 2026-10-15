@@ -190,7 +190,7 @@ public class DeferredExecutionOwnershipTests
         using var configuration = Configure(commandMetrics: false);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", 6379)],
         });
         using var capture = new Capture(commandMetrics: false);

@@ -48,7 +48,7 @@ internal sealed record Customer(string Name, string Email);
 
 - `GetAsync` reads one path and throws `InvalidOperationException` on more than one match. Use
   `GetManyAsync` for wildcards, or `GetJsonAsync` to read several paths as text.
-- `RespireJsonValue<T>.Found` is false when the key is missing or a JSONPath matches nothing.
+- `RespireJsonGetResult<T>.Found` is false when the key is missing or a JSONPath matches nothing.
 - A stored JSON `null` returns `Found = true` with a default `Value`, even for a non-nullable
   reference type.
 - With a legacy path, a missing path inside an existing document is a server error. Use a `$` path

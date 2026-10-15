@@ -31,7 +31,7 @@ await redis.Arrays.DeleteRangeAsync("samples", new RespireArrayRange(2, 3));
 `SetAsync<T>` uses the configured serializer. `GetAsync<T>` returns `default` for a missing slot; for value types, use a nullable `T` or `TryGetAsync<T>` to tell absence from a stored default. `GetManyAsync<T>`, `RangeAsync<T>`, and `LastItemsAsync<T>` keep reply positions, so nullable types show empty slots. Typed scan and grep entries are populated slots, but a value can still deserialize to null (for example, stored JSON `null`).
 
 ```csharp
-RespireGet<int> slot = await redis.Arrays.TryGetAsync<int>("samples", 2);
+RespireGetResult<int> slot = await redis.Arrays.TryGetAsync<int>("samples", 2);
 if (slot.Found) Console.WriteLine(slot.Value); // Stored 0 is still found.
 int?[] values = await redis.Arrays.RangeAsync<int?>("samples", 0, 3);
 ```
@@ -66,11 +66,11 @@ Reads follow the client's replica read policy. `ScanAsync` routes each page inde
 ## Aggregation and insertion cursors
 
 ```csharp
-RespireArrayAggregate sum = await redis.Arrays.AggregateAsync(
+RespireArrayAggregateResult sum = await redis.Arrays.AggregateAsync(
     "samples", 0, 100, RespireArrayOperation.Sum);
 Console.WriteLine(sum.NumericText); // Redis numeric text, without double rounding.
 
-RespireArrayAggregate used = await redis.Arrays.AggregateAsync(
+RespireArrayAggregateResult used = await redis.Arrays.AggregateAsync(
     "samples", 0, 100, RespireArrayOperation.Used);
 Console.WriteLine(used.Integer);
 

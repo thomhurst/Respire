@@ -30,14 +30,14 @@ public sealed class StreamedSetTests
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", oldTarget.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", oldTarget.Port)],
         });
         var pool = client.Core.DedicatedPool;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", oldTarget.Port,
-            new() { Protocol = RespProtocol.Resp2, CommandTimeout = TimeSpan.FromSeconds(10) });
+            new() { Protocol = RespireProtocol.Resp2, CommandTimeout = TimeSpan.FromSeconds(10) });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var source = new MemoryStream("data"u8.ToArray());
-        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var asking = new ProtocolCommand<RawCommand>(new("*1\r\n$6\r\nASKING\r\n"u8.ToArray()));
         var pending = connection.SendAskingStreamedSetAsync(in asking, command, timeout.Token,
             CommandDeadline.After(10_000), new DedicatedStreamRoute(client.Core, pool, connection), errorAttempts: 0).AsTask();
@@ -52,7 +52,7 @@ public sealed class StreamedSetTests
         await Assert.That(oldTarget.ReceivedCommands).IsEquivalentTo(["ASKING"]);
         await Assert.That(connection.IsConnected).IsFalse();
         await using var next = await RespireConnection.ConnectAsync("127.0.0.1", replacement.Port,
-            new() { Protocol = RespProtocol.Resp2 });
+            new() { Protocol = RespireProtocol.Resp2 });
         using var reply = await next.SendCheckedAsync(in command, timeout.Token, commandName: "SET");
         await Assert.That(reply.IsError).IsFalse();
         await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key data"]);
@@ -101,7 +101,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = mode.StartsWith("cluster"),
             SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
             CommandTimeout = TimeSpan.FromSeconds(1),
@@ -171,7 +171,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromSeconds(10),
         });
         var pool = await client.Core.GetDedicatedPoolAsync(timeout.Token, observation: default);
@@ -216,10 +216,10 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var source = new GeneratedStream(length + 1);
-        var command = new StreamedSetCommand((RespireValue)"large", source, length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"large", source, length, default, RespireSetWhen.Always);
         using var response = await connection.SendCheckedAsync(in command, commandName: "SET");
 
         await Assert.That(source.CanRead).IsTrue();
@@ -240,7 +240,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -274,7 +274,7 @@ public sealed class StreamedSetTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             UseCluster = useCluster,
             ThreadPoolMonitoring = false,
@@ -318,7 +318,7 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         // One 3 MiB segment (split into chunks) followed by many small segments (coalesced).
         var payload = new byte[length];
@@ -328,7 +328,7 @@ public sealed class StreamedSetTests
         for (var offset = largeSegment; offset < length; offset += 1000)
             last = last.Append(payload.AsMemory(offset, Math.Min(1000, length - offset)));
         var sequence = new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
-        var command = new StreamedSetCommand((RespireValue)"large-sequence", sequence, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"large-sequence", sequence, default, RespireSetWhen.Always);
 
         using var response = await connection.SendCheckedAsync(in command, commandName: "SET");
 
@@ -346,7 +346,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -371,11 +371,11 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         // Odd-sized reads exercise partial chunk fills; the server verifies every payload byte.
         var source = new GeneratedStream(length, maximumRead: 7);
-        var command = new StreamedSetCommand((RespireValue)"trickle", source, length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"trickle", source, length, default, RespireSetWhen.Always);
 
         using var response = await connection.SendCheckedAsync(in command, commandName: "SET");
 
@@ -392,7 +392,7 @@ public sealed class StreamedSetTests
         GatedWriteStream? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
                 var client = new TcpClient();
@@ -402,7 +402,7 @@ public sealed class StreamedSetTests
         });
         var source = new ReadSignalStream(length);
         transport!.GateSecondWrite();
-        var command = new StreamedSetCommand((RespireValue)"overlap", source, length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"overlap", source, length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
 
         await transport.SecondWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
@@ -424,7 +424,7 @@ public sealed class StreamedSetTests
         var pool = new TrackingArrayPool();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             StreamPayloadPool = pool,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
@@ -437,7 +437,7 @@ public sealed class StreamedSetTests
             maxRead: RespireConnection.StreamChunkSize, pauseAfter: RespireConnection.StreamChunkSize);
         transport!.GateSecondWrite();
         using var cancellation = new CancellationTokenSource();
-        var command = new StreamedSetCommand((RespireValue)"overlap-cancel", source, length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"overlap-cancel", source, length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
 
         try
@@ -469,7 +469,7 @@ public sealed class StreamedSetTests
         GatedWriteStream? transport = null;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
                 var client = new TcpClient();
@@ -479,7 +479,7 @@ public sealed class StreamedSetTests
         });
         var source = new FailingSecondReadStream(length);
         transport!.GateSecondWrite();
-        var command = new StreamedSetCommand((RespireValue)"failed-prefetch", source, length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"failed-prefetch", source, length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
 
         try
@@ -509,7 +509,7 @@ public sealed class StreamedSetTests
         var pool = new TrackingArrayPool();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             StreamPayloadPool = pool,
             TestingStreamFactory = async (host, port, cancellationToken) =>
             {
@@ -520,7 +520,7 @@ public sealed class StreamedSetTests
         });
         transport!.GateSecondWrite();
         using var cancellation = new CancellationTokenSource();
-        var command = new StreamedSetCommand((RespireValue)"partial-prefetch", source, length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"partial-prefetch", source, length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
         try
         {
@@ -550,7 +550,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -570,7 +570,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -589,12 +589,12 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
         });
-        const SetWhen undefined = (SetWhen)3;
+        const RespireSetWhen undefined = (RespireSetWhen)3;
         using var source = new MemoryStream(new byte[] { 1 });
         RespireValue value = "v";
 
@@ -617,11 +617,11 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         // Bypasses facet validation to prove the command itself never writes a short array.
         var command = new StreamedSetCommand(
-            (RespireValue)"bad", new MemoryStream(new byte[] { 1 }), 1, default, (SetWhen)3);
+            (RespireValue)"bad", new MemoryStream(new byte[] { 1 }), 1, default, (RespireSetWhen)3);
 
         await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET"))
             .Throws<ArgumentOutOfRangeException>();
@@ -638,7 +638,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -661,11 +661,11 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         using var keyMemory = new ThrowOnAccessMemoryManager();
         var command = new StreamedSetCommand(
-            new RespireKey(keyMemory.Memory), new MemoryStream([1]), 1, default, SetWhen.Always);
+            new RespireKey(keyMemory.Memory), new MemoryStream([1]), 1, default, RespireSetWhen.Always);
 
         await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET"))
             .ThrowsExactly<InvalidOperationException>();
@@ -682,7 +682,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromDays(60),
             ThreadPoolMonitoring = false,
@@ -701,7 +701,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -723,7 +723,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -745,7 +745,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -766,7 +766,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -785,16 +785,16 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromMilliseconds(200),
         });
         var holder = new PausedStream();
-        var first = new StreamedSetCommand((RespireValue)"first", holder, 4, default, SetWhen.Always);
+        var first = new StreamedSetCommand((RespireValue)"first", holder, 4, default, RespireSetWhen.Always);
         var firstSet = connection.SendAsync(in first, armCommandDeadline: false, commandName: "SET").AsTask();
         await holder.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var second = new StreamedSetCommand(
-            (RespireValue)"second", new MemoryStream(new byte[4]), 4, default, SetWhen.Always);
+            (RespireValue)"second", new MemoryStream(new byte[4]), 4, default, RespireSetWhen.Always);
         var error = await Assert.That(async () => await connection.SendCheckedAsync(in second, commandName: "SET"))
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
@@ -810,16 +810,16 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var holder = new PausedStream();
-        var first = new StreamedSetCommand((RespireValue)"first", holder, 4, default, SetWhen.Always);
+        var first = new StreamedSetCommand((RespireValue)"first", holder, 4, default, RespireSetWhen.Always);
         var firstSet = connection.SendAsync(in first, armCommandDeadline: false, commandName: "SET").AsTask();
         await holder.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         using var cancellation = new CancellationTokenSource();
         var second = new StreamedSetCommand(
-            (RespireValue)"second", new MemoryStream(new byte[4]), 4, default, SetWhen.Always);
+            (RespireValue)"second", new MemoryStream(new byte[4]), 4, default, RespireSetWhen.Always);
         var secondSet = connection.SendCheckedAsync(in second, commandName: "SET", cancellationToken: cancellation.Token).AsTask();
         cancellation.Cancel();
         var error = await Assert.That(async () => await secondSet).Throws<OperationCanceledException>();
@@ -838,10 +838,10 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var source = new PausedStream();
-        var command = new StreamedSetCommand((RespireValue)"retiring", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"retiring", source, 4, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -868,15 +868,15 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var activeSource = new PausedStream();
-        var activeCommand = new StreamedSetCommand((RespireValue)"active", activeSource, 4, default, SetWhen.Always);
+        var activeCommand = new StreamedSetCommand((RespireValue)"active", activeSource, 4, default, RespireSetWhen.Always);
         var activeSet = connection.SendCheckedAsync(in activeCommand, commandName: "SET").AsTask();
         await activeSource.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var queuedSource = new PausedStream();
-        var queuedCommand = new StreamedSetCommand((RespireValue)"queued", queuedSource, 4, default, SetWhen.Always);
+        var queuedCommand = new StreamedSetCommand((RespireValue)"queued", queuedSource, 4, default, RespireSetWhen.Always);
         var queuedSet = connection.SendCheckedAsync(in queuedCommand, commandName: "SET").AsTask();
         await Task.Delay(50);
         await Assert.That(queuedSet.IsCompleted).IsFalse();
@@ -901,7 +901,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -929,12 +929,12 @@ public sealed class StreamedSetTests
         var pool = new TrackingArrayPool();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new RespireConnectionOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             StreamPayloadPool = pool,
         });
         using var cancellation = new CancellationTokenSource();
         using var source = new SynchronouslyBlockedSecondReadStream();
-        var command = new StreamedSetCommand((RespireValue)"sync-block", source, source.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"sync-block", source, source.Length, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET", cancellationToken: cancellation.Token).AsTask();
 
         byte[]? buffer = null;
@@ -964,7 +964,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -996,13 +996,13 @@ public sealed class StreamedSetTests
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = timeout ? TimeSpan.FromMilliseconds(200) : null,
             });
             // The source sees the linked token cancelled during a read and may report it with an
             // exception that carries CancellationToken.None, which streams are allowed to do.
             var source = new TokenlessCancellationStream();
-            var command = new StreamedSetCommand((RespireValue)"tokenless", source, 4, default, SetWhen.Always);
+            var command = new StreamedSetCommand((RespireValue)"tokenless", source, 4, default, RespireSetWhen.Always);
             var set = Task.Run(async () =>
             {
                 using var _ = await connection.SendCheckedAsync(in command, commandName: "SET");
@@ -1083,7 +1083,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             ThreadPoolMonitoring = false,
             LoggerFactory = NullLoggerFactory.Instance,
@@ -1106,10 +1106,10 @@ public sealed class StreamedSetTests
         var server = new CountingSetServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var source = new PausedStream();
-        var command = new StreamedSetCommand((RespireValue)"orphaned", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"orphaned", source, 4, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1131,10 +1131,10 @@ public sealed class StreamedSetTests
         CountingSetServer? server = new();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         var source = new CancellationCallbackStream(blockCallback);
-        var command = new StreamedSetCommand((RespireValue)"callback", source, 1, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"callback", source, 1, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         try
         {
@@ -1162,7 +1162,7 @@ public sealed class StreamedSetTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) },
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             CommandTimeout = TimeSpan.FromSeconds(2),
             ThreadPoolMonitoring = false,
@@ -1199,7 +1199,7 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = TimeSpan.FromSeconds(2),
                 TestingStreamFactory = async (host, port, cancellationToken) =>
                 {
@@ -1216,7 +1216,7 @@ public sealed class StreamedSetTests
         // kernel socket capacity, and prove that the selected frame write actually started.
         using var source = new MemoryStream(new byte[] { 1 });
         var command = new StreamedSetCommand(
-            (RespireValue)"stalled", source, source.Length, default, SetWhen.Always);
+            (RespireValue)"stalled", source, source.Length, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await (stallPayload ? transport.SecondWriteStarted : transport.WriteStarted)
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -1240,7 +1240,7 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = null,
                 TestingStreamFactory = async (host, port, cancellationToken) =>
                 {
@@ -1257,7 +1257,7 @@ public sealed class StreamedSetTests
         await transport.WriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
 
         var source = new PausedStream();
-        var command = new StreamedSetCommand((RespireValue)"queued", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"queued", source, 4, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await Task.Delay(100);
         // Precondition: the streamed SET owns the write path and waits for the stalled write.
@@ -1290,20 +1290,20 @@ public sealed class StreamedSetTests
         await using var server = new CountingSetServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var pool = client.Core.DedicatedPool;
         if (routeRetires) await pool.DisposeAsync();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromMilliseconds(100),
         });
         // The read blocks synchronously past the deadline and then succeeds, so the completed
         // read task wins over the cancelled token. The header must still not be queued.
         var source = new SynchronouslyBlockingStream(TimeSpan.FromMilliseconds(500));
-        var command = new StreamedSetCommand((RespireValue)"late", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"late", source, 4, default, RespireSetWhen.Always);
 
         var error = await Assert.That(async () => await connection.SendCheckedAsync(in command, commandName: "SET",
                     streamingRoute: new DedicatedStreamRoute(client.Core, pool, connection))
@@ -1328,13 +1328,13 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = null,
                 Generation = generation,
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         var source = new PausedStream();
-        var command = new StreamedSetCommand((RespireValue)"retry", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"retry", source, 4, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1363,14 +1363,14 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = null,
                 Generation = generation,
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         var payload = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
         var source = new PartialThenBlockedStream(payload, maxRead: 6, pauseAfter: 12);
-        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1393,14 +1393,14 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = null,
                 Generation = generation,
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         var payload = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
         var source = new PartialThenIgnoringCancellationStream(payload, maxRead: 6, pauseAfter: 12);
-        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1431,11 +1431,11 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2, CommandTimeout = null, Generation = generation,
+                Protocol = RespireProtocol.Resp2, CommandTimeout = null, Generation = generation,
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         using var source = new GatedFirstReadStream(synchronousRead);
-        var command = new StreamedSetCommand("retry", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand("retry", source, 4, default, RespireSetWhen.Always);
         var send = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
@@ -1487,14 +1487,14 @@ public sealed class StreamedSetTests
         await using var connection = await RespireConnection.ConnectAsync(
             "127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, new()
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 CommandTimeout = null,
                 Generation = generation,
             });
         using var peer = await accept.WaitAsync(TimeSpan.FromSeconds(5));
         var payload = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
         var source = new PartialThenRetirementThrowingStream(payload, maxRead: 6, pauseAfter: 12);
-        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"retry", source, payload.Length, default, RespireSetWhen.Always);
         var send = Task.Run(() => connection.SendCheckedAsync(in command, commandName: "SET").AsTask());
         await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 

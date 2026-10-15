@@ -81,8 +81,8 @@ public class CredentialFormattingTests
         var credentials = new SessionAWSCredentials("private-access-key", "private-secret-key", "private-session-token");
         object[] providers =
         [
-            new ElastiCacheIamCredentialProvider(credentials, RegionEndpoint.USEast1, "cache", "private-user"),
-            new MemoryDbIamCredentialProvider(credentials, RegionEndpoint.USEast1, "cluster", "private-user"),
+            new RespireElastiCacheIamCredentialProvider(credentials, RegionEndpoint.USEast1, "cache", "private-user"),
+            new RespireMemoryDbIamCredentialProvider(credentials, RegionEndpoint.USEast1, "cluster", "private-user"),
         ];
 
         foreach (var provider in providers)

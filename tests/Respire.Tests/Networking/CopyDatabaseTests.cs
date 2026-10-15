@@ -71,7 +71,7 @@ public class CopyDatabaseTests
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var view = client.WithKeyPrefix("tenant:");

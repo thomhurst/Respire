@@ -424,7 +424,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
     }
 
     private RespireOptions Options(RespireFakeServer? fake, int protocol)
-        => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol };
+        => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol };
 
     private static async Task Text(TestRespSession session, string expected, params string[] arguments)
     {

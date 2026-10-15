@@ -17,7 +17,7 @@ public class StringLcsIndexIntegrationTests(ModernRedisTestContainer fixture)
     public async Task RangesFilteringAndTotalLength_AgreeAcrossExecutionModes(string mode, int protocol)
     {
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix($"lcs:{Guid.NewGuid():N}:");
         await client.SetAsync("first", "ohmytext");
         await client.SetAsync("second", "mynewtext");

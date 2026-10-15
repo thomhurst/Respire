@@ -1,7 +1,7 @@
 namespace Respire;
 
 /// <summary>Per-field result for hash field expiry mutations.</summary>
-public enum HashFieldExpiryResult
+public enum RespireHashFieldExpiryResult
 {
     /// <summary>The hash key or field does not exist. Redis: -2.</summary>
     NoSuchField = -2,

@@ -13,7 +13,7 @@ identities, so rebuild consuming applications and libraries together. The curren
   `using` directives for renamed packages.
 - JSON, Search, TimeSeries, and Probabilistic package IDs are unchanged.
 - Replace `using Redis.Search;` with `using Respire.Search;`.
-- Import `Respire.Compression.Lz4` for `Lz4ValueCodec` and `Respire.Compression.Zstd` for `ZstdValueCodec`.
+- Import `Respire.Compression.Lz4` for `RespireLz4ValueCodec` and `Respire.Compression.Zstd` for `RespireZstdValueCodec`.
 - Update assembly-qualified type names, reflection configuration, and explicit DLL references.
   Do not mix old and renamed packages in one dependency graph.
 

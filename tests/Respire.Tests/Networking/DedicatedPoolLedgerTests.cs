@@ -82,7 +82,7 @@ public class DedicatedPoolLedgerTests
         var logger = new CleanupFailureLogger();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
         try
@@ -172,7 +172,7 @@ public class DedicatedPoolLedgerTests
         if (aggregateFailure) logger.WarningFailure = new AggregateException(logger.WarningFailure);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
         });
         var core = client.Core;
         var connection = core.Multiplexer.GetConnection();
@@ -230,7 +230,7 @@ public class DedicatedPoolLedgerTests
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var firstLogger = new CleanupFailureLogger();
         var secondLogger = new CleanupFailureLogger();
@@ -293,7 +293,7 @@ public class DedicatedPoolLedgerTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 2,
+            Protocol = RespireProtocol.Resp2, Connections = 2,
             Endpoints = [new("127.0.0.1", mode == "sentinel" ? sentinel.Port : primary.Port)],
             UseCluster = mode == "cluster", ClusterTopologyRefreshInterval = null,
             SentinelPrimaryName = mode == "sentinel" ? "primary" : null,
@@ -337,7 +337,7 @@ public class DedicatedPoolLedgerTests
         var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
         });
         var router = client.Core.Cluster!;
@@ -385,7 +385,7 @@ public class DedicatedPoolLedgerTests
         var logger = new CleanupFailureLogger { ThrowOnDisconnect = false, DistinctDisconnectFailures = true };
         var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)], LoggerFactory = logger,
         });

@@ -341,7 +341,7 @@ public class FailoverGroupMaintenanceTests
         {
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceWindowTimeout = window ?? TimeSpan.FromSeconds(5),
             ConnectTimeout = TimeSpan.FromSeconds(2),

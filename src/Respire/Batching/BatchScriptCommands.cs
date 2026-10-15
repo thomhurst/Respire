@@ -9,7 +9,7 @@ namespace Respire;
 /// Deferred scripts use EVAL (EVAL_RO for read-only scripts) directly so they are valid
 /// inside MULTI/EXEC without requiring a post-execution NOSCRIPT retry.
 /// </summary>
-public interface IBatchScriptCommands
+public interface IRespireBatchScriptCommands
 {
     /// <summary>
     /// Queues a script evaluation. Keys are prefixed by the client and args are passed through
@@ -29,12 +29,12 @@ public interface IBatchScriptCommands
 
     /// <summary>
     /// Queues SCRIPT FLUSH on the execution node. In Cluster, this clears only that node's cache;
-    /// use IScriptCommands.FlushAsync for all discovered primaries. Returns true for OK.
+    /// use IRespireScriptCommands.FlushAsync for all discovered primaries. Returns true for OK.
     /// </summary>
-    RespirePending<bool> Flush(ScriptFlushMode mode = ScriptFlushMode.Default);
+    RespirePending<bool> Flush(RespireScriptFlushMode mode = RespireScriptFlushMode.Default);
 }
 
-internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptCommands
+internal sealed class BatchScriptCommands(IPendingSink sink) : IRespireBatchScriptCommands
 {
     public RespirePending<string> Load(RespireScript script)
     {
@@ -47,7 +47,7 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
         => sink.Add<CmdN, bool[]>("SCRIPT EXISTS", new CmdN(Verbs.ScriptExists, ScriptCommands.MapDigests(sha1s)),
             static (_, value) => ResponseReader.FlagArray(in value));
 
-    public RespirePending<bool> Flush(ScriptFlushMode mode = ScriptFlushMode.Default)
+    public RespirePending<bool> Flush(RespireScriptFlushMode mode = RespireScriptFlushMode.Default)
         => sink.Add<Cmd, bool>("SCRIPT FLUSH", new Cmd(ScriptCommands.FlushVerb(mode)),
             static (_, value) => ResponseReader.Ok(in value));
 

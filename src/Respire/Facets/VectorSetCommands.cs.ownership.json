@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IVectorSetCommands",
+      "Type": "Respire.IRespireVectorSetCommands",
       "OwnerType": "Respire.VectorSetCommands",
       "Members": [
         "AddAsync(RespireKey,ReadOnlyMemory<float>,RespireValue,RespireVectorAddOptions,RespireVectorEncoding,CancellationToken):ValueTask<bool>",

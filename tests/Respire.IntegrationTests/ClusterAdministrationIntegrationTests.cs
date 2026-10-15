@@ -87,7 +87,7 @@ public class ClusterAdministrationIntegrationTests
         RespireClient Client(int port) => RespireClient.Create(new RespireOptions
         {
             Endpoints = [Endpoint(port)], Connections = 1, AllowAdmin = true,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
     }
@@ -125,7 +125,7 @@ public class ClusterAdministrationIntegrationTests
         RespireClient Client(int port) => RespireClient.Create(new RespireOptions
         {
             Endpoints = [Endpoint(port)], Connections = 1, AllowAdmin = true,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
     }

@@ -30,7 +30,7 @@ public partial class ErrorMetricsTests
         };
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             ClientSideCache = cache ? new() { CoalesceConcurrentMisses = false } : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });

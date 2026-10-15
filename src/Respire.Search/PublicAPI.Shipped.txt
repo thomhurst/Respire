@@ -546,14 +546,14 @@ Respire.Search.RespireSearchValue
 Respire.Search.RespireSearchValue.<Clone>$() -> Respire.Search.RespireSearchValue!
 Respire.Search.RespireSearchValue.Bytes.get -> System.ReadOnlyMemory<byte>?
 Respire.Search.RespireSearchValue.Bytes.init -> void
-Respire.Search.RespireSearchValue.Deconstruct(out Respire.Protocol.RespDataType Type, out string? Scalar, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>! Items, out System.ReadOnlyMemory<byte>? Bytes) -> void
+Respire.Search.RespireSearchValue.Deconstruct(out Respire.Protocol.RespireDataType Type, out string? Scalar, out System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>! Items, out System.ReadOnlyMemory<byte>? Bytes) -> void
 Respire.Search.RespireSearchValue.Equals(Respire.Search.RespireSearchValue? other) -> bool
 Respire.Search.RespireSearchValue.Items.get -> System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>!
 Respire.Search.RespireSearchValue.Items.init -> void
-Respire.Search.RespireSearchValue.RespireSearchValue(Respire.Protocol.RespDataType Type, string? Scalar, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>! Items, System.ReadOnlyMemory<byte>? Bytes = null) -> void
+Respire.Search.RespireSearchValue.RespireSearchValue(Respire.Protocol.RespireDataType Type, string? Scalar, System.Collections.Generic.IReadOnlyList<Respire.Search.RespireSearchValue!>! Items, System.ReadOnlyMemory<byte>? Bytes = null) -> void
 Respire.Search.RespireSearchValue.Scalar.get -> string?
 Respire.Search.RespireSearchValue.Scalar.init -> void
-Respire.Search.RespireSearchValue.Type.get -> Respire.Protocol.RespDataType
+Respire.Search.RespireSearchValue.Type.get -> Respire.Protocol.RespireDataType
 Respire.Search.RespireSearchValue.Type.init -> void
 Respire.Search.RespireSearchVectorAlgorithm
 Respire.Search.RespireSearchVectorAlgorithm.Flat = 0 -> Respire.Search.RespireSearchVectorAlgorithm

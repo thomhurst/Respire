@@ -5,7 +5,7 @@ namespace Respire;
 public readonly record struct RespireIncrementResult<T>(T Value, T AppliedIncrement) where T : struct;
 
 /// <summary>Integer bounds and expiry policy for Redis 8.8+ INCREX.</summary>
-public readonly record struct IntegerIncrementOptions
+public readonly record struct RespireIntegerIncrementOptions
 {
     /// <summary>Inclusive lower bound; omitted means <see cref="long.MinValue"/>.</summary>
     public long? LowerBound { get; init; }
@@ -21,7 +21,7 @@ public readonly record struct IntegerIncrementOptions
 
 /// <summary>Floating-point bounds and expiry policy for Redis 8.8+ INCREX.</summary>
 /// <remarks>Redis calculates with long double; this API represents inputs and replies as .NET double.</remarks>
-public readonly record struct FloatIncrementOptions
+public readonly record struct RespireFloatIncrementOptions
 {
     /// <summary>Inclusive lower bound; omitted uses the server's numeric type limit. Infinity is allowed, NaN is not.</summary>
     public double? LowerBound { get; init; }

@@ -141,7 +141,7 @@ public class StreamWorkerCapabilityScriptTests
     public async Task RecoveryRemovesDeletedPendingEntriesOnlyFromItsGroup(int protocol, int minor)
     {
         await using var fake = new RespireFakeServer(null, false, true, new Version(8, minor));
-        await using var client = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await DeletedPendingScenarioAsync(client);
     }
 
@@ -151,8 +151,8 @@ public class StreamWorkerCapabilityScriptTests
         await client.Streams.AddAsync("deleted", new RespireStreamAddOptions { Id = "2-0" }, ("f", "live"));
         await client.Streams.CreateGroupAsync("deleted", "g", RespireStreamId.Beginning);
         await client.Streams.CreateGroupAsync("deleted", "other", RespireStreamId.Beginning);
-        await client.Streams.ReadGroupOnceAsync("deleted", "g", "old", new StreamReadOptions { Count = 2 });
-        await client.Streams.ReadGroupOnceAsync("deleted", "other", "other-owner", new StreamReadOptions { Count = 2 });
+        await client.Streams.ReadGroupOnceAsync("deleted", "g", "old", new RespireStreamReadOptions { Count = 2 });
+        await client.Streams.ReadGroupOnceAsync("deleted", "other", "other-owner", new RespireStreamReadOptions { Count = 2 });
         await client.Streams.RemoveAsync("deleted", new RespireStreamId("1-0"));
         using (var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["deleted"],
             ["g", "new", 0, "0-0", 2]))
@@ -185,7 +185,7 @@ public class StreamWorkerCapabilityScriptTests
         for (var i = 1; i <= 3; i++)
             await client.Streams.AddAsync("cleanup-cursor", new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", "v"));
         await client.Streams.CreateGroupAsync("cleanup-cursor", "g", RespireStreamId.Beginning);
-        await client.Streams.ReadGroupOnceAsync("cleanup-cursor", "g", "old", new StreamReadOptions { Count = 3 });
+        await client.Streams.ReadGroupOnceAsync("cleanup-cursor", "g", "old", new RespireStreamReadOptions { Count = 3 });
         await client.Streams.RemoveAsync("cleanup-cursor", new RespireStreamId("2-0"), new RespireStreamId("3-0"));
         var cursor = "0-0";
         foreach (var expected in new[] { "2-0", "3-0", "0-0" })
@@ -209,7 +209,7 @@ public class StreamWorkerCapabilityScriptTests
     {
         var clock = new RespireFakeClock(DateTimeOffset.UtcNow);
         await using var fake = new RespireFakeServer(clock, false, true, new Version(8, minor));
-        await using var root = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(fake.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await CapabilityScenarioAsync(root, clock, minor);
     }
 

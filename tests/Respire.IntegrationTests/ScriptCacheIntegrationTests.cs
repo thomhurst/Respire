@@ -22,7 +22,7 @@ public class ScriptCacheIntegrationTests
         (await client.Scripts.ExistsAsync(script.Sha1)).Should().Equal(false);
         (await client.Scripts.ExecuteStringAsync(script, ["key"])).Should().Be("value");
         (await client.Scripts.ExistsAsync(script.Sha1)).Should().Equal(true);
-        foreach (var mode in new[] { ScriptFlushMode.Default, ScriptFlushMode.Sync, ScriptFlushMode.Async })
+        foreach (var mode in new[] { RespireScriptFlushMode.Default, RespireScriptFlushMode.Sync, RespireScriptFlushMode.Async })
         {
             await client.Scripts.FlushAsync(mode);
             (await client.Scripts.ExistsAsync(script.Sha1)).Should().Equal(false);

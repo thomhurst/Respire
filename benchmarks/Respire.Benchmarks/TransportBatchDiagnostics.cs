@@ -83,7 +83,7 @@ internal static class TransportBatchDiagnostics
                 var port = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379");
                 await using (var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
-                    Endpoints = [new(host, port)], Connections = connections, Protocol = RespProtocol.Resp2,
+                    Endpoints = [new(host, port)], Connections = connections, Protocol = RespireProtocol.Resp2,
                     ThreadPoolMonitoring = false, TestingStreamFactory = gate.ConnectAsync,
                 }).ConfigureAwait(false))
                 {

@@ -227,6 +227,6 @@ public class DefaultKeyPrefixTests
     /// <summary>Creates deterministic fixture options without automatic maintenance negotiation.</summary>
     private static RespireOptions Options(int port) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], Protocol = RespProtocol.Resp2, Connections = 1,
+        Endpoints = [new("127.0.0.1", port)], Protocol = RespireProtocol.Resp2, Connections = 1,
     };
 }

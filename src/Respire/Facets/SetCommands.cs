@@ -10,7 +10,7 @@ namespace Respire;
 /// Set (unordered, unique members) commands. Collection cardinality uses
 /// <see cref="CountAsync"/>.
 /// </summary>
-public partial interface ISetCommands
+public partial interface IRespireSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> AddAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
@@ -164,7 +164,7 @@ public partial interface ISetCommands
         RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 }
 
-internal sealed partial class SetCommands(RespireClient client) : ISetCommands
+internal sealed partial class SetCommands(RespireClient client) : IRespireSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> AddAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)

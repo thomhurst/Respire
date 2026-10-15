@@ -79,7 +79,7 @@ public class TransactionReadViewTests
         {
             ReplyOverride = (_, command) => Reply(command, "replica", true),
         };
-        var serializer = new SystemTextJsonSerializer();
+        var serializer = new RespireSystemTextJsonSerializer();
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
@@ -122,7 +122,7 @@ public class TransactionReadViewTests
     public async Task RetriesReadFreshInputsAndKeepPrefixes(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var root = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix("tenant:");
         await client.SetAsync("balance", "1");
         var attempts = 0;

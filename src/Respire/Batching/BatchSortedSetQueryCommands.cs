@@ -5,7 +5,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface IBatchSortedSetCommands
+public partial interface IRespireBatchSortedSetCommands
 {
     /// <summary>One random UTF-8 member, or null when absent. Redis: ZRANDMEMBER (6.2+).</summary>
     RespirePending<string?> RandomMember(RespireKey key);

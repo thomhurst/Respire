@@ -24,7 +24,7 @@ public class StreamManagementCommandTests
         target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)], ClusterTopologyRefreshInterval = null,
         });
         for (var index = 0; index < 4; index++)

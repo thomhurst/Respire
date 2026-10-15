@@ -247,7 +247,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var mutationsAtFinal = -1;
@@ -290,7 +290,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1,
+            Protocol = (RespireProtocol)protocol, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await ExecuteAsync();

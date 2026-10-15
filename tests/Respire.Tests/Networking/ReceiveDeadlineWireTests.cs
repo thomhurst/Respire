@@ -17,7 +17,7 @@ public class ReceiveDeadlineWireTests
         await using var connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2, ResponseTimeout = TimeSpan.FromMilliseconds(50),
+                Protocol = RespireProtocol.Resp2, ResponseTimeout = TimeSpan.FromMilliseconds(50),
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),
             });
         var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token).AsTask();

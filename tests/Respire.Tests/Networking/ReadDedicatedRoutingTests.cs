@@ -286,7 +286,7 @@ public partial class ReadDedicatedRoutingTests
             return previous(id, command);
         };
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], policy)
-            with { Protocol = RespProtocol.Resp3 });
+            with { Protocol = RespireProtocol.Resp3 });
         using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"])
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(reply.AsString()).IsEqualTo("replica");
@@ -339,7 +339,7 @@ public partial class ReadDedicatedRoutingTests
             Options(useSentinel ? sentinel : primary, useSentinel ? [] : [replica, fast], RespireReadFrom.Nearest)
             with
             {
-                Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
+                Protocol = RespireProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = failure == 0 ? null : OpenStreamAsync,
             });
         if (useSentinel) await SentinelTestSetup.WaitForStartupAsync(client);
@@ -444,7 +444,7 @@ public partial class ReadDedicatedRoutingTests
         await using var client = await RespireClient.ConnectAsync(
             Options(useSentinel ? sentinel : primary, useSentinel ? [] : [first, second], policy) with
             {
-                Protocol = RespProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
+                Protocol = RespireProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = OpenStreamAsync,
             });
         using var caller = new CancellationTokenSource();
@@ -503,7 +503,7 @@ public partial class ReadDedicatedRoutingTests
             return previous(id, command);
         };
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], policy)
-            with { Protocol = RespProtocol.Resp3, SentinelPrimaryName = "primary" });
+            with { Protocol = RespireProtocol.Resp3, SentinelPrimaryName = "primary" });
         var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                 ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireConnectionException>();
@@ -745,7 +745,7 @@ public partial class ReadDedicatedRoutingTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = replicas.Select(node => new RespireEndpoint("127.0.0.1", node.Port)).ToArray(),
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             ReadFrom = policy,
             ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(5),
         };

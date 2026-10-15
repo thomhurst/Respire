@@ -9,7 +9,7 @@ namespace Respire.Tests;
 
 public class KeyNotificationTests
 {
-    private static readonly SystemTextJsonSerializer Serializer = new();
+    private static readonly RespireSystemTextJsonSerializer Serializer = new();
 
     [Test]
     [Arguments("__keyspace@12__:tenant:key", "hset", RespireKeyNotificationKind.KeySpace)]
@@ -162,13 +162,13 @@ public class KeyNotificationTests
     {
         var exact = RespireChannel.KeySpaceSingleKey("tenant:{tag}:key", 12);
         await Assert.That(exact.ToString()).IsEqualTo("__keyspace@12__:tenant:{tag}:key");
-        await Assert.That(exact.Kind).IsEqualTo(SubscriptionKind.Channel);
+        await Assert.That(exact.Kind).IsEqualTo(RespireSubscriptionKind.Channel);
         await Assert.That(exact.RoutingScope).IsEqualTo(RespireChannelRoutingScope.KeyOwner);
         await Assert.That(exact.RoutingSlot).IsEqualTo(new RespireKey("tenant:{tag}:key").ClusterSlot);
         await Assert.That(exact.NotificationDatabase).IsEqualTo(12);
         var prefix = RespireChannel.KeySpacePrefix("a*?[]\\");
         await Assert.That(prefix.ToString()).IsEqualTo("__keyspace@*__:a\\*\\?\\[\\]\\\\*");
-        await Assert.That(prefix.Kind).IsEqualTo(SubscriptionKind.Pattern);
+        await Assert.That(prefix.Kind).IsEqualTo(RespireSubscriptionKind.Pattern);
         await Assert.That(prefix.RoutingScope).IsEqualTo(RespireChannelRoutingScope.AllPrimaries);
         var eventKey = RespireChannel.SubKeySpaceEvent("new*"u8, "a?key");
         await Assert.That(eventKey.ToString()).IsEqualTo("__subkeyspaceevent@*__:new\\*|a\\?key");
@@ -197,7 +197,7 @@ public class KeyNotificationTests
                 await Assert.That(channel.NotificationDatabase).IsEqualTo(database);
                 await Assert.That(RespireChannel.Literal(channel).NotificationDatabase).IsEqualTo(database);
                 await Assert.That(channel.RoutingSlot).IsEqualTo(slot);
-                await Assert.That(channel.Kind).IsEqualTo(SubscriptionKind.Channel);
+                await Assert.That(channel.Kind).IsEqualTo(RespireSubscriptionKind.Channel);
                 await Assert.That(channel.RoutingScope).IsEqualTo(RespireChannelRoutingScope.KeyOwner);
             }
         }

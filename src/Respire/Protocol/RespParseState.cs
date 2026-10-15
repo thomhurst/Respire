@@ -4,7 +4,7 @@ using Respire.Networking;
 
 namespace Respire.Protocol;
 
-internal readonly record struct RespDirectFillRequest(RespDataType Type, int PayloadLength);
+internal readonly record struct RespDirectFillRequest(RespireDataType Type, int PayloadLength);
 
 /// <summary>
 /// Reusable connection parser that retains completed aggregate children and decoded bulk
@@ -15,7 +15,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
     private AggregateFrame[] _frames = new AggregateFrame[4];
     private int _depth;
     private bool _hasPendingBulk;
-    private RespDataType _pendingBulkType;
+    private RespireDataType _pendingBulkType;
     private int _pendingBulkLength;
 
 #if DEBUG
@@ -198,7 +198,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
     public bool SupplyDirectFill(in RespValue filledValue, out RespValue value)
         => AcceptValue(in filledValue, out value);
 
-    internal void PrepareBulk(RespDataType type, int payloadLength)
+    internal void PrepareBulk(RespireDataType type, int payloadLength)
     {
         _pendingBulkType = type;
         _pendingBulkLength = payloadLength;
@@ -223,9 +223,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
         var type = typeByte switch
         {
-            (byte)'$' => RespDataType.BulkString,
-            (byte)'=' => RespDataType.VerbatimString,
-            _ => RespDataType.BulkError,
+            (byte)'$' => RespireDataType.BulkString,
+            (byte)'=' => RespireDataType.VerbatimString,
+            _ => RespireDataType.BulkError,
         };
         if (declaredLength >= directFillThreshold && declaredLength > buffer.Length - headerEnd - 2)
         {
@@ -279,7 +279,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         pos = cursor;
         if (declaredLength == -1)
         {
-            value = RespValue.NullFromWire((RespDataType)typeByte);
+            value = RespValue.NullFromWire((RespireDataType)typeByte);
             return RespParseStatus.Done;
         }
 
@@ -290,9 +290,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
         var type = typeByte switch
         {
-            (byte)'$' => RespDataType.BulkString,
-            (byte)'=' => RespDataType.VerbatimString,
-            _ => RespDataType.BulkError,
+            (byte)'$' => RespireDataType.BulkString,
+            (byte)'=' => RespireDataType.VerbatimString,
+            _ => RespireDataType.BulkError,
         };
         var length = (int)declaredLength;
         if (length >= directFillThreshold && buffer.Length - pos < length + 2)
@@ -347,7 +347,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         if (declaredCount == -1)
         {
             pos = cursor;
-            value = RespValue.NullFromWire((RespDataType)typeByte);
+            value = RespValue.NullFromWire((RespireDataType)typeByte);
             return RespParseStatus.Done;
         }
 
@@ -361,10 +361,10 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
 
         var type = typeByte switch
         {
-            (byte)'~' => RespDataType.Set,
-            (byte)'>' => RespDataType.Push,
-            (byte)'%' or (byte)'|' => RespDataType.Map,
-            _ => RespDataType.Array,
+            (byte)'~' => RespireDataType.Set,
+            (byte)'>' => RespireDataType.Push,
+            (byte)'%' or (byte)'|' => RespireDataType.Map,
+            _ => RespireDataType.Array,
         };
         if (count == 0)
         {
@@ -377,7 +377,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         return RespParseStatus.Done;
     }
 
-    private void PushFrame(RespDataType type, int count, bool discard)
+    private void PushFrame(RespireDataType type, int count, bool discard)
     {
         if (_depth == _frames.Length)
         {
@@ -388,7 +388,7 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
     }
 
     internal void AdoptPartialAggregate(
-        RespDataType type, int count, int depth, Span<RespValue> completed, ReadOnlySpan<byte> buffer)
+        RespireDataType type, int count, int depth, Span<RespValue> completed, ReadOnlySpan<byte> buffer)
     {
         while (depth >= _frames.Length)
             Array.Resize(ref _frames, _frames.Length * 2);
@@ -464,9 +464,9 @@ internal sealed class RespParseState(int directFillThreshold, bool stopAfterAttr
         _hasPendingBulk = false;
     }
 
-    private struct AggregateFrame(RespDataType type, RespValue[] elements, int count, bool discard)
+    private struct AggregateFrame(RespireDataType type, RespValue[] elements, int count, bool discard)
     {
-        public RespDataType Type = type;
+        public RespireDataType Type = type;
         public RespValue[] Elements = elements;
         public int Count = count;
         public int Index;

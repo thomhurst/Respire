@@ -8,10 +8,10 @@ namespace Respire.Analyzers.Tests;
 public class UndisposedPooledResultAnalyzerTests
 {
     [Test]
-    [Arguments("IScriptCommands", "ExecuteLeaseAsync")]
-    [Arguments("IScriptCommands", "ExecuteLeaseSpanAsync")]
-    [Arguments("IFunctionCommands", "ExecuteLeaseAsync")]
-    [Arguments("IFunctionCommands", "ExecuteLeaseSpanAsync")]
+    [Arguments("IRespireScriptCommands", "ExecuteLeaseAsync")]
+    [Arguments("IRespireScriptCommands", "ExecuteLeaseSpanAsync")]
+    [Arguments("IRespireFunctionCommands", "ExecuteLeaseAsync")]
+    [Arguments("IRespireFunctionCommands", "ExecuteLeaseSpanAsync")]
     public async Task FacetLeasesRequireDisposal(string facet, string method) => await Verify.VerifyAsync(
         $$"""
         using System.Threading.Tasks;

@@ -16,7 +16,7 @@ public class ClusterStreamReadIntegrationTests(ClusterTransactionTestContainer f
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Protocol = (RespProtocol)protocol,
+            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Protocol = (RespireProtocol)protocol,
         });
         var view = client.WithKeyPrefix($"stream-read:{Guid.NewGuid():N}:");
         await view.Streams.AddAsync("{a}:one", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));

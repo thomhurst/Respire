@@ -684,10 +684,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
 
         internal static bool IsPrimary(in RespValue reply)
         {
-            if (reply.Type != RespDataType.Array) return false;
+            if (reply.Type != RespireDataType.Array) return false;
             var role = reply.AsArray();
-            return role.Length >= 3 && role[0].Type is RespDataType.BulkString or RespDataType.SimpleString
-                && role[0].AsString() == "master" && role[1].Type == RespDataType.Integer && role[2].Type == RespDataType.Array;
+            return role.Length >= 3 && role[0].Type is RespireDataType.BulkString or RespireDataType.SimpleString
+                && role[0].AsString() == "master" && role[1].Type == RespireDataType.Integer && role[2].Type == RespireDataType.Array;
         }
 
         private static bool ContainsReadOnly(in RespValue reply)

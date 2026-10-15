@@ -22,7 +22,7 @@ public class ClientCacheClassificationBenchmarks
     private RespireClient _cached = null!;
     private RespireClient _coalescing = null!;
     private RespireClient _uncached = null!;
-    private readonly SetCommand _classificationSet = new("key", "value", default, SetWhen.Always, false);
+    private readonly SetCommand _classificationSet = new("key", "value", default, RespireSetWhen.Always, false);
     private readonly CmdN _classificationMulti = new(Verbs.Del, ["first", "second"]);
     private readonly CatalogCommand _classificationRaw = new(RespireCommands.String.SET, ["key", "value"]);
 
@@ -43,7 +43,7 @@ public class ClientCacheClassificationBenchmarks
             }
             var options = new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespProtocol.Resp3,
+                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             _uncached = await RespireClient.ConnectAsync(options);

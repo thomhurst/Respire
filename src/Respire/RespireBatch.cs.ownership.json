@@ -16,10 +16,10 @@
         "GetString(RespireKey):RespirePending<string?>",
         "Get`1(RespireKey):RespirePending<T?>",
         "Increment(RespireKey,long):RespirePending<long>",
-        "Set(RespireKey,RespireValue,RespireExpiry,SetWhen):RespirePending<bool>",
-        "Set`1(RespireKey,T,RespireExpiry,SetWhen):RespirePending<bool>",
+        "Set(RespireKey,RespireValue,RespireExpiry,RespireSetWhen):RespirePending<bool>",
+        "Set`1(RespireKey,T,RespireExpiry,RespireSetWhen):RespirePending<bool>",
         "TryExecuteAsync(CancellationToken):ValueTask<RespireBatchResult>",
-        "TryGet`1(RespireKey):RespirePending<RespireGet<T>>"
+        "TryGet`1(RespireKey):RespirePending<RespireGetResult<T>>"
       ],
       "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
     }

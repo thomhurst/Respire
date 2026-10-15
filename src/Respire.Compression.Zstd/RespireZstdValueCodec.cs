@@ -9,7 +9,7 @@ namespace Respire.Compression.Zstd;
 /// <remarks>Requires the optional Respire.Compression.Zstd package. Each compressed payload is one
 /// ordinary Zstandard frame without an external dictionary. Bounded shared pools reuse contexts exclusively
 /// per call, so the codec supports concurrent calls and does not require disposal.</remarks>
-public sealed class ZstdValueCodec : RespireValueCodec
+public sealed class RespireZstdValueCodec : RespireValueCodec
 {
     private readonly int _level;
     // No thread-local retention or per-level pools: arbitrary codec instances and levels share this bound.
@@ -20,7 +20,7 @@ public sealed class ZstdValueCodec : RespireValueCodec
 
     /// <summary>Creates a codec with compression level 3 by default. Supported levels are -131072 through 22;
     /// zero selects the dependency's default level of 3. Negative levels favor speed over compression ratio.</summary>
-    public ZstdValueCodec(RespireValueCodecOptions? options = null, int level = 3)
+    public RespireZstdValueCodec(RespireValueCodecOptions? options = null, int level = 3)
         : base(4, options, allowReservedAlgorithm: true)
     {
         if (level < Compressor.MinCompressionLevel || level > Compressor.MaxCompressionLevel)

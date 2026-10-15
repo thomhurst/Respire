@@ -93,7 +93,7 @@ public class SemaphoreErrorMetricsTests
         {
             Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
             Connections = 1,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = null,
         });
         metrics.Items.Clear();
@@ -492,7 +492,7 @@ public class SemaphoreErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2, Connections = 1,
+                Protocol = RespireProtocol.Resp2, Connections = 1,
                 Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await using var acquired = await new RespireSemaphore(client, "key", 1).TryAcquireAsync(TimeSpan.FromSeconds(30));

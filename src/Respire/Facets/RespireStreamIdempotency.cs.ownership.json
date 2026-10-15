@@ -3,11 +3,11 @@
   "Boundaries": [],
   "NonRoutes": [
     {
-      "Member": "Respire.StreamIdempotency.Automatic(RespireValue):StreamIdempotency",
+      "Member": "Respire.RespireStreamIdempotency.Automatic(RespireValue):RespireStreamIdempotency",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     },
     {
-      "Member": "Respire.StreamIdempotency.Manual(RespireValue,RespireValue):StreamIdempotency",
+      "Member": "Respire.RespireStreamIdempotency.Manual(RespireValue,RespireValue):RespireStreamIdempotency",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
     }
   ]

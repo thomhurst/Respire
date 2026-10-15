@@ -82,7 +82,7 @@ public class TopologyExceptionEndpointTests
 
     private static RespireOptions StandaloneOptions(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
         ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };

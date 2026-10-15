@@ -50,10 +50,11 @@ General rules:
 
 ### Public type names during migration
 
-New native public types use the `Respire` prefix (`IRespire` for interfaces). Native types
+Native public types use the `Respire` prefix (`IRespire` for interfaces). Native types
 must not share a simple name with a public StackExchange.Redis type, so importing both
-namespaces leaves each library's types unambiguous. Existing noncolliding names are being
-normalized separately; the following pre-1.0 renames remove all current collisions:
+namespaces leaves each library's types unambiguous. The [public API naming guide](../fundamentals/api-naming.md)
+covers the complete prefix and result-suffix rules, exceptions, and noncolliding renames.
+The following pre-1.0 renames remove all current collisions:
 
 | Previous native name | New native name |
 | --- | --- |

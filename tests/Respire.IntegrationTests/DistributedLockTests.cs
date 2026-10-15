@@ -95,7 +95,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
     {
         var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(await Db.KeyExistsAsync(Key)).IsFalse();
 
         await using var next = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
@@ -106,8 +106,8 @@ public class DistributedLockTests(RedisTestContainer fixture)
     {
         var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.AlreadyReleased);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.AlreadyReleased);
     }
 
     [Test]
@@ -158,7 +158,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         // Disposing the scope stops renewal without treating the lock as lost.
         await Assert.That(renewalStopped.IsCancellationRequested).IsTrue();
         await Assert.That(keepAlive.OwnershipLost).IsFalse();
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
     }
 
     /// <summary>
@@ -200,7 +200,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         await Assert.That(await mutex.VerifyStillHeldAsync()).IsTrue();
         await Db.StringSetAsync(Key, "replacement", TimeSpan.FromSeconds(30));
         await Assert.That(await mutex.VerifyStillHeldAsync()).IsFalse();
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
     }
 
     [Test]
@@ -227,7 +227,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
     public async Task Dispose_AfterExplicitRelease_DoesNotTouchTheNextOwnersLock()
     {
         var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
 
         await using var next = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
@@ -247,7 +247,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         await Db.StringSetAsync(Key, "thief", TimeSpan.FromSeconds(30));
 
         await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(60))).IsFalse();
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
 
         await mutex.DisposeAsync();
 
@@ -275,7 +275,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         await Assert.That(await Db.KeyExistsAsync("tenant:" + Key)).IsTrue();
         await Assert.That(await Db.KeyExistsAsync(Key)).IsFalse();
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(await Db.KeyExistsAsync("tenant:" + Key)).IsFalse();
     }
 
@@ -307,7 +307,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
             retryEvery: TimeSpan.FromMilliseconds(50));
 
         // The first lease expired, so its handle owns nothing and must not delete the new lock.
-        await Assert.That(await holder.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await holder.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
 
         var stored = (byte[]?)await Db.StringGetAsync(Key);
         await Assert.That(Encoding.UTF8.GetString(stored!)).IsEqualTo(Encoding.UTF8.GetString(contender.Token.Bytes.Span));

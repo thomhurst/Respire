@@ -1,10 +1,10 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchStreamCommands",
+      "Type": "Respire.IRespireBatchStreamCommands",
       "OwnerType": "Respire.BatchStreamCommands",
       "Members": [
-        "Configure(RespireKey,StreamConfigurationOptions):RespirePending<bool>"
+        "Configure(RespireKey,RespireStreamConfigurationOptions):RespirePending<bool>"
       ],
       "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
     }

@@ -282,7 +282,7 @@ public class NearestReadRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
             Endpoints = [new("localhost", source.Port)],
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             UseCluster = true, ClusterTopologyRefreshInterval = null,
         });
         var router = client.Core.Cluster!;
@@ -426,7 +426,7 @@ public class NearestReadRoutingTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", sentinel.Port)], CommandTimeout = TimeSpan.FromSeconds(10),
         });
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
@@ -504,7 +504,7 @@ public class NearestReadRoutingTests
         await using var replica = Server("replica");
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ConnectTimeout = TimeSpan.FromMilliseconds(200),
+            Protocol = RespireProtocol.Resp2, Connections = 1, ConnectTimeout = TimeSpan.FromMilliseconds(200),
             Endpoints = [new("127.0.0.1", port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
         });
@@ -571,7 +571,7 @@ public class NearestReadRoutingTests
             : Reply(command, "primary");
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", primary.Port)],
         });
         client.Core.Cluster!.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -612,7 +612,7 @@ public class NearestReadRoutingTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
         });
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
@@ -633,7 +633,7 @@ public class NearestReadRoutingTests
         await using var replica = Server("replica");
         await using var client = RespireClient.Create(Options(primary, replica) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         client.Core.ReadRouter.NearestLatency = new ReadLatencySampler<RespireConnection>((connection, _) =>
             ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L));
@@ -948,7 +948,7 @@ public class NearestReadRoutingTests
         var attempts = 0;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("unavailable.test", 6379)],
             ReplicaEndpoints = [new("unavailable.test", 6379)],
             // A released ephemeral port can be reused by another parallel test. Inject the
@@ -1030,7 +1030,7 @@ public class NearestReadRoutingTests
 
     private static RespireOptions Options(FakeRespServer primary, params FakeRespServer[] replicas) => new()
     {
-        Protocol = RespProtocol.Resp2, Connections = 1,
+        Protocol = RespireProtocol.Resp2, Connections = 1,
         Endpoints = [new("127.0.0.1", primary.Port)],
         ReplicaEndpoints = replicas.Select(replica => new RespireEndpoint("127.0.0.1", replica.Port)).ToArray(),
     };

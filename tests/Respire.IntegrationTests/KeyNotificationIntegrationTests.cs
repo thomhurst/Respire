@@ -16,7 +16,7 @@ public sealed class KeyNotificationRedisContainer : IAsyncInitializer, IAsyncDis
     {
         Endpoints = [new(Container.Hostname, Container.GetMappedPublicPort(6379))],
         Database = TestContext.Current!.Isolation.UniqueId,
-        Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+        Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
     };
     public string ConnectionString =>
         $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}/{TestContext.Current!.Isolation.UniqueId}";

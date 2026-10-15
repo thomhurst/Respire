@@ -19,7 +19,7 @@ public class ServerNodeCommandTests
     {
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Database = 4, ClientName = "configured", UseCluster = true,
+            Protocol = RespireProtocol.Resp3, Database = 4, ClientName = "configured", UseCluster = true,
             ClientAvailabilityZone = "zone", ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             Username = "user", Password = "password", UseTls = true,
@@ -28,12 +28,12 @@ public class ServerNodeCommandTests
         };
         var ordinary = options.ToConnectionOptions(enableClientTracking: true, enableMaintenanceNotifications: true);
         var control = options.ToControlConnectionOptions();
-        await Assert.That(ordinary.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(ordinary.Protocol).IsEqualTo(RespireProtocol.Resp3);
         await Assert.That(ordinary.Database).IsEqualTo(4);
         await Assert.That(ordinary.RequireClusterDatabaseSupport && ordinary.DiscoverAvailabilityZone
             && ordinary.EnableClientTracking).IsTrue();
         await Assert.That(ordinary.MaintenanceNotifications).IsEqualTo(RespireMaintenanceNotificationMode.Enabled);
-        await Assert.That(control.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(control.Protocol).IsEqualTo(RespireProtocol.Resp2);
         await Assert.That(control.Database).IsEqualTo(0);
         await Assert.That(control.ClientName).IsNull();
         await Assert.That(control.RequireClusterDatabaseSupport || control.DiscoverAvailabilityZone
@@ -57,7 +57,7 @@ public class ServerNodeCommandTests
         var opened = new TaskCompletionSource<RespireEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespProtocol.Resp3, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespireProtocol.Resp3, AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -96,7 +96,7 @@ public class ServerNodeCommandTests
         var longBudget = TimeSpan.FromSeconds(30);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespProtocol.Resp2, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespireProtocol.Resp2, AllowAdmin = true,
             CommandTimeout = extend ? shortBudget : longBudget,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -217,7 +217,7 @@ public class ServerNodeCommandTests
         using var metrics = new MetricConfigurationScope();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1, Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
             AllowAdmin = true, LoggerFactory = logger,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -370,7 +370,7 @@ public class ServerNodeCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
             Username = "user", Password = "password", AllowAdmin = true,
         });
         byte[] bytes = [255, 0];
@@ -409,7 +409,7 @@ public class ServerNodeCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp3,
             Database = 4, ClientName = "configured", Username = "default", Password = "password", AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -440,7 +440,7 @@ public class ServerNodeCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
             ClientSideCache = new(), AllowAdmin = true,
         });
         var cache = client.Core.ClientCache!;
@@ -486,7 +486,7 @@ public class ServerNodeCommandTests
         target.SuppressReply = _ => { received.TrySetResult(); return true; };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespProtocol.Resp3, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespireProtocol.Resp3, AllowAdmin = true,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var stream = await GatedWriteStream.ConnectAsync(host, port, received.Task, token);
@@ -518,7 +518,7 @@ public class ServerNodeCommandTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespireProtocol.Resp3,
             AllowAdmin = true, Password = "password",
         });
         try
@@ -610,7 +610,7 @@ public class ServerNodeCommandTests
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", port)], Connections = 1, AllowAdmin = admin,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 

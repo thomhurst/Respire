@@ -183,7 +183,7 @@ public sealed class StreamedSetAllocationTests
         for (var index = 0; index < count; index++)
         {
             using var source = new MemoryStream("a"u8.ToArray());
-            var command = new StreamedSetCommand("allocation", source, 1, default, SetWhen.Always);
+            var command = new StreamedSetCommand("allocation", source, 1, default, RespireSetWhen.Always);
             var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             if (!gate.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Upload gate did not become available.");
             var before = GC.GetAllocatedBytesForCurrentThread();

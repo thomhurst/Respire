@@ -30,7 +30,7 @@ internal static class HedgedReadLatencyProbe
                 Endpoints = [fixture.DataEndpoints[0]],
                 ReplicaEndpoints = [fixture.DataEndpoints[1]],
                 Connections = 1,
-                Protocol = RespProtocol.Resp3,
+                Protocol = RespireProtocol.Resp3,
                 ReplicaRefreshInterval = TimeSpan.FromHours(1),
             };
             await using var seed = await RespireClient.ConnectAsync(options, cancellationToken).ConfigureAwait(false);

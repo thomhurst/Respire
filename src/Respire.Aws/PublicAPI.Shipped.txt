@@ -1,7 +1,7 @@
 #nullable enable
-Respire.Aws.ElastiCacheIamCredentialProvider
-Respire.Aws.ElastiCacheIamCredentialProvider.ElastiCacheIamCredentialProvider(Amazon.Runtime.AWSCredentials! awsCredentials, Amazon.RegionEndpoint! region, string! cacheName, string! userId, bool isServerless = false) -> void
-Respire.Aws.ElastiCacheIamCredentialProvider.GetCredentialsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireCredentials!>
-Respire.Aws.MemoryDbIamCredentialProvider
-Respire.Aws.MemoryDbIamCredentialProvider.GetCredentialsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireCredentials!>
-Respire.Aws.MemoryDbIamCredentialProvider.MemoryDbIamCredentialProvider(Amazon.Runtime.AWSCredentials! awsCredentials, Amazon.RegionEndpoint! region, string! clusterName, string! username) -> void
+Respire.Aws.RespireElastiCacheIamCredentialProvider
+Respire.Aws.RespireElastiCacheIamCredentialProvider.RespireElastiCacheIamCredentialProvider(Amazon.Runtime.AWSCredentials! awsCredentials, Amazon.RegionEndpoint! region, string! cacheName, string! userId, bool isServerless = false) -> void
+Respire.Aws.RespireElastiCacheIamCredentialProvider.GetCredentialsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireCredentials!>
+Respire.Aws.RespireMemoryDbIamCredentialProvider
+Respire.Aws.RespireMemoryDbIamCredentialProvider.GetCredentialsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireCredentials!>
+Respire.Aws.RespireMemoryDbIamCredentialProvider.RespireMemoryDbIamCredentialProvider(Amazon.Runtime.AWSCredentials! awsCredentials, Amazon.RegionEndpoint! region, string! clusterName, string! username) -> void

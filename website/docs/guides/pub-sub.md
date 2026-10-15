@@ -189,7 +189,7 @@ Override per subscription with `RespireSubscriptionOptions`; a `null` argument i
 ```csharp
 var options = new RespireSubscriptionOptions(
     BufferSize: 128,
-    Overflow: SubscriptionOverflow.DropNewest)
+    Overflow: RespireSubscriptionOverflow.DropNewest)
 {
     MaxPayloadBytes = 16 * 1024,
 };

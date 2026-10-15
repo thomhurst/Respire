@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchHyperLogLogCommands",
+      "Type": "Respire.IRespireBatchHyperLogLogCommands",
       "OwnerType": "Respire.BatchHyperLogLogCommands",
       "Members": [
         "Add(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<bool>",

@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IServerCommands",
+      "Type": "Respire.IRespireServerCommands",
       "OwnerType": "Respire.ServerCommands",
       "Members": [
         "ClientsAsync(RespireClientFilterOptions,CancellationToken):ValueTask<RespireServerClientInfo[]>",

@@ -36,7 +36,7 @@ public class ServerPubSubCommandTests
             }
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", servers[0].Port)],
             });
             using var cancellation = new CancellationTokenSource();
@@ -91,7 +91,7 @@ public class ServerPubSubCommandTests
         await Assert.That(counts[0].Subscribers).IsEqualTo(2);
         await Assert.That(counts[1].Channel.Bytes.IsEmpty).IsTrue();
         await Assert.That(counts[1].Subscribers).IsEqualTo(0);
-        await Assert.That(counts[0].Channel.Kind).IsEqualTo(sharded ? SubscriptionKind.Sharded : SubscriptionKind.Channel);
+        await Assert.That(counts[0].Channel.Kind).IsEqualTo(sharded ? RespireSubscriptionKind.Sharded : RespireSubscriptionKind.Channel);
     }
 
     [Test]
@@ -113,7 +113,7 @@ public class ServerPubSubCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
         });
         var first = await client.Server.PubSubPatternCountOnAllNodesAsync();
@@ -150,7 +150,7 @@ public class ServerPubSubCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1, Database = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var execution = client.Server.PubSubPatternCountOnAllNodesAsync().AsTask();
@@ -182,7 +182,7 @@ public class ServerPubSubCommandTests
         await client.DisposeAsync();
         await Assert.That(channels[0].Bytes.ToArray()).IsEquivalentTo(name);
         await Assert.That(channels[1].Bytes.IsEmpty).IsTrue();
-        await Assert.That(channels[0].Kind).IsEqualTo(sharded ? SubscriptionKind.Sharded : SubscriptionKind.Channel);
+        await Assert.That(channels[0].Kind).IsEqualTo(sharded ? RespireSubscriptionKind.Sharded : RespireSubscriptionKind.Channel);
         await Assert.That(counts[0].Channel.Bytes.ToArray()).IsEquivalentTo(name);
         await Assert.That(counts[0].Subscribers).IsEqualTo(2);
         await Assert.That(counts[1].Subscribers).IsEqualTo(0);
@@ -245,7 +245,7 @@ public class ServerPubSubCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var results = await client.Server.PubSubPatternCountOnAllNodesAsync();

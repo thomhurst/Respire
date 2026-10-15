@@ -46,9 +46,9 @@ public class RespParseStateTests
                 var bulk = nested ? value.AsArray()[0] : value;
                 await Assert.That(bulk.Type).IsEqualTo(type switch
                 {
-                    '$' => RespDataType.BulkString,
-                    '=' => RespDataType.VerbatimString,
-                    _ => RespDataType.BulkError,
+                    '$' => RespireDataType.BulkString,
+                    '=' => RespireDataType.VerbatimString,
+                    _ => RespireDataType.BulkError,
                 });
                 await Assert.That(bulk.AsSpan().Length).IsEqualTo(type == '=' ? length - 4 : length);
                 await Assert.That(parser.IsIdle).IsTrue();
@@ -155,7 +155,7 @@ public class RespParseStateTests
         var status = parser.TryParse("*2\r\n$10\r\n"u8, ref pos, out _, out var request);
 
         await Assert.That(status).IsEqualTo(RespParseStatus.NeedDirectFill);
-        await Assert.That(request.Type).IsEqualTo(RespDataType.BulkString);
+        await Assert.That(request.Type).IsEqualTo(RespireDataType.BulkString);
         await Assert.That(request.PayloadLength).IsEqualTo(10);
 
         var filled = RespValue.BulkString("0123456789");

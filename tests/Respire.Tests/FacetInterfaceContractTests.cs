@@ -42,12 +42,12 @@ public class FacetInterfaceContractTests
     [Arguments(typeof(IRespireCommandQueue), "get_Server")]
     [Arguments(typeof(IRespireCommandQueue), "get_Arrays")]
     [Arguments(typeof(IRespireCommandQueue), "get_Functions")]
-    [Arguments(typeof(IBatchScriptCommands), "Load")]
-    [Arguments(typeof(IBatchScriptCommands), "Exists")]
-    [Arguments(typeof(IBatchScriptCommands), "Flush")]
-    [Arguments(typeof(IScriptCommands), "FlushAsync")]
-    [Arguments(typeof(IKeyCommands), "ScanValkeyClusterPageAsync")]
-    [Arguments(typeof(IBatchKeyCommands), "ScanValkeyClusterPage")]
+    [Arguments(typeof(IRespireBatchScriptCommands), "Load")]
+    [Arguments(typeof(IRespireBatchScriptCommands), "Exists")]
+    [Arguments(typeof(IRespireBatchScriptCommands), "Flush")]
+    [Arguments(typeof(IRespireScriptCommands), "FlushAsync")]
+    [Arguments(typeof(IRespireKeyCommands), "ScanValkeyClusterPageAsync")]
+    [Arguments(typeof(IRespireBatchKeyCommands), "ScanValkeyClusterPage")]
     public async Task Capabilities_RequireExplicitImplementations(Type contract, string name)
     {
         var methods = contract.GetMethods().Where(method => method.Name == name).ToArray();
@@ -58,7 +58,7 @@ public class FacetInterfaceContractTests
     [Test]
     public async Task ScriptCacheExistsCore_RequiresImplementation()
     {
-        var method = typeof(IScriptCommands).GetMethod(nameof(IScriptCommands.ExistsAsync),
+        var method = typeof(IRespireScriptCommands).GetMethod(nameof(IRespireScriptCommands.ExistsAsync),
             [typeof(ReadOnlySpan<string>), typeof(CancellationToken)])!;
         await Assert.That(method.IsAbstract).IsTrue();
     }
@@ -83,22 +83,22 @@ public class FacetInterfaceContractTests
     }
 
     [Test]
-    [Arguments(typeof(IServerCommands))]
-    [Arguments(typeof(IBatchServerCommands))]
-    [Arguments(typeof(IHashCommands))]
-    [Arguments(typeof(IArrayCommands))]
-    [Arguments(typeof(IBatchArrayCommands))]
-    [Arguments(typeof(IBatchHashCommands))]
-    [Arguments(typeof(ISortedSetCommands))]
-    [Arguments(typeof(IBatchSortedSetCommands))]
-    [Arguments(typeof(IStreamCommands))]
-    [Arguments(typeof(IStringCommands))]
-    [Arguments(typeof(IBatchStringCommands))]
+    [Arguments(typeof(IRespireServerCommands))]
+    [Arguments(typeof(IRespireBatchServerCommands))]
+    [Arguments(typeof(IRespireHashCommands))]
+    [Arguments(typeof(IRespireArrayCommands))]
+    [Arguments(typeof(IRespireBatchArrayCommands))]
+    [Arguments(typeof(IRespireBatchHashCommands))]
+    [Arguments(typeof(IRespireSortedSetCommands))]
+    [Arguments(typeof(IRespireBatchSortedSetCommands))]
+    [Arguments(typeof(IRespireStreamCommands))]
+    [Arguments(typeof(IRespireStringCommands))]
+    [Arguments(typeof(IRespireBatchStringCommands))]
     [Arguments(typeof(IRespireNameResolver))]
     [Arguments(typeof(IRespireClientSideCache))]
     [Arguments(typeof(IRespireCommandQueue))]
-    [Arguments(typeof(IBatchScriptCommands))]
-    [Arguments(typeof(IBatchKeyCommands))]
+    [Arguments(typeof(IRespireBatchScriptCommands))]
+    [Arguments(typeof(IRespireBatchKeyCommands))]
     public async Task CommandContracts_RequireImplementations(Type contract)
     {
         var defaults = contract.GetMethods()

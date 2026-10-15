@@ -50,8 +50,8 @@ public sealed partial class RespireFakeServer
                 return FakeReply.Error($"ERR {token} specified multiple times");
             var value = Integer(args[index + 1]);
             var maximum = token == "IDMP-DURATION"
-                ? StreamConfigurationOptions.MaximumIdempotencyDurationSeconds
-                : StreamConfigurationOptions.MaximumIdempotencyMaxSize;
+                ? RespireStreamConfigurationOptions.MaximumIdempotencyDurationSeconds
+                : RespireStreamConfigurationOptions.MaximumIdempotencyMaxSize;
             if (value < 1 || value > maximum)
                 return FakeReply.Error($"ERR {token} must be between 1 and {maximum}");
             if (token == "IDMP-DURATION") duration = (int)value;

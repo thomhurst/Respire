@@ -15,10 +15,10 @@ public class CredentialProviderTests
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
 
     [Test]
-    [Arguments(RespProtocol.Auto)]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task EveryNewConnectionObtainsCurrentCredentials(RespProtocol protocol)
+    [Arguments(RespireProtocol.Auto)]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task EveryNewConnectionObtainsCurrentCredentials(RespireProtocol protocol)
     {
         await using var server = Server();
         var provider = new Provider();
@@ -32,22 +32,22 @@ public class CredentialProviderTests
         await using (var second = await RespireClient.ConnectAsync(options)) { }
         await Assert.That(provider.Calls).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands)
-            .IsEquivalentTo(protocol == RespProtocol.Resp2
+            .IsEquivalentTo(protocol == RespireProtocol.Resp2
                 ? new[] { "AUTH user first", "AUTH user second" }
                 : new[] { "HELLO 3 AUTH user first", "HELLO 3 AUTH user second" });
     }
 
     [Test]
-    [Arguments(RespProtocol.Auto, "WRONGPASS")]
-    [Arguments(RespProtocol.Auto, "ERR")]
-    [Arguments(RespProtocol.Auto, "NOAUTH")]
-    [Arguments(RespProtocol.Resp2, "WRONGPASS")]
-    [Arguments(RespProtocol.Resp2, "ERR")]
-    [Arguments(RespProtocol.Resp2, "NOAUTH")]
-    [Arguments(RespProtocol.Resp3, "WRONGPASS")]
-    [Arguments(RespProtocol.Resp3, "ERR")]
-    [Arguments(RespProtocol.Resp3, "NOAUTH")]
-    public async Task RejectedInitialAuthenticationHasTypedRedactedFailure(RespProtocol protocol, string errorCode)
+    [Arguments(RespireProtocol.Auto, "WRONGPASS")]
+    [Arguments(RespireProtocol.Auto, "ERR")]
+    [Arguments(RespireProtocol.Auto, "NOAUTH")]
+    [Arguments(RespireProtocol.Resp2, "WRONGPASS")]
+    [Arguments(RespireProtocol.Resp2, "ERR")]
+    [Arguments(RespireProtocol.Resp2, "NOAUTH")]
+    [Arguments(RespireProtocol.Resp3, "WRONGPASS")]
+    [Arguments(RespireProtocol.Resp3, "ERR")]
+    [Arguments(RespireProtocol.Resp3, "NOAUTH")]
+    public async Task RejectedInitialAuthenticationHasTypedRedactedFailure(RespireProtocol protocol, string errorCode)
     {
         await using var server = new FakeRespServer(System.Text.Encoding.UTF8.GetBytes(
             $"-{errorCode} invalid password private-token for private-user\r\n"));
@@ -117,7 +117,7 @@ public class CredentialProviderTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp3, CredentialProvider = provider, CredentialTimeProvider = clock,
+            Protocol = RespireProtocol.Resp3, CredentialProvider = provider, CredentialTimeProvider = clock,
             CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10), ConnectTimeout = Limit,
             ClientSideCache = new()
             {
@@ -226,7 +226,7 @@ public class CredentialProviderTests
         var provider = ExpiringProvider(clock);
         await using var server = Server();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            Options(server, provider, clock) with { Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2 });
+            Options(server, provider, clock) with { Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2 });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         server.SuppressReply = command => command == "PING" || command == "AUTH user second";
         var ping = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
@@ -319,7 +319,7 @@ public class CredentialProviderTests
         await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
 
         var source = new MemoryStream("data"u8.ToArray());
-        var command = new StreamedSetCommand((RespireValue)"key", source, source.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, source.Length, default, RespireSetWhen.Always);
         var pending = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         // The upload must not take the wire (or even read its source) while AUTH is unacknowledged.
         await Task.Delay(100);
@@ -842,7 +842,7 @@ public class CredentialProviderTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = provider, Protocol = RespProtocol.Resp2,
+            Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = provider, Protocol = RespireProtocol.Resp2,
             CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
@@ -1040,9 +1040,9 @@ public class CredentialProviderTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Auto)]
-    public async Task SubscriptionsRequireStrictResp3ForRenewableCredentials(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Auto)]
+    public async Task SubscriptionsRequireStrictResp3ForRenewableCredentials(RespireProtocol protocol)
     {
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -1071,7 +1071,7 @@ public class CredentialProviderTests
     private static RespireConnectionOptions Options(FakeRespServer server, Provider provider, Clock clock)
         => new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, CredentialProvider = provider, Protocol = RespProtocol.Resp2,
+            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, CredentialProvider = provider, Protocol = RespireProtocol.Resp2,
             CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
             CredentialRefreshRetryDelay = TimeSpan.FromSeconds(1), ConnectTimeout = Limit,
         }.ToConnectionOptions();

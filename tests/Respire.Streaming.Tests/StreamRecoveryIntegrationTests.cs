@@ -18,10 +18,10 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
     public async Task ClaimSkipsDeletedPendingEntriesAndKeepsCursor(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer(null, createConsumersOnEmptyReads: false,
             autoClaimDeletesPendingEntries: false);
-        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         foreach (var client in new[] { real, fake })
         {
             for (var i = 1; i <= 2; i++)
@@ -49,9 +49,9 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
     public async Task BoundedCursorDeletedPendingAndAttemptFencingMatchRedis(int protocol)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer();
-        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         foreach (var root in new[] { real, fake })
         {
             var client = root.WithKeyPrefix("tenant:");
@@ -107,7 +107,7 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
     public async Task StoppedConsumerIsRecoveredByAnotherHostAtLeastOnce(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         await view.Streams.AddAsync("events", ("payload", "recover"));
         var entered = Channel.CreateUnbounded<RespireStreamEntry>();
@@ -162,7 +162,7 @@ public class StreamRecoveryIntegrationTests(RedisTestContainer redis)
     public async Task RealWorkerRejectsStaleCompletionAfterOwnerOrAttemptChanges(int protocol, bool sameConsumer, bool replay)
     {
         await using var root = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix("tenant:");
         await client.Streams.AddAsync("stale", new RespireStreamAddOptions { Id = "1-0" }, ("payload", "body"));
         await client.Streams.CreateGroupAsync("stale", "workers", RespireStreamId.Beginning);

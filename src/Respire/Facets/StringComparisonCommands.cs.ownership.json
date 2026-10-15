@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IStringCommands",
+      "Type": "Respire.IRespireStringCommands",
       "OwnerType": "Respire.StringCommands",
       "Members": [
         "DeleteConditionalAsync(RespireKey,RespireValueCondition,CancellationToken):ValueTask<bool>",

@@ -203,7 +203,7 @@ public class RespireConnectionTests
 
         var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
 
-        await Assert.That(response.Type).IsEqualTo(RespDataType.BulkString);
+        await Assert.That(response.Type).IsEqualTo(RespireDataType.BulkString);
         await Assert.That(response.AsString()).IsEqualTo(payload);
         response.Dispose();
     }
@@ -427,7 +427,7 @@ public class RespireConnectionTests
         server.DelayReply(0, 250);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
@@ -451,7 +451,7 @@ public class RespireConnectionTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
@@ -651,7 +651,7 @@ public class RespireConnectionTests
 
         var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
 
-        await Assert.That(response.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(response.Type).IsEqualTo(RespireDataType.Array);
         var count = response.AsArray().Length;
         var first = response.AsArray()[0].AsString();
         var second = response.AsArray()[1].AsInteger();

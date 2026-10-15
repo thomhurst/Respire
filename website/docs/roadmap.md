@@ -21,6 +21,9 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ## Available now
 
+- [Consistent native public type names](fundamentals/api-naming.md): `Respire` prefixes,
+  `IRespire` interfaces, and `Result` suffixes for command outcome wrappers.
+
 - [Local cross-slot diagnostics](fundamentals/connections.md#client-side-cross-slot-validation)
   distinguish client validation from Redis replies, with slot details and opt-in key context.
 

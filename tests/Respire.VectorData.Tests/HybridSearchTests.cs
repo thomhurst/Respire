@@ -214,7 +214,7 @@ public class HybridSearchTests(HybridRedisVersions fixture)
 
     private async Task<RespireClient> Connect(int protocol, int version)
     {
-        return await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.Connection(version)) with { Protocol = (RespProtocol)protocol });
+        return await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.Connection(version)) with { Protocol = (RespireProtocol)protocol });
     }
 
     private static async Task WaitForIndex(RespireVectorStoreCollection<Movie> collection, int count)

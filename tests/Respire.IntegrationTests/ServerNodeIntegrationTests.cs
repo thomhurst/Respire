@@ -25,7 +25,7 @@ public class ServerNodeIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [endpoint], Connections = 1, AllowAdmin = true,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         var node = client.WithKeyPrefix("ignored:").Server.OnNode(endpoint);
         (await node.AclGeneratePasswordAsync()).Should().HaveLength(64);
@@ -81,7 +81,7 @@ public class ServerNodeIntegrationTests
         {
             Endpoints = [endpoint], Connections = 1, AllowAdmin = true, Database = 2, ClientName = "busy-origin",
             Username = "default", Password = password, CommandTimeout = TimeSpan.FromSeconds(40),
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
         if (function)
             await client.Functions.LoadAsync("#!lua name=busycontrol\nredis.register_function('busycontrol', function() while true do end end)");

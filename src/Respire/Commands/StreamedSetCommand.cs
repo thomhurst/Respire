@@ -92,7 +92,7 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
     private readonly ReadOnlySequence<byte> _sequence;
     private readonly long _length;
     private readonly RespireExpiry _expiry;
-    private readonly SetWhen _when;
+    private readonly RespireSetWhen _when;
     private readonly ClientSideCacheCoordinator.MutationFence _mutationFence;
 
     private StreamedSetCommand(in StreamedSetCommand command, ClientSideCacheCoordinator.MutationFence fence)
@@ -111,7 +111,7 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
 
     public ClientSideCacheCoordinator.MutationFence GetMutationFence() => _mutationFence;
 
-    internal StreamedSetCommand(RespireValue key, Stream source, long length, RespireExpiry expiry, SetWhen when)
+    internal StreamedSetCommand(RespireValue key, Stream source, long length, RespireExpiry expiry, RespireSetWhen when)
     {
         _key = key;
         _stream = new StreamSource(source);
@@ -121,7 +121,7 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
         _when = when;
     }
 
-    internal StreamedSetCommand(RespireValue key, ReadOnlySequence<byte> source, RespireExpiry expiry, SetWhen when)
+    internal StreamedSetCommand(RespireValue key, ReadOnlySequence<byte> source, RespireExpiry expiry, RespireSetWhen when)
     {
         _key = key;
         _stream = null;
@@ -170,7 +170,7 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
         // Validate before writing so an argument count can never promise a token WriteEnd omits.
         SetCommand.ValidateWhen(_when);
         SetCommand.ValidateExpiry(_expiry);
-        var argumentCount = 3 + _expiry.TokenCount + (_when == SetWhen.Always ? 0 : 1);
+        var argumentCount = 3 + _expiry.TokenCount + (_when == RespireSetWhen.Always ? 0 : 1);
         writer.WriteArrayHeader(argumentCount);
         writer.WriteRaw(Verbs.Set.Bulk);
         _key.WriteTo(ref writer);
@@ -191,8 +191,8 @@ internal readonly struct StreamedSetCommand : IReplayableStreamingRespCommand, I
             writer.WriteBulkInteger(unixMilliseconds);
         }
 
-        if (_when == SetWhen.NotExists) writer.WriteRaw(CommandOptionFrames.NX);
-        else if (_when == SetWhen.Exists) writer.WriteRaw(CommandOptionFrames.XX);
+        if (_when == RespireSetWhen.NotExists) writer.WriteRaw(CommandOptionFrames.NX);
+        else if (_when == RespireSetWhen.Exists) writer.WriteRaw(CommandOptionFrames.XX);
         if (_expiry.IsKeep) writer.WriteRaw(CommandOptionFrames.KEEPTTL);
     }
 }

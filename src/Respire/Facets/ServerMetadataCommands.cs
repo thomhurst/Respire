@@ -4,7 +4,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Returns owned COMMAND INFO entries in request order, including null for unknown commands.</summary>
     /// <remarks>Redis 2.8.13+. Empty requests mean all commands on Redis 7+.

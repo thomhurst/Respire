@@ -12,19 +12,19 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
     [MatrixDataSource]
     public async Task LiteralPatternAndShardedViewsShareOnlyPhysicalRoutes(
         [Matrix(2, 3)] int protocol,
-        [Matrix(SubscriptionKind.Channel, SubscriptionKind.Pattern, SubscriptionKind.Sharded)] SubscriptionKind kind)
+        [Matrix(RespireSubscriptionKind.Channel, RespireSubscriptionKind.Pattern, RespireSubscriptionKind.Sharded)] RespireSubscriptionKind kind)
     {
         byte[] prefix = [.. Encoding.UTF8.GetBytes($"events:{Guid.NewGuid():N}:"), 255, 0,
             (byte)'*', (byte)'?', (byte)'[', (byte)']', (byte)'\\', (byte)':'];
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol };
+        var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol };
         await using var root = await RespireClient.ConnectAsync(options with { KeyPrefix = "configured-keys:", PubSubPrefix = prefix });
         await using var physicalClient = await RespireClient.ConnectAsync(options with { Database = RedisTestContainer.ScratchDatabase });
         var view = root.WithKeyPrefix("nested:").WithPubSubPrefix("nested:");
         var logical = (RespireChannel)"item";
         var target = kind switch
         {
-            SubscriptionKind.Pattern => RespireChannel.Pattern("i*"),
-            SubscriptionKind.Sharded => RespireChannel.Sharded(logical),
+            RespireSubscriptionKind.Pattern => RespireChannel.Pattern("i*"),
+            RespireSubscriptionKind.Sharded => RespireChannel.Sharded(logical),
             _ => logical,
         };
         var physical = view.ResolveChannel(logical);
@@ -42,11 +42,11 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         firstReader.Current.Channel.Should().Be(physical);
         duplicateReader.Current.Channel.Should().Be(physical);
         firstReader.Current.Text.Should().Be("inside");
-        firstReader.Current.Pattern.Should().Be(kind == SubscriptionKind.Pattern ? physicalTarget : (RespireChannel?)null);
+        firstReader.Current.Pattern.Should().Be(kind == RespireSubscriptionKind.Pattern ? physicalTarget : (RespireChannel?)null);
         first.Targets.Should().Equal(physicalTarget);
         view.ResolveKey("item").Should().Be((RespireKey)"configured-keys:nested:item");
-        var physicalCounts = await view.Server.PubSubSubscriberCountsAsync([physical], sharded: kind == SubscriptionKind.Sharded);
-        if (kind != SubscriptionKind.Pattern) physicalCounts.Single().Subscribers.Should().Be(1);
+        var physicalCounts = await view.Server.PubSubSubscriberCountsAsync([physical], sharded: kind == RespireSubscriptionKind.Sharded);
+        if (kind != RespireSubscriptionKind.Pattern) physicalCounts.Single().Subscribers.Should().Be(1);
         await first.DisposeAsync();
         await view.DisposeAsync();
         (await Publish(physicalClient, physical, "retained")).Should().Be(1);
@@ -58,7 +58,7 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         (await root.PingAsync()).Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);
 
         ValueTask<long> Publish(IRespireClient client, RespireChannel channel, string value)
-            => kind == SubscriptionKind.Sharded ? client.PublishShardedAsync(channel, value, deadline.Token)
+            => kind == RespireSubscriptionKind.Sharded ? client.PublishShardedAsync(channel, value, deadline.Token)
                 : client.PublishAsync(channel, value, deadline.Token);
     }
 
@@ -66,10 +66,10 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
     [MatrixDataSource]
     public async Task ReconnectPreservesPrefixedRoutesAndPhysicalGapIdentity(
         [Matrix(2, 3)] int protocol,
-        [Matrix(SubscriptionKind.Channel, SubscriptionKind.Pattern, SubscriptionKind.Sharded)] SubscriptionKind kind)
+        [Matrix(RespireSubscriptionKind.Channel, RespireSubscriptionKind.Pattern, RespireSubscriptionKind.Sharded)] RespireSubscriptionKind kind)
     {
         var clientName = $"prefix-reconnect-{Guid.NewGuid():N}";
-        var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol, ClientName = clientName };
+        var options = RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol, ClientName = clientName };
         await using var root = await RespireClient.ConnectAsync(options);
         await using var publisher = await RespireClient.ConnectAsync(options with { ClientName = null });
         byte[] prefix = [.. Encoding.UTF8.GetBytes($"{clientName}:"), 255, 0, (byte)'*', (byte)':'];
@@ -77,8 +77,8 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         var logical = (RespireChannel)"item";
         var target = kind switch
         {
-            SubscriptionKind.Pattern => RespireChannel.Pattern("i*"),
-            SubscriptionKind.Sharded => RespireChannel.Sharded(logical),
+            RespireSubscriptionKind.Pattern => RespireChannel.Pattern("i*"),
+            RespireSubscriptionKind.Sharded => RespireChannel.Sharded(logical),
             _ => logical,
         };
         var physical = view.ResolveChannel(logical);
@@ -89,7 +89,7 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         (await reader.MoveNextAsync()).Should().BeTrue();
         reader.Current.Channel.Should().Be(physical);
         using var clients = await publisher.ExecuteAsync("CLIENT LIST");
-        var verb = kind switch { SubscriptionKind.Pattern => "psubscribe", SubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
+        var verb = kind switch { RespireSubscriptionKind.Pattern => "psubscribe", RespireSubscriptionKind.Sharded => "ssubscribe", _ => "subscribe" };
         var line = clients.AsString().Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Single(value => value.Contains($"name={clientName}", StringComparison.Ordinal) && value.Contains($"cmd={verb}", StringComparison.Ordinal));
         var id = line.Split(' ').Single(value => value.StartsWith("id=", StringComparison.Ordinal))[3..];
@@ -103,14 +103,14 @@ public class PubSubPrefixIntegrationTests(RedisTestContainer fixture)
         reader.Current.Gap!.Reason.Should().Be(RespireSubscriptionGapReason.Reconnect);
         (await reader.MoveNextAsync()).Should().BeTrue();
         reader.Current.Channel.Should().Be(physical);
-        reader.Current.Pattern.Should().Be(kind == SubscriptionKind.Pattern ? view.ResolveChannel(target) : (RespireChannel?)null);
+        reader.Current.Pattern.Should().Be(kind == RespireSubscriptionKind.Pattern ? view.ResolveChannel(target) : (RespireChannel?)null);
         reader.Current.Text.Should().Be("after");
         subscription.Targets.Should().Equal(view.ResolveChannel(target));
         await subscription.DisposeAsync();
         (await Publish("removed")).Should().Be(0);
 
         ValueTask<long> Publish(string value)
-            => kind == SubscriptionKind.Sharded ? publisher.PublishShardedAsync(physical, value, deadline.Token)
+            => kind == RespireSubscriptionKind.Sharded ? publisher.PublishShardedAsync(physical, value, deadline.Token)
                 : publisher.PublishAsync(physical, value, deadline.Token);
     }
 }

@@ -332,8 +332,8 @@ public class LockCommandTests
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.AlreadyReleased);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.AlreadyReleased);
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(mutex.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(60))).IsFalse();
@@ -355,8 +355,8 @@ public class LockCommandTests
         await WaitForCommandAsync(server, "DELEX ");
         var second = mutex.ReleaseAsync().AsTask();
 
-        await Assert.That(await first).IsEqualTo(LockReleaseOutcome.Released);
-        await Assert.That(await second).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await first).IsEqualTo(RespireLockReleaseOutcome.Released);
+        await Assert.That(await second).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(RecordedLockOperations(server).Count).IsEqualTo(2);
     }
 
@@ -379,7 +379,7 @@ public class LockCommandTests
             .Throws<OperationCanceledException>();
         await dispose;
         await Assert.That(mutex.IsReleased).IsTrue();
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!keepAlive.CancellationToken.IsCancellationRequested)
@@ -428,7 +428,7 @@ public class LockCommandTests
         await Assert.That(keepAlive.OwnershipLost).IsFalse();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsFalse();
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         var token = mutex.Token.ToUtf8String();
         await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
         {
@@ -448,7 +448,7 @@ public class LockCommandTests
         server.DelayCommand("PING", 1000);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             MaxInflightCommands = 1,
@@ -470,7 +470,7 @@ public class LockCommandTests
             .IsFalse();
 
         await ping;
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
             .IsEqualTo(1);
     }
@@ -524,7 +524,7 @@ public class LockCommandTests
         server.DelayCommand("PING", 3000);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             MaxInflightCommands = 1,
@@ -543,7 +543,7 @@ public class LockCommandTests
 
         await Assert.That(async () => await ping).Throws<RespireTimeoutException>();
         await Task.Delay(2200);
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
             .IsEqualTo(1);
     }
@@ -558,7 +558,7 @@ public class LockCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         var token = mutex.Token.ToUtf8String();
         await Assert.That(RecordedLockOperations(server)).IsEquivalentTo(new[]
         {
@@ -579,7 +579,7 @@ public class LockCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             LoggerFactory = logger,
@@ -588,9 +588,9 @@ public class LockCommandTests
 
         // A cancellable token makes the release fenceable, so CLIENT ID is attempted and denied.
         var first = await client.Locks.AcquireOrThrowAsync("first", TimeSpan.FromSeconds(30));
-        await Assert.That(await first.ReleaseAsync(cancellation.Token)).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await first.ReleaseAsync(cancellation.Token)).IsEqualTo(RespireLockReleaseOutcome.Released);
         var second = await client.Locks.AcquireOrThrowAsync("second", TimeSpan.FromSeconds(30));
-        await Assert.That(await second.ReleaseAsync(cancellation.Token)).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await second.ReleaseAsync(cancellation.Token)).IsEqualTo(RespireLockReleaseOutcome.Released);
 
         await Assert.That(DelexCount(server)).IsEqualTo(2);
         await Assert.That(logger.Warnings.Count(warning => warning is RespireServerException)).IsEqualTo(1);
@@ -609,7 +609,7 @@ public class LockCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = TimeSpan.FromSeconds(5),
@@ -645,7 +645,7 @@ public class LockCommandTests
         await starterCancellation.CancelAsync();
 
         await Assert.That(async () => await starter).Throws<OperationCanceledException>();
-        await Assert.That(await joiner.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await joiner.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(RespireLockReleaseOutcome.Released);
         await ping;
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(DelexCount(server)).IsEqualTo(1);
@@ -675,8 +675,8 @@ public class LockCommandTests
         // Whichever joiner restarts the release first, the others follow that attempt or see
         // its result; none inherits the starter's cancellation.
         var outcomes = await Task.WhenAll(joiners).WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(outcomes.Count(outcome => outcome == LockReleaseOutcome.Released)).IsGreaterThanOrEqualTo(1);
-        await Assert.That(outcomes.All(outcome => outcome is LockReleaseOutcome.Released or LockReleaseOutcome.AlreadyReleased))
+        await Assert.That(outcomes.Count(outcome => outcome == RespireLockReleaseOutcome.Released)).IsGreaterThanOrEqualTo(1);
+        await Assert.That(outcomes.All(outcome => outcome is RespireLockReleaseOutcome.Released or RespireLockReleaseOutcome.AlreadyReleased))
             .IsTrue();
         await ping;
         await Assert.That(DelexCount(server)).IsEqualTo(1);
@@ -702,7 +702,7 @@ public class LockCommandTests
         await Assert.That(async () => await joiner.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();
         await Assert.That(starter.IsCompleted).IsFalse();
-        await Assert.That(await starter.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await starter.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(DelexCount(server)).IsEqualTo(1);
     }
@@ -720,7 +720,7 @@ public class LockCommandTests
         server.DelayCommand("DELEX ", 1000);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             LoggerFactory = logger,
@@ -761,7 +761,7 @@ public class LockCommandTests
             : LockReply(command);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TimeSpan.FromSeconds(30),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -784,7 +784,7 @@ public class LockCommandTests
 
         targetAccept.TrySetResult();
         await Assert.That(await mutex.ReleaseAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
-            .IsEqualTo(LockReleaseOutcome.Released);
+            .IsEqualTo(RespireLockReleaseOutcome.Released);
     }
 
     [Test]
@@ -806,7 +806,7 @@ public class LockCommandTests
         // The cancellable token makes the release fenceable. The seed answers its delete with
         // ASK, and the target denies CLIENT ID, so the delete continues there unfenced.
         await Assert.That(await mutex.ReleaseAsync(cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10)))
-            .IsEqualTo(LockReleaseOutcome.Released);
+            .IsEqualTo(RespireLockReleaseOutcome.Released);
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(DelexCount(seed)).IsEqualTo(1);
         await Assert.That(DelexCount(target)).IsEqualTo(1);
@@ -852,7 +852,7 @@ public class LockCommandTests
     private static ValueTask<RespireClient> ConnectClusterAsync(FakeRespServer seed, ILoggerFactory? logger)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TimeSpan.FromSeconds(30),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -870,7 +870,7 @@ public class LockCommandTests
             "$-1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = null,
@@ -902,7 +902,7 @@ public class LockCommandTests
         server.CloseConnectionAfterCommand = 4;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = null,
@@ -955,7 +955,7 @@ public class LockCommandTests
         server.DelayReply(3, 500);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         });
@@ -1242,7 +1242,7 @@ public class LockCommandTests
         await Assert.That(mutex.GetKeepAlivePhase(out _)).IsEqualTo(RespireLock.KeepAlivePhase.Releasing);
 
         commands.CompletePendingRelease();
-        await Assert.That(await release).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await release).IsEqualTo(RespireLockReleaseOutcome.Released);
         var afterPhase = mutex.GetKeepAlivePhase(out var afterRelease);
         await Assert.That(afterPhase).IsEqualTo(RespireLock.KeepAlivePhase.Ended);
         await Assert.That(afterRelease).IsEqualTo(TimeSpan.Zero);
@@ -1267,7 +1267,7 @@ public class LockCommandTests
         await dispose;
 
         await Assert.That(mutex.IsReleased).IsFalse();
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
     }
 
     [Test]
@@ -1388,7 +1388,7 @@ public class LockCommandTests
         await Assert.That(async () => await release).Throws<RespireServerException>();
 
         await Assert.That(mutex.IsReleased).IsTrue();
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
     }
 
     [Test]
@@ -1399,7 +1399,7 @@ public class LockCommandTests
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         await using var keepAlive = await mutex.KeepAliveAsync();
 
-        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!keepAlive.CancellationToken.IsCancellationRequested)
@@ -1586,7 +1586,7 @@ public class LockCommandTests
     private static ValueTask<RespireClient> ConnectWithSingleInflightSlotAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             MaxInflightCommands = 1,
@@ -1650,7 +1650,7 @@ public class LockCommandTests
         public ValueTask DisposeAsync() { Dispose(); return default; }
     }
 
-    private sealed class CoordinatedLockCommands : ILockCommands, IManagedLockCommands
+    private sealed class CoordinatedLockCommands : IRespireLockCommands, IManagedLockCommands
     {
         private readonly bool _blockFirstExtension;
         private readonly bool _reportUncertain;

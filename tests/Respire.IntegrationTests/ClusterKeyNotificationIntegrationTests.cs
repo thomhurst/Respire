@@ -137,7 +137,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
     internal RespireOptions Options(int protocol) => new()
     {
         UseCluster = true,
-        Protocol = (RespProtocol)protocol,
+        Protocol = (RespireProtocol)protocol,
         Connections = 1,
         Endpoints = [new RespireEndpoint("127.0.0.1", Port(0))],
     };

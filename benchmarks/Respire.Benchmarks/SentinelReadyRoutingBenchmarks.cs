@@ -22,13 +22,13 @@ public class SentinelReadyRoutingBenchmarks
         var sentinelPort = int.TryParse(Environment.GetEnvironmentVariable("SENTINEL_PORT"), out var configuredSentinel) ? configuredSentinel : 26379;
         _standalone = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(host, redisPort)], Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new(host, redisPort)], Protocol = RespireProtocol.Resp2, Connections = 1,
             ThreadPoolMonitoring = false,
         }).ConfigureAwait(false);
         _sentinel = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(host, sentinelPort)], SentinelPrimaryName = "mymaster",
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
         }).ConfigureAwait(false);
         if (!await _standalone.Strings.SetAsync(_key, _payload).ConfigureAwait(false))
             throw new InvalidOperationException("Failed to initialize the fixed benchmark payload.");

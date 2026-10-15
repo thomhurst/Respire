@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchStringCommands",
+      "Type": "Respire.IRespireBatchStringCommands",
       "OwnerType": "Respire.BatchStringCommands",
       "Members": [
         "DeleteConditional(RespireKey,RespireValueCondition):RespirePending<bool>",

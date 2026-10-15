@@ -69,7 +69,7 @@ public partial class CommandHookTests
         var options = new RespireOptions
         {
             Endpoints = [new("127.0.0.1", endpoint.Port)], UseCluster = true,
-            Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
         };
         await using var plain = RespireClient.Create(options);
         await using var hooked = RespireClient.Create(options with { CommandHook = hook });
@@ -287,7 +287,7 @@ public partial class CommandHookTests
         var hook = new RecordingHook();
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
         using var cancellation = new CancellationTokenSource();
@@ -479,7 +479,7 @@ public partial class CommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
     };
 

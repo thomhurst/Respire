@@ -27,7 +27,7 @@ public partial class RespireJsonClientTests
         PausedJsonWriteStream? transport = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = expire ? TimeSpan.FromMinutes(1) : null,
@@ -105,7 +105,7 @@ public partial class RespireJsonClientTests
         PausedJsonWriteStream? transport = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
             TestingStreamFactory = async (host, port, token) =>
             {

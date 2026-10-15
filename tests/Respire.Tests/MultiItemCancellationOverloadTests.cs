@@ -68,7 +68,7 @@ public class MultiItemCancellationOverloadTests
                 // The single-key sorted-set overload already required every option and retains
                 // its positional contract. The multi-key overload moved the now-required wait
                 // ahead of optional count/descending. Still require the complete single-key shape.
-                if (type == typeof(ISortedSetCommands) && method.Name == nameof(ISortedSetCommands.PopManyAsync)
+                if (type == typeof(IRespireSortedSetCommands) && method.Name == nameof(IRespireSortedSetCommands.PopManyAsync)
                     && expected.SequenceEqual([typeof(RespireKey), typeof(TimeSpan?), typeof(long),
                         typeof(bool), typeof(CancellationToken)]))
                 {
@@ -208,9 +208,9 @@ public class MultiItemCancellationOverloadTests
         _ = client.Strings.GetManyAsync<int>(keys, token);
         _ = client.Strings.SetManyAsync(pairs, token);
         _ = client.Strings.SetManyExpireAsync(expiry, pairs, token);
-        _ = client.Strings.SetManyExpireAsync(expiry, SetWhen.NotExists, pairs, token);
-        _ = client.Strings.SetManyExpireAsync(expireAt, SetWhen.Exists, pairs, token);
-        _ = client.Strings.SetManyExpireAsync(RespireExpiry.Keep, SetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyExpireAsync(expiry, RespireSetWhen.NotExists, pairs, token);
+        _ = client.Strings.SetManyExpireAsync(expireAt, RespireSetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyExpireAsync(RespireExpiry.Keep, RespireSetWhen.Exists, pairs, token);
 
         _ = client.Hashes.SetAsync("h", fieldValues, token);
         _ = client.Hashes.GetManyAsync("h", fields, token);
@@ -226,9 +226,9 @@ public class MultiItemCancellationOverloadTests
         _ = client.Hashes.GetAndExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
         _ = client.Hashes.GetAndExpireAsync("h", RespireExpiry.Persist, fields, token);
         _ = client.Hashes.SetExpireAsync("h", expiry, fieldValues, token);
-        _ = client.Hashes.SetExpireAsync("h", expiry, SetWhen.Exists, fieldValues, token);
+        _ = client.Hashes.SetExpireAsync("h", expiry, RespireSetWhen.Exists, fieldValues, token);
         _ = client.Hashes.SetExpireAsync("h", RespireExpiry.At(expireAt), fieldValues, token);
-        _ = client.Hashes.SetExpireAsync("h", RespireExpiry.At(expireAt), SetWhen.Exists, fieldValues, token);
+        _ = client.Hashes.SetExpireAsync("h", RespireExpiry.At(expireAt), RespireSetWhen.Exists, fieldValues, token);
 
         _ = client.Lists.LeftPushAsync("l", values, token);
         _ = client.Lists.RightPushAsync("l", values, token);
@@ -256,18 +256,18 @@ public class MultiItemCancellationOverloadTests
         _ = client.HyperLogLog.CountAsync(keys, token);
         _ = client.HyperLogLog.MergeAsync("hll", keys, token);
 
-        _ = client.Bitmaps.OperateAsync(BitOperation.Or, "d", keys, token);
+        _ = client.Bitmaps.OperateAsync(RespireBitOperation.Or, "d", keys, token);
         _ = client.Bitmaps.FieldAsync("b", operations, token);
         _ = client.Bitmaps.FieldReadOnlyAsync("b", operations, token);
 
         _ = client.Geo.AddAsync("g", geoEntries, token);
         _ = client.Geo.AddAsync(
-            "g", new GeoAddOptions { When = SetWhen.NotExists, Changed = true }, geoEntries, token);
+            "g", new RespireGeoAddOptions { When = RespireSetWhen.NotExists, Changed = true }, geoEntries, token);
 
         _ = client.Strings.SetManyExpireAsync(expiry, ("a", "x"), ("b", "y"));
         _ = client.Geo.AddAsync("g", new RespireGeoEntry(0, 0, "a"), new RespireGeoEntry(1, 1, "b"));
         _ = client.Geo.AddAsync(
-            "g", new GeoAddOptions { When = SetWhen.NotExists },
+            "g", new RespireGeoAddOptions { When = RespireSetWhen.NotExists },
             new RespireGeoEntry(0, 0, "a"), new RespireGeoEntry(1, 1, "b"));
 
         RespireChannel[] channels = ["a", "b"];
@@ -392,7 +392,7 @@ public class MultiItemCancellationOverloadTests
     }
 
     /// <summary>Records which <c>DeleteAsync</c> overload the compiler picked.</summary>
-    private sealed class RecordingKeyCommands : IKeyCommands
+    private sealed class RecordingKeyCommands : IRespireKeyCommands
     {
         public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
             => DeleteAsync([key], cancellationToken);
@@ -453,10 +453,10 @@ public class MultiItemCancellationOverloadTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireTtlResult> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -471,7 +471,7 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default)
+        public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, RespireExpiryTimePrecision precision, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)

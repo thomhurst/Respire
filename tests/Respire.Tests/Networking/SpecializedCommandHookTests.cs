@@ -62,7 +62,7 @@ public class SpecializedCommandHookTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, ThreadPoolMonitoring = false,
             CommandTimeout = TimeSpan.FromSeconds(5), AllowAdmin = true, CommandHook = hook,
         });
@@ -151,7 +151,7 @@ public class SpecializedCommandHookTests
                 case "commandlog": await CheckRows(await client.Server.ResetCommandLogOnAllNodesAsync(RespireCommandLogType.Slow, token)); break;
                 case "server": await client.Server.TimeAsync(token); break;
                 case "dbsize": await client.Server.DatabaseSizeAsync(token); break;
-                case "flush": await client.Server.FlushDatabaseAsync(ServerFlushMode.Default, token); break;
+                case "flush": await client.Server.FlushDatabaseAsync(RespireServerFlushMode.Default, token); break;
                 case "exists": await client.Scripts.ExistsAsync("digest", token); break;
                 case "load": await client.Scripts.LoadAsync(RespireScript.Create("return 1"), token); break;
                 case "script-flush": await client.Scripts.FlushAsync(cancellationToken: token); break;
@@ -189,7 +189,7 @@ public class SpecializedCommandHookTests
             var hook = new RecordingHook();
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
                 Connections = 1, ThreadPoolMonitoring = false, AllowAdmin = true,
                 CommandHook = enabled ? hook : null,
             });

@@ -140,8 +140,8 @@ public class ClusterMigrationParserTests
 
     private static void Write(Stream stream, RespValue field)
     {
-        if (field.Type == RespDataType.Integer) stream.Write(Encoding.ASCII.GetBytes($":{field.AsInteger()}\r\n"));
-        else if (field.Type == RespDataType.Array)
+        if (field.Type == RespireDataType.Integer) stream.Write(Encoding.ASCII.GetBytes($":{field.AsInteger()}\r\n"));
+        else if (field.Type == RespireDataType.Array)
         {
             stream.Write(Encoding.ASCII.GetBytes($"*{field.AsArray().Length}\r\n"));
             foreach (var child in field.AsArray()) Write(stream, child);

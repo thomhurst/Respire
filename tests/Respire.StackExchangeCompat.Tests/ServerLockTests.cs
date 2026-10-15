@@ -11,7 +11,7 @@ public class ServerLockTests(RedisTestContainer fixture)
     private RespireOptions Options(int protocol) => RespireOptions.Parse(fixture.ConnectionString) with
     {
         Connections = 1,
-        Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
     };
 
     [Test]
@@ -82,7 +82,7 @@ public class ServerLockTests(RedisTestContainer fixture)
         var first = connection.GetServer(connection.GetEndPoints()[0]);
         var target = connection.GetServer(second.Host, second.Port);
         Assert.NotEqual(first.InfoRaw("server"), target.InfoRaw("server"));
-        await using var control = await RespireClient.ConnectAsync(RespireOptions.Parse(second.ConnectionString) with { Protocol = RespProtocol.Resp2 });
+        await using var control = await RespireClient.ConnectAsync(RespireOptions.Parse(second.ConnectionString) with { Protocol = RespireProtocol.Resp2 });
         using (await control.ExecuteAsync(RespireCommands.Server.REPLICAOF, "127.0.0.1", 1)) { }
         Assert.True(target.IsConnected);
         Assert.True(target.IsReplica);

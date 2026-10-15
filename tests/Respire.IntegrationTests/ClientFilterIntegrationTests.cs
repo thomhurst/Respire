@@ -19,7 +19,7 @@ public class ClientFilterIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
         };
         await using var admin = await RespireClient.ConnectAsync(options);
         await using var target = await RespireClient.ConnectAsync(options);
@@ -59,7 +59,7 @@ public class ClientFilterIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
         };
         await using var admin = await RespireClient.ConnectAsync(options);
         await admin.Server.AclSetUserAsync("filter-user", ["on", ">test-password", "+@all", "~*", "&*"]);
@@ -167,7 +167,7 @@ public class ClientFilterIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Connections = 1, AllowAdmin = true, ClientName = "filter-admin",
         };
         await using var admin = await RespireClient.ConnectAsync(options);

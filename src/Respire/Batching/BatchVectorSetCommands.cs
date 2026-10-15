@@ -6,7 +6,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Vector-set commands queued in a batch or transaction. Inputs are snapshotted at enqueue time.</summary>
-public interface IBatchVectorSetCommands
+public interface IRespireBatchVectorSetCommands
 {
     /// <summary>VADD: adds or replaces a vector; true means a new member was added.</summary>
     RespirePending<bool> Add(RespireKey key, ReadOnlyMemory<float> vector, RespireValue member, RespireVectorAddOptions options = default, RespireVectorEncoding encoding = default);
@@ -49,7 +49,7 @@ public interface IBatchVectorSetCommands
     RespirePending<byte[][]> Range(RespireKey key, RespireValue start, RespireValue end, long? count = null);
 }
 
-internal sealed class BatchVectorSetCommands(IPendingSink sink) : IBatchVectorSetCommands
+internal sealed class BatchVectorSetCommands(IPendingSink sink) : IRespireBatchVectorSetCommands
 {
     public RespirePending<bool> Add(RespireKey key, ReadOnlyMemory<float> vector, RespireValue member,
         RespireVectorAddOptions options = default, RespireVectorEncoding encoding = default)

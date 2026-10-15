@@ -24,7 +24,7 @@ public class StreamConfigurationTests
         await using var transaction = surface == 2 ? view.CreateTransaction() : null;
         IRespireCommandQueue? queue = transaction ?? (IRespireCommandQueue?)batch;
         byte[] key = [0, 255, 32];
-        StreamConfigurationOptions[] options = [new() { IdempotencyDurationSeconds = 1 }, new() { IdempotencyMaxSize = 10000 },
+        RespireStreamConfigurationOptions[] options = [new() { IdempotencyDurationSeconds = 1 }, new() { IdempotencyMaxSize = 10000 },
             new() { IdempotencyDurationSeconds = 86400, IdempotencyMaxSize = 1 }];
         List<RespirePending<bool>> pending = [];
         foreach (var option in options)
@@ -50,10 +50,10 @@ public class StreamConfigurationTests
     public async Task InvalidOptionsAndCancellationDoNotConnectOrEnqueue()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
-        StreamConfigurationOptions[] invalid = [default, new() { IdempotencyDurationSeconds = 0 }, new() { IdempotencyDurationSeconds = 86401 },
+        RespireStreamConfigurationOptions[] invalid = [default, new() { IdempotencyDurationSeconds = 0 }, new() { IdempotencyDurationSeconds = 86401 },
             new() { IdempotencyMaxSize = 0 }, new() { IdempotencyMaxSize = 10001 }, new() { IdempotencyDurationSeconds = 1, IdempotencyMaxSize = -1 }];
         foreach (var options in invalid)
         {
@@ -76,7 +76,7 @@ public class StreamConfigurationTests
     {
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes(reply), FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var options = new StreamConfigurationOptions { IdempotencyMaxSize = 1 };
+        var options = new RespireStreamConfigurationOptions { IdempotencyMaxSize = 1 };
         await Assert.That(async () => await client.Streams.ConfigureAsync("s", options)).Throws<RespireException>();
         await Assert.That(await client.Streams.ConfigureAsync("s", options)).IsTrue();
         await Assert.That(server.CommandsSeen).IsEqualTo(2);
@@ -88,7 +88,7 @@ public class StreamConfigurationTests
         await using var owner = new FakeRespServer(FakeRespServer.OkReply);
         var slot = ClusterHash.GetSlot("{tenant}:events");
         await using var seed = new FakeRespServer(Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n"));
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
         await client.WithKeyPrefix("{tenant}:").Streams.ConfigureAsync("events", new() { IdempotencyMaxSize = 1 });
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(new[] { "XCFGSET {tenant}:events IDMP-MAXSIZE 1" });
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(new[] { "CLUSTER SLOTS" });

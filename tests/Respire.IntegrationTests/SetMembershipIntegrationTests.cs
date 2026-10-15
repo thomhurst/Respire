@@ -15,7 +15,7 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         byte[] binary = [0xff, 0x00, 0x42];
         await client.Sets.AddAsync("members", binary, "text");
@@ -33,7 +33,7 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         byte[] binary = [0xff, 0x00, 0x42];
         await client.Sets.AddAsync("source", binary, "shared");
@@ -55,7 +55,7 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.Sets.AddAsync("first", "a", "b", "c");
         await client.Sets.AddAsync("second", "b", "c", "d");
@@ -76,7 +76,7 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.SetAsync("wrong", "string");
         await client.Sets.AddAsync("set", "member");
@@ -105,7 +105,7 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.Sets.AddAsync("first", "a", "b", "c");
         await client.Sets.AddAsync("second", "b", "c");

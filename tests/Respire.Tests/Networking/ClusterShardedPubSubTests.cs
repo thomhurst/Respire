@@ -329,7 +329,7 @@ public class ClusterShardedPubSubTests
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
-        await using var redirected = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
+        await using var redirected = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
             .AsTask().WaitAsync(Deadline);
         var router = client.Core.Cluster!;
         var first = router.GetMultiplexer(new("127.0.0.1", cluster.First.Port));
@@ -338,14 +338,14 @@ public class ClusterShardedPubSubTests
         // The router still names the migration source for foo. An unrelated slot change must
         // not treat that intentional mismatch as a moved subscription.
         router.SetSlotOwner(ClusterHash.GetSlot("baz"), second);
-        await using var added = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None)
+        await using var added = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None)
             .AsTask().WaitAsync(Deadline);
         // A duplicate subscription keeps the confirmed ASK route instead of repeating ASK.
-        await using var duplicate = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
+        await using var duplicate = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
             .AsTask().WaitAsync(Deadline);
         // Migration completing makes the ASK target the known owner; still no recovery.
         router.SetSlotOwner(ClusterHash.GetSlot("foo"), first);
-        await using var afterMigration = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None)
+        await using var afterMigration = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None)
             .AsTask().WaitAsync(Deadline);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "ASKING")).IsEqualTo(1);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
@@ -400,7 +400,7 @@ public class ClusterShardedPubSubTests
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
         await using var subscription = await hub.SubscribeAsync(
-            SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
+            RespireSubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
         cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE foo"
             ? [.. cluster.Confirmation("ssubscribe", "foo"), .. cluster.Message("foo", "after")] : null;
         var router = client.Core.Cluster!;
@@ -527,7 +527,7 @@ public class ClusterShardedPubSubTests
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
-        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar", "foo", "{foo}:barrier"], new(), CancellationToken.None);
+        await using var subscription = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar", "foo", "{foo}:barrier"], new(), CancellationToken.None);
         await using var reader = subscription.GetAsyncEnumerator();
         var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
@@ -578,7 +578,7 @@ public class ClusterShardedPubSubTests
         } : null);
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
-        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        await using var subscription = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
@@ -588,13 +588,13 @@ public class ClusterShardedPubSubTests
         cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
         await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
         var retry = await clock.NextAsync();
-        await Assert.That(async () => await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None))
+        await Assert.That(async () => await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None))
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo")).IsFalse();
         cluster.FirstOverride = null;
         retry.Fire();
         await recovered.Task.WaitAsync(Deadline);
-        await using var added = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
+        await using var added = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
         await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
     }
 
@@ -610,14 +610,14 @@ public class ClusterShardedPubSubTests
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
-        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        await using var subscription = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         var router = client.Core.Cluster!;
         var first = router.GetMultiplexer(new("127.0.0.1", cluster.First.Port));
         var second = router.GetMultiplexer(new("127.0.0.1", cluster.Second.Port));
         // foo changes owner, but no subscription uses that slot. A nonzero recovery delay
         // must not make the healthy bar route reject admission for another healthy channel.
         router.SetSlotOwner(ClusterHash.GetSlot("foo"), first);
-        await using var added = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["baz"], new(), CancellationToken.None)
+        await using var added = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["baz"], new(), CancellationToken.None)
             .AsTask().WaitAsync(Deadline);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar")).IsEqualTo(1);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE baz")).IsEqualTo(1);
@@ -648,14 +648,14 @@ public class ClusterShardedPubSubTests
         await using var client = cluster.CreateClient(configured
             ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 3 } : null);
         await using var hub = new SubscriptionHub(client.Core);
-        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        await using var subscription = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         cluster.First.SuppressReply = command => command == "SSUBSCRIBE bar";
         try
         {
             await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
             await WaitAsync(() => cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar") == 2);
             // Recovery now owns the control gate and is blocked on a real wire reply.
-            var pending = hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None).AsTask();
+            var pending = hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None).AsTask();
             await Assert.That(pending.IsCompleted).IsTrue();
             await Assert.That(async () => await pending).ThrowsExactly<RespireConnectionException>();
             await Assert.That(cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo")).IsFalse();
@@ -675,14 +675,14 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         await using var client = cluster.CreateClient();
         var hub = new SubscriptionHub(client.Core);
-        await using var sharded = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        await using var sharded = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         cluster.First.SuppressReply = command => command == "SSUBSCRIBE bar";
         try
         {
             await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
             await WaitAsync(() => cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar") == 2);
 
-            await using var regular = await hub.SubscribeAsync(SubscriptionKind.Channel, ["ordinary"], new(), CancellationToken.None)
+            await using var regular = await hub.SubscribeAsync(RespireSubscriptionKind.Channel, ["ordinary"], new(), CancellationToken.None)
                 .AsTask().WaitAsync(Deadline);
             await Assert.That(cluster.First.ReceivedCommands.Contains("SUBSCRIBE ordinary")).IsTrue();
         }
@@ -698,7 +698,7 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(2);
         await using var client = cluster.CreateClient();
         await using var hub = new SubscriptionHub(client.Core);
-        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        await using var subscription = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         var router = client.Core.Cluster!;
         var topologyEvent = router.GetType().GetField("TopologyChanged",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
@@ -892,7 +892,7 @@ public class ClusterShardedPubSubTests
             int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null)
             => RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
+            UseCluster = true, Protocol = (RespireProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
             LoggerFactory = logger, MaxInflightCommands = maxInflightCommands, CredentialProvider = credentialProvider,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
         });

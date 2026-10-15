@@ -22,7 +22,7 @@ public class PubSubReconnectPolicyTests
     };
     private static RespireOptions Options(int port, RespireReconnectPolicy? policy, int database = 0) => new()
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         Endpoints = { new RespireEndpoint("127.0.0.1", port) }, Connections = 1, Database = database,
         ReconnectPolicy = policy,
     };
@@ -412,7 +412,7 @@ public class PubSubReconnectPolicyTests
         await using var hub = new SubscriptionHub(client.Core, clock);
         using var deadline = new CancellationTokenSource(Deadline);
         ValueTask<RespireSubscription> Subscribe(string name)
-            => hub.SubscribeAsync(SubscriptionKind.Channel, [name], new(), deadline.Token);
+            => hub.SubscribeAsync(RespireSubscriptionKind.Channel, [name], new(), deadline.Token);
         await using var retained = await Subscribe("ch");
         await using var removed = await Subscribe("ch");
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -4,7 +4,7 @@ using VectorData.ConformanceTests.Support;
 namespace Respire.VectorData.Conformance.Tests;
 
 // The upstream definitions configure test-only mappers, never production reflection mapping.
-internal sealed class HashTestStore(RedisServerFixture server, RespProtocol protocol) : TestStore
+internal sealed class HashTestStore(RedisServerFixture server, RespireProtocol protocol) : TestStore
 {
     private readonly string _namespace = "official-hash:" + Guid.NewGuid().ToString("N");
     private readonly List<RespireVectorStore> _stores = [];

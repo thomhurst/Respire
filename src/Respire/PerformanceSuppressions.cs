@@ -7,7 +7,7 @@ using System.Diagnostics.CodeAnalysis;
     Scope = "type", Target = "~T:Respire.RespireBitFieldOperation",
     Justification = "Command-building token consumed by the encoder; it is not an equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
-    Scope = "type", Target = "~T:Respire.GeoSearchOrigin",
+    Scope = "type", Target = "~T:Respire.RespireGeoSearchOrigin",
     Justification = "Command-building choice consumed by the GEO encoder; it is not an equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
     Scope = "type", Target = "~T:Respire.RespireGeoSearchShape",
@@ -19,7 +19,7 @@ using System.Diagnostics.CodeAnalysis;
     Scope = "type", Target = "~T:Respire.RespireCommandInterpolatedStringHandler",
     Justification = "Mutable compiler-driven command builder; comparing partially built handlers has no supported meaning.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
-    Scope = "type", Target = "~T:Respire.RespireExpiryTime",
+    Scope = "type", Target = "~T:Respire.RespireExpiryTimeResult",
     Justification = "Decoded expiry status is consumed through Exists and UnixTimeMilliseconds, not as an equality or hash-key abstraction.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
     Scope = "type", Target = "~T:Respire.RespireKeyNotification",
@@ -46,7 +46,7 @@ using System.Diagnostics.CodeAnalysis;
     Scope = "type", Target = "~T:Respire.RespireSubKeyEnumerable.Enumerator",
     Justification = "Mutable forward-only enumerator; equality of traversal state is not part of its contract.")]
 [assembly: SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types",
-    Scope = "type", Target = "~T:Respire.RespireTtl",
+    Scope = "type", Target = "~T:Respire.RespireTtlResult",
     Justification = "Decoded TTL status is consumed through Exists and TimeToLive, not as an equality or hash-key abstraction.")]
 
 // This response indexer returns existing storage, not a new defensive array on every access.

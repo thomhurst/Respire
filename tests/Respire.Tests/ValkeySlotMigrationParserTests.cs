@@ -22,7 +22,7 @@ public class ValkeySlotMigrationParserTests
         fields.AddRange([Text("future"), RespValue.Array(RespValue.BulkString(bytes))]);
         var storage = System.Buffers.ArrayPool<RespValue>.Shared.Rent(fields.Count);
         fields.CopyTo(storage);
-        var reply = RespValue.Array(RespValue.PooledAggregate(map ? RespDataType.Map : RespDataType.Array, storage, fields.Count));
+        var reply = RespValue.Array(RespValue.PooledAggregate(map ? RespireDataType.Map : RespireDataType.Array, storage, fields.Count));
         var result = ValkeySlotMigrationParser.Parse(in reply).Single();
         reply.Dispose();
         bytes.AsSpan().Clear();

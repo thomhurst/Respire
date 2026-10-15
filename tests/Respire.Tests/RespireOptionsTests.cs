@@ -64,7 +64,7 @@ public class RespireOptionsTests
         await Assert.That(options.Endpoints).IsEmpty();
         await Assert.That(options.Connections).IsEqualTo(1);
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
-        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Auto);
+        await Assert.That(options.Protocol).IsEqualTo(RespireProtocol.Auto);
         await Assert.That(options.ClientSideCache).IsNull();
         await Assert.That(options.ReadFrom).IsEqualTo(RespireReadFrom.Primary);
     }
@@ -88,12 +88,12 @@ public class RespireOptionsTests
     {
         await using var client = RespireClient.Create(ValidOptions() with
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
 
-        await Assert.That(client.Core.Options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(client.Core.Options.Protocol).IsEqualTo(RespireProtocol.Resp3);
         await Assert.That(client.Core.Options.MaintenanceNotifications)
             .IsEqualTo(RespireMaintenanceNotificationMode.Enabled);
         await Assert.That(client.ClientSideCache).IsNotNull();
@@ -104,7 +104,7 @@ public class RespireOptionsTests
     {
         var options = ValidOptions() with
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         };
 
@@ -329,7 +329,7 @@ public class RespireOptionsTests
         await Assert.That(options.Database).IsEqualTo(2);
         await Assert.That(options.ConnectTimeout).IsEqualTo(TimeSpan.FromMilliseconds(1500));
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromMilliseconds(2500));
-        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(options.Protocol).IsEqualTo(RespireProtocol.Resp3);
         await Assert.That(options.AllowAdmin).IsTrue();
     }
 

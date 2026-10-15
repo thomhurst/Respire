@@ -21,12 +21,12 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     public async Task AbsoluteExpiryDistinguishesMissingPersistentAndPrecisions(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         await view.SetAsync("persistent", "value");
         var instant = DateTimeOffset.FromUnixTimeMilliseconds(2100000000678);
         await view.SetAsync("expiring", "value", expiry: instant);
-        foreach (var precision in new[] { ExpiryTimePrecision.Milliseconds, ExpiryTimePrecision.Seconds })
+        foreach (var precision in new[] { RespireExpiryTimePrecision.Milliseconds, RespireExpiryTimePrecision.Seconds })
         {
             var missing = await Run(view, mode, k => k.ExpiryTimeAsync("missing", precision), k => k.ExpiryTime("missing", precision));
             missing.Exists.Should().BeFalse();
@@ -36,7 +36,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
             persistent.HasExpiry.Should().BeFalse();
             var expiring = await Run(view, mode, k => k.ExpiryTimeAsync("expiring", precision), k => k.ExpiryTime("expiring", precision));
             expiring.Exists.Should().BeTrue();
-            expiring.UnixTimeMilliseconds.Should().Be(precision == ExpiryTimePrecision.Milliseconds ? 2100000000678L : 2100000001000L);
+            expiring.UnixTimeMilliseconds.Should().Be(precision == RespireExpiryTimePrecision.Milliseconds ? 2100000000678L : 2100000001000L);
             expiring.GetExpiresAt().Should().Be(DateTimeOffset.FromUnixTimeMilliseconds(expiring.UnixTimeMilliseconds!.Value));
         }
         (await client.Keys.ExistsAsync("expiring")).Should().BeFalse();
@@ -52,7 +52,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     public async Task ObjectMetadataPreservesMissingKeysAndNonLfuPolicyErrors(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         RespireKey key = new byte[] { 0xff, 0, (byte)'x' };
         await view.SetAsync(key, "not-an-integer");
@@ -80,7 +80,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     {
         // The eviction policy is server-wide, so this runs on the dedicated LFU server.
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(Lfu.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(Lfu.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("frequency", "value");
         var frequency = await Run(client, mode, k => k.FrequencyAsync("frequency"), k => k.Frequency("frequency"));
         frequency.Should().NotBeNull();
@@ -91,7 +91,7 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     }
 
     private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode,
-        Func<IKeyCommands, ValueTask<T>> immediate, Func<IBatchKeyCommands, RespirePending<T>> deferred)
+        Func<IRespireKeyCommands, ValueTask<T>> immediate, Func<IRespireBatchKeyCommands, RespirePending<T>> deferred)
     {
         if (mode == ExecutionMode.Immediate) return await immediate(client.Keys);
         using var batch = mode == ExecutionMode.Batch ? client.CreateBatch() : null;

@@ -41,7 +41,7 @@ Pass a `RespireJsonClient`, for example `client.Json` (see [Redis JSON](json.md)
 | --- | --- |
 | `UserJsonMapper.SetAsync(jsonClient, user)` | Writes the document at the template key |
 | `UserJsonMapper.SetAsync(jsonClient, key, user)` | Writes at an explicit key; a null model stores a JSON null document |
-| `UserJsonMapper.GetAsync(jsonClient, key)` | Returns a `RespireJsonValue<User>` |
+| `UserJsonMapper.GetAsync(jsonClient, key)` | Returns a `RespireJsonGetResult<User>` |
 | `UserJsonMapper.SetNameAsync(jsonClient, key, "Grace")` | Writes one property |
 | `UserJsonMapper.GetNameAsync(jsonClient, key)` | Reads one property |
 | `UserJsonMapper.SetAgeAsync(jsonClient, key, null)` | Stores JSON null in a nullable property |

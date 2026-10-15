@@ -14,7 +14,7 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
         [Matrix(0, 1, 2)] int surface, [Matrix(RespireStreamNackMode.Silent, RespireStreamNackMode.Fail, RespireStreamNackMode.Fatal)] RespireStreamNackMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"nack:{Guid.NewGuid():N}:");
         try
         {
@@ -59,7 +59,7 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
         [Matrix(RespireStreamNackMode.Silent, RespireStreamNackMode.Fail, RespireStreamNackMode.Fatal)] RespireStreamNackMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"nack-force:{Guid.NewGuid():N}:");
         try
         {
@@ -85,7 +85,7 @@ public class StreamNackIntegrationTests(KeyNotificationRedisContainer fixture)
     public async Task BinaryGroupNamesRemainUnmodified(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"binary-nack:{Guid.NewGuid():N}";
         byte[] group = [255, 0, 32];
         try

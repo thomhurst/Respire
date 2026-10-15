@@ -10,14 +10,14 @@ internal static class ClusterInspectionParser
 
     internal static string Text(in RespValue value, string? field = null)
     {
-        if (value.Type is not (RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.VerbatimString))
             throw new RespireProtocolException($"{FieldContext(field)} must be a string.");
         return value.AsString();
     }
 
     private static long Integer(in RespValue value, string? field = null)
     {
-        if (value.Type != RespDataType.Integer) throw new RespireProtocolException($"{FieldContext(field)} must be an integer.");
+        if (value.Type != RespireDataType.Integer) throw new RespireProtocolException($"{FieldContext(field)} must be an integer.");
         return value.AsInteger();
     }
 
@@ -35,13 +35,13 @@ internal static class ClusterInspectionParser
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
     {
-        if (value.Type != RespDataType.Array) throw new RespireProtocolException("Cluster inspection list must be an array.");
+        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("Cluster inspection list must be an array.");
         return value.AsArray();
     }
 
     private static Dictionary<string, RespValue> Fields(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("Cluster inspection fields must be a map or an array of pairs.");
         var items = value.AsArray();
         if (items.Length % 2 != 0) throw new RespireProtocolException("Cluster inspection field/value pair is incomplete.");

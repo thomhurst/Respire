@@ -258,7 +258,7 @@ public class SentinelDiscoveryAgingTests
         state.RecordConnection(PeerMembership(state), succeeded: false);
         var options = new RespireOptions
         {
-            Endpoints = [seed], SentinelPrimaryName = "mymaster", Protocol = RespProtocol.Resp2,
+            Endpoints = [seed], SentinelPrimaryName = "mymaster", Protocol = RespireProtocol.Resp2,
         };
         for (var i = 0; i < 3; i++)
             await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (_, _, _) => ValueTask.FromResult(1),

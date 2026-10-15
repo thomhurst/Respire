@@ -25,7 +25,7 @@ public class ClusterAtomicMigrationIntegrationTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = [cluster.Endpoint(0)], AllowAdmin = true,
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             CommandTimeout = TimeSpan.FromSeconds(5), ConnectTimeout = TimeSpan.FromSeconds(5),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });

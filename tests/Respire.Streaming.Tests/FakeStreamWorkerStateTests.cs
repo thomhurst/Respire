@@ -14,7 +14,7 @@ public class FakeStreamWorkerStateTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         for (var i = 1; i <= 3; i++)
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
         await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
@@ -32,14 +32,14 @@ public class FakeStreamWorkerStateTests
         await Assert.That(all[0].IdleTime).IsEqualTo(TimeSpan.FromMilliseconds(250));
         await Assert.That(all[1].DeliveryCount).IsEqualTo(1);
         await Assert.That(all[1].IdleTime).IsEqualTo(TimeSpan.FromMilliseconds(350));
-        var filtered = await client.Streams.PendingAsync(new StreamPendingOptions
+        var filtered = await client.Streams.PendingAsync(new RespireStreamPendingOptions
         {
             MinIdle = TimeSpan.FromMilliseconds(300), Consumer = "a",
         }, "s", "g");
         await Assert.That(filtered.Single().Id).IsEqualTo((RespireStreamId)"2-0");
-        var exclusive = await client.Streams.PendingAsync(new StreamPendingOptions { Start = "(1-0", End = "2-0" }, "s", "g");
+        var exclusive = await client.Streams.PendingAsync(new RespireStreamPendingOptions { Start = "(1-0", End = "2-0" }, "s", "g");
         await Assert.That(exclusive.Single().Id).IsEqualTo((RespireStreamId)"2-0");
-        await Assert.That(await client.Streams.PendingAsync(new StreamPendingOptions { End = "(1-0" }, "s", "g")).IsEmpty();
+        await Assert.That(await client.Streams.PendingAsync(new RespireStreamPendingOptions { End = "(1-0" }, "s", "g")).IsEmpty();
         await Assert.That(await client.Streams.PendingAsync("s", "g", consumer: "other")).IsEmpty();
         await client.Streams.AcknowledgeAsync("s", "g", ["1-0", "2-0"]);
         var empty = await client.Streams.PendingSummaryAsync("s", "g");
@@ -54,7 +54,7 @@ public class FakeStreamWorkerStateTests
     public async Task GroupInfoRetainsConsumerCountAfterAcknowledgement(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         var entries = await client.Streams.ReadGroupOnceAsync("s", "g", "a");

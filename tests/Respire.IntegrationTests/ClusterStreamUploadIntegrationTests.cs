@@ -12,15 +12,15 @@ namespace Respire.IntegrationTests;
 public class ClusterStreamUploadIntegrationTests(SharedRedisClusterFixture fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2, false, false)]
-    [Arguments(RespProtocol.Resp2, false, true)]
-    [Arguments(RespProtocol.Resp2, true, false)]
-    [Arguments(RespProtocol.Resp2, true, true)]
-    [Arguments(RespProtocol.Resp3, false, false)]
-    [Arguments(RespProtocol.Resp3, false, true)]
-    [Arguments(RespProtocol.Resp3, true, false)]
-    [Arguments(RespProtocol.Resp3, true, true)]
-    public async Task RedirectReplaysTheEntireUpload(RespProtocol protocol, bool asking, bool sequence)
+    [Arguments(RespireProtocol.Resp2, false, false)]
+    [Arguments(RespireProtocol.Resp2, false, true)]
+    [Arguments(RespireProtocol.Resp2, true, false)]
+    [Arguments(RespireProtocol.Resp2, true, true)]
+    [Arguments(RespireProtocol.Resp3, false, false)]
+    [Arguments(RespireProtocol.Resp3, false, true)]
+    [Arguments(RespireProtocol.Resp3, true, false)]
+    [Arguments(RespireProtocol.Resp3, true, true)]
+    public async Task RedirectReplaysTheEntireUpload(RespireProtocol protocol, bool asking, bool sequence)
     {
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions

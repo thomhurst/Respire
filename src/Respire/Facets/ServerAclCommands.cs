@@ -4,7 +4,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Returns the authenticated username as owned bytes from one node. Redis 6+.</summary>
     ValueTask<byte[]> AclWhoAmIAsync(CancellationToken cancellationToken = default);

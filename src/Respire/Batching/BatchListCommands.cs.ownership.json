@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchListCommands",
+      "Type": "Respire.IRespireBatchListCommands",
       "OwnerType": "Respire.BatchListCommands",
       "Members": [
         "Count(RespireKey):RespirePending<long>",

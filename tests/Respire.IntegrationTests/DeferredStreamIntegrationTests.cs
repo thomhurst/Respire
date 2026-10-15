@@ -14,7 +14,7 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
     public async Task NonBlockingStreamCommandsRoundTrip(int protocol, bool transactional)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"deferred-stream:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         await view.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
@@ -69,7 +69,7 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
     public async Task StreamErrorsDoNotHideOtherResults(int protocol, bool transactional)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"stream-error:{Guid.NewGuid():N}";
         await client.SetAsync(key, "wrong type");
         using var batch = transactional ? null : client.CreateBatch();

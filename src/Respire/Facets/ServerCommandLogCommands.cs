@@ -42,7 +42,7 @@ public sealed record RespireCommandLogEntry(
     public long? ReplyBytes => Type == RespireCommandLogType.LargeReply ? MetricValue : null;
 }
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Returns owned Valkey 8.1+ command log entries in server order. Count -1 means all, 0 means none.</summary>
     ValueTask<RespireCommandLogEntry[]> CommandLogAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default);

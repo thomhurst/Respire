@@ -29,7 +29,7 @@ public class ErrorMetricsReviewBoundaryTests
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = cluster, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = cluster, Connections = 1,
             ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : target.Port)],
         });
@@ -120,7 +120,7 @@ public class ErrorMetricsReviewBoundaryTests
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{source.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var capture = new ErrorCapture();

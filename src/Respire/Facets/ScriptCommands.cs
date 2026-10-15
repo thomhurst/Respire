@@ -129,7 +129,7 @@ public sealed class RespireScript
 }
 
 /// <summary>How Redis releases memory when clearing its script cache.</summary>
-public enum ScriptFlushMode
+public enum RespireScriptFlushMode
 {
     /// <summary>Use the server's lazyfree-lazy-user-flush setting.</summary>
     Default,
@@ -140,7 +140,7 @@ public enum ScriptFlushMode
 }
 
 /// <summary>Lua scripting commands.</summary>
-public interface IScriptCommands
+public interface IRespireScriptCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<RespireResult> ExecuteAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -266,10 +266,10 @@ public interface IScriptCommands
     /// delete keys. The default mode follows the server's lazyfree-lazy-user-flush setting.
     /// Explicit SYNC / ASYNC requires Redis 6.2+. Redis: SCRIPT FLUSH.
     /// </summary>
-    ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default);
+    ValueTask FlushAsync(RespireScriptFlushMode mode = RespireScriptFlushMode.Default, CancellationToken cancellationToken = default);
 }
 
-internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
+internal sealed class ScriptCommands(RespireClient client) : IRespireScriptCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<RespireResult> ExecuteAsync(RespireScript script, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -396,7 +396,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
+    public ValueTask FlushAsync(RespireScriptFlushMode mode = RespireScriptFlushMode.Default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
         try
@@ -428,11 +428,11 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return values;
     }
 
-    internal static Verb FlushVerb(ScriptFlushMode mode) => mode switch
+    internal static Verb FlushVerb(RespireScriptFlushMode mode) => mode switch
     {
-        ScriptFlushMode.Default => Verbs.ScriptFlush,
-        ScriptFlushMode.Sync => Verbs.ScriptFlushSync,
-        ScriptFlushMode.Async => Verbs.ScriptFlushAsync,
+        RespireScriptFlushMode.Default => Verbs.ScriptFlush,
+        RespireScriptFlushMode.Sync => Verbs.ScriptFlushSync,
+        RespireScriptFlushMode.Async => Verbs.ScriptFlushAsync,
         _ => throw new ArgumentOutOfRangeException(nameof(mode)),
     };
 

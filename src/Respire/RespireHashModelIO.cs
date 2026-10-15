@@ -127,7 +127,7 @@ public static class RespireHashModelIO
                 {
                     using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HSETEX,
                         [keyValue, "PX", group.Ttl, "FIELDS", group.Fields.Length, .. pairs], cancellationToken: cancellationToken).ConfigureAwait(false);
-                    if (reply.Type != RespDataType.Integer || reply.AsInteger() != 1)
+                    if (reply.Type != RespireDataType.Integer || reply.AsInteger() != 1)
                         throw new RespireProtocolException("Unconditional HSETEX must return 1.");
                 }
                 catch (RespireServerException error) when (error.Message.StartsWith("ERR unknown command 'HSETEX'", StringComparison.OrdinalIgnoreCase))
@@ -143,11 +143,11 @@ public static class RespireHashModelIO
                 using var expiry = await client.ExecuteLeaseAsync(RespireCommands.Hash.HPEXPIRE,
                     [keyValue, group.Ttl, "FIELDS", group.Fields.Length, .. group.Fields.Select(field => (RespireValue)field.Key)],
                     cancellationToken: cancellationToken).ConfigureAwait(false);
-                if (expiry.Type != RespDataType.Array || expiry.Count != group.Fields.Length)
+                if (expiry.Type != RespireDataType.Array || expiry.Count != group.Fields.Length)
                     throw new RespireProtocolException("HPEXPIRE must return one status per field.");
                 for (var field = 0; field < expiry.Count; field++)
                 {
-                    if (expiry[field].Type != RespDataType.Integer)
+                    if (expiry[field].Type != RespireDataType.Integer)
                         throw new RespireProtocolException("HPEXPIRE must return integer field statuses.");
                     var status = expiry[field].AsInteger();
                     if (status is not (-2 or 0 or 1 or 2))
@@ -186,7 +186,7 @@ public static class RespireHashModelIO
         ArgumentNullException.ThrowIfNull(client);
         cancellationToken.ThrowIfCancellationRequested();
         using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HGETALL, [key.Snapshot().AsValue()], cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (reply.Type is not (RespDataType.Array or RespDataType.Map) || reply.Count % 2 != 0)
+        if (reply.Type is not (RespireDataType.Array or RespireDataType.Map) || reply.Count % 2 != 0)
             throw new RespireProtocolException("HGETALL must return complete field/value pairs.");
         var fields = new Dictionary<string, T>(reply.Count / 2, StringComparer.Ordinal);
         for (var index = 0; index < reply.Count; index += 2)
@@ -230,7 +230,7 @@ public static class RespireHashModelIO
             arguments[index + 1] = name;
         }
         using var reply = await client.ExecuteLeaseAsync(RespireCommands.Hash.HMGET, arguments, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (reply.Type != RespDataType.Array || reply.Count != names.Length)
+        if (reply.Type != RespireDataType.Array || reply.Count != names.Length)
             throw new RespireProtocolException("HMGET must return one value per requested field.");
         for (var index = 0; index < names.Length; index++)
             selected[names[index]] = reply[index].IsNull ? null : decode(reply[index]);
@@ -238,16 +238,16 @@ public static class RespireHashModelIO
     }
 
     private static string ReadString(RespireResult reply)
-        => reply.Type == RespDataType.BulkString ? reply.AsString()
+        => reply.Type == RespireDataType.BulkString ? reply.AsString()
             : throw new RespireProtocolException("Hash fields and values must be bulk strings.");
 
     private static byte[] ReadBytes(RespireResult reply)
-        => reply.Type == RespDataType.BulkString ? reply.AsBytes()
+        => reply.Type == RespireDataType.BulkString ? reply.AsBytes()
             : throw new RespireProtocolException("Hash fields and values must be bulk strings.");
 
     private static void ValidateWriteReply(RespireResult reply, int count)
     {
-        if (reply.Type != RespDataType.Integer || reply.AsInteger() < 0 || reply.AsInteger() > count)
+        if (reply.Type != RespireDataType.Integer || reply.AsInteger() < 0 || reply.AsInteger() > count)
             throw new RespireProtocolException("Hash writes must return a valid field count.");
     }
 }

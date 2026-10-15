@@ -3,7 +3,7 @@ using Respire.Internal;
 
 namespace Respire;
 
-public partial interface IBatchSetCommands
+public partial interface IRespireBatchSetCommands
 {
     /// <summary>Queues the set difference count. Redis 8.10+: SDIFFCARD.</summary>
     RespirePending<long> DifferenceCount(params ReadOnlySpan<RespireKey> keys);

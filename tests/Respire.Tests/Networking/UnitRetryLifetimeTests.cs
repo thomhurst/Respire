@@ -102,7 +102,7 @@ public partial class UnitRetryLifetimeTests
             : "*3\r\n+OK\r\n$3\r\nbad\r\n$5\r\nvalue\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(Options(server, sentinel: false) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins },
         });
         Exception? numberError;
@@ -263,7 +263,7 @@ public partial class UnitRetryLifetimeTests
     private static RespireOptions Options(FakeRespServer server, bool sentinel) => new()
     {
         Endpoints = [new("127.0.0.1", server.Port)], SentinelPrimaryName = sentinel ? "mymaster" : null,
-        Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+        Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
         CommandTimeout = TimeSpan.FromSeconds(5), RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
 }

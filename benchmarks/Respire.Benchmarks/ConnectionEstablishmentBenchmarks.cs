@@ -14,8 +14,8 @@ public class ConnectionEstablishmentBenchmarks
     private RespireConnection _connection = null!;
     private readonly RawCommand _ping = new("*1\r\n$4\r\nPING\r\n"u8.ToArray());
 
-    [Params(RespProtocol.Resp2, RespProtocol.Resp3)]
-    public RespProtocol Protocol { get; set; }
+    [Params(RespireProtocol.Resp2, RespireProtocol.Resp3)]
+    public RespireProtocol Protocol { get; set; }
 
     [GlobalSetup]
     public async Task Setup()

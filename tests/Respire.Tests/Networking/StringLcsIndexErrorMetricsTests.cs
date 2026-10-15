@@ -15,7 +15,7 @@ public class StringLcsIndexErrorMetricsTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var transaction = client.CreateTransaction();
@@ -78,7 +78,7 @@ public class StringLcsIndexErrorMetricsTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = crossSlot, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = crossSlot, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var capture = new ErrorCapture();

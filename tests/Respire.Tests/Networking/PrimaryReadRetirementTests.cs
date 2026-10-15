@@ -22,7 +22,7 @@ public class PrimaryReadRetirementTests
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var core = client.Core;
@@ -35,7 +35,7 @@ public class PrimaryReadRetirementTests
         await using var original = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2,
+                Protocol = RespireProtocol.Resp2,
                 TestingStreamFactory = async (_, _, _) =>
                 {
                     entered.TrySetResult();

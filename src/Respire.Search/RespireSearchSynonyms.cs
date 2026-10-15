@@ -38,7 +38,7 @@ public sealed partial class RespireSearchClient
         ArgumentException.ThrowIfNullOrWhiteSpace(index);
         using var result = await _commands.GetSynonymsAsync(index, cancellationToken).ConfigureAwait(false);
         const string command = "FT.SYNDUMP";
-        if (result.IsNull || result.Type is not (RespDataType.Array or RespDataType.Map) || (result.Count & 1) != 0)
+        if (result.IsNull || result.Type is not (RespireDataType.Array or RespireDataType.Map) || (result.Count & 1) != 0)
             throw RespireSearchReply.Unexpected(command, "term/group pairs were expected");
         var terms = new Dictionary<string, IReadOnlyList<string>>(result.Count / 2, StringComparer.Ordinal);
         for (var i = 0; i < result.Count; i += 2)

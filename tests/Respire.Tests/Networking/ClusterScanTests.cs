@@ -446,7 +446,7 @@ public class ClusterScanTests
         await using var cluster = new ScanCluster();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1,
+            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", cluster.First.Server.Port)],
             ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
         });
@@ -496,7 +496,7 @@ public class ClusterScanTests
         await using var cluster = new ScanCluster();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1,
+            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", cluster.First.Server.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5 },
         });
@@ -1319,7 +1319,7 @@ public class ClusterScanTests
         }
         internal ValueTask<RespireClient> ConnectAsync(int protocol = 2, int connections = 1, RespireCommandHook? hook = null) => RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, Connections = connections, MaxInflightCommands = 4,
+            UseCluster = true, Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Connections = connections, MaxInflightCommands = 4,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Server.Port) },
             CommandHook = hook,
         });

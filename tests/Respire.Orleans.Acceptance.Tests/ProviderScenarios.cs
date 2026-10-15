@@ -353,8 +353,8 @@ public class ProviderScenarios(RedisTestContainer redis)
         var controlOptions = ConfigurationOptions.Parse(redis.StackExchangeConnectionString);
         controlOptions.Protocol = shimOptions.Protocol switch
         {
-            RespProtocol.Resp2 => RedisProtocol.Resp2,
-            RespProtocol.Resp3 => RedisProtocol.Resp3,
+            RespireProtocol.Resp2 => RedisProtocol.Resp2,
+            RespireProtocol.Resp3 => RedisProtocol.Resp3,
             _ => null
         };
         await using var shim = RespireConnectionMultiplexer.Create(shimOptions);

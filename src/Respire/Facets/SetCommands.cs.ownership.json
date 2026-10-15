@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.ISetCommands",
+      "Type": "Respire.IRespireSetCommands",
       "OwnerType": "Respire.SetCommands",
       "Members": [
         "AddAsync(RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",

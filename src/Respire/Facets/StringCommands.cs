@@ -7,7 +7,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Condition for SET-style writes.</summary>
-public enum SetWhen
+public enum RespireSetWhen
 {
     /// <summary>Unconditional write.</summary>
     Always,
@@ -29,7 +29,7 @@ public enum SetWhen
 /// String (plain value) commands. Unlike collection facets' <c>CountAsync</c>,
 /// <see cref="LengthAsync"/> returns a byte length.
 /// </summary>
-public partial interface IStringCommands
+public partial interface IRespireStringCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string?[]> GetManyAsync(RespireKey key, CancellationToken cancellationToken);
@@ -49,7 +49,7 @@ public partial interface IStringCommands
     ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, SetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
+    ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, RespireSetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken);
 
     /// <summary>Gets a key's value as a string, or null when missing. Redis: GET.</summary>
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -67,7 +67,7 @@ public partial interface IStringCommands
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -103,7 +103,7 @@ public partial interface IStringCommands
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -164,7 +164,7 @@ public partial interface IStringCommands
         Stream value,
         long length,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -182,7 +182,7 @@ public partial interface IStringCommands
         RespireKey key,
         ReadOnlySequence<byte> value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
@@ -197,7 +197,7 @@ public partial interface IStringCommands
         RespireKey key,
         T value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>Sets a key and returns its previous value. Redis: SET … GET.</summary>
@@ -205,7 +205,7 @@ public partial interface IStringCommands
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -218,7 +218,7 @@ public partial interface IStringCommands
         RespireKey key,
         T value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
@@ -311,13 +311,13 @@ public partial interface IStringCommands
     /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken);
 
@@ -332,7 +332,7 @@ public partial interface IStringCommands
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class StringCommands(RespireClient client) : IStringCommands
+internal sealed partial class StringCommands(RespireClient client) : IRespireStringCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<string?[]> GetManyAsync(RespireKey key, CancellationToken cancellationToken)
@@ -357,7 +357,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         => SetManyExpireAsync(expiry, [pairs], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, SetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
+    public ValueTask<bool> SetManyExpireAsync(RespireExpiry expiry, RespireSetWhen when, (RespireKey Key, RespireValue Value) pairs, CancellationToken cancellationToken)
         => SetManyExpireAsync(expiry, when, [pairs], cancellationToken);
 
 
@@ -373,7 +373,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => client.CachedGetAsync(
             client.PreflightResolveKey(key),
             cancellationToken,
@@ -404,7 +404,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         => client.LeaseAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken, observation: observation);
 
     public ValueTask<bool> SetAsync(
-        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default)
     {
         var borrowed = DispatchResponseSource.DecoratedObservation;
@@ -422,7 +422,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     }
 
     private ValueTask<bool> SetBorrowedAsync(
-        RespireKey key, RespireValue value, RespireExpiry expiry, SetWhen when,
+        RespireKey key, RespireValue value, RespireExpiry expiry, RespireSetWhen when,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         RespireValue.ThrowIfNull(value, nameof(value));
@@ -434,7 +434,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     public ValueTask<bool> SetAsync(
         RespireKey key, Stream value, long length, RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always, CancellationToken cancellationToken = default)
+        RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
         try { return owner.Attach(SetBorrowedAsync(key, value, length, expiry, when, cancellationToken, owner.Observation)); }
@@ -443,7 +443,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     private ValueTask<bool> SetBorrowedAsync(
         RespireKey key, Stream value, long length, RespireExpiry expiry,
-        SetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireSetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         ArgumentNullException.ThrowIfNull(value);
         if (!value.CanRead) throw new ArgumentException("The source stream must be readable.", nameof(value));
@@ -461,7 +461,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     public ValueTask<bool> SetAsync(
         RespireKey key, ReadOnlySequence<byte> value, RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always, CancellationToken cancellationToken = default)
+        RespireSetWhen when = RespireSetWhen.Always, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
         try { return owner.Attach(SetBorrowedAsync(key, value, expiry, when, cancellationToken, owner.Observation)); }
@@ -470,7 +470,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     private ValueTask<bool> SetBorrowedAsync(
         RespireKey key, ReadOnlySequence<byte> value, RespireExpiry expiry,
-        SetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireSetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         SetCommand.ValidateExpiry(expiry);
         SetCommand.ValidateWhen(when);
@@ -498,7 +498,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(
-        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
+        RespireKey key, T value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default)
     {
         RespireValue serialized;
@@ -518,7 +518,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
@@ -530,7 +530,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireKey key,
         RespireValue value,
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         RespireValue.ThrowIfNull(value, nameof(value));
@@ -547,7 +547,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireKey key,
         T value,
         RespireExpiry expiry = default,
-        SetWhen when = SetWhen.Always,
+        RespireSetWhen when = RespireSetWhen.Always,
         CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
@@ -561,7 +561,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireKey key,
         T value,
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         SetCommand.ValidateExpiry(expiry);
@@ -815,7 +815,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     private ValueTask<bool> SetManyExpireBorrowedAsync(
         RespireExpiry expiry, ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, RespireTelemetry.ErrorObservation observation)
-        => SetManyExpireBorrowedAsync(expiry, SetWhen.Always, pairs, CancellationToken.None, observation);
+        => SetManyExpireBorrowedAsync(expiry, RespireSetWhen.Always, pairs, CancellationToken.None, observation);
 
     public ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
@@ -831,11 +831,11 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         RespireExpiry expiry,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => SetManyExpireBorrowedAsync(expiry, SetWhen.Always, pairs, cancellationToken, observation);
+        => SetManyExpireBorrowedAsync(expiry, RespireSetWhen.Always, pairs, cancellationToken, observation);
 
     public ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         var owner = DispatchResponseSource<bool>.Start();
@@ -845,13 +845,13 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     private ValueTask<bool> SetManyExpireBorrowedAsync(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, RespireTelemetry.ErrorObservation observation)
         => SetManyExpireBorrowedAsync(expiry, when, pairs, CancellationToken.None, observation);
 
     public ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken)
     {
@@ -862,7 +862,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
     private ValueTask<bool> SetManyExpireBorrowedAsync(
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => client.FlagAsync(
@@ -947,7 +947,7 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
     internal static RespireValue[] SetManyExpireArgs(
         RespireClient client,
         RespireExpiry expiry,
-        SetWhen when,
+        RespireSetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         if (expiry.IsPersist)
@@ -991,12 +991,12 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
 
         return args;
     }
-    private static string? StringSetWhenToken(SetWhen when)
+    private static string? StringSetWhenToken(RespireSetWhen when)
         => when switch
         {
-            SetWhen.Always => null,
-            SetWhen.NotExists => "NX",
-            SetWhen.Exists => "XX",
+            RespireSetWhen.Always => null,
+            RespireSetWhen.NotExists => "NX",
+            RespireSetWhen.Exists => "XX",
             _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
         };
 

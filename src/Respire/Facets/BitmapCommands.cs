@@ -6,7 +6,7 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>The unit used by Redis bitmap range offsets.</summary>
-public enum BitIndexUnit
+public enum RespireBitIndexUnit
 {
     /// <summary>Interpret offsets as byte indexes.</summary>
     Byte,
@@ -16,7 +16,7 @@ public enum BitIndexUnit
 }
 
 /// <summary>A Redis BITOP operation.</summary>
-public enum BitOperation
+public enum RespireBitOperation
 {
     /// <summary>Bitwise AND of all source strings.</summary>
     And,
@@ -175,10 +175,10 @@ public readonly struct RespireBitFieldOperation
 }
 
 /// <summary>Redis bitmap and bit-field commands.</summary>
-public interface IBitmapCommands
+public interface IRespireBitmapCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<long> OperateAsync(BitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
+    ValueTask<long> OperateAsync(RespireBitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long?[]> FieldAsync(RespireKey key, RespireBitFieldOperation operation, CancellationToken cancellationToken);
@@ -198,21 +198,21 @@ public interface IBitmapCommands
 
     /// <summary>Counts set bits in an inclusive byte or bit range. Redis: BITCOUNT.</summary>
     ValueTask<long> SetBitCountAsync(
-        RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte,
+        RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte,
         CancellationToken cancellationToken = default);
 
     /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
     ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
-        BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default);
+        RespireBitIndexUnit unit = RespireBitIndexUnit.Byte, CancellationToken cancellationToken = default);
 
     /// <summary>Combines source bitmaps into a destination and returns its byte length. Redis: BITOP.</summary>
     ValueTask<long> OperateAsync(
-        BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
+        RespireBitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
 
     /// <summary>Combines source bitmaps into a destination and returns its byte length. Redis: BITOP.</summary>
     ValueTask<long> OperateAsync(
-        BitOperation operation,
+        RespireBitOperation operation,
         RespireKey destination,
         ReadOnlySpan<RespireKey> sourceKeys,
         CancellationToken cancellationToken);
@@ -232,10 +232,10 @@ public interface IBitmapCommands
         RespireKey key, ReadOnlySpan<RespireBitFieldOperation> gets, CancellationToken cancellationToken);
 }
 
-internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
+internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<long> OperateAsync(BitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
+    public ValueTask<long> OperateAsync(RespireBitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
         => OperateAsync(operation, destination, [sourceKey], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -267,7 +267,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             "BITCOUNT", new Cmd1(RespireCommands.Bitmap.BITCOUNT.Verb, client.Key(in key)), cancellationToken);
 
     public ValueTask<long> SetBitCountAsync(
-        RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte,
+        RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte,
         CancellationToken cancellationToken = default)
         => client.IntegerAsync(
             "BITCOUNT",
@@ -276,7 +276,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
 
     public ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
-        BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default)
+        RespireBitIndexUnit unit = RespireBitIndexUnit.Byte, CancellationToken cancellationToken = default)
     {
         ValidatePosition(start, end, unit);
         return (start, end) switch
@@ -293,11 +293,11 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
     }
 
     public ValueTask<long> OperateAsync(
-        BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
+        RespireBitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
         => OperateAsync(operation, destination, sourceKeys, CancellationToken.None);
 
     public ValueTask<long> OperateAsync(
-        BitOperation operation,
+        RespireBitOperation operation,
         RespireKey destination,
         ReadOnlySpan<RespireKey> sourceKeys,
         CancellationToken cancellationToken)
@@ -365,21 +365,21 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
     }
 
     /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidateOperate(BitOperation operation, ReadOnlySpan<RespireKey> sourceKeys)
+    internal static void ValidateOperate(RespireBitOperation operation, ReadOnlySpan<RespireKey> sourceKeys)
     {
         if (sourceKeys.IsEmpty)
         {
             throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
         }
 
-        if (operation == BitOperation.Not && sourceKeys.Length != 1)
+        if (operation == RespireBitOperation.Not && sourceKeys.Length != 1)
         {
             throw new ArgumentException("BITOP NOT requires exactly one source key.", nameof(sourceKeys));
         }
     }
 
     /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidatePosition(long? start, long? end, BitIndexUnit unit)
+    internal static void ValidatePosition(long? start, long? end, RespireBitIndexUnit unit)
     {
         if (end.HasValue && !start.HasValue)
         {
@@ -391,29 +391,29 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             throw new ArgumentOutOfRangeException(nameof(unit));
         }
 
-        if (start.HasValue && !end.HasValue && unit != BitIndexUnit.Byte)
+        if (start.HasValue && !end.HasValue && unit != RespireBitIndexUnit.Byte)
         {
             throw new ArgumentException("Bit indexing requires end because Redis places BYTE|BIT after end.", nameof(unit));
         }
     }
 
-    internal static string Unit(BitIndexUnit unit) => unit switch
+    internal static string Unit(RespireBitIndexUnit unit) => unit switch
     {
-        BitIndexUnit.Byte => "BYTE",
-        BitIndexUnit.Bit => "BIT",
+        RespireBitIndexUnit.Byte => "BYTE",
+        RespireBitIndexUnit.Bit => "BIT",
         _ => throw new ArgumentOutOfRangeException(nameof(unit)),
     };
 
-    internal static string Operation(BitOperation operation) => operation switch
+    internal static string Operation(RespireBitOperation operation) => operation switch
     {
-        BitOperation.And => "AND",
-        BitOperation.Or => "OR",
-        BitOperation.Xor => "XOR",
-        BitOperation.Not => "NOT",
-        BitOperation.Diff => "DIFF",
-        BitOperation.Diff1 => "DIFF1",
-        BitOperation.AndOr => "ANDOR",
-        BitOperation.One => "ONE",
+        RespireBitOperation.And => "AND",
+        RespireBitOperation.Or => "OR",
+        RespireBitOperation.Xor => "XOR",
+        RespireBitOperation.Not => "NOT",
+        RespireBitOperation.Diff => "DIFF",
+        RespireBitOperation.Diff1 => "DIFF1",
+        RespireBitOperation.AndOr => "ANDOR",
+        RespireBitOperation.One => "ONE",
         _ => throw new ArgumentOutOfRangeException(nameof(operation)),
     };
 }

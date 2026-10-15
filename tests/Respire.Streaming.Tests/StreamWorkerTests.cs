@@ -760,7 +760,7 @@ public partial class StreamWorkerTests
         {
             var server = workerVersion is null ? new RespireFakeServer(clock)
                 : new RespireFakeServer(clock, false, true, workerVersion);
-            var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+            var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
             var view = keyPrefix is not null ? client.WithKeyPrefix(keyPrefix)
                 : prefix ? client.WithKeyPrefix("tenant:") : client;
             state ??= new State();

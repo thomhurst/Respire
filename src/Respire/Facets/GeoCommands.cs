@@ -22,7 +22,7 @@ public enum RespireGeoUnit
 }
 
 /// <summary>The result ordering requested from Redis GEOSEARCH.</summary>
-public enum GeoSortOrder
+public enum RespireGeoSortOrder
 {
     /// <summary>Return results in server-selected order.</summary>
     Unsorted,
@@ -40,14 +40,14 @@ public readonly record struct RespireGeoEntry(double Longitude, double Latitude,
 /// <summary>A longitude and latitude returned by Redis GEOPOS or GEOSEARCH.</summary>
 public readonly record struct RespireGeoPosition(double Longitude, double Latitude);
 
-/// <summary>A Redis GEOSEARCH result with the optional details requested by <see cref="GeoSearchOptions"/>.</summary>
-public readonly record struct GeoSearchResult
+/// <summary>A Redis GEOSEARCH result with the optional details requested by <see cref="RespireGeoSearchOptions"/>.</summary>
+public readonly record struct RespireGeoSearchResult
 {
     private readonly string _member;
     private readonly byte[]? _memberBytes;
 
     /// <summary>Creates a result from a UTF-8 text member and optional details.</summary>
-    public GeoSearchResult(
+    public RespireGeoSearchResult(
         string Member,
         double? Distance = null,
         long? Hash = null,
@@ -86,7 +86,7 @@ public readonly record struct GeoSearchResult
     /// <summary>The exact Redis member payload, for binary-safe follow-up commands.</summary>
     public ReadOnlyMemory<byte> MemberBytes => _memberBytes ?? Array.Empty<byte>();
 
-    internal GeoSearchResult(
+    internal RespireGeoSearchResult(
         ReadOnlySpan<byte> memberBytes,
         double? distance = null,
         long? hash = null,
@@ -110,7 +110,7 @@ public readonly record struct GeoSearchResult
     }
 
     /// <inheritdoc/>
-    public bool Equals(GeoSearchResult other)
+    public bool Equals(RespireGeoSearchResult other)
         => Member == other.Member
             && Distance == other.Distance
             && Hash == other.Hash
@@ -131,9 +131,9 @@ public readonly record struct GeoSearchResult
 }
 
 /// <summary>The member or coordinates from which Redis GEOSEARCH measures distance.</summary>
-public readonly struct GeoSearchOrigin
+public readonly struct RespireGeoSearchOrigin
 {
-    private GeoSearchOrigin(RespireValue? member, double longitude, double latitude)
+    private RespireGeoSearchOrigin(RespireValue? member, double longitude, double latitude)
     {
         IsInitialized = true;
         Member = member;
@@ -147,10 +147,10 @@ public readonly struct GeoSearchOrigin
     internal bool IsInitialized { get; }
 
     /// <summary>Creates a Redis GEOSEARCH <c>FROMMEMBER</c> origin.</summary>
-    public static GeoSearchOrigin FromMember(RespireValue member) => new(member, 0, 0);
+    public static RespireGeoSearchOrigin FromMember(RespireValue member) => new(member, 0, 0);
 
     /// <summary>Creates a Redis GEOSEARCH <c>FROMLONLAT</c> origin.</summary>
-    public static GeoSearchOrigin FromCoordinates(double longitude, double latitude)
+    public static RespireGeoSearchOrigin FromCoordinates(double longitude, double latitude)
         => new(null, longitude, latitude);
 }
 
@@ -196,10 +196,10 @@ public readonly struct RespireGeoSearchShape
 }
 
 /// <summary>Sorting, limiting, and optional detail fields for Redis GEOSEARCH.</summary>
-public readonly record struct GeoSearchOptions
+public readonly record struct RespireGeoSearchOptions
 {
     /// <summary>Gets the requested distance ordering.</summary>
-    public GeoSortOrder Sort { get; init; }
+    public RespireGeoSortOrder Sort { get; init; }
 
     /// <summary>Gets the maximum number of results, or null for no limit.</summary>
     public int? Count { get; init; }
@@ -218,23 +218,23 @@ public readonly record struct GeoSearchOptions
 }
 
 /// <summary>Options controlling GEOADD conditional writes and changed-count reporting.</summary>
-public readonly record struct GeoAddOptions
+public readonly record struct RespireGeoAddOptions
 {
     /// <summary>Gets the condition under which members are written.</summary>
-    public SetWhen When { get; init; }
+    public RespireSetWhen When { get; init; }
 
     /// <summary>Gets whether Redis counts both added and changed members.</summary>
     public bool Changed { get; init; }
 }
 
 /// <summary>Redis geospatial index commands.</summary>
-public interface IGeoCommands
+public interface IRespireGeoCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> AddAsync(RespireKey key, RespireGeoEntry entry, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    ValueTask<long> AddAsync(RespireKey key, GeoAddOptions options, RespireGeoEntry entry, CancellationToken cancellationToken);
+    ValueTask<long> AddAsync(RespireKey key, RespireGeoAddOptions options, RespireGeoEntry entry, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string?[]> HashAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
@@ -253,12 +253,12 @@ public interface IGeoCommands
 
     /// <summary>Adds geospatial members using conditional and count options. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(
-        RespireKey key, GeoAddOptions options, params ReadOnlySpan<RespireGeoEntry> entries);
+        RespireKey key, RespireGeoAddOptions options, params ReadOnlySpan<RespireGeoEntry> entries);
 
     /// <summary>Adds geospatial members using conditional and count options. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(
         RespireKey key,
-        GeoAddOptions options,
+        RespireGeoAddOptions options,
         ReadOnlySpan<RespireGeoEntry> entries,
         CancellationToken cancellationToken);
 
@@ -282,25 +282,25 @@ public interface IGeoCommands
         RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
 
     /// <summary>Searches members inside a circle or box. Redis: GEOSEARCH.</summary>
-    ValueTask<GeoSearchResult[]> SearchAsync(
-        RespireKey key, GeoSearchOrigin origin, RespireGeoSearchShape shape,
-        GeoSearchOptions options = default, CancellationToken cancellationToken = default);
+    ValueTask<RespireGeoSearchResult[]> SearchAsync(
+        RespireKey key, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default);
 
     /// <summary>Stores matching members or distances in another sorted set. Redis: GEOSEARCHSTORE.</summary>
     ValueTask<long> SearchStoreAsync(
-        RespireKey destination, RespireKey source, GeoSearchOrigin origin, RespireGeoSearchShape shape,
-        GeoSearchOptions options = default, bool storeDistance = false,
+        RespireKey destination, RespireKey source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, bool storeDistance = false,
         CancellationToken cancellationToken = default);
 }
 
-internal sealed class GeoCommands(RespireClient client) : IGeoCommands
+internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> AddAsync(RespireKey key, RespireGeoEntry entry, CancellationToken cancellationToken)
         => AddAsync(key, [entry], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
-    public ValueTask<long> AddAsync(RespireKey key, GeoAddOptions options, RespireGeoEntry entry, CancellationToken cancellationToken)
+    public ValueTask<long> AddAsync(RespireKey key, RespireGeoAddOptions options, RespireGeoEntry entry, CancellationToken cancellationToken)
         => AddAsync(key, options, [entry], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -322,12 +322,12 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         => AddAsync(key, default, entries, cancellationToken);
 
     public ValueTask<long> AddAsync(
-        RespireKey key, GeoAddOptions options, params ReadOnlySpan<RespireGeoEntry> entries)
+        RespireKey key, RespireGeoAddOptions options, params ReadOnlySpan<RespireGeoEntry> entries)
         => AddAsync(key, options, entries, CancellationToken.None);
 
     public ValueTask<long> AddAsync(
         RespireKey key,
-        GeoAddOptions options,
+        RespireGeoAddOptions options,
         ReadOnlySpan<RespireGeoEntry> entries,
         CancellationToken cancellationToken)
     {
@@ -408,9 +408,9 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         return result;
     }
 
-    public ValueTask<GeoSearchResult[]> SearchAsync(
-        RespireKey key, GeoSearchOrigin origin, RespireGeoSearchShape shape,
-        GeoSearchOptions options = default, CancellationToken cancellationToken = default)
+    public ValueTask<RespireGeoSearchResult[]> SearchAsync(
+        RespireKey key, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default)
     {
         Validate(origin, shape, options);
         return client.ConvertResponseAsync(
@@ -420,12 +420,12 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
                 destination: null, storeDistance: false),
             cancellationToken,
             options,
-            static (GeoSearchOptions state, in RespValue value) => ParseSearch(in value, state));
+            static (RespireGeoSearchOptions state, in RespValue value) => ParseSearch(in value, state));
     }
 
     public ValueTask<long> SearchStoreAsync(
-        RespireKey destination, RespireKey source, GeoSearchOrigin origin, RespireGeoSearchShape shape,
-        GeoSearchOptions options = default, bool storeDistance = false,
+        RespireKey destination, RespireKey source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, bool storeDistance = false,
         CancellationToken cancellationToken = default)
     {
         Validate(origin, shape, options);
@@ -438,16 +438,16 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
             cancellationToken);
     }
 
-    internal static GeoSearchResult[] ParseSearch(in RespValue reply, GeoSearchOptions options)
+    internal static RespireGeoSearchResult[] ParseSearch(in RespValue reply, RespireGeoSearchOptions options)
     {
         var values = reply.AsArray();
-        var results = new GeoSearchResult[values.Length];
+        var results = new RespireGeoSearchResult[values.Length];
         var detailed = options.IncludeDistance || options.IncludeHash || options.IncludeCoordinates;
         for (var i = 0; i < values.Length; i++)
         {
             if (!detailed)
             {
-                results[i] = new GeoSearchResult(values[i].AsSpan());
+                results[i] = new RespireGeoSearchResult(values[i].AsSpan());
                 continue;
             }
 
@@ -463,14 +463,14 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
                     ResponseReader.Double(in coordinates[0]), ResponseReader.Double(in coordinates[1]));
             }
 
-            results[i] = new GeoSearchResult(item[0].AsSpan(), distance, hash, position);
+            results[i] = new RespireGeoSearchResult(item[0].AsSpan(), distance, hash, position);
         }
 
         return results;
     }
 
     /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidateAdd(SetWhen when, ReadOnlySpan<RespireGeoEntry> entries)
+    internal static void ValidateAdd(RespireSetWhen when, ReadOnlySpan<RespireGeoEntry> entries)
     {
         if (entries.IsEmpty)
         {
@@ -489,7 +489,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
     }
 
     /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidateSearchStore(GeoSearchOptions options)
+    internal static void ValidateSearchStore(RespireGeoSearchOptions options)
     {
         if (options.IncludeDistance || options.IncludeHash || options.IncludeCoordinates)
         {
@@ -505,7 +505,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         }
     }
 
-    internal static void Validate(GeoSearchOrigin origin, RespireGeoSearchShape shape, GeoSearchOptions options)
+    internal static void Validate(RespireGeoSearchOrigin origin, RespireGeoSearchShape shape, RespireGeoSearchOptions options)
     {
         if (!origin.IsInitialized)
         {
@@ -544,7 +544,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
             throw new ArgumentException("Any requires Count.", nameof(options));
         }
 
-        if (options.Any && options.Sort != GeoSortOrder.Unsorted)
+        if (options.Any && options.Sort != RespireGeoSortOrder.Unsorted)
         {
             throw new ArgumentException("Any cannot be combined with sorting.", nameof(options));
         }
@@ -574,8 +574,8 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
 }
 
 internal readonly struct GeoSearchCommand(
-    Verb verb, RespireValue source, GeoSearchOrigin origin, RespireGeoSearchShape shape,
-    GeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
+    Verb verb, RespireValue source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+    RespireGeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
@@ -629,7 +629,7 @@ internal readonly struct GeoSearchCommand(
             + 1
             + (origin.Member is null ? 3 : 2)
             + (shape.IsRadius ? 3 : 4)
-            + (options.Sort == GeoSortOrder.Unsorted ? 0 : 1)
+            + (options.Sort == RespireGeoSortOrder.Unsorted ? 0 : 1)
             + (options.Count.HasValue ? 2 + (options.Any ? 1 : 0) : 0)
             + (options.IncludeDistance ? 1 : 0)
             + (options.IncludeHash ? 1 : 0)
@@ -668,9 +668,9 @@ internal readonly struct GeoSearchCommand(
         }
 
         writer.WriteBulkString(GeoCommands.Unit(shape.Unit));
-        if (options.Sort != GeoSortOrder.Unsorted)
+        if (options.Sort != RespireGeoSortOrder.Unsorted)
         {
-            writer.WriteRaw(options.Sort == GeoSortOrder.Ascending ? CommandOptionFrames.ASC : CommandOptionFrames.DESC);
+            writer.WriteRaw(options.Sort == RespireGeoSortOrder.Ascending ? CommandOptionFrames.ASC : CommandOptionFrames.DESC);
         }
 
         if (options.Count is { } count)
@@ -699,7 +699,7 @@ internal readonly struct GeoSearchCommand(
 }
 
 internal readonly struct GeoAddCommand(
-    Verb verb, RespireValue key, SetWhen when, bool changed, RespireGeoEntry[] entries) : IRespCommand
+    Verb verb, RespireValue key, RespireSetWhen when, bool changed, RespireGeoEntry[] entries) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
@@ -710,13 +710,13 @@ internal readonly struct GeoAddCommand(
 
     public void Write(ref RespWriter writer)
     {
-        var optionCount = (when == SetWhen.Always ? 0 : 1) + (changed ? 1 : 0);
+        var optionCount = (when == RespireSetWhen.Always ? 0 : 1) + (changed ? 1 : 0);
         writer.WriteArrayHeader(verb.Tokens + 1 + optionCount + entries.Length * 3);
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
-        if (when != SetWhen.Always)
+        if (when != RespireSetWhen.Always)
         {
-            writer.WriteBulkString(when == SetWhen.NotExists ? "NX" : "XX");
+            writer.WriteBulkString(when == RespireSetWhen.NotExists ? "NX" : "XX");
         }
 
         if (changed)

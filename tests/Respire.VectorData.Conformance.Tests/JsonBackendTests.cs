@@ -37,7 +37,7 @@ public sealed class JsonBackendTests(RedisServerFixture server)
         foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
         {
             if (method.GetCustomAttribute<FactAttribute>() is null || exclusions.Contains(method.Name)) continue;
-            foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+            foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
             {
                 if (method.GetParameters().Length == 0) yield return [protocol, name, method.Name, null!];
                 else
@@ -50,13 +50,13 @@ public sealed class JsonBackendTests(RedisServerFixture server)
                 }
             }
         }
-        foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+        foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
             yield return [protocol, "Index", "Hnsw", null!];
     }
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public async Task Official_json_contract(RespProtocol protocol, string suite, string methodName, bool? includeVectors)
+    public async Task Official_json_contract(RespireProtocol protocol, string suite, string methodName, bool? includeVectors)
     {
         var store = new JsonTestStore(server, protocol);
         VectorStoreFixture[] fixtures;

@@ -32,7 +32,7 @@ public class HashFieldScanTests
             : "*2\r\n$1\r\n7\r\n*0\r\n"u8.ToArray();
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", first.Port) },
         });
         await using var client = owner.WithReadFrom(RespireReadFrom.PrimaryPreferred);
@@ -194,7 +194,7 @@ public class HashFieldScanTests
             : command.StartsWith("HSCAN ", StringComparison.Ordinal) ? pageReply : FakeRespServer.OkReply;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
         });
         await using var reads = client.WithReadFrom(policy);

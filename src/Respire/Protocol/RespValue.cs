@@ -37,18 +37,18 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         DeferredPayload = 8,
     }
 
-    private readonly RespDataType _type;
+    private readonly RespireDataType _type;
     private readonly ValueFlags _flags;
     private readonly long _integerValue;
     private readonly ReadOnlyMemory<byte> _payload;
     private readonly RespValue[]? _elements;
     private readonly int _elementCount;
 
-    public RespDataType Type => _type;
-    public bool IsNull => _type == RespDataType.Null;
+    public RespireDataType Type => _type;
+    public bool IsNull => _type == RespireDataType.Null;
     // Null needs no numeric storage. Retain framing here without growing every parsed value.
-    internal RespDataType NullWireType => _integerValue == 0 ? RespDataType.Null : (RespDataType)_integerValue;
-    public bool IsError => _type is RespDataType.Error or RespDataType.BulkError;
+    internal RespireDataType NullWireType => _integerValue == 0 ? RespireDataType.Null : (RespireDataType)_integerValue;
+    public bool IsError => _type is RespireDataType.Error or RespireDataType.BulkError;
 
     // Retained queue errors carry EXEC's confirmed outcome without changing payload ownership.
     internal bool TransactionStateCleared => (_flags & ValueFlags.TransactionStateCleared) != 0;
@@ -56,7 +56,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     internal RespValue WithTransactionStateCleared()
         => new(_type, _flags | ValueFlags.TransactionStateCleared, _integerValue, _payload, _elements, _elementCount);
 
-    private RespValue(RespDataType type, ValueFlags flags = ValueFlags.None, long integerValue = 0,
+    private RespValue(RespireDataType type, ValueFlags flags = ValueFlags.None, long integerValue = 0,
         ReadOnlyMemory<byte> payload = default, RespValue[]? elements = null, int elementCount = 0)
     {
         _type = type;
@@ -67,53 +67,53 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         _elementCount = elementCount;
     }
 
-    public static readonly RespValue Null = new(RespDataType.Null);
-    internal static RespValue NullFromWire(RespDataType wireType)
-        => new(RespDataType.Null, integerValue: (long)wireType);
-    public static readonly RespValue True = new(RespDataType.Boolean, integerValue: 1);
-    public static readonly RespValue False = new(RespDataType.Boolean, integerValue: 0);
+    public static readonly RespValue Null = new(RespireDataType.Null);
+    internal static RespValue NullFromWire(RespireDataType wireType)
+        => new(RespireDataType.Null, integerValue: (long)wireType);
+    public static readonly RespValue True = new(RespireDataType.Boolean, integerValue: 1);
+    public static readonly RespValue False = new(RespireDataType.Boolean, integerValue: 0);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespValue Integer(long value) => new(RespDataType.Integer, integerValue: value);
+    public static RespValue Integer(long value) => new(RespireDataType.Integer, integerValue: value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue Boolean(bool value) => value ? True : False;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue Double(double value)
-        => new(RespDataType.Double, integerValue: BitConverter.DoubleToInt64Bits(value));
+        => new(RespireDataType.Double, integerValue: BitConverter.DoubleToInt64Bits(value));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue SimpleString(ReadOnlyMemory<byte> buffer, int startIndex, int length)
-        => new(RespDataType.SimpleString, payload: buffer.Slice(startIndex, length));
+        => new(RespireDataType.SimpleString, payload: buffer.Slice(startIndex, length));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue SimpleString(ReadOnlyMemory<byte> buffer)
-        => new(RespDataType.SimpleString, payload: buffer);
+        => new(RespireDataType.SimpleString, payload: buffer);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue BulkString(ReadOnlyMemory<byte> buffer, int startIndex, int length)
-        => new(RespDataType.BulkString, payload: buffer.Slice(startIndex, length));
+        => new(RespireDataType.BulkString, payload: buffer.Slice(startIndex, length));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue BulkString(ReadOnlyMemory<byte> buffer)
-        => new(RespDataType.BulkString, payload: buffer);
+        => new(RespireDataType.BulkString, payload: buffer);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue Error(ReadOnlyMemory<byte> buffer, int startIndex, int length)
-        => new(RespDataType.Error, payload: buffer.Slice(startIndex, length));
+        => new(RespireDataType.Error, payload: buffer.Slice(startIndex, length));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue Error(ReadOnlyMemory<byte> buffer)
-        => new(RespDataType.Error, payload: buffer);
+        => new(RespireDataType.Error, payload: buffer);
 
-    public static RespValue SimpleString(string value) => CreateStringValue(value, RespDataType.SimpleString);
+    public static RespValue SimpleString(string value) => CreateStringValue(value, RespireDataType.SimpleString);
 
-    public static RespValue BulkString(string value) => CreateStringValue(value, RespDataType.BulkString);
+    public static RespValue BulkString(string value) => CreateStringValue(value, RespireDataType.BulkString);
 
-    public static RespValue Error(string value) => CreateStringValue(value, RespDataType.Error);
+    public static RespValue Error(string value) => CreateStringValue(value, RespireDataType.Error);
 
-    private static RespValue CreateStringValue(string value, RespDataType type)
+    private static RespValue CreateStringValue(string value, RespireDataType type)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -124,21 +124,21 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     }
 
     public static RespValue Array(params RespValue[] values)
-        => new(RespDataType.Array, elements: values, elementCount: values.Length);
+        => new(RespireDataType.Array, elements: values, elementCount: values.Length);
 
     public static RespValue Array(ReadOnlySpan<RespValue> values)
-        => new(RespDataType.Array, elements: values.ToArray(), elementCount: values.Length);
+        => new(RespireDataType.Array, elements: values.ToArray(), elementCount: values.Length);
 
     /// <summary>Wire-path factory: payload lives in an array rented from <see cref="RespirePools.ResponsePayloads"/>.</summary>
-    internal static RespValue PooledString(RespDataType type, byte[] pooledArray, int length)
+    internal static RespValue PooledString(RespireDataType type, byte[] pooledArray, int length)
         => new(type, ValueFlags.PooledPayload, payload: new ReadOnlyMemory<byte>(pooledArray, 0, length));
 
     /// <summary>Wire-path factory: elements live in an array rented from <see cref="RespirePools.ValueArrays"/>.</summary>
-    internal static RespValue PooledAggregate(RespDataType type, RespValue[] pooledElements, int count)
+    internal static RespValue PooledAggregate(RespireDataType type, RespValue[] pooledElements, int count)
         => new(type, ValueFlags.PooledElements, elements: pooledElements, elementCount: count);
 
     /// <summary>Parser-local wire offsets; never exposed until the complete root owns their payload.</summary>
-    internal static RespValue DeferredString(RespDataType type, int offset, int length)
+    internal static RespValue DeferredString(RespireDataType type, int offset, int length)
         => new(type, ValueFlags.DeferredPayload, integerValue: offset, elementCount: length);
 
     [Conditional("DEBUG")]
@@ -245,11 +245,11 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         return size;
     }
 
-    public long AsInteger() => _type == RespDataType.Integer ? _integerValue : 0;
+    public long AsInteger() => _type == RespireDataType.Integer ? _integerValue : 0;
 
-    public bool AsBoolean() => _type == RespDataType.Boolean && _integerValue != 0;
+    public bool AsBoolean() => _type == RespireDataType.Boolean && _integerValue != 0;
 
-    public double AsDouble() => _type == RespDataType.Double ? BitConverter.Int64BitsToDouble(_integerValue) : 0.0;
+    public double AsDouble() => _type == RespireDataType.Double ? BitConverter.Int64BitsToDouble(_integerValue) : 0.0;
 
     /// <summary>The value's element list for aggregate types (map pairs are flattened key,value,key,value).</summary>
     public ReadOnlySpan<RespValue> AsArray()
@@ -259,13 +259,13 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     {
         switch (_type)
         {
-            case RespDataType.SimpleString:
-            case RespDataType.BulkString:
-            case RespDataType.Error:
-            case RespDataType.BulkError:
-            case RespDataType.BigNumber:
+            case RespireDataType.SimpleString:
+            case RespireDataType.BulkString:
+            case RespireDataType.Error:
+            case RespireDataType.BulkError:
+            case RespireDataType.BigNumber:
                 return _payload.Span;
-            case RespDataType.VerbatimString:
+            case RespireDataType.VerbatimString:
                 // RESP3 verbatim strings carry a 3-char format prefix and a colon ("txt:...").
                 var span = _payload.Span;
                 return span.Length >= 4 ? span[4..] : span;
@@ -275,8 +275,8 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     }
 
     internal ReadOnlyMemory<byte> AsMemory()
-        => _type is RespDataType.SimpleString or RespDataType.BulkString
-            or RespDataType.Error or RespDataType.BulkError or RespDataType.BigNumber
+        => _type is RespireDataType.SimpleString or RespireDataType.BulkString
+            or RespireDataType.Error or RespireDataType.BulkError or RespireDataType.BigNumber
             ? _payload
             : default;
 
@@ -284,12 +284,12 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     {
         return _type switch
         {
-            RespDataType.SimpleString or RespDataType.BulkString or RespDataType.BigNumber =>
+            RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.BigNumber =>
                 Utf8String.GetString(_payload),
-            RespDataType.VerbatimString => DecodeVerbatimString(),
-            RespDataType.Integer => FormatInteger(),
-            RespDataType.Boolean => AsBoolean().ToString(),
-            RespDataType.Double => FormatDouble(),
+            RespireDataType.VerbatimString => DecodeVerbatimString(),
+            RespireDataType.Integer => FormatInteger(),
+            RespireDataType.Boolean => AsBoolean().ToString(),
+            RespireDataType.Double => FormatDouble(),
             _ => string.Empty,
         };
     }
@@ -367,14 +367,14 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     {
         return _type switch
         {
-            RespDataType.Null => "null",
-            RespDataType.Boolean => AsBoolean().ToString(),
-            RespDataType.Integer => FormatInteger(),
-            RespDataType.Double => FormatDouble(),
-            RespDataType.Array or RespDataType.Map or RespDataType.Set or RespDataType.Push
+            RespireDataType.Null => "null",
+            RespireDataType.Boolean => AsBoolean().ToString(),
+            RespireDataType.Integer => FormatInteger(),
+            RespireDataType.Double => FormatDouble(),
+            RespireDataType.Array or RespireDataType.Map or RespireDataType.Set or RespireDataType.Push
                 => $"[{_type}({_elementCount})]",
-            RespDataType.SimpleString or RespDataType.BulkString or RespDataType.Error
-                or RespDataType.BulkError or RespDataType.VerbatimString or RespDataType.BigNumber
+            RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.Error
+                or RespireDataType.BulkError or RespireDataType.VerbatimString or RespireDataType.BigNumber
                 => Utf8String.GetString(AsSpan()),
             _ => $"Unknown({_type})",
         };
@@ -389,16 +389,16 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
         switch (_type)
         {
-            case RespDataType.Null:
+            case RespireDataType.Null:
                 return true;
-            case RespDataType.Boolean:
-            case RespDataType.Integer:
-            case RespDataType.Double:
+            case RespireDataType.Boolean:
+            case RespireDataType.Integer:
+            case RespireDataType.Double:
                 return _integerValue == other._integerValue;
-            case RespDataType.Array:
-            case RespDataType.Map:
-            case RespDataType.Set:
-            case RespDataType.Push:
+            case RespireDataType.Array:
+            case RespireDataType.Map:
+            case RespireDataType.Set:
+            case RespireDataType.Push:
                 if (_elementCount != other._elementCount)
                 {
                     return false;

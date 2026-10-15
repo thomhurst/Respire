@@ -1,13 +1,13 @@
 namespace Respire;
 
 /// <summary>A map mutation sent to an external store. A missing entry represents a deletion.</summary>
-public readonly record struct RespireMapChange<TKey, TValue>(TKey Key, RespireGet<TValue> Entry);
+public readonly record struct RespireMapChange<TKey, TValue>(TKey Key, RespireGetResult<TValue> Entry);
 
 /// <summary>Read-through and external persistence settings for a near-cache map.</summary>
 public sealed record RespireMapOptions<TKey, TValue>
 {
     /// <summary>Loads missing entries. Returning Found=false leaves the field absent.</summary>
-    public Func<TKey, CancellationToken, ValueTask<RespireGet<TValue>>>? Loader { get; init; }
+    public Func<TKey, CancellationToken, ValueTask<RespireGetResult<TValue>>>? Loader { get; init; }
 
     /// <summary>
     /// Persists ordered mutations after Redis accepts them. Must be idempotent: a failed batch

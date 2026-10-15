@@ -8,10 +8,10 @@ namespace Respire;
 
 /// <summary>
 /// Hash (field → value map) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="IHashCommands"/>; collection cardinality
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IRespireHashCommands"/>; collection cardinality
 /// uses <see cref="Count"/>.
 /// </summary>
-public partial interface IBatchHashCommands
+public partial interface IRespireBatchHashCommands
 {
     /// <summary>Sets one field. True when the field was newly created. Redis: HSET.</summary>
     RespirePending<bool> Set(RespireKey key, string field, RespireValue value);
@@ -21,7 +21,7 @@ public partial interface IBatchHashCommands
     /// a conditional write is applied. Redis: HSET/HSETNX/HSETEX.
     /// </summary>
     RespirePending<bool> Set(
-        RespireKey key, string field, RespireValue value, SetWhen when);
+        RespireKey key, string field, RespireValue value, RespireSetWhen when);
 
     /// <summary>Sets one serialized field. True when newly created. Redis: HSET.</summary>
     /// <remarks>
@@ -43,7 +43,7 @@ public partial interface IBatchHashCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]
-    RespirePending<bool> Set<T>(RespireKey key, string field, T value, SetWhen when);
+    RespirePending<bool> Set<T>(RespireKey key, string field, T value, RespireSetWhen when);
 
     /// <summary>Sets many fields; returns how many were newly created. Redis: HSET.</summary>
     RespirePending<long> Set(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -59,7 +59,7 @@ public partial interface IBatchHashCommands
     /// <summary>Gets a typed field while distinguishing a missing field from a stored default value. Redis: HGET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key, string field);
+    RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key, string field);
 
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
     RespirePending<byte[]?> GetBytes(RespireKey key, string field);
@@ -112,27 +112,27 @@ public partial interface IBatchHashCommands
     RespirePending<KeyValuePair<string, string>[]> RandomFieldsWithValues(RespireKey key, long count);
 
     /// <summary>Absolute field expiry times with millisecond resolution. Redis: HPEXPIRETIME (Redis 7.4+).</summary>
-    RespirePending<RespireExpiryTime[]> ExpiryTime(RespireKey key, params ReadOnlySpan<string> fields);
+    RespirePending<RespireExpiryTimeResult[]> ExpiryTime(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Absolute field expiry times at the requested resolution. Redis: HEXPIRETIME/HPEXPIRETIME (Redis 7.4+).</summary>
-    RespirePending<RespireExpiryTime[]> ExpiryTime(
-        RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields);
+    RespirePending<RespireExpiryTimeResult[]> ExpiryTime(
+        RespireKey key, RespireExpiryTimePrecision precision, params ReadOnlySpan<string> fields);
 
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
-    RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields);
+    RespirePending<RespireTtlResult[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Expiry state for binary fields, in milliseconds. Redis: HPTTL.</summary>
-    RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<RespireKey> fields);
+    RespirePending<RespireTtlResult[]> Expiry(RespireKey key, params ReadOnlySpan<RespireKey> fields);
 
     /// <summary>Expiry state for one binary field, in milliseconds. Redis: HPTTL.</summary>
-    RespirePending<RespireTtl> Expiry(RespireKey key, RespireKey field);
+    RespirePending<RespireTtlResult> Expiry(RespireKey key, RespireKey field);
 
     /// <summary>Sets, updates, or removes field expiry metadata. Redis: HPEXPIRE/HPEXPIREAT/HPERSIST.</summary>
-    RespirePending<HashFieldExpiryResult[]> Expire(
+    RespirePending<RespireHashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
     /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
-    RespirePending<HashFieldExpiryResult[]> Expire(
+    RespirePending<RespireHashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
@@ -148,26 +148,26 @@ public partial interface IBatchHashCommands
 
     /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
     RespirePending<bool> SetExpire(
-        RespireKey key, RespireExpiry expiry, SetWhen when,
+        RespireKey key, RespireExpiry expiry, RespireSetWhen when,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 }
 
-internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
+internal sealed partial class BatchHashCommands(IPendingSink sink) : IRespireBatchHashCommands
 {
     public RespirePending<bool> Set(RespireKey key, string field, RespireValue value)
-        => Set(key, field, value, SetWhen.Always);
+        => Set(key, field, value, RespireSetWhen.Always);
 
     public RespirePending<bool> Set(
-        RespireKey key, string field, RespireValue value, SetWhen when)
+        RespireKey key, string field, RespireValue value, RespireSetWhen when)
         => when switch
         {
-            SetWhen.Always => sink.Add<Cmd3, bool>(
+            RespireSetWhen.Always => sink.Add<Cmd3, bool>(
                 "HSET", new Cmd3(Verbs.HSet, sink.Client.Key(in key), field, value),
                 static (c, v) => ResponseReader.Flag(in v)),
-            SetWhen.NotExists => sink.Add<Cmd3, bool>(
+            RespireSetWhen.NotExists => sink.Add<Cmd3, bool>(
                 "HSETNX", new Cmd3(Verbs.HSetNx, sink.Client.Key(in key), field, value),
                 static (c, v) => ResponseReader.Flag(in v)),
-            SetWhen.Exists => sink.Add<Cmd1N, bool>(
+            RespireSetWhen.Exists => sink.Add<Cmd1N, bool>(
                 "HSETEX",
                 new Cmd1N(
                     RespireCommands.Hash.HSETEX.Verb,
@@ -187,7 +187,7 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]
-    public RespirePending<bool> Set<T>(RespireKey key, string field, T value, SetWhen when)
+    public RespirePending<bool> Set<T>(RespireKey key, string field, T value, RespireSetWhen when)
         => Set(key, field, sink.Client.SerializeRawCompatible(value), when);
 
     public RespirePending<long> Set(
@@ -210,8 +210,8 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key, string field)
-        => sink.Add<Cmd2, RespireGet<T>>(
+    public RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key, string field)
+        => sink.Add<Cmd2, RespireGetResult<T>>(
             "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), field),
             static (c, v) => c.TryDeserializeBorrowed<T>(in v));
 
@@ -300,46 +300,46 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
             new Cmd3(RespireCommands.Hash.HRANDFIELD.Verb, sink.Client.Key(in key), count, "WITHVALUES"),
             static (c, v) => HashCommands.ParseRandomPairs(in v));
 
-    public RespirePending<RespireExpiryTime[]> ExpiryTime(RespireKey key, params ReadOnlySpan<string> fields)
-        => ExpiryTime(key, ExpiryTimePrecision.Milliseconds, fields);
+    public RespirePending<RespireExpiryTimeResult[]> ExpiryTime(RespireKey key, params ReadOnlySpan<string> fields)
+        => ExpiryTime(key, RespireExpiryTimePrecision.Milliseconds, fields);
 
-    public RespirePending<RespireExpiryTime[]> ExpiryTime(
-        RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields)
+    public RespirePending<RespireExpiryTimeResult[]> ExpiryTime(
+        RespireKey key, RespireExpiryTimePrecision precision, params ReadOnlySpan<string> fields)
     {
         var (operation, verb) = HashCommands.ExpiryTimeCommand(precision);
-        return sink.Add<Cmd1N, RespireExpiryTime[]>(operation,
+        return sink.Add<Cmd1N, RespireExpiryTimeResult[]>(operation,
             new Cmd1N(verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
-            precision == ExpiryTimePrecision.Seconds
-                ? static (c, v) => HashCommands.ParseExpiryTimes(in v, ExpiryTimePrecision.Seconds)
-                : static (c, v) => HashCommands.ParseExpiryTimes(in v, ExpiryTimePrecision.Milliseconds));
+            precision == RespireExpiryTimePrecision.Seconds
+                ? static (c, v) => HashCommands.ParseExpiryTimes(in v, RespireExpiryTimePrecision.Seconds)
+                : static (c, v) => HashCommands.ParseExpiryTimes(in v, RespireExpiryTimePrecision.Milliseconds));
     }
 
-    public RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields)
-        => sink.Add<Cmd1N, RespireTtl[]>(
+    public RespirePending<RespireTtlResult[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields)
+        => sink.Add<Cmd1N, RespireTtlResult[]>(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
             static (c, v) => ResponseReader.TtlArray(in v));
 
-    public RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<RespireKey> fields)
-        => sink.Add<Cmd1N, RespireTtl[]>(
+    public RespirePending<RespireTtlResult[]> Expiry(RespireKey key, params ReadOnlySpan<RespireKey> fields)
+        => sink.Add<Cmd1N, RespireTtlResult[]>(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
             static (c, v) => ResponseReader.TtlArray(in v));
 
-    public RespirePending<RespireTtl> Expiry(RespireKey key, RespireKey field)
+    public RespirePending<RespireTtlResult> Expiry(RespireKey key, RespireKey field)
     {
         var fieldSnapshot = field.Snapshot();
-        return sink.Add<Cmd1N, RespireTtl>(
+        return sink.Add<Cmd1N, RespireTtlResult>(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock([fieldSnapshot])),
             static (c, v) => ResponseReader.TtlArray(in v)[0]);
     }
 
-    public RespirePending<HashFieldExpiryResult[]> Expire(
+    public RespirePending<RespireHashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
         => Expire(key, expiry, RespireExpireWhen.Always, fields);
 
-    public RespirePending<HashFieldExpiryResult[]> Expire(
+    public RespirePending<RespireHashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, RespireExpireWhen when, params ReadOnlySpan<string> fields)
     {
         if (expiry.IsPersist)
@@ -349,7 +349,7 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
                 throw new ArgumentException("HPERSIST does not support NX, XX, GT, or LT.", nameof(when));
             }
 
-            return sink.Add<Cmd1N, HashFieldExpiryResult[]>(
+            return sink.Add<Cmd1N, RespireHashFieldExpiryResult[]>(
                 "HPERSIST",
                 new Cmd1N(RespireCommands.Hash.HPERSIST.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
                 static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
@@ -399,10 +399,10 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
 
     public RespirePending<bool> SetExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpire(key, expiry, SetWhen.Always, fields);
+        => SetExpire(key, expiry, RespireSetWhen.Always, fields);
 
     public RespirePending<bool> SetExpire(
-        RespireKey key, RespireExpiry expiry, SetWhen when,
+        RespireKey key, RespireExpiry expiry, RespireSetWhen when,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
@@ -424,14 +424,14 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
             "HSETEX expiry must be relative, absolute, or RespireExpiry.Keep.", nameof(expiry));
     }
 
-    private RespirePending<HashFieldExpiryResult[]> ExpireCore(
+    private RespirePending<RespireHashFieldExpiryResult[]> ExpireCore(
         string operation,
         Verb verb,
         RespireKey key,
         long value,
         RespireExpireWhen when,
         ReadOnlySpan<string> fields)
-        => sink.Add<Cmd1N, HashFieldExpiryResult[]>(
+        => sink.Add<Cmd1N, RespireHashFieldExpiryResult[]>(
             operation,
             new Cmd1N(verb, sink.Client.Key(in key), HashCommands.ExpireFieldsBlock(value, when, fields)),
             static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
@@ -447,7 +447,7 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IBatchHashC
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
     private RespirePending<bool> SetExpireCore(
-        RespireKey key, string option, long optionValue, bool hasValue, SetWhen when,
+        RespireKey key, string option, long optionValue, bool hasValue, RespireSetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, bool>(
             "HSETEX",

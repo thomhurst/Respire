@@ -93,7 +93,7 @@ public enum RespireArrayOperation
 /// .NET double. Bitwise operations and MATCH/USED return Integer. Empty numeric or
 /// bitwise input returns null; MATCH/USED return zero instead.
 /// </summary>
-public readonly record struct RespireArrayAggregate(string? NumericText, long? Integer)
+public readonly record struct RespireArrayAggregateResult(string? NumericText, long? Integer)
 {
     /// <summary>Whether Redis returned nil.</summary>
     public bool IsNull => NumericText is null && Integer is null;

@@ -25,14 +25,14 @@ await redis.SetAsync("visits", 1);
 long visits = await redis.IncrementAsync("visits");
 ```
 
-Conditional writes use `SetWhen`:
+Conditional writes use `RespireSetWhen`:
 
 ```csharp
 bool created = await redis.SetAsync(
     "lock:invoice:42",
     requestId,
     expiry: TimeSpan.FromSeconds(20),
-    when: SetWhen.NotExists);
+    when: RespireSetWhen.NotExists);
 ```
 
 ### Large binary values
@@ -105,12 +105,12 @@ Expiry inputs and results have different meanings:
 | Meaning | Type and parameter | Examples |
 | --- | --- | --- |
 | Expiry policy sent to Redis | `RespireExpiry expiry` | `SetAsync`, `ExpireAsync`, `GetOrSetAsync` |
-| Remaining lifetime reported by Redis | `RespireTtl` | `Keys.ExpiryAsync` (PTTL) |
-| Absolute expiry instant reported by Redis | `RespireExpiryTime` | `Keys.ExpiryTimeAsync` (PEXPIRETIME/EXPIRETIME) |
+| Remaining lifetime reported by Redis | `RespireTtlResult` | `Keys.ExpiryAsync` (PTTL) |
+| Absolute expiry instant reported by Redis | `RespireExpiryTimeResult` | `Keys.ExpiryTimeAsync` (PEXPIRETIME/EXPIRETIME) |
 | Relative lock lease | `TimeSpan leaseDuration` | `Locks.AcquireAsync`, `Locks.TryTakeAsync` |
 
 Both result types distinguish a missing key or field from a persistent one using `Exists` and
-`HasExpiry`. `RespireTtl.TimeToLive` is a duration; `RespireExpiryTime.UnixTimeMilliseconds` is the
+`HasExpiry`. `RespireTtlResult.TimeToLive` is a duration; `RespireExpiryTimeResult.UnixTimeMilliseconds` is the
 server's deadline. They remain separate because adding a TTL to the client's clock cannot recover
 the server's exact deadline. Expiry result types are never command inputs.
 
@@ -199,7 +199,7 @@ bool allCreated = await redis.Strings.SetManyIfNotExistsAsync(
 // One shared expiry (and optional NX/XX) for every pair — Redis MSETEX.
 await redis.Strings.SetManyExpireAsync(
     TimeSpan.FromMinutes(5),
-    SetWhen.NotExists,
+    RespireSetWhen.NotExists,
     ("feature:a", "on"),
     ("feature:b", "off"));
 
@@ -226,7 +226,7 @@ long removed = await redis.DeleteAsync(keys, cancellationToken);
 
 ```csharp
 await redis.ExpireAsync("session:42", TimeSpan.FromMinutes(30));
-RespireTtl ttl = await redis.Keys.ExpiryAsync("session:42");
+RespireTtlResult ttl = await redis.Keys.ExpiryAsync("session:42");
 
 await redis.Keys.ExpireAsync("session:42", RespireExpiry.Persist);
 await redis.Keys.ExpireAsync("report", RespireExpiry.At(DateTimeOffset.UtcNow.AddDays(1)));
@@ -346,13 +346,13 @@ localhost:6379,keyPrefix=tenant%3A42%3A
 ## Absolute expiration and object metadata
 
 ```csharp
-RespireExpiryTime expiration = await redis.Keys.ExpiryTimeAsync("session:42");
+RespireExpiryTimeResult expiration = await redis.Keys.ExpiryTimeAsync("session:42");
 string? encoding = await redis.Keys.EncodingAsync("session:42");
 TimeSpan? idle = await redis.Keys.IdleTimeAsync("session:42");
 long? references = await redis.Keys.ReferenceCountAsync("session:42");
 ```
 
-`Keys.ExpiryTimeAsync(key)` sends Redis 7 `PEXPIRETIME`; pass `ExpiryTimePrecision.Seconds` for `EXPIRETIME`. Both return `RespireExpiryTime`, also used for hash-field expiration:
+`Keys.ExpiryTimeAsync(key)` sends Redis 7 `PEXPIRETIME`; pass `RespireExpiryTimePrecision.Seconds` for `EXPIRETIME`. Both return `RespireExpiryTimeResult`, also used for hash-field expiration:
 
 - `Exists` tells a missing key from a persistent one.
 - `HasExpiry` and nullable `UnixTimeMilliseconds` give the absolute expiration, not the remaining TTL. The seconds variant keeps the server's whole seconds, expressed in milliseconds.
@@ -402,7 +402,7 @@ Redis 8.8+ `INCREX` atomically increments, applies optional inclusive bounds, an
 
 ```csharp
 RespireIncrementResult<long> counter = await redis.Strings.IncrementExtendedAsync(
-    "requests", by: 1, options: new IntegerIncrementOptions
+    "requests", by: 1, options: new RespireIntegerIncrementOptions
     {
         UpperBound = 100,
         Expiry = TimeSpan.FromMinutes(1),
@@ -410,14 +410,14 @@ RespireIncrementResult<long> counter = await redis.Strings.IncrementExtendedAsyn
     });
 
 RespireIncrementResult<double> balance = await redis.Strings.IncrementExtendedAsync(
-    "balance", by: -0.5, options: new FloatIncrementOptions
+    "balance", by: -0.5, options: new RespireFloatIncrementOptions
     {
         LowerBound = 0,
         Saturate = true,
     });
 
 using var batch = redis.CreateBatch();
-var queued = batch.Strings.IncrementExtended("requests", options: new IntegerIncrementOptions
+var queued = batch.Strings.IncrementExtended("requests", options: new RespireIntegerIncrementOptions
 {
     UpperBound = 100,
 });

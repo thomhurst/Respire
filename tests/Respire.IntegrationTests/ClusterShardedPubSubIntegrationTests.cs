@@ -18,7 +18,7 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
         var cluster = fixture.Cluster;
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1,
+            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
         byte[] prefix = [.. Encoding.UTF8.GetBytes($"{{{fixture.ReserveSlot(node: 0)}}}:"), 255, 0, (byte)'*'];
@@ -54,7 +54,7 @@ public class ClusterShardedPubSubIntegrationTests(SharedRedisClusterFixture fixt
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1,
+            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
             Endpoints = { new RespireEndpoint(cluster.Host, cluster.Port(0)) },
         });
         // Hash tags keep the binary suffix in the routed channel while selecting three owners.

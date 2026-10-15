@@ -155,7 +155,7 @@ public class StringComparisonIntegrationTests(VersionedServerFixture servers)
     private static Task<string?> Digest(IRespireClient client, Mode mode, RespireKey key)
         => Execute(client, mode, () => client.Strings.DigestAsync(key), s => s.Digest(key));
 
-    private static async Task<T> Execute<T>(IRespireClient client, Mode mode, Func<ValueTask<T>> immediate, Func<IBatchStringCommands, RespirePending<T>> enqueue)
+    private static async Task<T> Execute<T>(IRespireClient client, Mode mode, Func<ValueTask<T>> immediate, Func<IRespireBatchStringCommands, RespirePending<T>> enqueue)
     {
         if (mode == Mode.Immediate) return await immediate();
         if (mode == Mode.Batch)

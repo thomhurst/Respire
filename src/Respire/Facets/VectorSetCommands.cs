@@ -10,7 +10,7 @@ namespace Respire;
 /// <summary>Redis vector-set commands. Requires a server with the requested vector-set command.</summary>
 /// <remarks>Input memory is borrowed until completion. Replies own their storage. Attributes must be JSON,
 /// including when produced by a custom serializer. No fallback or automatic conversion of existing data is performed.</remarks>
-public interface IVectorSetCommands
+public interface IRespireVectorSetCommands
 {
     /// <summary>VADD: adds or replaces a vector; true means a new member was added.</summary>
     ValueTask<bool> AddAsync(RespireKey key, ReadOnlyMemory<float> vector, RespireValue member, RespireVectorAddOptions options = default, RespireVectorEncoding encoding = default, CancellationToken cancellationToken = default);
@@ -53,7 +53,7 @@ public interface IVectorSetCommands
     ValueTask<byte[][]> RangeAsync(RespireKey key, RespireValue start, RespireValue end, long? count = null, CancellationToken cancellationToken = default);
 }
 
-internal sealed class VectorSetCommands(RespireClient client) : IVectorSetCommands
+internal sealed class VectorSetCommands(RespireClient client) : IRespireVectorSetCommands
 {
     public ValueTask<bool> AddAsync(RespireKey key, ReadOnlyMemory<float> vector, RespireValue member,
         RespireVectorAddOptions options = default, RespireVectorEncoding encoding = default, CancellationToken cancellationToken = default)

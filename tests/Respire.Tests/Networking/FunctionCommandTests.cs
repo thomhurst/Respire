@@ -54,7 +54,7 @@ public class FunctionCommandTests
             var functions = transaction ? tx.Functions : batch.Functions;
             var call = functions.Execute(RespireFunction.Create("function", true), ["key"], [binary]);
             var backup = functions.Dump();
-            var restore = functions.Restore(binary, FunctionRestorePolicy.Replace);
+            var restore = functions.Restore(binary, RespireFunctionRestorePolicy.Replace);
             if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
             owned = call.Result; dump = backup.Result;
             await Assert.That(restore.Result).IsTrue();
@@ -74,7 +74,7 @@ public class FunctionCommandTests
     [Test]
     public async Task ClusterSlotValidationPrecedesQueueAndAdminDoesNotSelectSlot()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
         var function = RespireFunction.Create("function");
         await Assert.That(async () => { using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]); }).Throws<RespireCrossSlotException>();
         using var batch = client.CreateBatch();
@@ -84,7 +84,7 @@ public class FunctionCommandTests
         _ = tx.Functions.Load("#!lua name=library\nreturn 1");
         _ = tx.Functions.List("library", true);
         _ = tx.Functions.Restore(new byte[] { 1 });
-        _ = tx.Functions.Flush(FunctionFlushMode.Async);
+        _ = tx.Functions.Flush(RespireFunctionFlushMode.Async);
         _ = tx.Functions.Delete("library");
         _ = tx.Functions.Execute(function, ["{b}"]);
         await Assert.That(() => tx.Functions.Execute(function, ["{a}"])).Throws<InvalidOperationException>();
@@ -105,12 +105,12 @@ public class FunctionCommandTests
         await Assert.That(async () => await client.Functions.LoadAsync(" ")).Throws<ArgumentException>();
         await Assert.That(async () => await client.Functions.DeleteAsync(" ")).Throws<ArgumentException>();
         await Assert.That(async () => await client.Functions.ListAsync(" ")).Throws<ArgumentException>();
-        await Assert.That(async () => await client.Functions.FlushAsync((FunctionFlushMode)99)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Functions.RestoreAsync(default, (FunctionRestorePolicy)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Functions.FlushAsync((RespireFunctionFlushMode)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Functions.RestoreAsync(default, (RespireFunctionRestorePolicy)99)).Throws<ArgumentOutOfRangeException>();
         using var batch = client.CreateBatch();
         await Assert.That(() => batch.Functions.Load(" ")).Throws<ArgumentException>();
-        await Assert.That(() => batch.Functions.Flush((FunctionFlushMode)99)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => batch.Functions.Restore(default, (FunctionRestorePolicy)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => batch.Functions.Flush((RespireFunctionFlushMode)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => batch.Functions.Restore(default, (RespireFunctionRestorePolicy)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
@@ -218,7 +218,7 @@ public class FunctionCommandTests
             if (!resp3) return RespValue.Array(values);
             var rented = RespirePools.ValueArrays.Rent(values.Length);
             values.CopyTo(rented, 0);
-            return RespValue.PooledAggregate(RespDataType.Map, rented, values.Length);
+            return RespValue.PooledAggregate(RespireDataType.Map, rented, values.Length);
         }
         static RespValue Text(string value) => RespValue.BulkString(Encoding.UTF8.GetBytes(value));
     }

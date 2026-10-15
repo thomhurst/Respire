@@ -19,7 +19,7 @@ public class BatchReplyGateTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = connections,
-            Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             TestingStreamFactory = gate.ConnectAsync,
         });
         for (var iteration = 0; iteration < 3; iteration++)
@@ -53,7 +53,7 @@ public class BatchReplyGateTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp2, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
             TestingStreamFactory = gate.ConnectAsync,
         });
         using var batch = client.CreateBatch();

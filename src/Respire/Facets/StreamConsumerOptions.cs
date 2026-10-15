@@ -3,7 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 namespace Respire;
 
 /// <summary>Filters for an extended XPENDING query.</summary>
-public readonly record struct StreamPendingOptions
+public readonly record struct RespireStreamPendingOptions
 {
     internal const int DefaultCount = 10;
 
@@ -29,7 +29,7 @@ public readonly record struct StreamPendingOptions
 }
 
 /// <summary>Optional pending-entry changes applied by XCLAIM.</summary>
-public readonly record struct StreamClaimOptions
+public readonly record struct RespireStreamClaimOptions
 {
     /// <summary>Set the entry's idle duration instead of resetting it to zero. Cannot be combined with DeliveryTime.</summary>
     public TimeSpan? IdleTime { get; init; }

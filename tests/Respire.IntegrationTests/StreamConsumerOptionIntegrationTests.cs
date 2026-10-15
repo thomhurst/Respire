@@ -24,7 +24,7 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         }
         (RespireKey Key, RespireStreamId After)[] streams = [("{s}:one", ">"), ("{s}:two", ">")];
-        var options = new StreamReadOptions { NoAck = true };
+        var options = new RespireStreamReadOptions { NoAck = true };
         RespireStreamReadResult[] page;
         if (surface == 0) page = await client.Streams.ReadGroupAsync(streams, "g", "c", options);
         else
@@ -67,12 +67,12 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
             await client.Streams.CreateGroupAsync(key, "g", "0");
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "old"));
             await client.Streams.ReadGroupOnceAsync(key, "g", "original");
-            await client.Streams.ClaimAsync(new StreamClaimOptions { IdleTime = TimeSpan.FromSeconds(10), RetryCount = 7 },
+            await client.Streams.ClaimAsync(new RespireStreamClaimOptions { IdleTime = TimeSpan.FromSeconds(10), RetryCount = 7 },
                 key, "g", "original", TimeSpan.Zero, "1-0");
             await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "new"));
         }
         var results = await client.Streams.ReadGroupAsync([("one", ">"), ("two", ">")], "g", "replacement",
-            new StreamReadOptions { ClaimMinIdle = TimeSpan.FromSeconds(5), NoAck = noAck });
+            new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.FromSeconds(5), NoAck = noAck });
         results.Should().HaveCount(2);
         foreach (var row in results)
         {
@@ -103,12 +103,12 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         await client.Streams.CreateGroupAsync("events", "g", "0");
         foreach (var id in new[] { "1-0", "2-0", "3-0" })
             await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = id }, ("f", id));
-        await client.Streams.ReadGroupOnceAsync("events", "g", "original", new StreamReadOptions { Count = 1 });
-        var claimed = await client.Streams.ClaimAsync(new StreamClaimOptions
+        await client.Streams.ReadGroupOnceAsync("events", "g", "original", new RespireStreamReadOptions { Count = 1 });
+        var claimed = await client.Streams.ClaimAsync(new RespireStreamClaimOptions
         { Force = true, IdleTime = TimeSpan.FromSeconds(10), RetryCount = 7, LastId = "2-0" },
             "events", "g", "replacement", TimeSpan.Zero, "1-0", "2-0", "99-0");
         claimed.Select(entry => entry.Id).Should().Equal((RespireStreamId)"1-0", (RespireStreamId)"2-0");
-        var filter = new StreamPendingOptions { MinIdle = TimeSpan.FromSeconds(5), Consumer = "replacement", Start = "(1-0" };
+        var filter = new RespireStreamPendingOptions { MinIdle = TimeSpan.FromSeconds(5), Consumer = "replacement", Start = "(1-0" };
         var pending = await client.Streams.PendingAsync(filter, "events", "g");
         pending.Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"2-0");
         pending[0].DeliveryCount.Should().Be(7);
@@ -117,7 +117,7 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         (await client.Streams.ReadGroupOnceAsync("events", "g", "original")).Should().ContainSingle()
             .Which.Id.Should().Be((RespireStreamId)"3-0");
         var timestamp = (await client.Server.TimeAsync()).AddSeconds(-20);
-        var ids = await client.Streams.ClaimIdsAsync(new StreamClaimOptions { DeliveryTime = timestamp },
+        var ids = await client.Streams.ClaimIdsAsync(new RespireStreamClaimOptions { DeliveryTime = timestamp },
             "events", "g", "ids-only", TimeSpan.Zero, "1-0");
         ids.Should().Equal((RespireStreamId)"1-0");
         var timed = (await client.Streams.PendingAsync("events", "g", consumer: "ids-only")).Single();
@@ -166,7 +166,7 @@ public class StreamConsumerOptionIntegrationTests(VersionedServerFixture fixture
         await client.Streams.CreateGroupAsync("events", "g", "0");
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
         await client.Streams.ReadGroupOnceAsync("events", "g", "original");
-        var options = new StreamReadOptions { ClaimMinIdle = TimeSpan.FromSeconds(2), WaitFor = Timeout.InfiniteTimeSpan };
+        var options = new RespireStreamReadOptions { ClaimMinIdle = TimeSpan.FromSeconds(2), WaitFor = Timeout.InfiniteTimeSpan };
         var read = client.Streams.ReadGroupOnceAsync("events", "g", "replacement", options, cancellationToken: timeout.Token).AsTask();
         await WaitForBlockedAsync();
         (await client.SetAsync("ordinary", "responsive", cancellationToken: timeout.Token)).Should().BeTrue();

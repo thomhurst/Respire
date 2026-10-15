@@ -21,8 +21,8 @@ public class CommandInputBenchmarks
         => RespireGeoSearchShape.Box(10, 20, RespireGeoUnit.Kilometers);
 
     [Benchmark]
-    public GeoSearchOrigin CreateGeoSearchOrigin()
-        => GeoSearchOrigin.FromCoordinates(-0.1, 51.5);
+    public RespireGeoSearchOrigin CreateGeoSearchOrigin()
+        => RespireGeoSearchOrigin.FromCoordinates(-0.1, 51.5);
 
     [Benchmark]
     public int ClassifyCatalogCommand()

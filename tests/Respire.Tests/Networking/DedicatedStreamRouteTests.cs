@@ -29,7 +29,7 @@ public class DedicatedStreamRouteTests
             : FakeRespServer.OkReply;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = mode != "standalone",
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = mode != "standalone",
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var slot = ClusterHash.GetSlot("key");

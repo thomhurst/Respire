@@ -18,7 +18,7 @@ public class FakeListParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         byte[] binary = [255, 0, 128];
         byte[] binaryKey = [0, 255, .. Guid.NewGuid().ToByteArray()];
         await Number(client, "RPUSH", binaryKey, binary);
@@ -70,7 +70,7 @@ public class FakeListParityTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         await client.Lists.RightPushAsync("list", "a", "b", "a", "a");
         await Number(client, "PEXPIRE", "list", 60_000);
         foreach (var (command, args) in new (string, RespireValue[])[]

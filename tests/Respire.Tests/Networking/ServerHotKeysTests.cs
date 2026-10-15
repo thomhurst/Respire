@@ -27,7 +27,7 @@ public class ServerHotKeysTests
             _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]); return true;
         };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
-            { Connections = 2, Protocol = (RespProtocol)protocol, ClientSideCache = protocol == 3 ? new() : null });
+            { Connections = 2, Protocol = (RespireProtocol)protocol, ClientSideCache = protocol == 3 ? new() : null });
         var tracker = await client.WithKeyPrefix("ignored:").Server.GetHotKeysTrackerAsync();
         var second = await client.Server.GetHotKeysTrackerAsync();
         int[] slots = [1, 3];
@@ -77,7 +77,7 @@ public class ServerHotKeysTests
             _ = server.SendRawAsync(WireSnapshot(true), server.ReceivedConnectionIds[^1]); return true;
         };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
-            { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+            { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var cache = client.Core.ClientCache!;
         RespireKey key = "cached"; var token = cache.BeginRead(in key); var value = RespValue.BulkString("retained");
         cache.CompleteRead(in token, in value, allowInsert: true);
@@ -250,7 +250,7 @@ public class ServerHotKeysTests
         }
     }
 
-    private static RespireOptions Options(int port) => new() { Endpoints = [new("127.0.0.1", port)], Connections = 1, Protocol = RespProtocol.Resp2, AllowAdmin = true };
+    private static RespireOptions Options(int port) => new() { Endpoints = [new("127.0.0.1", port)], Connections = 1, Protocol = RespireProtocol.Resp2, AllowAdmin = true };
     private static RespValue[] Fields(byte[] key) => [
         RespValue.BulkString("tracking-active"), RespValue.Integer(1), RespValue.BulkString("sample-ratio"), RespValue.Integer(1),
         RespValue.BulkString("selected-slots"), RespValue.Array(RespValue.Array(RespValue.Integer(0), RespValue.Integer(16383))),
@@ -267,8 +267,8 @@ public class ServerHotKeysTests
     }
     private static byte[] Encode(RespValue value) => value.Type switch
     {
-        RespDataType.Integer => Encoding.ASCII.GetBytes($":{value.AsInteger()}\r\n"),
-        RespDataType.Array => Sequence('*', value.AsArray().ToArray().Select(Encode).ToArray()),
+        RespireDataType.Integer => Encoding.ASCII.GetBytes($":{value.AsInteger()}\r\n"),
+        RespireDataType.Array => Sequence('*', value.AsArray().ToArray().Select(Encode).ToArray()),
         _ => Bulk(value.AsSpan().ToArray()),
     };
     private static byte[] Bulk(byte[] bytes) => [.. Encoding.ASCII.GetBytes($"${bytes.Length}\r\n"), .. bytes, 13, 10];

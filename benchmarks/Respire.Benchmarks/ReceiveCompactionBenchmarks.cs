@@ -29,7 +29,7 @@ public class ReceiveCompactionBenchmarks
         _connection = await RespireConnection.ConnectAsync("scripted", 6379,
             new RespireConnectionOptions
             {
-                Protocol = RespProtocol.Resp2, ReceiveBufferSize = 65536,
+                Protocol = RespireProtocol.Resp2, ReceiveBufferSize = 65536,
                 TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(_stream),
             });
         _capacity = await _stream.InitialWindow.WaitAsync(TimeSpan.FromSeconds(10));

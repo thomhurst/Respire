@@ -23,7 +23,7 @@ public class DeflateValueCodecTests
         {
             fixed (byte* pointer = destination)
             {
-                using var stream = new DeflateValueCodec.BoundedWriteStream(pointer + 1, 4);
+                using var stream = new RespireDeflateValueCodec.BoundedWriteStream(pointer + 1, 4);
                 if (useSpan)
                 {
                     stream.Write(first.AsSpan());
@@ -52,7 +52,7 @@ public class DeflateValueCodecTests
     [Arguments(CompressionLevel.NoCompression)]
     public async Task BoundedCompressionMatchesIndependentDeflateAndKeepsOwnership(CompressionLevel level)
     {
-        var codec = new DeflateValueCodec(new() { MinimumLength = 0 }, level);
+        var codec = new RespireDeflateValueCodec(new() { MinimumLength = 0 }, level);
         var random = new byte[65536];
         new Random(982).NextBytes(random);
         foreach (var input in new[] { Array.Empty<byte>(), new byte[1], new byte[4096], random })

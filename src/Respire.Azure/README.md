@@ -20,8 +20,8 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = { new RespireEndpoint("my-cache.eastus.redis.azure.net", 10000) },
     UseTls = true,
-    Protocol = RespProtocol.Resp3,
-    CredentialProvider = new AzureManagedRedisCredentialProvider(
+    Protocol = RespireProtocol.Resp3,
+    CredentialProvider = new RespireAzureManagedRedisCredentialProvider(
         new DefaultAzureCredential(), "<identity-object-id>"),
 });
 ```

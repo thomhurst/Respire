@@ -24,13 +24,13 @@ public class SortedSetRankWithScoreIntegrationTests(ModernRedisTestContainer fix
     {
         await using var server = new RespireFakeServer();
         var options = fake ? server.CreateOptions() : RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"rank:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("a", -1.5), ("b", 2.5), ("c", 2.5));
-        (await Rank(view, mode, "key", "a", false)).Should().Be(new SortedSetRank(0, -1.5));
-        (await Rank(view, mode, "key", "b", false)).Should().Be(new SortedSetRank(1, 2.5));
-        (await Rank(view, mode, "key", "b", true)).Should().Be(new SortedSetRank(1, 2.5));
-        (await Rank(view, mode, "key", "c", true)).Should().Be(new SortedSetRank(0, 2.5));
+        (await Rank(view, mode, "key", "a", false)).Should().Be(new RespireSortedSetRankResult(0, -1.5));
+        (await Rank(view, mode, "key", "b", false)).Should().Be(new RespireSortedSetRankResult(1, 2.5));
+        (await Rank(view, mode, "key", "b", true)).Should().Be(new RespireSortedSetRankResult(1, 2.5));
+        (await Rank(view, mode, "key", "c", true)).Should().Be(new RespireSortedSetRankResult(0, 2.5));
         (await Rank(view, mode, "key", "missing", false)).Should().BeNull();
         (await Rank(view, mode, "missing", "a", true)).Should().BeNull();
         (await view.SortedSets.RankAsync("key", "c")).Should().Be(2);
@@ -41,22 +41,22 @@ public class SortedSetRankWithScoreIntegrationTests(ModernRedisTestContainer fix
     public async Task CachedRankAndScoredRank_AreDistinctAndInvalidateTogether()
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+            with { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var view = client.WithKeyPrefix($"rank-cache:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
         (await view.SortedSets.RankAsync("key", "b")).Should().Be(1);
-        (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().Be(new SortedSetRank(1, 2));
-        (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().Be(new SortedSetRank(1, 2));
-        (await view.SortedSets.RankWithScoreAsync("key", "b", true)).Should().Be(new SortedSetRank(0, 2));
+        (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().Be(new RespireSortedSetRankResult(1, 2));
+        (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().Be(new RespireSortedSetRankResult(1, 2));
+        (await view.SortedSets.RankWithScoreAsync("key", "b", true)).Should().Be(new RespireSortedSetRankResult(0, 2));
         await view.SortedSets.AddAsync("key", "b", 0.5);
-        (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().Be(new SortedSetRank(0, 0.5));
+        (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().Be(new RespireSortedSetRankResult(0, 0.5));
         (await view.SortedSets.RankAsync("key", "b")).Should().Be(0);
         await view.SortedSets.RemoveAsync("key", "b");
         (await view.SortedSets.RankWithScoreAsync("key", "b")).Should().BeNull();
         await view.DeleteAsync("key");
     }
 
-    private static async Task<SortedSetRank?> Rank(IRespireClient client, string mode,
+    private static async Task<RespireSortedSetRankResult?> Rank(IRespireClient client, string mode,
         string key, string member, bool descending)
     {
         if (mode == "immediate") return await client.SortedSets.RankWithScoreAsync(key, member, descending);

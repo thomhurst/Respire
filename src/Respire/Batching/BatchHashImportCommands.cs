@@ -4,7 +4,7 @@ using Respire.Internal;
 
 namespace Respire;
 
-public partial interface IBatchHashCommands
+public partial interface IRespireBatchHashCommands
 {
     /// <summary>Queues HIMPORT PREPARE on a hash import session's batch or transaction.</summary>
     [Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]

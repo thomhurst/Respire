@@ -80,16 +80,16 @@ string[] randomFields = await redis.Hashes.RandomFieldsAsync("user:42", count: 2
 KeyValuePair<string, string>[] samples =
     await redis.Hashes.RandomFieldsWithValuesAsync("user:42", count: -5);
 
-RespireExpiryTime[] expiryTimes = await redis.Hashes.ExpiryTimeAsync("user:42", "name", "role");
-RespireExpiryTime[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
-    "user:42", ExpiryTimePrecision.Seconds, "name", "role");
+RespireExpiryTimeResult[] expiryTimes = await redis.Hashes.ExpiryTimeAsync("user:42", "name", "role");
+RespireExpiryTimeResult[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
+    "user:42", RespireExpiryTimePrecision.Seconds, "name", "role");
 ```
 
-`ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `ExpiryTimePrecision.Seconds` for `HEXPIRETIME`, which rounds fractional seconds up. Results follow input order, including repeated fields.
+`ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `RespireExpiryTimePrecision.Seconds` for `HEXPIRETIME`, which rounds fractional seconds up. Results follow input order, including repeated fields.
 
-For a single field's remaining lifetime, `Hashes.ExpiryAsync(key, field, cancellationToken)` returns one `RespireTtl`; a string field and a `RespireKey` field both select the scalar result. Pass a `string[]` or `ReadOnlySpan<string>` for the array result, even when the collection contains one field. Other collection commands such as `GetManyAsync` retain their array result when called with a single item and a cancellation token.
+For a single field's remaining lifetime, `Hashes.ExpiryAsync(key, field, cancellationToken)` returns one `RespireTtlResult`; a string field and a `RespireKey` field both select the scalar result. Pass a `string[]` or `ReadOnlySpan<string>` for the array result, even when the collection contains one field. Other collection commands such as `GetManyAsync` retain their array result when called with a single item and a cancellation token.
 
-| `RespireExpiryTime` member | Meaning |
+| `RespireExpiryTimeResult` member | Meaning |
 |---|---|
 | `Exists` | False for a missing field. |
 | `HasExpiry` | True when an expiration is set. |
@@ -188,7 +188,7 @@ Queued `Lists.PopMany(keys, count, side)` sends nonblocking LMPOP. Blocking pops
 string[]? moved = await redis.Lists.MoveManyAsync(
     "{jobs}:ready", "{jobs}:processing", count: 10,
     from: RespireListSide.Left, to: RespireListSide.Right,
-    countMode: ListMoveCountMode.Exactly, order: RespireListMoveOrder.Bulk,
+    countMode: RespireListMoveCountMode.Exactly, order: RespireListMoveOrder.Bulk,
     waitFor: TimeSpan.FromSeconds(5));
 ```
 
@@ -270,10 +270,10 @@ double? increased = await redis.SortedSets.IncrementAsync("scores",
 - `RandomMemberAsync(key)` returns one member or `null`.
 - `RandomMembersAsync(key, count)` and `RandomMembersWithScoresAsync(key, count)` return arrays (Redis 6.2+). Positive counts give distinct members up to the set size. Negative counts allow duplicates and return exactly the absolute count for a nonempty set. Zero returns empty. `long.MinValue` is rejected.
 - Sampling never removes members. Generic variants deserialize members, including `byte[]`. A missing scalar result is `default(T)`; a missing counted result is an empty array.
-- `RankWithScoreAsync(key, member, descending: false)` (Redis 7.2+, `ZRANK`/`ZREVRANK WITHSCORE`) returns a nullable `SortedSetRank` with zero-based `Rank` and `Score`. It returns `null` for a missing key or member. `RankAsync` returns only the rank.
+- `RankWithScoreAsync(key, member, descending: false)` (Redis 7.2+, `ZRANK`/`ZREVRANK WITHSCORE`) returns a nullable `RespireSortedSetRankResult` with zero-based `Rank` and `Score`. It returns `null` for a missing key or member. `RankAsync` returns only the rank.
 
 ```csharp
-SortedSetRank? position = await redis.SortedSets.RankWithScoreAsync("scores", "ada", descending: true);
+RespireSortedSetRankResult? position = await redis.SortedSets.RankWithScoreAsync("scores", "ada", descending: true);
 ```
 
 - `CountByLexAsync` and `RemoveRangeByLexAsync` take a `RespireLexRange` with inclusive, exclusive, or infinite bounds. Lex operations need all members to share one score.
@@ -358,15 +358,15 @@ await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
 
 Set `RespireStreamAddOptions.Idempotency` to deduplicate appends:
 
-- `StreamIdempotency.Manual(producerId, messageId)` sends IDMP.
-- `StreamIdempotency.Automatic(producerId)` sends IDMPAUTO and derives the identity from the field/value payload.
+- `RespireStreamIdempotency.Manual(producerId, messageId)` sends IDMP.
+- `RespireStreamIdempotency.Automatic(producerId)` sends IDMPAUTO and derives the identity from the field/value payload.
 
 Null keeps ordinary XADD. Both modes need an automatic entry ID (`Id = null` or `"*"`) and nonempty identifiers. Factories copy binary identifiers, which are never key-prefixed. Equality compares the mode and identifier bytes.
 
 ```csharp
 var options = new RespireStreamAddOptions
 {
-    Idempotency = StreamIdempotency.Manual("orders-producer", "event-42"),
+    Idempotency = RespireStreamIdempotency.Manual("orders-producer", "event-42"),
 };
 RespireStreamId? first = await redis.Streams.AddAsync("orders", options, ("status", "paid"));
 RespireStreamId? duplicate = await redis.Streams.AddAsync("orders", options, ("status", "paid"));
@@ -396,7 +396,7 @@ Capacity eviction can remove identities before their duration ends.
 
 ```csharp
 await redis.Streams.AddAsync("orders", ("status", "created"));
-bool configured = await redis.Streams.ConfigureAsync("orders", new StreamConfigurationOptions
+bool configured = await redis.Streams.ConfigureAsync("orders", new RespireStreamConfigurationOptions
 {
     IdempotencyDurationSeconds = 300,
     IdempotencyMaxSize = 1000,
@@ -425,15 +425,15 @@ long released = await redis.Streams.NegativeAcknowledgeAsync(
 
 - The result is Redis's total count, not per-ID outcomes. Duplicate IDs count repeatedly.
 - `PendingAsync` shows released entries with an empty consumer and a `-1 ms` idle time.
-- Absent pending entries are skipped unless `StreamNackOptions.Force` creates unowned references for existing stream entries. New forced entries start with zero deliveries, except in `Fatal` mode.
+- Absent pending entries are skipped unless `RespireStreamNackOptions.Force` creates unowned references for existing stream entries. New forced entries start with zero deliveries, except in `Fatal` mode.
 - `RetryCount` overrides any mode with a nonnegative count. Ordinary consumers rarely need `Force` or `RetryCount`.
-- Cancellation overloads take an ID span (for example `["1-0"]`) followed by the token. In variadic calls, write `new StreamNackOptions { ... }`, not target-typed `new()`.
+- Cancellation overloads take an ID span (for example `["1-0"]`) followed by the token. In variadic calls, write `new RespireStreamNackOptions { ... }`, not target-typed `new()`.
 - IDs must be numeric. Group names accept raw binary and are copied.
 - Queued form: `Streams.NegativeAcknowledge`. A pre-cancelled call sends nothing; later cancellation cannot undo the write. Missing groups return server errors.
 
 ### Trimming
 
-`RespireStreamAddOptions.MinId` or `MaxLength` trims while appending. `Streams.TrimAsync` with `StreamTrimOptions` trims an existing stream and returns the number of entries removed.
+`RespireStreamAddOptions.MinId` or `MaxLength` trims while appending. `Streams.TrimAsync` with `RespireStreamTrimOptions` trims an existing stream and returns the number of entries removed.
 
 - `MinId` removes entries with lower IDs. `MaxLength` keeps the newest entries up to that length.
 - The two thresholds are mutually exclusive. `TrimAsync` requires one; `AddAsync` does not trim without one.
@@ -444,7 +444,7 @@ await redis.Streams.AddAsync("events", new RespireStreamAddOptions
     MinId = "1700000000000-0", Limit = 1000,
 }, ("type", "updated"));
 
-long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
+long removed = await redis.Streams.TrimAsync("events", new RespireStreamTrimOptions
 {
     MinId = "1700000000000-0", Approximate = true, Limit = 0,
 });
@@ -453,7 +453,7 @@ long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
 | Option | Default | Meaning |
 |---|---|---|
 | `RespireStreamAddOptions.ApproximateTrim` | `true` | Approximate trimming removes whole internal nodes and can keep entries past the threshold. |
-| `StreamTrimOptions.Approximate` | `false` | Same, for `TrimAsync`. `TrimByMaxLengthAsync` also defaults to exact. |
+| `RespireStreamTrimOptions.Approximate` | `false` | Same, for `TrimAsync`. `TrimByMaxLengthAsync` also defaults to exact. |
 | `Limit` | null (server default) | Caps trimming work, not the removed count. Only valid with approximate trimming and a threshold. `0` disables the cap. |
 
 - Lengths and limits must be nonnegative.
@@ -464,7 +464,7 @@ long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
 
 ### Reference-aware removal (Redis 8.2+)
 
-`StreamReferencePolicy` controls pending-entry references for XDELEX, XACKDEL, and trimming (`RespireStreamAddOptions.ReferencePolicy`, `StreamTrimOptions.ReferencePolicy`). Null omits the token, which works on older servers. Any explicit policy, including `KeepReferences`, requires Redis 8.2+.
+`RespireStreamReferencePolicy` controls pending-entry references for XDELEX, XACKDEL, and trimming (`RespireStreamAddOptions.ReferencePolicy`, `RespireStreamTrimOptions.ReferencePolicy`). Null omits the token, which works on older servers. Any explicit policy, including `KeepReferences`, requires Redis 8.2+.
 
 | Policy | Wire token | Effect |
 |---|---|---|
@@ -477,14 +477,14 @@ long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
 
 ```csharp
 RespireStreamDeletionResult[] outcomes = await redis.Streams.AcknowledgeAndRemoveAsync(
-    "events", "processors", StreamReferencePolicy.Acknowledged, "1700000000000-0");
+    "events", "processors", RespireStreamReferencePolicy.Acknowledged, "1700000000000-0");
 
-await redis.Streams.RemoveAsync("events", StreamReferencePolicy.DeleteReferences,
+await redis.Streams.RemoveAsync("events", RespireStreamReferencePolicy.DeleteReferences,
     "1700000000000-0", "1700000000001-0");
 
-await redis.Streams.TrimAsync("events", new StreamTrimOptions
+await redis.Streams.TrimAsync("events", new RespireStreamTrimOptions
 {
-    MaxLength = 1000, ReferencePolicy = StreamReferencePolicy.Acknowledged,
+    MaxLength = 1000, ReferencePolicy = RespireStreamReferencePolicy.Acknowledged,
 });
 ```
 
@@ -529,11 +529,11 @@ await foreach (var item in redis.Streams.ReadAllAsync(
 
 #### Reply limits (Redis 8.10+)
 
-Pass `StreamReadOptions` to the options-first `ReadAsync` overload or queued `Read` overload:
+Pass `RespireStreamReadOptions` to the options-first `ReadAsync` overload or queued `Read` overload:
 
 ```csharp
 var page = await redis.Streams.ReadAsync(
-    new StreamReadOptions { Count = 50, MaxCount = 80, MaxSize = 65_536 },
+    new RespireStreamReadOptions { Count = 50, MaxCount = 80, MaxSize = 65_536 },
     [("{events}:one", "0"), ("{events}:two", "0")]);
 ```
 
@@ -545,7 +545,7 @@ var page = await redis.Streams.ReadAsync(
 
 - The first limit reached wins. These are server-side limits, not client-side truncation.
 - Nonblocking reads visit streams in request order, so earlier streams can use the whole budget.
-- Leave `StreamReadOptions.WaitFor` unset for immediate reads. Assigning `WaitFor = null` waits indefinitely; `IsBlocking` reports whether the option was assigned. Queued reads reject any assigned `WaitFor`, including null, locally. See [blocking-wait migration](../guides/blocking-queues.md#migrating-blocking-waits).
+- Leave `RespireStreamReadOptions.WaitFor` unset for immediate reads. Assigning `WaitFor = null` waits indefinitely; `IsBlocking` reports whether the option was assigned. Queued reads reject any assigned `WaitFor`, including null, locally. See [blocking-wait migration](../guides/blocking-queues.md#migrating-blocking-waits).
 - Without `MaxCount` and `MaxSize`, the server requirements are unchanged.
 - `XREADGROUP` accepts the same limits; see [Consumer groups](#consumer-groups).
 
@@ -603,7 +603,7 @@ See [XREADGROUP](https://redis.io/docs/latest/commands/xreadgroup/).
 
 ### Consumer recovery options
 
-| `StreamReadOptions` | Effect |
+| `RespireStreamReadOptions` | Effect |
 |---|---|
 | `NoAck` | New group entries skip the pending list. Existing pending entries are not acknowledged. |
 | `ClaimMinIdle` | Uses Redis 8.4 `XREADGROUP CLAIM`. Eligible pending entries arrive before new entries, longest idle first. |
@@ -613,7 +613,7 @@ Both work with single- and multi-stream pages, the options-first consumer loop, 
 ```csharp
 var page = await redis.Streams.ReadGroupAsync(
     [("{events}:one", ">"), ("{events}:two", ">")], "processors", "worker-2",
-    new StreamReadOptions
+    new RespireStreamReadOptions
     {
         Count = 100,
         ClaimMinIdle = TimeSpan.FromMinutes(1),
@@ -629,13 +629,13 @@ Use options-first `PendingAsync` to filter by idle time (Redis 6.2+), consumer, 
 
 ```csharp
 var pending = await redis.Streams.PendingAsync(
-    new StreamPendingOptions { MinIdle = TimeSpan.FromMinutes(1), Count = 100 },
+    new RespireStreamPendingOptions { MinIdle = TimeSpan.FromMinutes(1), Count = 100 },
     "events", "processors", stoppingToken);
 
 if (pending.Length > 0)
 {
     var ids = await redis.Streams.ClaimIdsAsync(
-        new StreamClaimOptions { IdleTime = TimeSpan.Zero, RetryCount = 1 },
+        new RespireStreamClaimOptions { IdleTime = TimeSpan.Zero, RetryCount = 1 },
         "events", "processors", "worker-2", TimeSpan.FromMinutes(1),
         pending.Select(entry => entry.Id).ToArray(), cancellationToken: stoppingToken);
 }
@@ -645,7 +645,7 @@ var recoveredIds = await redis.Streams.ClaimPendingIdsAsync(
     count: 100, cancellationToken: stoppingToken);
 ```
 
-`StreamClaimOptions` works with `ClaimAsync` and `ClaimIdsAsync`:
+`RespireStreamClaimOptions` works with `ClaimAsync` and `ClaimIdsAsync`:
 
 | Option | Meaning |
 |---|---|
@@ -701,9 +701,9 @@ await redis.HyperLogLog.AddAsync("visitors", sessionId);
 long estimate = await redis.HyperLogLog.CountAsync("visitors");
 
 await redis.Geo.AddAsync("cafes", new RespireGeoEntry(-0.1276, 51.5072, "london"));
-GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
+RespireGeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     "cafes",
-    GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
+    RespireGeoSearchOrigin.FromCoordinates(-0.1, 51.5),
     RespireGeoSearchShape.Circle(10, RespireGeoUnit.Kilometers));
 ```
 

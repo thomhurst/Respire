@@ -93,11 +93,11 @@ internal sealed partial class RespireConnection
             || _commandTimeout is { } command && options.MaintenanceRelaxedTimeout > command);
     internal Respire.Infrastructure.MovingAnnouncement? LastMovingAnnouncement => Volatile.Read(ref _lastMovingAnnouncement);
 
-    private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespProtocol protocol,
+    private async ValueTask NegotiateMaintenanceAsync(RespireConnectionOptions options, RespireProtocol protocol,
         CancellationToken cancellationToken, bool armCommandDeadline)
     {
         if (_maintenanceOptions is null) return;
-        if (protocol != RespProtocol.Resp3)
+        if (protocol != RespireProtocol.Resp3)
         {
             if (options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Enabled)
                 throw new RespireConnectionException("Maintenance notifications require RESP3.");
@@ -137,7 +137,7 @@ internal sealed partial class RespireConnection
     }
 
     private static bool IsMaintenanceAcknowledgement(in RespValue reply)
-        => reply.Type == RespDataType.SimpleString && reply.AsSpan().SequenceEqual("OK"u8);
+        => reply.Type == RespireDataType.SimpleString && reply.AsSpan().SequenceEqual("OK"u8);
 
     /// <summary>
     /// Sends a protocol barrier before graceful retirement. Redis emits pushes and command replies

@@ -72,15 +72,15 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     public bool IsDisposed => Lifetime is null || Lifetime.IsDisposed;
 
     /// <summary>The RESP wire type of this result.</summary>
-    public RespDataType Type => Value.Type;
+    public RespireDataType Type => Value.Type;
 
     /// <summary>Whether the server returned RESP null.</summary>
     public bool IsNull => Value.IsNull;
 
     /// <summary>The original null framing type, or null for a non-null reply.</summary>
     /// <remarks>Distinguishes RESP2 null bulk strings and arrays from RESP3 null.
-    /// <see cref="Type"/> continues to return <see cref="RespDataType.Null"/> for all null replies.</remarks>
-    public RespDataType? NullWireType
+    /// <see cref="Type"/> continues to return <see cref="RespireDataType.Null"/> for all null replies.</remarks>
+    public RespireDataType? NullWireType
     {
         get
         {
@@ -109,7 +109,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     public double AsDouble()
     {
         var value = Value;
-        if (value.Type == RespDataType.Double)
+        if (value.Type == RespireDataType.Double)
         {
             return value.AsDouble();
         }
@@ -124,7 +124,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     public bool AsBoolean()
     {
         var value = Value;
-        return value.Type == RespDataType.Boolean ? value.AsBoolean() : value.AsInteger() != 0;
+        return value.Type == RespireDataType.Boolean ? value.AsBoolean() : value.AsInteger() != 0;
     }
 
     /// <summary>Returns the borrowed raw bytes for a string-like result.</summary>

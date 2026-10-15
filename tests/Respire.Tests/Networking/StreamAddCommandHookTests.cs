@@ -96,7 +96,7 @@ public class StreamAddCommandHookTests
         await using var client = await RespireClient.ConnectAsync(Options(server, hook, automatic: false));
         var options = new RespireStreamAddOptions
         {
-            Idempotency = explicitIdentity ? StreamIdempotency.Manual("producer", "message") : null,
+            Idempotency = explicitIdentity ? RespireStreamIdempotency.Manual("producer", "message") : null,
         };
         await Assert.That(await client.Streams.AddAsync("s", options, ("f", "v"))).IsEqualTo((RespireStreamId?)"1-0");
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
@@ -209,7 +209,7 @@ public class StreamAddCommandHookTests
 
     private static RespireOptions Options(FakeRespServer server, RecordingHook hook, bool automatic = true) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         Connections = 1, ThreadPoolMonitoring = false,
         CommandTimeout = TimeSpan.FromSeconds(3), CommandHook = hook,
         RetryPolicy = automatic ? new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked } : null,

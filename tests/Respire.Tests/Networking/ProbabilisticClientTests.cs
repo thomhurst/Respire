@@ -273,7 +273,7 @@ public class ProbabilisticClientTests
     private static RespireOptions Options(FakeRespServer server) => new()
     {
         Endpoints = { new("127.0.0.1", server.Port) },
-        Protocol = RespProtocol.Resp3,
+        Protocol = RespireProtocol.Resp3,
         ThreadPoolMonitoring = false,
     };
 

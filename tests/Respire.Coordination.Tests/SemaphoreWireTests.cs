@@ -47,7 +47,7 @@ public class SemaphoreWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)],
             CommandTimeout = null,
@@ -87,7 +87,7 @@ public class SemaphoreWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)],
             CommandTimeout = null,
@@ -169,7 +169,7 @@ public class SemaphoreWireTests
         using var logger = new ThrowOnceDisconnectLogger();
         var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
             LoggerFactory = logger,
@@ -294,7 +294,7 @@ public class SemaphoreWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -450,7 +450,7 @@ public class SemaphoreWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             MaxInflightCommands = 1,
@@ -504,7 +504,7 @@ public class SemaphoreWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = [new("127.0.0.1", seed.Port)],
             CommandTimeout = null,
@@ -618,7 +618,7 @@ public class SemaphoreWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -673,7 +673,7 @@ public class SemaphoreWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -709,7 +709,7 @@ public class SemaphoreWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -734,7 +734,7 @@ public class SemaphoreWireTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,
@@ -845,7 +845,7 @@ public class SemaphoreWireTests
         server.DelayReply(0, 1500);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             MaxInflightCommands = 1,
@@ -879,7 +879,7 @@ public class SemaphoreWireTests
         };
         var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             CommandTimeout = null,

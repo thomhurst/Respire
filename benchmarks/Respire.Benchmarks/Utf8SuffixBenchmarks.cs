@@ -53,7 +53,7 @@ public class Utf8SuffixBenchmarks
         }
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespireProtocol.Resp2, Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         _view = (RespireClient)_client.WithKeyPrefix("tenant:");

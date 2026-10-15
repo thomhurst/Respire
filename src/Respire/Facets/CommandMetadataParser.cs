@@ -6,25 +6,25 @@ internal static class CommandMetadataParser
 {
     internal static string Text(in RespValue value)
     {
-        Require(value.Type is RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString);
+        Require(value.Type is RespireDataType.SimpleString or RespireDataType.BulkString or RespireDataType.VerbatimString);
         return value.AsString();
     }
 
     private static byte[] Bytes(in RespValue value)
     {
-        Require(value.Type is RespDataType.SimpleString or RespDataType.BulkString);
+        Require(value.Type is RespireDataType.SimpleString or RespireDataType.BulkString);
         return value.AsSpan().ToArray();
     }
 
     private static long Integer(in RespValue value)
     {
-        Require(value.Type == RespDataType.Integer);
+        Require(value.Type == RespireDataType.Integer);
         return value.AsInteger();
     }
 
     private static ReadOnlySpan<RespValue> Items(in RespValue value, bool allowSet = false)
     {
-        Require(value.Type == RespDataType.Array || (allowSet && value.Type == RespDataType.Set));
+        Require(value.Type == RespireDataType.Array || (allowSet && value.Type == RespireDataType.Set));
         return value.AsArray();
     }
 
@@ -46,7 +46,7 @@ internal static class CommandMetadataParser
 
     internal static bool Ok(in RespValue value)
     {
-        Require(value.Type == RespDataType.SimpleString && value.AsSpan().SequenceEqual("OK"u8));
+        Require(value.Type == RespireDataType.SimpleString && value.AsSpan().SequenceEqual("OK"u8));
         return true;
     }
 
@@ -98,7 +98,7 @@ internal static class CommandMetadataParser
 
     internal static RespireCommandDocumentation[] Docs(in RespValue value)
     {
-        Require(value.Type is RespDataType.Array or RespDataType.Map);
+        Require(value.Type is RespireDataType.Array or RespireDataType.Map);
         var commands = value.AsArray();
         Require(commands.Length % 2 == 0);
         var result = new RespireCommandDocumentation[commands.Length / 2];
@@ -179,7 +179,7 @@ internal static class CommandMetadataParser
 
     private static Dictionary<string, RespValue> Fields(in RespValue value)
     {
-        Require(value.Type is RespDataType.Array or RespDataType.Map);
+        Require(value.Type is RespireDataType.Array or RespireDataType.Map);
         var items = value.AsArray();
         Require(items.Length % 2 == 0);
         var result = new Dictionary<string, RespValue>(items.Length / 2, StringComparer.Ordinal);

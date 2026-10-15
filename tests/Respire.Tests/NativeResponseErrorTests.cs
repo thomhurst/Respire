@@ -22,7 +22,7 @@ public class NativeResponseErrorTests
         using var configuration = new MetricConfigurationScope();
         using var capture = new Capture();
         var (source, consume) = Rent(shape, true);
-        source.TrySetResult(RespValue.PooledAggregate(RespDataType.Array, new RespValue[1], 2));
+        source.TrySetResult(RespValue.PooledAggregate(RespireDataType.Array, new RespValue[1], 2));
         try { await Assert.That(consume).ThrowsExactly<IndexOutOfRangeException>(); }
         finally { source.ReleaseRef(); }
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -60,7 +60,7 @@ public class NativeResponseErrorTests
         }
         // Invalid element count makes response disposal fail after conversion has failed.
         source.TrySetResult(RespValue.PooledAggregate(
-            shape is "raw" or "string" or "bytes" ? RespDataType.Error : RespDataType.Array, new RespValue[1], 2));
+            shape is "raw" or "string" or "bytes" ? RespireDataType.Error : RespireDataType.Array, new RespValue[1], 2));
         Exception? actual = null;
         try { await consume; }
         catch (Exception error) { actual = error; }
@@ -173,7 +173,7 @@ public class NativeResponseErrorTests
             _ => null,
         };
         // An invalid element count injects a deterministic disposal failure without renting storage.
-        var response = RespValue.PooledAggregate(RespDataType.Array, new RespValue[1], 2);
+        var response = RespValue.PooledAggregate(RespireDataType.Array, new RespValue[1], 2);
         var owner = ErrorObservation.StartFailure();
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         Exception? actual = null;
@@ -367,14 +367,14 @@ public class NativeResponseErrorTests
         using var capture = new Capture();
         var elements = RespirePools.ValueArrays.Rent(1);
         elements[0] = RespValue.Integer(42);
-        var response = RespValue.PooledAggregate(RespDataType.Array, elements, 1);
+        var response = RespValue.PooledAggregate(RespireDataType.Array, elements, 1);
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         var converted = PooledResponseSource<int, RespValue>.Create(
             asynchronous ? new(completion.Task) : new(response), 0,
             static (int _, in RespValue value) => value, transferOwnership: transfer);
         if (asynchronous) completion.SetResult(response);
         var result = await converted;
-        await Assert.That(elements[0].Type == RespDataType.Integer).IsEqualTo(transfer);
+        await Assert.That(elements[0].Type == RespireDataType.Integer).IsEqualTo(transfer);
         if (transfer) result.Dispose();
         await Assert.That(capture.Items.Count).IsEqualTo(0);
     }
@@ -387,10 +387,10 @@ public class NativeResponseErrorTests
         using var configuration = new MetricConfigurationScope();
         var elements = RespirePools.ValueArrays.Rent(1);
         elements[0] = RespValue.Integer(42);
-        var response = RespValue.PooledAggregate(RespDataType.Array, elements, 1);
+        var response = RespValue.PooledAggregate(RespireDataType.Array, elements, 1);
         using var capture = new Capture(() =>
         {
-            if (elements[0].Type == RespDataType.Integer)
+            if (elements[0].Type == RespireDataType.Integer)
                 throw new InvalidOperationException("Response still owns its elements.");
         });
         var completion = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);

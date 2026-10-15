@@ -18,14 +18,14 @@ public readonly record struct RespireStreamReadResult(RespireKey Key,
 /// <summary>One owned entry and its stream key, returned by a multi-stream enumeration.</summary>
 public readonly record struct RespireStreamReadEntry(RespireKey Key, RespireStreamEntry Entry);
 
-public partial interface IStreamCommands
+public partial interface IRespireStreamCommands
 {
     /// <summary>Reads one stream with optional cumulative Redis 8.10 reply limits.</summary>
-    ValueTask<RespireStreamEntry[]> ReadAsync(StreamReadOptions options, RespireKey key,
+    ValueTask<RespireStreamEntry[]> ReadAsync(RespireStreamReadOptions options, RespireKey key,
         RespireStreamId after = default, CancellationToken cancellationToken = default);
 
     /// <summary>Reads same-slot streams with shared reply limits. Options precede keys to preserve existing overloads.</summary>
-    ValueTask<RespireStreamReadResult[]> ReadAsync(StreamReadOptions options,
+    ValueTask<RespireStreamReadResult[]> ReadAsync(RespireStreamReadOptions options,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default);
 
     /// <summary>Reads entries newer than after. Omit waitFor for immediate reads; null waits until cancelled.</summary>
@@ -57,7 +57,7 @@ public partial interface IStreamCommands
 
 internal sealed partial class StreamCommands
 {
-    public ValueTask<RespireStreamEntry[]> ReadAsync(StreamReadOptions options, RespireKey key,
+    public ValueTask<RespireStreamEntry[]> ReadAsync(RespireStreamReadOptions options, RespireKey key,
         RespireStreamId after = default, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamEntry[]>.Start();
@@ -69,7 +69,7 @@ internal sealed partial class StreamCommands
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    public ValueTask<RespireStreamReadResult[]> ReadAsync(StreamReadOptions options,
+    public ValueTask<RespireStreamReadResult[]> ReadAsync(RespireStreamReadOptions options,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<RespireStreamReadResult[]>.Start();
@@ -82,16 +82,16 @@ internal sealed partial class StreamCommands
     }
 
     public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, TimeSpan? waitFor, RespireStreamId after = default, int? count = null, CancellationToken cancellationToken = default)
-        => ReadAsync(new StreamReadOptions { Count = count, WaitFor = waitFor }, key, after, cancellationToken);
+        => ReadAsync(new RespireStreamReadOptions { Count = count, WaitFor = waitFor }, key, after, cancellationToken);
 
     public ValueTask<RespireStreamEntry[]> ReadAsync(RespireKey key, RespireStreamId after = default, int? count = null, CancellationToken cancellationToken = default)
-        => ReadAsync(new StreamReadOptions { Count = count }, key, after, cancellationToken);
+        => ReadAsync(new RespireStreamReadOptions { Count = count }, key, after, cancellationToken);
 
     public ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, TimeSpan? waitFor, int? count = null, CancellationToken cancellationToken = default)
-        => ReadAsync(new StreamReadOptions { Count = count, WaitFor = waitFor }, streams, cancellationToken);
+        => ReadAsync(new RespireStreamReadOptions { Count = count, WaitFor = waitFor }, streams, cancellationToken);
 
     public ValueTask<RespireStreamReadResult[]> ReadAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, int? count = null, CancellationToken cancellationToken = default)
-        => ReadAsync(new StreamReadOptions { Count = count }, streams, cancellationToken);
+        => ReadAsync(new RespireStreamReadOptions { Count = count }, streams, cancellationToken);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamEntry[]> ReadSingleAsync(StreamReadCommand command, bool blocking,
@@ -115,10 +115,10 @@ internal sealed partial class StreamCommands
 
     internal static StreamReadCommand BuildReadCommand(RespireClient client,
         ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, int? count, TimeSpan? waitFor)
-        => BuildReadCommand(client, streams, new StreamReadOptions { Count = count, WaitFor = waitFor });
+        => BuildReadCommand(client, streams, new RespireStreamReadOptions { Count = count, WaitFor = waitFor });
 
     internal static StreamReadCommand BuildReadCommand(RespireClient client,
-        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, StreamReadOptions options,
+        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, RespireStreamReadOptions options,
         bool queued = false, string? group = null, string? consumer = null)
     {
         options.Validate(queued, group is not null);
@@ -175,19 +175,19 @@ internal sealed partial class StreamCommands
     internal static RespireStreamReadResult[] ParseStreamRead(in RespValue reply, RespireClient client, string? group = null)
     {
         if (reply.IsNull) return [];
-        if (reply.Type is not (RespDataType.Array or RespDataType.Map))
+        if (reply.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("XREAD must return stream/entries pairs.");
         var values = reply.AsArray();
-        var map = reply.Type == RespDataType.Map;
+        var map = reply.Type == RespireDataType.Map;
         if (map && values.Length % 2 != 0) throw new RespireProtocolException("XREAD returned an incomplete stream pair.");
         var result = new RespireStreamReadResult[map ? values.Length / 2 : values.Length];
         for (var i = 0; i < result.Length; i++)
         {
-            if (!map && values[i].Type != RespDataType.Array)
+            if (!map && values[i].Type != RespireDataType.Array)
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
             var pair = map ? values.Slice(i * 2, 2) : values[i].AsArray();
-            if (pair.Length != 2 || pair[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-                || pair[1].Type != RespDataType.Array)
+            if (pair.Length != 2 || pair[0].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)
+                || pair[1].Type != RespireDataType.Array)
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
             var key = MultiKeyPop.ParsePoppedKey(in pair[0], client.KeyPrefixBytes);
             result[i] = new(key, ParseEntries(in pair[1], group is null ? null : client, group is null ? default : client.Key(key), group));

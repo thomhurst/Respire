@@ -23,7 +23,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
         (await Number(client, "SCARD", key)).Should().Be(2);
         using (var members = await client.ExecuteAsync("SMEMBERS", key))
         {
-            members.Type.Should().Be(protocol == 3 ? RespDataType.Set : RespDataType.Array);
+            members.Type.Should().Be(protocol == 3 ? RespireDataType.Set : RespireDataType.Array);
             members.Select(value => Convert.ToHexString(value.AsBytes())).Should().BeEquivalentTo(Convert.ToHexString(member), "");
             foreach (var value in members)
             {
@@ -38,7 +38,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
         using (var type = await client.ExecuteAsync("TYPE", key)) type.AsString().Should().Be("none");
         using (var members = await client.ExecuteAsync("SMEMBERS", key))
         {
-            members.Type.Should().Be(protocol == 3 ? RespDataType.Set : RespDataType.Array);
+            members.Type.Should().Be(protocol == 3 ? RespireDataType.Set : RespireDataType.Array);
             members.Count.Should().Be(0);
         }
         (await Number(client, "SCARD", key)).Should().Be(0);
@@ -172,7 +172,7 @@ public class FakeSetParityTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> Connect(RespireFakeServer? fake, int protocol)
         => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString))
-            with { Protocol = (RespProtocol)protocol, Connections = 1 });
+            with { Protocol = (RespireProtocol)protocol, Connections = 1 });
 
     private static async Task<long> Number(IRespireClient client, string command, params RespireValue[] args)
     {

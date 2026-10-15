@@ -25,7 +25,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(16, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 2, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 2, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);

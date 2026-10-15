@@ -30,7 +30,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     public async Task RejectsUnadmittedNativeWrites(string path, int payloadLength, bool dedicated = false)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-contract:" + Guid.NewGuid().ToString("N");
         DedicatedConnectionPool? pool = null;
         RespireConnection? borrowed = null;
@@ -53,7 +53,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
                 {
                     case "streaming":
                         var streamed = new StreamedSetCommand(key.AsValue(),
-                            new ReadOnlySequence<byte>(new byte[payloadLength]), default, SetWhen.Always);
+                            new ReadOnlySequence<byte>(new byte[payloadLength]), default, RespireSetWhen.Always);
                         using (await connection.SendCheckedAsync(streamed, commandName: "SET")) { }
                         break;
                     case "transaction":
@@ -103,7 +103,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     public async Task DiagnosticNamesCannotAuthorizeUnknownDispatch(bool preEncoded)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-name:" + Guid.NewGuid().ToString("N");
         try
         {
@@ -143,7 +143,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     public async Task MutatingPreludesCannotBorrowTheirFinalCommandsAdmission(string path)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var suffix = Guid.NewGuid().ToString("N");
         RespireKey prefixKey = "dispatch-prelude:" + suffix, bodyKey = "dispatch-body:" + suffix;
         var cache = client.Core.ClientCache!;
@@ -198,7 +198,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     public async Task RejectsForeignOrRetiredMutationAdmissions(bool foreign)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-owner:" + Guid.NewGuid().ToString("N");
         var owner = foreign ? new ClientSideCacheCoordinator(new()) : client.Core.ClientCache!;
         var fence = owner.BeginUnknownMutation();
@@ -225,7 +225,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
     public async Task ExplicitReadOnlyDispatchRetainsTheResidentCacheEntry()
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         RespireKey key = "dispatch-read:" + Guid.NewGuid().ToString("N");
         try
         {
@@ -251,7 +251,7 @@ public class CacheMutationDispatchIntegrationTests(RedisTestContainer fixture)
         var suffix = Guid.NewGuid().ToString("N");
         var prefix = "dispatch-protocol:" + suffix + ":";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = RespProtocol.Resp3, ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = [prefix] } });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() { TrackingMode = mode, KeyPrefixes = [prefix] } });
         RespireKey key = prefix + "key";
         try
         {

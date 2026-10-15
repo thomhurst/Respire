@@ -14,7 +14,7 @@ public sealed record RespireValkeyClusterScanPage(string Cursor, IReadOnlyList<R
     public bool IsComplete => Cursor == "0";
 }
 
-public partial interface IKeyCommands
+public partial interface IRespireKeyCommands
 {
     /// <summary>Reads one owned page using Valkey 9.1+ CLUSTERSCAN. Requires UseCluster.</summary>
     /// <remarks>Start with "0" and pass each returned cursor unchanged. Keep the database, match, type,
@@ -101,7 +101,7 @@ internal static class ValkeyClusterScanParser
         var keys = new List<RespireKey>(values.Length);
         foreach (ref readonly var key in values)
         {
-            if (key.Type != RespDataType.BulkString || key.IsNull) throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
+            if (key.Type != RespireDataType.BulkString || key.IsNull) throw new RespireProtocolException("CLUSTERSCAN keys must be bulk strings.");
             var bytes = key.AsSpan();
             RespireKey owned;
             if (prefix is null) owned = new RespireKey(bytes.ToArray());
@@ -113,10 +113,10 @@ internal static class ValkeyClusterScanParser
 
     internal static string ReadCursor(in RespValue reply)
     {
-        if (reply.Type != RespDataType.Array || reply.AsArray().Length != 2)
+        if (reply.Type != RespireDataType.Array || reply.AsArray().Length != 2)
             throw new RespireProtocolException("CLUSTERSCAN must return a cursor and a key array.");
         var fields = reply.AsArray();
-        if (fields[0].Type != RespDataType.BulkString || fields[0].AsSpan().IsEmpty || fields[1].Type != RespDataType.Array)
+        if (fields[0].Type != RespireDataType.BulkString || fields[0].AsSpan().IsEmpty || fields[1].Type != RespireDataType.Array)
             throw new RespireProtocolException("CLUSTERSCAN returned an invalid cursor or key array.");
         try { return CursorEncoding.GetString(fields[0].AsSpan()); }
         catch (DecoderFallbackException error)

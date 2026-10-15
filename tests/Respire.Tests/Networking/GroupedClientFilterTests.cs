@@ -12,7 +12,7 @@ public class GroupedClientFilterTests
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var handle = await client.Server.GetClientConnectionAsync();
@@ -77,7 +77,7 @@ public class GroupedClientFilterTests
         await using var server = new FakeRespServer(2, ":0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await client.Server.KillClientsAsync(new() { Ids = [42], SkipMe = true });
@@ -100,7 +100,7 @@ public class GroupedClientFilterTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var filter = new RespireClientFilterOptions
@@ -120,7 +120,7 @@ public class GroupedClientFilterTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         RespireClientFilterOptions[] empty =
@@ -141,7 +141,7 @@ public class GroupedClientFilterTests
         await using var server = new FakeRespServer(":7\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var handle = await client.Server.GetClientConnectionAsync();

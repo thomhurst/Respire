@@ -8,7 +8,7 @@ using TUnit.Core;
 namespace Respire.Tests;
 
 /// <summary>
-/// Covers <see cref="RespireGet{T}"/> and the compile-time overload resolution of the facets that
+/// Covers <see cref="RespireGetResult{T}"/> and the compile-time overload resolution of the facets that
 /// pair a raw <see cref="RespireValue"/> method with a serializing generic one. The resolution
 /// tests bind at compile time — the expression tree only reports which member the compiler chose.
 /// </summary>
@@ -17,8 +17,8 @@ public class TypedValueApiTests
     [Test]
     public async Task BitmapSet_RequiresConcreteImplementations()
     {
-        var clientSet = typeof(IBitmapCommands).GetMethod(nameof(IBitmapCommands.SetAsync));
-        var batchSet = typeof(IBatchBitmapCommands).GetMethod(nameof(IBatchBitmapCommands.Set));
+        var clientSet = typeof(IRespireBitmapCommands).GetMethod(nameof(IRespireBitmapCommands.SetAsync));
+        var batchSet = typeof(IRespireBatchBitmapCommands).GetMethod(nameof(IRespireBatchBitmapCommands.Set));
 
         await Assert.That(clientSet).IsNotNull();
         await Assert.That(clientSet!.IsAbstract).IsTrue();
@@ -52,14 +52,14 @@ public class TypedValueApiTests
     {
         (Type Type, string Name)[] methods =
         [
-            (typeof(IStringCommands), nameof(IStringCommands.GetAndDeleteAsync)),
-            (typeof(IStringCommands), nameof(IStringCommands.GetAndExpireAsync)),
-            (typeof(IHashCommands), nameof(IHashCommands.GetAndRemoveAsync)),
-            (typeof(IHashCommands), nameof(IHashCommands.GetAndExpireAsync)),
-            (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndDelete)),
-            (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndExpire)),
-            (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndRemove)),
-            (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndExpire)),
+            (typeof(IRespireStringCommands), nameof(IRespireStringCommands.GetAndDeleteAsync)),
+            (typeof(IRespireStringCommands), nameof(IRespireStringCommands.GetAndExpireAsync)),
+            (typeof(IRespireHashCommands), nameof(IRespireHashCommands.GetAndRemoveAsync)),
+            (typeof(IRespireHashCommands), nameof(IRespireHashCommands.GetAndExpireAsync)),
+            (typeof(IRespireBatchStringCommands), nameof(IRespireBatchStringCommands.GetAndDelete)),
+            (typeof(IRespireBatchStringCommands), nameof(IRespireBatchStringCommands.GetAndExpire)),
+            (typeof(IRespireBatchHashCommands), nameof(IRespireBatchHashCommands.GetAndRemove)),
+            (typeof(IRespireBatchHashCommands), nameof(IRespireBatchHashCommands.GetAndExpire)),
         ];
 
         foreach (var (type, name) in methods)
@@ -85,7 +85,7 @@ public class TypedValueApiTests
     [Test]
     public async Task DefaultRespireGet_IsNotFoundAndCarriesDefaultValue()
     {
-        RespireGet<int> missing = default;
+        RespireGetResult<int> missing = default;
 
         await Assert.That(missing.Found).IsFalse();
         await Assert.That(missing.Value).IsEqualTo(0);
@@ -97,7 +97,7 @@ public class TypedValueApiTests
     [Test]
     public async Task FoundRespireGet_IsDistinctFromMissingEvenWhenValueIsDefault()
     {
-        var stored = new RespireGet<int>(Found: true, Value: 0);
+        var stored = new RespireGetResult<int>(Found: true, Value: 0);
         var (found, value) = stored;
 
         await Assert.That(found).IsTrue();
@@ -105,13 +105,13 @@ public class TypedValueApiTests
         await Assert.That(stored.GetValueOrDefault(-1)).IsEqualTo(0);
         await Assert.That(stored.TryGetValue(out var extracted)).IsTrue();
         await Assert.That(extracted).IsEqualTo(0);
-        await Assert.That(stored.Equals(default(RespireGet<int>))).IsFalse();
+        await Assert.That(stored.Equals(default(RespireGetResult<int>))).IsFalse();
     }
 
     [Test]
     public async Task TryGetValue_WritesDefaultWhenFoundIsFalse()
     {
-        var inconsistent = new RespireGet<int>(Found: false, Value: 42);
+        var inconsistent = new RespireGetResult<int>(Found: false, Value: 42);
 
         await Assert.That(inconsistent.TryGetValue(out var value)).IsFalse();
         await Assert.That(value).IsEqualTo(0);
@@ -120,7 +120,7 @@ public class TypedValueApiTests
     [Test]
     public async Task TryGetValue_AnnotatesReferenceAsNullableRegardlessOfFound()
     {
-        var parameter = typeof(RespireGet<string>).GetMethod(nameof(RespireGet<string>.TryGetValue))!
+        var parameter = typeof(RespireGetResult<string>).GetMethod(nameof(RespireGetResult<string>.TryGetValue))!
             .GetParameters()[0];
         var nullability = new NullabilityInfoContext().Create(parameter);
 
@@ -131,11 +131,11 @@ public class TypedValueApiTests
     [Test]
     public async Task NullableResultMembers_AnnotateReferenceValuesAsNullable()
     {
-        var type = typeof(RespireGet<string>);
+        var type = typeof(RespireGetResult<string>);
         var nullability = new NullabilityInfoContext();
-        var value = type.GetProperty(nameof(RespireGet<string>.Value))!;
-        var deconstruct = type.GetMethod(nameof(RespireGet<string>.Deconstruct))!;
-        var getValueOrDefault = type.GetMethod(nameof(RespireGet<string>.GetValueOrDefault))!;
+        var value = type.GetProperty(nameof(RespireGetResult<string>.Value))!;
+        var deconstruct = type.GetMethod(nameof(RespireGetResult<string>.Deconstruct))!;
+        var getValueOrDefault = type.GetMethod(nameof(RespireGetResult<string>.GetValueOrDefault))!;
 
         await Assert.That(nullability.Create(value).ReadState).IsEqualTo(NullabilityState.Nullable);
         await Assert.That(nullability.Create(deconstruct.GetParameters()[1]).WriteState)
@@ -158,8 +158,8 @@ public class TypedValueApiTests
     [Test]
     public async Task RespireGet_ForReferenceTypes_KeepsFoundNullDistinctFromMissing()
     {
-        var foundNull = new RespireGet<string?>(Found: true, Value: null);
-        RespireGet<string?> missing = default;
+        var foundNull = new RespireGetResult<string?>(Found: true, Value: null);
+        RespireGetResult<string?> missing = default;
 
         await Assert.That(foundNull.Found).IsTrue();
         await Assert.That(missing.Found).IsFalse();
@@ -172,8 +172,8 @@ public class TypedValueApiTests
     public async Task HashSetAsync_WithRespireValue_BindsToRawOverload()
     {
         var bound = BoundMethod(
-            (IHashCommands hash) => hash.SetAsync(
-                "key", "field", (RespireValue)"text", SetWhen.Always, CancellationToken.None));
+            (IRespireHashCommands hash) => hash.SetAsync(
+                "key", "field", (RespireValue)"text", RespireSetWhen.Always, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsFalse();
     }
@@ -184,8 +184,8 @@ public class TypedValueApiTests
         // An exact match beats the implicit string -> RespireValue conversion, so the typed
         // overload wins. Both write the same bytes: string serialization is pass-through.
         var bound = BoundMethod(
-            (IHashCommands hash) => hash.SetAsync(
-                "key", "field", "text", SetWhen.Always, CancellationToken.None));
+            (IRespireHashCommands hash) => hash.SetAsync(
+                "key", "field", "text", RespireSetWhen.Always, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsTrue();
         await Assert.That(bound.GetGenericArguments()[0]).IsEqualTo(typeof(string));
@@ -195,10 +195,10 @@ public class TypedValueApiTests
     public async Task HashSetAsync_LegacyCancellationOverloadsRemainBindable()
     {
         var raw = BoundMethod(
-            (IHashCommands hash) => hash.SetAsync(
+            (IRespireHashCommands hash) => hash.SetAsync(
                 "key", "field", (RespireValue)"text", CancellationToken.None));
         var typed = BoundMethod(
-            (IHashCommands hash) => hash.SetAsync(
+            (IRespireHashCommands hash) => hash.SetAsync(
                 "key", "field", "text", CancellationToken.None));
 
         await Assert.That(raw.GetParameters()[3].ParameterType).IsEqualTo(typeof(CancellationToken));
@@ -209,7 +209,7 @@ public class TypedValueApiTests
     public async Task BatchHashSet_LegacyThreeArgumentOverloadRemainsBindable()
     {
         var bound = BoundMethod(
-            (IBatchHashCommands hash) => hash.Set("key", "field", (RespireValue)"text"));
+            (IRespireBatchHashCommands hash) => hash.Set("key", "field", (RespireValue)"text"));
 
         await Assert.That(bound.GetParameters().Length).IsEqualTo(3);
     }
@@ -218,7 +218,7 @@ public class TypedValueApiTests
     public async Task SetContainsAsync_WithRespireValue_BindsToRawOverload()
     {
         var bound = BoundMethod(
-            (ISetCommands set) => set.ContainsAsync("key", (RespireValue)"member", CancellationToken.None));
+            (IRespireSetCommands set) => set.ContainsAsync("key", (RespireValue)"member", CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsFalse();
     }
@@ -227,7 +227,7 @@ public class TypedValueApiTests
     public async Task SetContainsAsync_WithString_BindsToSerializingOverload()
     {
         var bound = BoundMethod(
-            (ISetCommands set) => set.ContainsAsync("key", "member", CancellationToken.None));
+            (IRespireSetCommands set) => set.ContainsAsync("key", "member", CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsTrue();
     }
@@ -236,7 +236,7 @@ public class TypedValueApiTests
     public async Task SortedSetAddAsync_WithRespireValue_BindsToRawOverload()
     {
         var bound = BoundMethod(
-            (ISortedSetCommands sorted) => sorted.AddAsync("key", (RespireValue)"member", 1.5, CancellationToken.None));
+            (IRespireSortedSetCommands sorted) => sorted.AddAsync("key", (RespireValue)"member", 1.5, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsFalse();
     }
@@ -245,7 +245,7 @@ public class TypedValueApiTests
     public async Task SortedSetAddAsync_WithString_BindsToSerializingOverload()
     {
         var bound = BoundMethod(
-            (ISortedSetCommands sorted) => sorted.AddAsync("key", "member", 1.5, CancellationToken.None));
+            (IRespireSortedSetCommands sorted) => sorted.AddAsync("key", "member", 1.5, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsTrue();
     }
@@ -254,11 +254,11 @@ public class TypedValueApiTests
     public async Task StringSetAsync_KeepsTheSameSplitTheTypedFacetsCopy()
     {
         var raw = BoundMethod(
-            (IStringCommands strings) => strings.SetAsync(
-                "key", (RespireValue)"text", RespireExpiry.None, SetWhen.Always, CancellationToken.None));
+            (IRespireStringCommands strings) => strings.SetAsync(
+                "key", (RespireValue)"text", RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None));
         var typed = BoundMethod(
-            (IStringCommands strings) => strings.SetAsync(
-                "key", "text", RespireExpiry.None, SetWhen.Always, CancellationToken.None));
+            (IRespireStringCommands strings) => strings.SetAsync(
+                "key", "text", RespireExpiry.None, RespireSetWhen.Always, CancellationToken.None));
 
         await Assert.That(raw.IsGenericMethod).IsFalse();
         await Assert.That(typed.IsGenericMethod).IsTrue();
@@ -269,7 +269,7 @@ public class TypedValueApiTests
     {
         // The typed pops cannot infer T, so an untyped call is never captured by them.
         var bound = BoundMethod(
-            (IListCommands list) => list.LeftPopAsync("key", null, CancellationToken.None));
+            (IRespireListCommands list) => list.LeftPopAsync("key", null, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsFalse();
         await Assert.That(bound.ReturnType).IsEqualTo(typeof(ValueTask<string?>));
@@ -279,7 +279,7 @@ public class TypedValueApiTests
     public async Task ListPopAsync_WithTypeArgument_SelectsTheTypedOverload()
     {
         var bound = BoundMethod(
-            (IListCommands list) => list.LeftPopAsync<int>("key", null, CancellationToken.None));
+            (IRespireListCommands list) => list.LeftPopAsync<int>("key", null, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsTrue();
         await Assert.That(bound.GetGenericArguments()[0]).IsEqualTo(typeof(int));
@@ -289,9 +289,9 @@ public class TypedValueApiTests
     public async Task ListPopAsync_WithDefaultLiteral_SelectsTheImmediateOverload()
     {
         var left = BoundMethod(
-            (IListCommands list) => list.LeftPopAsync("key", default));
+            (IRespireListCommands list) => list.LeftPopAsync("key", default));
         var right = BoundMethod(
-            (IListCommands list) => list.RightPopAsync("key", default));
+            (IRespireListCommands list) => list.RightPopAsync("key", default));
 
         await Assert.That(left.GetParameters()[1].ParameterType).IsEqualTo(typeof(CancellationToken));
         await Assert.That(right.GetParameters()[1].ParameterType).IsEqualTo(typeof(CancellationToken));

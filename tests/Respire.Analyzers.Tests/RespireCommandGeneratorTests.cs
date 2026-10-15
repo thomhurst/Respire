@@ -10,6 +10,20 @@ public class RespireCommandGeneratorTests
     private const string Preamble = "#nullable enable\nusing Respire; using System; using System.Threading; using System.Threading.Tasks;\n";
 
     [Test]
+    [Arguments("IRespireModule", "RespireModuleImplementation")]
+    [Arguments("IModule", "ModuleImplementation")]
+    [Arguments("Module", "ModuleImplementation")]
+    [Arguments("Inventory", "InventoryImplementation")]
+    public async Task ImplementationNamesRemoveOnlyConventionalInterfacePrefix(string interfaceName, string className)
+    {
+        var (generated, diagnostics) = Generate(Preamble +
+            $"namespace Demo {{ [RespireCommands] public interface {interfaceName} {{ }} " +
+            $"public class Consumer {{ public {interfaceName} Create(IRespireClient client) => new {className}(client); }} }}");
+        await Assert.That(diagnostics).IsEmpty();
+        await Assert.That(generated).Contains("sealed class " + className);
+    }
+
+    [Test]
     [Arguments("ValueTask<string?> Get(RespireKey key, string path = \"$\", CancellationToken token = default);")]
     [Arguments("Task<long> Get(byte[] key, params RespireValue[] args);")]
     [Arguments("ValueTask<byte[]?[]> Get(string key, long count = 3, double factor = double.NaN);")]
@@ -48,7 +62,7 @@ public class RespireCommandGeneratorTests
     [Arguments("[RespireCommands] public interface IModule { [RespireCommand(\"X.GET\")] ValueTask Get(RespireCommandFlags a, RespireCommandFlags b); }")]
     [Arguments("[RespireCommands] public interface IModule { [RespireCommand(\"X.GET\")] static abstract ValueTask Get(); }")]
     [Arguments("[RespireCommands] public interface IModule { [RespireCommand(\"X.GET\")] ValueTask Get() => default; }")]
-    [Arguments("[RespireCommands] public interface IModule { } public class IModuleImplementation { }")]
+    [Arguments("[RespireCommands] public interface IModule { } public class ModuleImplementation { }")]
     public async Task InvalidDeclarationsHaveActionableDiagnostic(string declaration)
     {
         var (generated, diagnostics) = Generate(Preamble + declaration);

@@ -351,7 +351,7 @@ internal static partial class RespireTelemetry
 
     /// <summary>True when a confirmed publication reply could be counted; checked before resolving its operation name.</summary>
     internal static bool ShouldRecordPublication(in RespValue response)
-        => response.Type == RespDataType.Integer && IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages);
+        => response.Type == RespireDataType.Integer && IsMetricEnabled(RespireMetricGroups.PubSub, PubSubMessages);
 
     internal static void RecordPublication(string? operation, in RespValue response)
     {
@@ -589,13 +589,13 @@ internal static partial class RespireTelemetry
     }
 
     public static void RecordSubscriptionMessageDropped(
-        SubscriptionKind kind,
-        SubscriptionOverflow overflow)
+        RespireSubscriptionKind kind,
+        RespireSubscriptionOverflow overflow)
         => SubscriptionMessagesDropped.Add(1,
             new KeyValuePair<string, object?>("respire.subscription.kind", kind.ToString()),
             new KeyValuePair<string, object?>("respire.subscription.overflow", overflow.ToString()));
 
-    public static void RecordSubscriptionGap(SubscriptionKind kind, RespireSubscriptionGapReason reason)
+    public static void RecordSubscriptionGap(RespireSubscriptionKind kind, RespireSubscriptionGapReason reason)
     {
         if (!SubscriptionGaps.Enabled) return;
         SubscriptionGaps.Add(1,

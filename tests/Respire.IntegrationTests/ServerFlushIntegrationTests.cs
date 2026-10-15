@@ -16,12 +16,12 @@ public class ServerFlushIntegrationTests
         await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [6379]);
         RespireOptions Options(int database) => new()
         {
-            Protocol = (RespProtocol)protocol, Database = database, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol, Database = database, AllowAdmin = true,
             Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
         };
         await using var first = await RespireClient.ConnectAsync(Options(0));
         await using var second = await RespireClient.ConnectAsync(Options(1));
-        foreach (var mode in Enum.GetValues<ServerFlushMode>())
+        foreach (var mode in Enum.GetValues<RespireServerFlushMode>())
         foreach (var execution in new[] { 0, 1, 2 })
         {
             await first.SetAsync("key", (RespireValue)"first");
@@ -36,7 +36,7 @@ public class ServerFlushIntegrationTests
         }
     }
 
-    private static async Task FlushAsync(RespireClient client, bool all, ServerFlushMode mode, int execution)
+    private static async Task FlushAsync(RespireClient client, bool all, RespireServerFlushMode mode, int execution)
     {
         if (execution == 0)
         {

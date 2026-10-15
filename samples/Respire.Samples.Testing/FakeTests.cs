@@ -8,18 +8,18 @@ namespace Respire.Samples.Testing;
 public class FakeTests
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task SharedClientScenarios(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task SharedClientScenarios(RespireProtocol protocol)
     {
         await using var server = new RespireFakeServer();
         await SharedScenarios.RunAsync(server.CreateOptions() with { Protocol = protocol });
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ExpiryUsesControlledTime(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ExpiryUsesControlledTime(RespireProtocol protocol)
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
@@ -32,9 +32,9 @@ public class FakeTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task GateSeparatesAcceptedWriteFromItsReply(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task GateSeparatesAcceptedWriteFromItsReply(RespireProtocol protocol)
     {
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions() with { Protocol = protocol, Connections = 1 };
@@ -60,9 +60,9 @@ public class FakeTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task ScopedRejectionResetsWithoutChangingData(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task ScopedRejectionResetsWithoutChangingData(RespireProtocol protocol)
     {
         await using var server = new RespireFakeServer();
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });

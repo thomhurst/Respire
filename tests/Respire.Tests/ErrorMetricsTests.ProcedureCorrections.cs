@@ -67,7 +67,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var cache = client.Core.ClientCache!;

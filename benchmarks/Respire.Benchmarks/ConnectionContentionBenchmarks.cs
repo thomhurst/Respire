@@ -35,7 +35,7 @@ public class ConnectionContentionBenchmarks
         }
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Connections = 1, Protocol = RespProtocol.Resp2,
+            Endpoints = { new RespireEndpoint(host, port) }, Connections = 1, Protocol = RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         if (!await _client.SetAsync(_key, _value)) throw new InvalidOperationException("Seed SET failed.");

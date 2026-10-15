@@ -19,13 +19,13 @@ internal static class AclParser
 
     private static void RequireString(in RespValue value)
     {
-        if (value.Type is not (RespDataType.SimpleString or RespDataType.BulkString))
+        if (value.Type is not (RespireDataType.SimpleString or RespireDataType.BulkString))
             throw new RespireProtocolException("ACL text fields must be strings.");
     }
 
     private static ReadOnlySpan<RespValue> Items(in RespValue value, bool allowSet = false)
     {
-        if (value.Type != RespDataType.Array && !(allowSet && value.Type == RespDataType.Set))
+        if (value.Type != RespireDataType.Array && !(allowSet && value.Type == RespireDataType.Set))
             throw new RespireProtocolException("ACL lists must be arrays.");
         return value.AsArray();
     }
@@ -48,14 +48,14 @@ internal static class AclParser
 
     internal static bool Ok(in RespValue value)
     {
-        if (value.Type != RespDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
             throw new RespireProtocolException("ACL mutation must return OK.");
         return true;
     }
 
     internal static long NonnegativeInteger(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("ACL counts and identifiers must be nonnegative integers.");
         return value.AsInteger();
     }
@@ -64,7 +64,7 @@ internal static class AclParser
     {
         // Redis uses a bulk string for simulated denial and +OK for success. Actual command
         // errors (including the caller's NOPERM) are thrown by the response pipeline.
-        if (value.Type == RespDataType.BulkString) return new(false, value.AsString());
+        if (value.Type == RespireDataType.BulkString) return new(false, value.AsString());
         Ok(in value);
         return new(true, null);
     }
@@ -98,7 +98,7 @@ internal static class AclParser
     }
 
     private static RespireAclPatterns Patterns(in RespValue value)
-        => value.Type == RespDataType.Array ? new(null, ByteStrings(in value)) : new(Bytes(in value), null);
+        => value.Type == RespireDataType.Array ? new(null, ByteStrings(in value)) : new(Bytes(in value), null);
 
     internal static RespireAclLogEntry[] Log(in RespValue value)
     {
@@ -127,7 +127,7 @@ internal static class AclParser
     private static double Age(in RespValue value)
     {
         double age;
-        if (value.Type == RespDataType.Double) age = value.AsDouble();
+        if (value.Type == RespireDataType.Double) age = value.AsDouble();
         else if (!double.TryParse(Text(in value), NumberStyles.Float, CultureInfo.InvariantCulture, out age))
             throw new RespireProtocolException("ACL log age must be a finite nonnegative number.");
         if (!double.IsFinite(age) || age < 0)
@@ -140,7 +140,7 @@ internal static class AclParser
 
     private static Dictionary<string, RespValue> Fields(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Array or RespDataType.Map))
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
             throw new RespireProtocolException("ACL structures must be maps or arrays of field/value pairs.");
         var items = value.AsArray();
         if (items.Length % 2 != 0) throw new RespireProtocolException("ACL structures contain an incomplete field/value pair.");

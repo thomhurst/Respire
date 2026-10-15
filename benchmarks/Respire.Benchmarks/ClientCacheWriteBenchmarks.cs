@@ -54,7 +54,7 @@ public class ClientCacheWriteBenchmarks
             }
             var options = new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespProtocol.Resp3,
+                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             _withoutCache = await RespireClient.ConnectAsync(options);

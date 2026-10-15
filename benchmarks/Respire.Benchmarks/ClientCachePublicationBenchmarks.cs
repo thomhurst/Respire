@@ -37,7 +37,7 @@ public class ClientCachePublicationBenchmarks
             }
             _client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespProtocol.Resp3,
+                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                 ClientSideCache = new() { CoalesceConcurrentMisses = Coalesce, MaxSizeBytes = 1_000_000 },
             });

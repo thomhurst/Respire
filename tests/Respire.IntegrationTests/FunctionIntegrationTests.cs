@@ -46,14 +46,14 @@ public class FunctionIntegrationTests
         (await client.Functions.DeleteAsync("sample")).Should().BeTrue();
         (await client.Functions.ListAsync()).Should().BeEmpty();
         (await client.Functions.RestoreAsync(dump)).Should().BeTrue();
-        foreach (var policy in new[] { FunctionRestorePolicy.Replace, FunctionRestorePolicy.Flush })
+        foreach (var policy in new[] { RespireFunctionRestorePolicy.Replace, RespireFunctionRestorePolicy.Flush })
             (await client.Functions.RestoreAsync(dump, policy)).Should().BeTrue();
         Func<Task> collision = async () => { await client.Functions.RestoreAsync(dump); };
         await collision.Should().ThrowAsync<RespireServerException>();
         Func<Task> invalid = async () => { await client.Functions.RestoreAsync(new byte[] { 0, 255 }); };
         await invalid.Should().ThrowAsync<RespireServerException>();
         (await client.Functions.LoadAsync(Source, replace: true)).Should().Be("sample");
-        foreach (var mode in Enum.GetValues<FunctionFlushMode>())
+        foreach (var mode in Enum.GetValues<RespireFunctionFlushMode>())
         {
             (await client.Functions.FlushAsync(mode)).Should().BeTrue();
             (await client.Functions.ListAsync()).Should().BeEmpty();
@@ -67,7 +67,7 @@ public class FunctionIntegrationTests
             {
                 await using var tx = client.CreateTransaction();
                 var functions = transaction ? tx.Functions : batch.Functions;
-                var flushed = functions.Flush(FunctionFlushMode.Sync);
+                var flushed = functions.Flush(RespireFunctionFlushMode.Sync);
                 var loaded = functions.Load(library);
                 var listed = functions.List("sample", true);
                 var execution = functions.Execute(library.Function("owned", true), args: [binary]);

@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IStreamCommands",
+      "Type": "Respire.IRespireStreamCommands",
       "OwnerType": "Respire.StreamCommands",
       "Members": [
         "AcknowledgeAsync(RespireKey,string,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<long>",
@@ -35,7 +35,7 @@
         "RemoveAsync(RespireKey,params ReadOnlySpan<RespireStreamId>):ValueTask<long>",
         "SetGroupPositionAsync(RespireKey,string,RespireStreamId,long?,CancellationToken):ValueTask",
         "SetLastIdAsync(RespireKey,RespireStreamId,long?,RespireStreamId?,CancellationToken):ValueTask",
-        "TrimAsync(RespireKey,StreamTrimOptions,CancellationToken):ValueTask<long>",
+        "TrimAsync(RespireKey,RespireStreamTrimOptions,CancellationToken):ValueTask<long>",
         "TrimByMaxLengthAsync(RespireKey,long,bool,CancellationToken):ValueTask<long>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."

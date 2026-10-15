@@ -25,7 +25,7 @@ public partial class ErrorMetricsTests
             : null;
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var client = prefix ? root.WithKeyPrefix("tenant:") : root;
@@ -78,7 +78,7 @@ public partial class ErrorMetricsTests
         observation.SetAttempts(attempts);
         var connection = client.Core.Multiplexer.GetConnection();
         using var payload = new MemoryStream("payload"u8.ToArray());
-        var command = new StreamedSetCommand((RespireValue)"key", payload, payload.Length, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", payload, payload.Length, default, RespireSetWhen.Always);
         var response = asking
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellation.Token, "SET", observation: observation)
             : connection.SendCheckedAsync(in command, cancellation.Token, commandName: "SET", observation: observation);

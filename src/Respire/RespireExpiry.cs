@@ -24,7 +24,7 @@ internal enum RespireExpiryKind : byte
 /// or "remove the current TTL". Individual Redis commands accept the forms meaningful to them.
 /// </summary>
 /// <remarks>
-/// This is the expiry <i>input</i> type. <see cref="RespireTtl"/> is the expiry Redis
+/// This is the expiry <i>input</i> type. <see cref="RespireTtlResult"/> is the expiry Redis
 /// <i>reports</i> for a key (the PTTL result). Converts implicitly from <see cref="TimeSpan"/> and
 /// <see cref="DateTimeOffset"/>, so <c>expiry: TimeSpan.FromMinutes(5)</c> still reads the same.
 /// Absolute and relative forms are both sent at millisecond precision (PXAT/PX).

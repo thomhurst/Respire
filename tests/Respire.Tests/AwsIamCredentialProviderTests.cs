@@ -65,9 +65,9 @@ public sealed class AwsIamCredentialProviderTests
     public async Task PublicProvidersReturnFifteenMinuteCredentials()
     {
         var before = DateTimeOffset.UtcNow;
-        var elasticache = new ElastiCacheIamCredentialProvider(
+        var elasticache = new RespireElastiCacheIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "cache", "elasticache-user", isServerless: true);
-        var memorydb = new MemoryDbIamCredentialProvider(
+        var memorydb = new RespireMemoryDbIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "cluster", "memorydb-user");
 
         var cacheCredentials = await elasticache.GetCredentialsAsync();
@@ -91,12 +91,12 @@ public sealed class AwsIamCredentialProviderTests
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var provider = new MemoryDbIamCredentialProvider(
+        var provider = new RespireMemoryDbIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "cluster", "redis-user");
         await Assert.That(async () => await provider.GetCredentialsAsync(cancellation.Token))
             .Throws<OperationCanceledException>();
 
-        var failingProvider = new MemoryDbIamCredentialProvider(
+        var failingProvider = new RespireMemoryDbIamCredentialProvider(
             new ThrowingAwsCredentials(), RegionEndpoint.USEast1, "cluster", "redis-user");
         await Assert.That(async () => await failingProvider.GetCredentialsAsync())
             .Throws<InvalidOperationException>();
@@ -105,13 +105,13 @@ public sealed class AwsIamCredentialProviderTests
     [Test]
     public async Task ProviderConstructorsRejectInvalidResources()
     {
-        await Assert.That(() => new ElastiCacheIamCredentialProvider(
+        await Assert.That(() => new RespireElastiCacheIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "Uppercase", "user")).Throws<ArgumentException>();
-        await Assert.That(() => new ElastiCacheIamCredentialProvider(
+        await Assert.That(() => new RespireElastiCacheIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "cache", " ")).Throws<ArgumentException>();
-        await Assert.That(() => new MemoryDbIamCredentialProvider(
+        await Assert.That(() => new RespireMemoryDbIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "", "user")).Throws<ArgumentException>();
-        await Assert.That(() => new MemoryDbIamCredentialProvider(
+        await Assert.That(() => new RespireMemoryDbIamCredentialProvider(
             Credentials, RegionEndpoint.USEast1, "cluster", " ")).Throws<ArgumentException>();
     }
 

@@ -196,7 +196,7 @@ public class CommonMisuseAnalyzerTests
     public Task UnboundedSortedSetRanges(string framework) => Verify(framework, new UnboundedReadAnalyzer(), """
         class Consumer
         {
-            async Task Read(IRespireClient client, ISortedSetCommands sortedSets, long stop)
+            async Task Read(IRespireClient client, IRespireSortedSetCommands sortedSets, long stop)
             {
                 _ = await {|RESP011:client.SortedSets.RangeAsync("set")|};
                 _ = await {|RESP011:sortedSets.RangeAsync<int>("set")|};
@@ -212,7 +212,7 @@ public class CommonMisuseAnalyzerTests
                 _ = await sortedSets.RangeWithScoresAsync("set", 0, stop);
                 await foreach (var entry in sortedSets.ScanAsync("set")) { }
             }
-            void Queued(RespireBatch batch, RespireTransaction transaction, IBatchSortedSetCommands sortedSets, long stop)
+            void Queued(RespireBatch batch, RespireTransaction transaction, IRespireBatchSortedSetCommands sortedSets, long stop)
             {
                 _ = {|RESP011:batch.SortedSets.Range("set")|};
                 _ = {|RESP011:transaction.SortedSets.Range<int>("set", 0, -1)|};
@@ -412,7 +412,7 @@ public class CommonMisuseAnalyzerTests
     public Task GeneratedCodeIsIgnored() => Verify("net10.0", new UnboundedReadAnalyzer(), """
         class Consumer
         {
-            void Read(ISetCommands sets) { _ = sets.MembersAsync("key"); }
+            void Read(IRespireSetCommands sets) { _ = sets.MembersAsync("key"); }
         }
         """, generated: true);
 

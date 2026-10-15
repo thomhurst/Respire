@@ -22,7 +22,7 @@ Respire.Coordination.RespireCoordinationLease.Field.get -> Respire.RespireKey
 Respire.Coordination.RespireCoordinationLease.HashKey.get -> Respire.RespireKey
 Respire.Coordination.RespireCoordinationLease.IsReleased.get -> bool
 Respire.Coordination.RespireCoordinationLease.OwnerToken.get -> Respire.RespireLockToken
-Respire.Coordination.RespireCoordinationLease.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.LockReleaseOutcome>
+Respire.Coordination.RespireCoordinationLease.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockReleaseOutcome>
 Respire.Coordination.RespireCoordinationLease.RemainingEstimate.get -> System.TimeSpan
 Respire.Coordination.RespireCoordinationLease.ResetExpiryAsync(System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Coordination.RespireCoordinationLease.VerifyStillHeldAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
@@ -40,7 +40,7 @@ Respire.Coordination.RespireFencedLock.IsReleased.get -> bool
 Respire.Coordination.RespireFencedLock.KeepAliveAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockKeepAlive!>
 Respire.Coordination.RespireFencedLock.Key.get -> Respire.RespireKey
 Respire.Coordination.RespireFencedLock.OwnerToken.get -> Respire.RespireLockToken
-Respire.Coordination.RespireFencedLock.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.LockReleaseOutcome>
+Respire.Coordination.RespireFencedLock.ReleaseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireLockReleaseOutcome>
 Respire.Coordination.RespireFencedLock.RemainingEstimate.get -> System.TimeSpan
 Respire.Coordination.RespireFencedLock.ResetExpiryAsync(System.TimeSpan duration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Coordination.RespireFencedLock.VerifyStillHeldAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>

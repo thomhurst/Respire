@@ -16,7 +16,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
     private RespireOptions Options(int protocol) => RespireOptions.Parse(redis.ConnectionString) with
     {
         Connections = 1,
-        Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
     };
 
     [Test]
@@ -491,7 +491,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         server.DelayCommand("ZSCAN key 0", 750);
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
             CommandTimeout = TimeSpan.FromSeconds(2),
         });
         var database = connection.GetDatabase();
@@ -528,7 +528,7 @@ public class HangfireCommandsTests(RedisTestContainer redis)
         };
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
         });
         using var cancellation = new CancellationTokenSource();
         await using var scan = connection.GetDatabase().SortedSetScanAsync("key").GetAsyncEnumerator(cancellation.Token);

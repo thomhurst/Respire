@@ -156,7 +156,7 @@ public sealed class RespireHashImportSession : IAsyncDisposable
 
     internal static long ReadDiscardAll(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("HIMPORT discard replies must be nonnegative integers.");
         return value.AsInteger();
     }

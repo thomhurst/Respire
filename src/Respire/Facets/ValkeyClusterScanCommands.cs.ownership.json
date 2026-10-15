@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IKeyCommands",
+      "Type": "Respire.IRespireKeyCommands",
       "OwnerType": "Respire.KeyCommands",
       "Members": [
         "ScanValkeyClusterPageAsync(string,string?,RespireKeyType?,int,int?,CancellationToken):ValueTask<RespireValkeyClusterScanPage>"

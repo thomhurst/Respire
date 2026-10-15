@@ -20,7 +20,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(4, ":123\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             AllowAdmin = failure is not ("info-admin" or "evict" or "touch" or "pause-admin" or "unpause" or "unblock-admin"),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -73,7 +73,7 @@ public partial class ErrorMetricsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var handle = await client.Server.GetClientConnectionAsync();
@@ -112,7 +112,7 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(4, ":123\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = failure != "admin",
+            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = failure != "admin",
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         var handle = await client.Server.GetClientConnectionAsync();
@@ -142,7 +142,7 @@ public partial class ErrorMetricsTests
             ? NotificationTopology(server.Port) : replyOverride(connectionId, command);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
             UseCluster = cluster, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
@@ -184,7 +184,7 @@ public partial class ErrorMetricsTests
             };
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true, ClusterTopologyRefreshInterval = null,
             ReconnectPolicy = new()
             {
                 MaxAttempts = attempts, InitialDelay = TimeSpan.FromMilliseconds(1),

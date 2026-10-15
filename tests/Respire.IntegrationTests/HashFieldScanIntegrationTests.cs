@@ -13,7 +13,7 @@ public class HashFieldScanIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
         });
         var client = owner.WithKeyPrefix($"field-scan:{Guid.NewGuid():N}:");

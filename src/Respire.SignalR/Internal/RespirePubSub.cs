@@ -54,7 +54,7 @@ internal sealed class RespirePubSub : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (_subscriptions.TryGetValue(channel, out var existing)) return existing;
             var subscription = await _client.SubscribeAsync(Channel(channel),
-                new(_options.SubscriptionBufferSize, SubscriptionOverflow.DropOldest), Stopping).ConfigureAwait(false);
+                new(_options.SubscriptionBufferSize, RespireSubscriptionOverflow.DropOldest), Stopping).ConfigureAwait(false);
             var receiver = new ChannelSubscription(subscription, channel, this);
             _subscriptions[channel] = receiver;
             return receiver;

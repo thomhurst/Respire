@@ -4,7 +4,7 @@ using System.Threading.Channels;
 namespace Respire.Internal;
 
 /// <summary>Bounds data messages while retaining ordered, coalesced continuity markers.</summary>
-internal sealed class SubscriptionBuffer(int capacity, SubscriptionOverflow overflow)
+internal sealed class SubscriptionBuffer(int capacity, RespireSubscriptionOverflow overflow)
 {
     private readonly Lock _gate = new();
     private readonly Entry[] _entries = CreateEntries(capacity);
@@ -34,7 +34,7 @@ internal sealed class SubscriptionBuffer(int capacity, SubscriptionOverflow over
             {
                 var now = DateTimeOffset.UtcNow;
                 dropped = new(RespireSubscriptionGapReason.BufferOverflow, now, now, 1);
-                if (overflow == SubscriptionOverflow.DropNewest)
+                if (overflow == RespireSubscriptionOverflow.DropNewest)
                 {
                     _tailGap = RespireSubscriptionGap.Merge(_tailGap, dropped);
                     _ready.Writer.TryWrite(0);

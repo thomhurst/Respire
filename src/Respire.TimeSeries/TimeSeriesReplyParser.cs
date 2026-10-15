@@ -7,12 +7,12 @@ internal static class TimeSeriesReplyParser
 {
     internal static IReadOnlyList<RespireTimeSeriesRow> ParseRows(RespireResult result, int width)
     {
-        if (result.Type != RespDataType.Array) throw UnexpectedReply();
+        if (result.Type != RespireDataType.Array) throw UnexpectedReply();
         var rows = new RespireTimeSeriesRow[result.Count];
         for (var index = 0; index < rows.Length; index++)
         {
             var row = result[index];
-            if (row.Count != 2 || row[1].Type != RespDataType.Array || row[1].Count != width)
+            if (row.Count != 2 || row[1].Type != RespireDataType.Array || row[1].Count != width)
                 throw UnexpectedReply();
             var values = new double[width];
             for (var value = 0; value < width; value++) values[value] = row[1][value].AsDouble();
@@ -23,7 +23,7 @@ internal static class TimeSeriesReplyParser
 
     internal static string[] ParseLabelTokens(RespireResult result)
     {
-        if (result.Type is not (RespDataType.Array or RespDataType.Set)) throw UnexpectedReply();
+        if (result.Type is not (RespireDataType.Array or RespireDataType.Set)) throw UnexpectedReply();
         var values = new string[result.Count];
         for (var index = 0; index < values.Length; index++) values[index] = result[index].AsString();
         return values;
@@ -40,7 +40,7 @@ internal static class TimeSeriesReplyParser
     /// <param name="latestSample">True for TS.MGET, whose series hold one optional sample instead of a list.</param>
     internal static IReadOnlyList<RespireTimeSeriesSeries> ParseSeries(RespireResult result, bool latestSample)
     {
-        if (result.Type == RespDataType.Map)
+        if (result.Type == RespireDataType.Map)
         {
             // RESP3: key => [labels, ...metadata maps..., samples]. MGET has no metadata and one sample.
             var mapped = new List<RespireTimeSeriesSeries>(result.Count / 2);
@@ -70,7 +70,7 @@ internal static class TimeSeriesReplyParser
     internal static RespireTimeSeriesInfo ParseInfo(RespireResult result)
     {
         // Both shapes index as name/value pairs.
-        if (result.Type is not (RespDataType.Map or RespDataType.Array) || result.Count % 2 != 0)
+        if (result.Type is not (RespireDataType.Map or RespireDataType.Array) || result.Count % 2 != 0)
             throw UnexpectedReply();
 
         long totalSamples = 0;
@@ -133,7 +133,7 @@ internal static class TimeSeriesReplyParser
     private static Dictionary<string, string?> ParseLabels(RespireResult labels)
     {
         var result = new Dictionary<string, string?>(StringComparer.Ordinal);
-        if (labels.Type == RespDataType.Map)
+        if (labels.Type == RespireDataType.Map)
         {
             for (var index = 0; index + 1 < labels.Count; index += 2)
                 result[labels[index].AsString()] = ReadLabelValue(labels[index + 1]);
@@ -172,7 +172,7 @@ internal static class TimeSeriesReplyParser
 
     private static RespireTimeSeriesRule[] ParseRules(RespireResult rules)
     {
-        if (rules.Type == RespDataType.Map)
+        if (rules.Type == RespireDataType.Map)
         {
             // RESP3: destination => [bucketDuration, aggregator, alignment].
             var mapped = new RespireTimeSeriesRule[rules.Count / 2];

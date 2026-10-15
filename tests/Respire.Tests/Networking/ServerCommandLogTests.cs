@@ -30,7 +30,7 @@ public class ServerCommandLogTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = (RespProtocol)protocol,
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = (RespireProtocol)protocol,
             AllowAdmin = true, ClientSideCache = protocol == 3 ? new() : null,
         });
         var commands = client.WithKeyPrefix("ignored:").Server;
@@ -103,7 +103,7 @@ public class ServerCommandLogTests
     public async Task AdminValidationAndPreCancellationPreventIo()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         await Assert.That(async () => await client.Server.ResetCommandLogAsync(RespireCommandLogType.Slow)).Throws<NotSupportedException>();
         await Assert.That(async () => await client.Server.ResetCommandLogOnAllNodesAsync(RespireCommandLogType.Slow)).Throws<NotSupportedException>();
         await Assert.That(async () => await client.Server.CommandLogAsync(RespireCommandLogType.Slow, -2)).Throws<ArgumentOutOfRangeException>();
@@ -113,7 +113,7 @@ public class ServerCommandLogTests
         await Assert.That(async () => await client.Server.CommandLogAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.CommandLogOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await using var admin = RespireClient.Create(new RespireOptions
-            { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
+            { Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
         await Assert.That(async () => await admin.Server.ResetCommandLogAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await admin.Server.ResetCommandLogOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
@@ -142,7 +142,7 @@ public class ServerCommandLogTests
             return true;
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+            { Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
         var results = await client.Server.CommandLogOnAllNodesAsync(RespireCommandLogType.LargeRequest);
         await Assert.That(results.Length).IsEqualTo(2);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value[0].RequestBytes).IsEqualTo(42);

@@ -62,4 +62,4 @@ Cancellation:
 - Cancellation during discovery throws; after discovery it is reported per node.
 - Cancellation after RESET is sent cannot undo it. Respire never retries a RESET.
 
-These six methods are `IServerCommands` members. External implementations, decorators, and mocks must implement or forward them. They have no batch or transaction versions.
+These six methods are `IRespireServerCommands` members. External implementations, decorators, and mocks must implement or forward them. They have no batch or transaction versions.

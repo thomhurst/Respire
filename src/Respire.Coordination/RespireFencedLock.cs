@@ -56,7 +56,7 @@ public sealed class RespireFencedLock : IAsyncDisposable
     public ValueTask<RespireLockKeepAlive> KeepAliveAsync(CancellationToken cancellationToken = default)
         => _lease.KeepAliveAsync(cancellationToken);
     /// <summary>Releases only this owner and preserves the counter for future acquisitions.</summary>
-    public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireLockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
         => _lease.ReleaseAsync(cancellationToken);
     /// <summary>Releases the lease using managed lock cleanup; transport failures leave bounded expiry as the fallback.</summary>
     public ValueTask DisposeAsync() => _lease.DisposeAsync();

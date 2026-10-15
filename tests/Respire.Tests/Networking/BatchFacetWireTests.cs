@@ -47,13 +47,13 @@ public class BatchFacetWireTests
             ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":5\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.Hashes.SetAsync("hash", "new", "one", SetWhen.NotExists);
-        await client.Hashes.SetAsync("hash", "existing", (RespireValue)"two", SetWhen.Exists);
+        await client.Hashes.SetAsync("hash", "new", "one", RespireSetWhen.NotExists);
+        await client.Hashes.SetAsync("hash", "existing", (RespireValue)"two", RespireSetWhen.Exists);
         await client.Strings.SetRangeAsync("text", 2, "xyz");
 
         var batch = client.CreateBatch();
-        var created = batch.Hashes.Set("hash", "new", "one", SetWhen.NotExists);
-        var updated = batch.Hashes.Set("hash", "existing", "two", SetWhen.Exists);
+        var created = batch.Hashes.Set("hash", "new", "one", RespireSetWhen.NotExists);
+        var updated = batch.Hashes.Set("hash", "existing", "two", RespireSetWhen.Exists);
         var length = batch.Strings.SetRange("text", 2, "xyz");
         await batch.ExecuteAsync();
 
@@ -160,7 +160,7 @@ public class BatchFacetWireTests
         server.SuppressReply = static command => command == "GET key";
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(100)
@@ -209,7 +209,7 @@ public class BatchFacetWireTests
 
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", unavailablePort) },
             ConnectTimeout = TimeSpan.FromMilliseconds(100),
         });
@@ -263,13 +263,13 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await client.Strings.SetManyExpireAsync(
-            RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
+            RespireExpiry.In(TimeSpan.FromSeconds(1)), RespireSetWhen.NotExists, ("a", "1"), ("b", "2"));
         await client.Keys.DeleteAsync("k1", "k2", "k3");
         await client.Keys.ExpireAsync(
             "k1", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)));
         await client.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));
         await client.Hashes.SetExpireAsync(
-            "h", RespireExpiry.In(TimeSpan.FromSeconds(2)), SetWhen.NotExists, ("a", "one"));
+            "h", RespireExpiry.In(TimeSpan.FromSeconds(2)), RespireSetWhen.NotExists, ("a", "one"));
         await client.Hashes.CountAsync("h");
         await client.Lists.RightPushAsync("l", "x", "y");
         await client.Lists.RemoveAsync("l", "x", count: -1);
@@ -277,7 +277,7 @@ public class BatchFacetWireTests
         await client.Sets.IntersectStoreAsync("dest", "s1", "s2");
         await client.SortedSets.AddAsync("z", ("ada", 42), ("grace", 58));
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
-        await client.Bitmaps.SetBitCountAsync("bits", 0, 8, BitIndexUnit.Bit);
+        await client.Bitmaps.SetBitCountAsync("bits", 0, 8, RespireBitIndexUnit.Bit);
         await client.HyperLogLog.AddAsync("hll", "one", "two");
         await client.Geo.AddAsync("cities", new RespireGeoEntry(-0.1276, 51.5072, "london"));
 
@@ -285,12 +285,12 @@ public class BatchFacetWireTests
 
         var batch = client.CreateBatch();
         _ = batch.Strings.SetManyExpire(
-            RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
+            RespireExpiry.In(TimeSpan.FromSeconds(1)), RespireSetWhen.NotExists, ("a", "1"), ("b", "2"));
         _ = batch.Keys.Delete("k1", "k2", "k3");
         _ = batch.Keys.Expire("k1", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)));
         _ = batch.Hashes.Set("h", ("f1", "v1"), ("f2", "v2"));
         _ = batch.Hashes.SetExpire(
-            "h", RespireExpiry.In(TimeSpan.FromSeconds(2)), SetWhen.NotExists, ("a", "one"));
+            "h", RespireExpiry.In(TimeSpan.FromSeconds(2)), RespireSetWhen.NotExists, ("a", "one"));
         _ = batch.Hashes.Count("h");
         _ = batch.Lists.RightPush("l", "x", "y");
         _ = batch.Lists.Remove("l", "x", count: -1);
@@ -298,7 +298,7 @@ public class BatchFacetWireTests
         _ = batch.Sets.IntersectStore("dest", "s1", "s2");
         _ = batch.SortedSets.Add("z", ("ada", 42), ("grace", 58));
         _ = batch.SortedSets.CountByScore("z", 10, 50);
-        _ = batch.Bitmaps.SetBitCount("bits", 0, 8, BitIndexUnit.Bit);
+        _ = batch.Bitmaps.SetBitCount("bits", 0, 8, RespireBitIndexUnit.Bit);
         _ = batch.HyperLogLog.Add("hll", "one", "two");
         _ = batch.Geo.Add("cities", new RespireGeoEntry(-0.1276, 51.5072, "london"));
         await batch.ExecuteAsync();
@@ -352,8 +352,8 @@ public class BatchFacetWireTests
         var missing = batch.Strings.TryGet<int>("missing");
         await batch.ExecuteAsync();
 
-        await Assert.That(stored.Result).IsEqualTo(new RespireGet<int>(true, 0));
-        await Assert.That(missing.Result).IsEqualTo(default(RespireGet<int>));
+        await Assert.That(stored.Result).IsEqualTo(new RespireGetResult<int>(true, 0));
+        await Assert.That(missing.Result).IsEqualTo(default(RespireGetResult<int>));
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             new[] { "GET stored", "GET missing" }, CollectionOrdering.Matching);
     }

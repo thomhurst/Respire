@@ -12,11 +12,11 @@ namespace Respire.IntegrationTests;
 public class ReadDedicatedIntegrationTests
 {
     [Test]
-    [Arguments(false, RespProtocol.Resp2)]
-    [Arguments(false, RespProtocol.Resp3)]
-    [Arguments(true, RespProtocol.Resp2)]
-    [Arguments(true, RespProtocol.Resp3)]
-    public async Task ConfiguredAndSentinelBlockingReadsUseReplicaAndFallback(bool sentinel, RespProtocol protocol)
+    [Arguments(false, RespireProtocol.Resp2)]
+    [Arguments(false, RespireProtocol.Resp3)]
+    [Arguments(true, RespireProtocol.Resp2)]
+    [Arguments(true, RespireProtocol.Resp3)]
+    public async Task ConfiguredAndSentinelBlockingReadsUseReplicaAndFallback(bool sentinel, RespireProtocol protocol)
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {

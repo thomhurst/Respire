@@ -30,7 +30,7 @@ public class UnixSocketOptionsTests
         var options = RespireOptions.Parse($"{scheme}:///tmp/Redis%20%23%3F.sock?db=4&protocol=3&connections=2");
         await Assert.That(options.Endpoints.Single().Host).IsEqualTo("/tmp/Redis #?.sock");
         await Assert.That(options.Database).IsEqualTo(4);
-        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(options.Protocol).IsEqualTo(RespireProtocol.Resp3);
         await Assert.That(options.Connections).IsEqualTo(2);
     }
 

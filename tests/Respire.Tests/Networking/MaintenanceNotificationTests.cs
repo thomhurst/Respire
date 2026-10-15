@@ -42,11 +42,11 @@ public class MaintenanceNotificationTests
     }
 
     [Test]
-    [Arguments(RespireMaintenanceNotificationMode.Disabled, RespProtocol.Auto, 2)]
-    [Arguments(RespireMaintenanceNotificationMode.Auto, RespProtocol.Auto, 3)]
-    [Arguments(RespireMaintenanceNotificationMode.Enabled, RespProtocol.Resp3, 3)]
-    [Arguments(RespireMaintenanceNotificationMode.Auto, RespProtocol.Resp2, 1)]
-    public async Task NegotiatesOnlyWhenRequestedOnResp3(RespireMaintenanceNotificationMode mode, RespProtocol protocol, int count)
+    [Arguments(RespireMaintenanceNotificationMode.Disabled, RespireProtocol.Auto, 2)]
+    [Arguments(RespireMaintenanceNotificationMode.Auto, RespireProtocol.Auto, 3)]
+    [Arguments(RespireMaintenanceNotificationMode.Enabled, RespireProtocol.Resp3, 3)]
+    [Arguments(RespireMaintenanceNotificationMode.Auto, RespireProtocol.Resp2, 1)]
+    public async Task NegotiatesOnlyWhenRequestedOnResp3(RespireMaintenanceNotificationMode mode, RespireProtocol protocol, int count)
     {
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(Options(server) with { MaintenanceNotifications = mode, Protocol = protocol });
@@ -1029,7 +1029,7 @@ public class MaintenanceNotificationTests
 
         var pipe = new System.IO.Pipelines.Pipe();
         await using var input = pipe.Reader.AsStream();
-        var command = new StreamedSetCommand((RespireValue)"key", input, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", input, 4, default, RespireSetWhen.Always);
         var set = staleSelection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await pipe.Writer.WriteAsync("da"u8.ToArray());
         await Task.Delay(400); // Exceed the normal 300 ms deadline while the source is being read.
@@ -1528,7 +1528,7 @@ public class MaintenanceNotificationTests
         await WaitForCommands(target, 2);
         await WaitForRetirement(staleSelection);
         using var payload = new MemoryStream("data"u8.ToArray());
-        var command = new StreamedSetCommand((RespireValue)"key", payload, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", payload, 4, default, RespireSetWhen.Always);
 
         using var result = await staleSelection.SendCheckedAsync(in command, commandName: "SET")
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -2073,7 +2073,7 @@ public class MaintenanceNotificationTests
 
         var pipe = new System.IO.Pipelines.Pipe();
         await using var source = pipe.Reader.AsStream();
-        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         // Outlast the normal 150 ms command timeout mid-upload; the relaxed 5 s deadline applies.
         await pipe.Writer.WriteAsync("da"u8.ToArray());
@@ -2099,7 +2099,7 @@ public class MaintenanceNotificationTests
 
         var pipe = new System.IO.Pipelines.Pipe();
         await using var source = pipe.Reader.AsStream();
-        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await pipe.Writer.WriteAsync("da"u8.ToArray());
         await Task.Delay(400);
@@ -2124,7 +2124,7 @@ public class MaintenanceNotificationTests
 
         var pipe = new System.IO.Pipelines.Pipe();
         await using var source = pipe.Reader.AsStream();
-        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, SetWhen.Always);
+        var command = new StreamedSetCommand((RespireValue)"key", source, 4, default, RespireSetWhen.Always);
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await pipe.Writer.WriteAsync("da"u8.ToArray());
 
@@ -2256,7 +2256,7 @@ public class MaintenanceNotificationTests
         server.SuppressReply = command => command == "PING";
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = mode,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = mode,
             CommandTimeout = TimeSpan.FromMilliseconds(150),
         });
         await server.SendRawAsync(malformed
@@ -2275,7 +2275,7 @@ public class MaintenanceNotificationTests
         server.SuppressReply = command => command == "PING";
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(2), ResponseTimeout = TimeSpan.FromSeconds(2),
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(50),
         });
@@ -2485,7 +2485,7 @@ public class MaintenanceNotificationTests
         TimeSpan? responseTimeout = null, TimeSpan? window = null, int capacity = 16, TimeSpan? relaxed = null)
         => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = timeout,
             ResponseTimeout = responseTimeout,

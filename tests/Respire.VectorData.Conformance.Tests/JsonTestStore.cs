@@ -8,7 +8,7 @@ using VectorData.ConformanceTests.Support;
 
 namespace Respire.VectorData.Conformance.Tests;
 
-internal sealed class JsonTestStore(RedisServerFixture server, RespProtocol protocol) : TestStore
+internal sealed class JsonTestStore(RedisServerFixture server, RespireProtocol protocol) : TestStore
 {
     private RespireClient? _client;
 

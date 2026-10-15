@@ -2,21 +2,21 @@ using Respire.Commands;
 
 namespace Respire;
 
-public partial interface IBatchStreamCommands
+public partial interface IRespireBatchStreamCommands
 {
     /// <summary>Queues one nonblocking consumer-group page. Null startAt reads new entries.</summary>
     RespirePending<RespireStreamEntry[]> ReadGroup(RespireKey key, string group, string consumer,
-        StreamReadOptions options = default, RespireStreamId? startAt = null);
+        RespireStreamReadOptions options = default, RespireStreamId? startAt = null);
 
     /// <summary>Queues one nonblocking page from same-slot group streams. Use &gt; for new entries.</summary>
     RespirePending<RespireStreamReadResult[]> ReadGroup(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
-        string group, string consumer, StreamReadOptions options = default);
+        string group, string consumer, RespireStreamReadOptions options = default);
 }
 
 internal sealed partial class BatchStreamCommands
 {
     public RespirePending<RespireStreamEntry[]> ReadGroup(RespireKey key, string group, string consumer,
-        StreamReadOptions options = default, RespireStreamId? startAt = null)
+        RespireStreamReadOptions options = default, RespireStreamId? startAt = null)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(consumer);
@@ -31,7 +31,7 @@ internal sealed partial class BatchStreamCommands
     }
 
     public RespirePending<RespireStreamReadResult[]> ReadGroup(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
-        string group, string consumer, StreamReadOptions options = default)
+        string group, string consumer, RespireStreamReadOptions options = default)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(consumer);

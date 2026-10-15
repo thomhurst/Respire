@@ -16,7 +16,7 @@ public class FakeKeyspaceServerTests
         var start = DateTimeOffset.FromUnixTimeSeconds(123).AddTicks(4567897);
         var clock = new RespireFakeClock(start);
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         using var reply = await client.ExecuteAsync("TIME");
         await Assert.That(reply.Count).IsEqualTo(2);
         await Assert.That(reply[0].AsString()).IsEqualTo("123");
@@ -50,7 +50,7 @@ public class FakeKeyspaceServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("test:string", "value");
         using var hash = await client.ExecuteAsync("HSET", "test:hash", "f", "v");
         using var list = await client.ExecuteAsync("LPUSH", "test:list", "v");
@@ -103,7 +103,7 @@ public class FakeKeyspaceServerTests
     public async Task BinaryPatternsAndReturnedKeysPreserveBytes(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         byte[] key = [0, 255, 128, 42];
         byte[] pattern = [0, 255, (byte)'?', (byte)'\\', (byte)'*'];
         using var set = await client.ExecuteAsync("SET", key, "value");

@@ -17,7 +17,7 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
     public async Task ConditionsChangeCountsAndNullableIncrements(int protocol, string mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"zadd:{Guid.NewGuid():N}:");
         async Task<bool> Add(O options, double score, string member = "a")
             => await Run(view, mode, s => s.AddAsync("key", options, (RespireValue)member, score),
@@ -58,7 +58,7 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
     public async Task WritesInvalidateCachedScores_AndPreserveTypedMembers(string mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var view = client.WithKeyPrefix($"zadd-cache:{Guid.NewGuid():N}:");
         (await Run(view, mode, s => s.AddAsync<bool>("key", O.Nx, true, 1), s => s.Add<bool>("key", O.Nx, true, 1)))
             .Should().BeTrue();
@@ -74,7 +74,7 @@ public class SortedSetAddOptionsIntegrationTests(RedisTestContainer fixture)
     }
 
     private static async Task<T> Run<T>(IRespireClient client, string mode,
-        Func<ISortedSetCommands, ValueTask<T>> immediate, Func<IBatchSortedSetCommands, RespirePending<T>> deferred)
+        Func<IRespireSortedSetCommands, ValueTask<T>> immediate, Func<IRespireBatchSortedSetCommands, RespirePending<T>> deferred)
     {
         if (mode == "immediate") return await immediate(client.SortedSets);
         if (mode == "batch")

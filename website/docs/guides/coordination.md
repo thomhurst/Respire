@@ -63,7 +63,7 @@ using Respire.Coordination;
 await using var waitingClient = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = ["localhost:6379"],
-    Protocol = RespProtocol.Resp3,
+    Protocol = RespireProtocol.Resp3,
     ClientSideCache = new RespireClientSideCacheOptions(),
 });
 var waitingCoordination = waitingClient.Coordination;
@@ -142,7 +142,7 @@ using Respire.Coordination;
 await using var leaseClient = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = ["localhost:6379"],
-    Protocol = RespProtocol.Resp3,
+    Protocol = RespireProtocol.Resp3,
     ClientSideCache = new RespireClientSideCacheOptions(),
 });
 var leaseCoordination = leaseClient.Coordination;
@@ -175,7 +175,7 @@ This section applies to fencing-token locks and hash-field leases.
 - Fenced locks support the core [managed lock lifecycle](distributed-locks.md), including
   `KeepAliveAsync`. Hash-field leases have no keep-alive; renew them explicitly before they expire.
 - Managed renewal needs `CLIENT ID` and `CLIENT KILL` permissions.
-- `ReleaseAsync` returns `LockReleaseOutcome.Released`, `AlreadyReleased` or `NotOwned`. Disposing a
+- `ReleaseAsync` returns `RespireLockReleaseOutcome.Released`, `AlreadyReleased` or `NotOwned`. Disposing a
   copied attempt is idempotent and never deletes another owner's lease.
 
 Stop protected work when ownership expires or becomes uncertain.

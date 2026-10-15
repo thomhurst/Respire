@@ -36,7 +36,7 @@ public class BatchDurabilityTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(), Connections = 1,
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(), Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
@@ -68,7 +68,7 @@ public class BatchDurabilityTests
             await server.SendRawAsync(reply, server.ReceivedConnectionIds[acknowledgementIndex]);
             if (outcome == "error")
                 await Assert.That(async () => await executing.WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireServerException>();
-            else await Assert.That(await executing.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(new RespireAofAcknowledgement(aof ? 1 : 0, 0));
+            else await Assert.That(await executing.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(new RespireAofAcknowledgementResult(aof ? 1 : 0, 0));
         }
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
         await Assert.That(write.Result).IsTrue();
@@ -89,7 +89,7 @@ public class BatchDurabilityTests
         using var logger = new FailingDisconnectLogger();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
         });
         using var batch = client.CreateBatch();
@@ -120,7 +120,7 @@ public class BatchDurabilityTests
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply, acknowledgement);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var pool = client.Core.DedicatedPool;
@@ -163,7 +163,7 @@ public class BatchDurabilityTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 2,
             CommandTimeout = ordinaryTimeout, ConnectionIdleReadTimeout = ordinaryTimeout,
         });
@@ -188,7 +188,7 @@ public class BatchDurabilityTests
         await Assert.That(ids[^1] == ids[acknowledgementIndex]).IsFalse();
         await server.SendRawAsync(aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray(), ids[acknowledgementIndex]);
         var result = await executing;
-        await Assert.That(result).IsEqualTo(new RespireAofAcknowledgement(aof ? 1 : 0, 1));
+        await Assert.That(result).IsEqualTo(new RespireAofAcknowledgementResult(aof ? 1 : 0, 1));
         await Assert.That(first.Result && second.Result).IsTrue();
         await Assert.That(server.ReceivedCommands.Take(3)).IsEquivalentTo([
             "SET tenant:a first", "SET tenant:b second", aof ? "WAITAOF 1 2 5000" : "WAIT 2 5000"]);
@@ -270,7 +270,7 @@ public class BatchDurabilityTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, acknowledgement);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var batch = client.CreateBatch();
@@ -292,7 +292,7 @@ public class BatchDurabilityTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = true,
         });
         using var empty = client.CreateBatch();
@@ -326,7 +326,7 @@ public class BatchDurabilityTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var batch = client.WithKeyPrefix("tenant:").CreateBatch();
@@ -410,7 +410,7 @@ public class BatchDurabilityTests
         using var unavailable = new ReservedUnavailablePort();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", unavailable.Port)], ConnectTimeout = TimeSpan.FromSeconds(1),
         });
         using var batch = client.CreateBatch();
@@ -455,7 +455,7 @@ public class BatchDurabilityTests
         }
     }
 
-    private static async Task<RespireAofAcknowledgement> Execute(RespireBatch batch, bool aof, int replicas, TimeSpan timeout, CancellationToken cancellationToken = default)
+    private static async Task<RespireAofAcknowledgementResult> Execute(RespireBatch batch, bool aof, int replicas, TimeSpan timeout, CancellationToken cancellationToken = default)
         => aof ? await batch.ExecuteAndWaitForAofAsync(true, replicas, timeout, cancellationToken)
             : new(0, await batch.ExecuteAndWaitForReplicationAsync(replicas, timeout, cancellationToken));
 }

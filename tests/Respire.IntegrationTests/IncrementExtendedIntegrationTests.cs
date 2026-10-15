@@ -19,7 +19,7 @@ public class IncrementExtendedIntegrationTests
         await using var container = useFake ? null : await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         foreach (var mode in new[] { "immediate", "batch", "transaction" })
         {
             await client.SetAsync("zero", "-1");
@@ -85,7 +85,7 @@ public class IncrementExtendedIntegrationTests
         await using var container = useFake ? null : await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
         var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         foreach (var mode in new[] { "immediate", "batch", "transaction" })
         {
             var view = client.WithKeyPrefix(mode + ":");
@@ -151,7 +151,7 @@ public class IncrementExtendedIntegrationTests
     }
 
     private static async Task<RespireIncrementResult<long>> Integer(IRespireClient client, string mode, RespireKey key, long by,
-        IntegerIncrementOptions options = default)
+        RespireIntegerIncrementOptions options = default)
     {
         if (mode == "immediate") return await client.Strings.IncrementExtendedAsync(key, by, options);
         using var batch = mode == "batch" ? client.CreateBatch() : null;
@@ -164,7 +164,7 @@ public class IncrementExtendedIntegrationTests
     }
 
     private static async Task<RespireIncrementResult<double>> Floating(IRespireClient client, string mode, RespireKey key, double by,
-        FloatIncrementOptions options = default)
+        RespireFloatIncrementOptions options = default)
     {
         if (mode == "immediate") return await client.Strings.IncrementExtendedAsync(key, by, options);
         using var batch = mode == "batch" ? client.CreateBatch() : null;

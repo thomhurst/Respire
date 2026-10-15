@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchSortedSetCommands",
+      "Type": "Respire.IRespireBatchSortedSetCommands",
       "OwnerType": "Respire.BatchSortedSetCommands",
       "Members": [
         "CountByLex(RespireKey,RespireLexRange):RespirePending<long>",

@@ -33,8 +33,8 @@ internal sealed partial class SubscriptionHub
         internal RespireChannel? ExpectedUnsubscribe;
     }
 
-    private bool IsClusterSharded(SubscriptionKind kind)
-        => kind == SubscriptionKind.Sharded && core.Cluster is not null;
+    private bool IsClusterSharded(RespireSubscriptionKind kind)
+        => kind == RespireSubscriptionKind.Sharded && core.Cluster is not null;
 
     private async ValueTask ActivateShardedAsync(RespireSubscription subscription, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
@@ -67,8 +67,8 @@ internal sealed partial class SubscriptionHub
                 }
                 foreach (var name in subscription.Names)
                 {
-                    if (!Routes(SubscriptionKind.Sharded).TryGetValue(name, out var targets))
-                        Routes(SubscriptionKind.Sharded).Add(name, targets = []);
+                    if (!Routes(RespireSubscriptionKind.Sharded).TryGetValue(name, out var targets))
+                        Routes(RespireSubscriptionKind.Sharded).Add(name, targets = []);
                     targets.Add(subscription);
                 }
             }
@@ -162,7 +162,7 @@ internal sealed partial class SubscriptionHub
                 }
                 try
                 {
-                    await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
+                    await SendControlAsync(primary.Connection!, SubscribeVerb(RespireSubscriptionKind.Sharded), "SSUBSCRIBE",
                         name, cancellationToken, instrument: !recovering, primary.IsAskConnection, observation).ConfigureAwait(false);
                     lock (_gate)
                     {
@@ -298,7 +298,7 @@ internal sealed partial class SubscriptionHub
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
         lock (_gate)
         {
-            if (_disposed || !Routes(SubscriptionKind.Sharded).TryGetValue(channel, out var name, out var targets)
+            if (_disposed || !Routes(RespireSubscriptionKind.Sharded).TryGetValue(channel, out var name, out var targets)
                 || !_shardedOwners.TryGetValue(name, out var owner) || !ReferenceEquals(owner, primary)
                 || !primary.Confirmed.Contains(name)) return;
             EnqueueMessage(targets, name, null, payload, ref drops);
@@ -310,7 +310,7 @@ internal sealed partial class SubscriptionHub
 
     private void MarkShardedInterruptedLocked(RespireChannel name)
     {
-        if (_disposed || !Routes(SubscriptionKind.Sharded).TryGetValue(name, out var subscriptions)) return;
+        if (_disposed || !Routes(RespireSubscriptionKind.Sharded).TryGetValue(name, out var subscriptions)) return;
         var now = DateTimeOffset.UtcNow;
         foreach (var subscription in subscriptions)
         {
@@ -355,7 +355,7 @@ internal sealed partial class SubscriptionHub
         }
         try
         {
-            await SendControlAsync(primary.Connection!, UnsubscribeVerb(SubscriptionKind.Sharded), "SUNSUBSCRIBE", name,
+            await SendControlAsync(primary.Connection!, UnsubscribeVerb(RespireSubscriptionKind.Sharded), "SUNSUBSCRIBE", name,
                 cancellationToken, instrument: true).ConfigureAwait(false);
         }
         catch (Exception error) when (error is RespireException or OperationCanceledException)
@@ -373,7 +373,7 @@ internal sealed partial class SubscriptionHub
         }
     }
 
-    private async ValueTask ReleaseShardedRoutesAsync(List<(SubscriptionKind Kind, RespireChannel Name)> released)
+    private async ValueTask ReleaseShardedRoutesAsync(List<(RespireSubscriptionKind Kind, RespireChannel Name)> released)
     {
         foreach (var (_, name) in released)
         {
@@ -467,7 +467,7 @@ internal sealed partial class SubscriptionHub
 
     private void RequestShardedRecoveryLocked(PrimarySubscriptionConnection primary)
     {
-        if (_disposed || _shardedExhaustion is not null || !Routes(SubscriptionKind.Sharded).Names.Any()) return;
+        if (_disposed || _shardedExhaustion is not null || !Routes(RespireSubscriptionKind.Sharded).Names.Any()) return;
         _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
         _shardedRecoveryRequested = true;
         if (_shardedRecovery is { Task.IsCompleted: false }) return;
@@ -504,7 +504,7 @@ internal sealed partial class SubscriptionHub
                     lock (_gate)
                     {
                         _shardedRecoveryRequested = false;
-                        names = Routes(SubscriptionKind.Sharded).Names.ToArray();
+                        names = Routes(RespireSubscriptionKind.Sharded).Names.ToArray();
                     }
                     failure = null;
                     foreach (var name in names)
@@ -587,12 +587,12 @@ internal sealed partial class SubscriptionHub
             {
                 _shardedExhaustion = new RespireReconnectLimitException(
                     $"Sharded pub/sub recovery exhausted {attempt} attempts. Recreate the client to subscribe again.");
-                foreach (var subscription in Routes(SubscriptionKind.Sharded).Values.SelectMany(static list => list).Distinct())
+                foreach (var subscription in Routes(RespireSubscriptionKind.Sharded).Values.SelectMany(static list => list).Distinct())
                 {
                     _interrupted.Remove(subscription);
                     subscription.CompleteFromReconnectExhaustion();
                 }
-                Routes(SubscriptionKind.Sharded).Clear();
+                Routes(RespireSubscriptionKind.Sharded).Clear();
                 _shardedOwners.Clear();
                 foreach (var endpoint in _shardedRecoveryEndpoints)
                     QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true, clusterSharded: true);

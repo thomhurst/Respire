@@ -21,9 +21,9 @@ public class IncrementExtendedTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
         byte[] key = "counter"u8.ToArray();
-        var integer = new IntegerIncrementOptions { LowerBound = long.MinValue, UpperBound = long.MaxValue,
+        var integer = new RespireIntegerIncrementOptions { LowerBound = long.MinValue, UpperBound = long.MaxValue,
             Saturate = true, Expiry = TimeSpan.FromSeconds(5), ExpireOnlyWhenPersistent = true };
-        var floating = new FloatIncrementOptions { LowerBound = -1.5, UpperBound = 2.5, Expiry = RespireExpiry.Persist };
+        var floating = new RespireFloatIncrementOptions { LowerBound = -1.5, UpperBound = 2.5, Expiry = RespireExpiry.Persist };
         RespireIncrementResult<long> first;
         RespireIncrementResult<double> second;
         if (mode == "immediate")
@@ -67,7 +67,7 @@ public class IncrementExtendedTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var batch = client.CreateBatch();
-        IntegerIncrementOptions[] invalid = [new() { LowerBound = 2, UpperBound = 1 },
+        RespireIntegerIncrementOptions[] invalid = [new() { LowerBound = 2, UpperBound = 1 },
             new() { Expiry = TimeSpan.Zero }, new() { Expiry = RespireExpiry.At(DateTimeOffset.UnixEpoch) },
             new() { ExpireOnlyWhenPersistent = true }, new() { Expiry = RespireExpiry.Persist, ExpireOnlyWhenPersistent = true },
             new() { Expiry = RespireExpiry.Keep, ExpireOnlyWhenPersistent = true }];
@@ -117,7 +117,7 @@ public class IncrementExtendedTests
     {
         var clock = new RespireFakeClock(DateTimeOffset.FromUnixTimeSeconds(100));
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await Assert.That(await client.Strings.IncrementExtendedAsync("missing", options: new() { UpperBound = 0 })).IsEqualTo(new RespireIncrementResult<long>(0, 0));
         await Assert.That(await client.ExistsAsync("missing")).IsFalse();
         await client.SetAsync("key", long.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture), TimeSpan.FromSeconds(5));
@@ -152,7 +152,7 @@ public class IncrementExtendedTests
     public async Task FakeFloatReportsActualClampDeltaAndRejectsInvalidInput(int protocol)
     {
         await using var server = new RespireFakeServer();
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await Assert.That(await client.Strings.IncrementExtendedAsync("float", 2.5)).IsEqualTo(new RespireIncrementResult<double>(2.5, 2.5));
         await Assert.That(await client.Strings.IncrementExtendedAsync("float", -4.0, new() { LowerBound = 0.5 }))
             .IsEqualTo(new RespireIncrementResult<double>(2.5, 0));

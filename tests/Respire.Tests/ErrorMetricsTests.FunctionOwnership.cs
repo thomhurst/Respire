@@ -32,8 +32,8 @@ public partial class ErrorMetricsTests
                 case "load-source": _ = client.Functions.LoadAsync(" "); break;
                 case "load-library": _ = client.Functions.LoadAsync((RespireFunctionLibrary)null!); break;
                 case "delete": _ = client.Functions.DeleteAsync(" "); break;
-                case "flush": _ = client.Functions.FlushAsync((FunctionFlushMode)99); break;
-                case "restore": _ = client.Functions.RestoreAsync(default, (FunctionRestorePolicy)99); break;
+                case "flush": _ = client.Functions.FlushAsync((RespireFunctionFlushMode)99); break;
+                case "restore": _ = client.Functions.RestoreAsync(default, (RespireFunctionRestorePolicy)99); break;
                 default: _ = client.Functions.ExecuteAsync(null!); break;
             }
         }
@@ -72,7 +72,7 @@ public partial class ErrorMetricsTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));

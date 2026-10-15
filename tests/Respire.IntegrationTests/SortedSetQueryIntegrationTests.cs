@@ -18,7 +18,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     public async Task RandomMembers_PreserveCountsScoresAndMissingResults(int protocol, QueryMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"query:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
         (await Run(view, mode, s => s.RandomMemberAsync("missing"), s => s.RandomMember("missing"))).Should().BeNull();
@@ -47,7 +47,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     public async Task TypedRandomMembers_PreserveBinaryMembersAndDeserializeValues(int protocol, QueryMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"typed:{Guid.NewGuid():N}:");
         byte[] bytes = [0xff, 0, 0x80];
         await view.SortedSets.AddAsync("binary", (RespireValue)bytes, 1.5);
@@ -80,7 +80,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"lex:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("", 0), ("a", 0), ("b", 0), ("c", 0));
         var range = new RespireLexRange(RespireLexBound.Exclusive("a"), RespireLexBound.Inclusive("c"));
@@ -111,7 +111,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"intersection:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("first", ("a", 1), ("b", 2));
         await view.SortedSets.AddAsync("second", ("a", 50), ("b", 60), ("c", 70));
@@ -132,7 +132,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     public async Task WrongType_RemainsAServerError(int protocol, QueryMode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"wrong:{Guid.NewGuid():N}:");
         await view.SetAsync("key", "string");
         Func<Task>[] operations = [
@@ -148,7 +148,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     }
 
     private static async Task<T> Run<T>(IRespireClient client, QueryMode mode,
-        Func<ISortedSetCommands, ValueTask<T>> immediate, Func<IBatchSortedSetCommands, RespirePending<T>> deferred)
+        Func<IRespireSortedSetCommands, ValueTask<T>> immediate, Func<IRespireBatchSortedSetCommands, RespirePending<T>> deferred)
     {
         if (mode == QueryMode.Immediate) return await immediate(client.SortedSets);
         if (mode == QueryMode.Batch)

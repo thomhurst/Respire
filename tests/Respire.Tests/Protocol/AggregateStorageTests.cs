@@ -101,7 +101,7 @@ public class AggregateStorageTests
                 var child = owned;
                 for (var i = 0; i < depth - 1; i++)
                     child = child.AsArray()[^1];
-                await Assert.That(child.Type).IsEqualTo(RespDataType.Array);
+                await Assert.That(child.Type).IsEqualTo(RespireDataType.Array);
                 await Assert.That(child.AsArray().Length).IsEqualTo(0);
             }
         }

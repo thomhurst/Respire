@@ -22,7 +22,7 @@ public class TelemetryTests
         // This process-wide instrument also receives reconnect gaps from concurrent wire tests.
         // Only measurements recorded inside this test's trace belong to it.
         using var trace = TelemetryCapture.StartTestTrace();
-        RespireTelemetry.RecordSubscriptionGap(SubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
+        RespireTelemetry.RecordSubscriptionGap(RespireSubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
         var measurement = capture.Measurements.Single(item => item.TraceId == trace.TraceId
             && item.InstrumentName == "respire.pubsub.delivery.gaps"
             && item.Tags.GetValueOrDefault("respire.subscription.kind") as string == "Sharded"
@@ -37,8 +37,8 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
 
         RespireTelemetry.RecordSubscriptionMessageDropped(
-            SubscriptionKind.Pattern,
-            SubscriptionOverflow.DropNewest);
+            RespireSubscriptionKind.Pattern,
+            RespireSubscriptionOverflow.DropNewest);
 
         var measurement = capture.Measurements.Single(item =>
             item.InstrumentName == "respire.pubsub.messages.dropped"
@@ -82,7 +82,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Database = 4,
         });
@@ -168,7 +168,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -199,7 +199,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -288,7 +288,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("empty-pipeline.example") },
         });
 
@@ -335,7 +335,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             Serializer = new FailingDeserializer(),
@@ -357,7 +357,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("empty-transaction.example") },
         });
         await using var transaction = client.CreateTransaction();
@@ -382,7 +382,7 @@ public class TelemetryTests
         using var trace = TelemetryCapture.StartTestTrace();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             SentinelPrimaryName = "mymaster",
             Endpoints = { new RespireEndpoint("empty-sentinel.example") },
         });

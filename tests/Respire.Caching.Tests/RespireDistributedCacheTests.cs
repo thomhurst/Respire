@@ -668,7 +668,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await RespireClient.ConnectAsync(
             new RespireOptions
             {
-                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespProtocol.Resp2,
+                Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                 CommandTimeout = TimeSpan.FromMilliseconds(50),
             });
@@ -1214,7 +1214,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandTimeout = TimeSpan.FromSeconds(1),
@@ -1374,7 +1374,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await using var timeoutClient = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Database = 1,
             Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
@@ -1504,7 +1504,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     internal sealed class ScriptInterceptingClient(
         RespireClient inner,
         Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
-        IKeyCommands? keys = null,
+        IRespireKeyCommands? keys = null,
         bool ignoreScriptCancellation = false,
         TimeSpan? setDelay = null) : IRespireClient, IRespireNameResolver
     {
@@ -1517,10 +1517,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public RespireKey LastSetKey => _lastSetKey;
         public RespireExpiry LastSetExpiry { get; private set; }
 
-        public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
-        public IFunctionCommands Functions => inner.Functions;
+        public IRespireScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
+        public IRespireFunctionCommands Functions => inner.Functions;
 
-        private sealed class InterceptedScripts(ScriptInterceptingClient owner, IScriptCommands inner) : IScriptCommands
+        private sealed class InterceptedScripts(ScriptInterceptingClient owner, IRespireScriptCommands inner) : IRespireScriptCommands
         {
             public ValueTask<RespireResult> ExecuteAsync(
                 RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
@@ -1542,7 +1542,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
                 => inner.ExistsAsync(sha1s, cancellationToken);
 
-            public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
+            public ValueTask FlushAsync(RespireScriptFlushMode mode = RespireScriptFlushMode.Default, CancellationToken cancellationToken = default)
                 => inner.FlushAsync(mode, cancellationToken);
 
             public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
@@ -1561,20 +1561,20 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             remove => inner.ConnectionStateChanged -= value;
         }
 
-        public IStringCommands Strings => inner.Strings;
-        public IKeyCommands Keys => keys ?? inner.Keys;
-        public ILockCommands Locks => inner.Locks;
-        public IHashCommands Hashes => inner.Hashes;
-        public IListCommands Lists => inner.Lists;
-        public IArrayCommands Arrays => inner.Arrays;
-        public ISetCommands Sets => inner.Sets;
-        public ISortedSetCommands SortedSets => inner.SortedSets;
-        public IStreamCommands Streams => inner.Streams;
-        public IBitmapCommands Bitmaps => inner.Bitmaps;
-        public IHyperLogLogCommands HyperLogLog => inner.HyperLogLog;
-        public IGeoCommands Geo => inner.Geo;
-        public IVectorSetCommands VectorSets => inner.VectorSets;
-        public IServerCommands Server => inner.Server;
+        public IRespireStringCommands Strings => inner.Strings;
+        public IRespireKeyCommands Keys => keys ?? inner.Keys;
+        public IRespireLockCommands Locks => inner.Locks;
+        public IRespireHashCommands Hashes => inner.Hashes;
+        public IRespireListCommands Lists => inner.Lists;
+        public IRespireArrayCommands Arrays => inner.Arrays;
+        public IRespireSetCommands Sets => inner.Sets;
+        public IRespireSortedSetCommands SortedSets => inner.SortedSets;
+        public IRespireStreamCommands Streams => inner.Streams;
+        public IRespireBitmapCommands Bitmaps => inner.Bitmaps;
+        public IRespireHyperLogLogCommands HyperLogLog => inner.HyperLogLog;
+        public IRespireGeoCommands Geo => inner.Geo;
+        public IRespireVectorSetCommands VectorSets => inner.VectorSets;
+        public IRespireServerCommands Server => inner.Server;
 
         public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetStringAsync(key, cancellationToken);
@@ -1582,14 +1582,14 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetAsync<T>(key, cancellationToken);
 
-        public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
             => inner.TryGetAsync<T>(key, cancellationToken);
 
         public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetBytesAsync(key, cancellationToken);
 
         public async ValueTask<bool> SetAsync(
-            RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
+            RespireKey key, RespireValue value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always,
             CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
@@ -1599,7 +1599,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         }
 
         public async ValueTask<bool> SetAsync<T>(
-            RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
+            RespireKey key, T value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always,
             CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
@@ -1736,7 +1736,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class BlockingUnlinkKeyCommands(IKeyCommands inner) : IKeyCommands
+    private sealed class BlockingUnlinkKeyCommands(IRespireKeyCommands inner) : IRespireKeyCommands
     {
         public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
             => DeleteAsync([key], cancellationToken);
@@ -1783,10 +1783,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             CancellationToken cancellationToken = default)
             => inner.ExpireAsync(key, expiry, when, cancellationToken);
 
-        public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireTtlResult> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExpiryAsync(key, cancellationToken);
 
-        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExpiryTimeAsync(key, cancellationToken);
 
         public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -1801,7 +1801,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ReferenceCountAsync(key, cancellationToken);
 
-        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default)
+        public ValueTask<RespireExpiryTimeResult> ExpiryTimeAsync(RespireKey key, RespireExpiryTimePrecision precision, CancellationToken cancellationToken = default)
             => inner.ExpiryTimeAsync(key, precision, cancellationToken);
 
         public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)

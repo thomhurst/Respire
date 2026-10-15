@@ -19,7 +19,7 @@ public class ClusterScanIntegrationTests
         var options = new RespireOptions
         {
             UseCluster = true,
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(100),
             Endpoints = { new RespireEndpoint(cluster.Host, cluster.Port(0)) },
         };
@@ -48,7 +48,7 @@ public class ClusterScanIntegrationTests
         await using var cluster = await ScanCluster.StartAsync();
         var options = new RespireOptions
         {
-            UseCluster = true, Protocol = (RespProtocol)protocol, Connections = 1,
+            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
             Endpoints = { new RespireEndpoint(cluster.Host, cluster.Port(0)) },
         };
         await using var client = await RespireClient.ConnectAsync(options);

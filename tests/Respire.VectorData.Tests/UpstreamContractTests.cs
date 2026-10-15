@@ -101,7 +101,7 @@ public class UpstreamContractTests(ModernRedisTestContainer fixture)
 
     private async Task WithCollection(int protocol, Func<RespireVectorStore, RespireVectorStoreCollection<Movie>, Task> test)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "conformance:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new MovieMapper());
         using var collection = store.GetHashCollection<Movie>("movies");

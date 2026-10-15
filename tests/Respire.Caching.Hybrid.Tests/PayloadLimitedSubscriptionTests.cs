@@ -10,19 +10,19 @@ namespace Respire.Caching.Hybrid.Tests;
 public class PayloadLimitedSubscriptionTests(RedisTestContainer fixture)
 {
     [Test]
-    [Arguments(2, SubscriptionKind.Channel)]
-    [Arguments(3, SubscriptionKind.Channel)]
-    [Arguments(2, SubscriptionKind.Pattern)]
-    [Arguments(3, SubscriptionKind.Pattern)]
-    [Arguments(2, SubscriptionKind.Sharded)]
-    [Arguments(3, SubscriptionKind.Sharded)]
-    public async Task PayloadLimitsArePerSubscriptionAndRetainOrderedGaps(int protocol, SubscriptionKind kind)
+    [Arguments(2, RespireSubscriptionKind.Channel)]
+    [Arguments(3, RespireSubscriptionKind.Channel)]
+    [Arguments(2, RespireSubscriptionKind.Pattern)]
+    [Arguments(3, RespireSubscriptionKind.Pattern)]
+    [Arguments(2, RespireSubscriptionKind.Sharded)]
+    [Arguments(3, RespireSubscriptionKind.Sharded)]
+    public async Task PayloadLimitsArePerSubscriptionAndRetainOrderedGaps(int protocol, RespireSubscriptionKind kind)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var name = "payload:" + Guid.NewGuid().ToString("N");
-        var channel = kind == SubscriptionKind.Sharded ? RespireChannel.Sharded(name) : new RespireChannel(name);
-        var target = kind == SubscriptionKind.Pattern ? RespireChannel.Pattern(name + "*") : channel;
+        var channel = kind == RespireSubscriptionKind.Sharded ? RespireChannel.Sharded(name) : new RespireChannel(name);
+        var target = kind == RespireSubscriptionKind.Pattern ? RespireChannel.Pattern(name + "*") : channel;
         await using var bounded = await client.SubscribeAsync(target, new RespireSubscriptionOptions(2)
         { MaxPayloadBytes = 3 }, CancellationToken.None);
         await using var unrestricted = await client.SubscribeAsync(target);

@@ -5,7 +5,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-public partial interface ISortedSetCommands
+public partial interface IRespireSortedSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> AddAsync(RespireKey key, RespireSortedSetAddOptions options, (RespireValue Member, double Score) entry, CancellationToken cancellationToken);

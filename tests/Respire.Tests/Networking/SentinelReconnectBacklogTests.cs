@@ -438,7 +438,7 @@ public partial class SentinelRoutingTests
                     ReconnectPolicy = reconnectPolicy,
                     RetryPolicy = retryPolicy,
                     CircuitBreaker = circuitBreaker,
-                    Protocol = clientCache ? RespProtocol.Resp3 : RespProtocol.Resp2,
+                    Protocol = clientCache ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
                     ClientSideCache = clientCache ? new() : null,
                     CommandTimeout = noCommandTimeout ? null : commandTimeout ?? Limit,
                     TestingStreamFactory = async (host, targetPort, token) =>

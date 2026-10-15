@@ -11,48 +11,48 @@ public class DeferredFacetParityTests
     private static readonly HashSet<MethodInfo> ImmediateOnlyMethods =
     [
         // Array scans page by index while streaming; only individual pages can be queued.
-        .. typeof(IArrayCommands).GetMethods().Where(method => method.Name == nameof(IArrayCommands.ScanAsync)),
+        .. typeof(IRespireArrayCommands).GetMethods().Where(method => method.Name == nameof(IRespireArrayCommands.ScanAsync)),
         // Opening an import session acquires a connection and owns its lifetime; it is not a queued command.
-        typeof(IHashCommands).GetMethod(nameof(IHashCommands.CreateImportSessionAsync),
+        typeof(IRespireHashCommands).GetMethod(nameof(IRespireHashCommands.CreateImportSessionAsync),
             [typeof(CancellationToken)])!,
-        typeof(IHashCommands).GetMethod(nameof(IHashCommands.CreateImportSessionAsync),
+        typeof(IRespireHashCommands).GetMethod(nameof(IRespireHashCommands.CreateImportSessionAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,
         // Cursor scans issue multiple commands while streaming; they are not one queued result.
-        typeof(IKeyCommands).GetMethod(nameof(IKeyCommands.ScanAsync),
+        typeof(IRespireKeyCommands).GetMethod(nameof(IRespireKeyCommands.ScanAsync),
             [typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,
         // A resumable page also discovers/validates multiple primaries before committing progress.
-        typeof(IKeyCommands).GetMethod(nameof(IKeyCommands.ScanClusterPageAsync),
+        typeof(IRespireKeyCommands).GetMethod(nameof(IRespireKeyCommands.ScanClusterPageAsync),
             [typeof(RespireClusterScanCursor), typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,
-        typeof(IHashCommands).GetMethod(nameof(IHashCommands.ScanAsync),
+        typeof(IRespireHashCommands).GetMethod(nameof(IRespireHashCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
-        typeof(IHashCommands).GetMethod(nameof(IHashCommands.ScanFieldsAsync),
+        typeof(IRespireHashCommands).GetMethod(nameof(IRespireHashCommands.ScanFieldsAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
-        typeof(ISetCommands).GetMethod(nameof(ISetCommands.ScanAsync),
+        typeof(IRespireSetCommands).GetMethod(nameof(IRespireSetCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
-        typeof(ISortedSetCommands).GetMethod(nameof(ISortedSetCommands.ScanAsync),
+        typeof(IRespireSortedSetCommands).GetMethod(nameof(IRespireSortedSetCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         // Single- and multi-key scalar list pops always block and cannot be queued.
-        .. typeof(IListCommands).GetMethods().Where(method => method.Name == nameof(IListCommands.PopAsync)
+        .. typeof(IRespireListCommands).GetMethods().Where(method => method.Name == nameof(IRespireListCommands.PopAsync)
             && method.GetParameters().Any(parameter => parameter.Name == "waitFor"
                 && parameter.ParameterType == typeof(TimeSpan?) && !parameter.IsOptional)),
         // Both typed and string multi-key scalar sorted-set pops always block on a dedicated lease.
-        .. typeof(ISortedSetCommands).GetMethods().Where(method => method.Name == nameof(ISortedSetCommands.PopAsync)
+        .. typeof(IRespireSortedSetCommands).GetMethods().Where(method => method.Name == nameof(IRespireSortedSetCommands.PopAsync)
             && method.GetParameters().Any(parameter => parameter.Name == "waitFor"
                 && parameter.ParameterType == typeof(TimeSpan?) && !parameter.IsOptional)),
         // A streamed reply owns a live network response and cannot be queued for batch completion.
-        typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetStreamAsync),
+        typeof(IRespireStringCommands).GetMethod(nameof(IRespireStringCommands.GetStreamAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,
         // Leased replies require explicit pooled-buffer ownership outside deferred completion.
-        typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetLeaseAsync),
+        typeof(IRespireStringCommands).GetMethod(nameof(IRespireStringCommands.GetLeaseAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,
-        .. typeof(IFunctionCommands).GetMethods().Where(method => method.Name is
-            nameof(IFunctionCommands.ExecuteLeaseAsync) or nameof(IFunctionCommands.ExecuteLeaseSpanAsync)),
+        .. typeof(IRespireFunctionCommands).GetMethods().Where(method => method.Name is
+            nameof(IRespireFunctionCommands.ExecuteLeaseAsync) or nameof(IRespireFunctionCommands.ExecuteLeaseSpanAsync)),
         // Stream payloads are immediate-only: deferred batches snapshot values and cannot hold
         // a multiplexed connection while asynchronously reading an external source.
-        typeof(IStringCommands).GetMethod(nameof(IStringCommands.SetAsync),
-            [typeof(RespireKey), typeof(Stream), typeof(long), typeof(RespireExpiry), typeof(SetWhen), typeof(CancellationToken)])!,
-        typeof(IStringCommands).GetMethod(nameof(IStringCommands.SetAsync),
-            [typeof(RespireKey), typeof(ReadOnlySequence<byte>), typeof(RespireExpiry), typeof(SetWhen), typeof(CancellationToken)])!,
+        typeof(IRespireStringCommands).GetMethod(nameof(IRespireStringCommands.SetAsync),
+            [typeof(RespireKey), typeof(Stream), typeof(long), typeof(RespireExpiry), typeof(RespireSetWhen), typeof(CancellationToken)])!,
+        typeof(IRespireStringCommands).GetMethod(nameof(IRespireStringCommands.SetAsync),
+            [typeof(RespireKey), typeof(ReadOnlySequence<byte>), typeof(RespireExpiry), typeof(RespireSetWhen), typeof(CancellationToken)])!,
     ];
 
     [Test]
@@ -86,22 +86,22 @@ public class DeferredFacetParityTests
         // outside the current deferred facet. New method names must be classified explicitly.
         string[] clientOnly =
         [
-            nameof(IStreamCommands.CreateGroupAsync), nameof(IStreamCommands.DeleteGroupAsync),
-            nameof(IStreamCommands.DeleteConsumerAsync), nameof(IStreamCommands.SetGroupPositionAsync),
-            nameof(IStreamCommands.CreateConsumerAsync), nameof(IStreamCommands.SetLastIdAsync),
-            nameof(IStreamCommands.PendingSummaryAsync), nameof(IStreamCommands.PendingAsync),
-            nameof(IStreamCommands.ClaimAsync), nameof(IStreamCommands.ClaimPendingAsync),
-            nameof(IStreamCommands.ClaimIdsAsync), nameof(IStreamCommands.ClaimPendingIdsAsync),
-            nameof(IStreamCommands.InfoAsync), nameof(IStreamCommands.GroupInfoAsync),
-            nameof(IStreamCommands.ConsumerInfoAsync),
-            nameof(IStreamCommands.ReadAllAsync),
+            nameof(IRespireStreamCommands.CreateGroupAsync), nameof(IRespireStreamCommands.DeleteGroupAsync),
+            nameof(IRespireStreamCommands.DeleteConsumerAsync), nameof(IRespireStreamCommands.SetGroupPositionAsync),
+            nameof(IRespireStreamCommands.CreateConsumerAsync), nameof(IRespireStreamCommands.SetLastIdAsync),
+            nameof(IRespireStreamCommands.PendingSummaryAsync), nameof(IRespireStreamCommands.PendingAsync),
+            nameof(IRespireStreamCommands.ClaimAsync), nameof(IRespireStreamCommands.ClaimPendingAsync),
+            nameof(IRespireStreamCommands.ClaimIdsAsync), nameof(IRespireStreamCommands.ClaimPendingIdsAsync),
+            nameof(IRespireStreamCommands.InfoAsync), nameof(IRespireStreamCommands.GroupInfoAsync),
+            nameof(IRespireStreamCommands.ConsumerInfoAsync),
+            nameof(IRespireStreamCommands.ReadAllAsync),
         ];
-        var immediate = typeof(IStreamCommands).GetMethods();
+        var immediate = typeof(IRespireStreamCommands).GetMethods();
         await Assert.That(clientOnly.Except(immediate.Select(method => method.Name)).ToArray()).IsEmpty();
-        var actual = typeof(IBatchStreamCommands).GetMethods()
+        var actual = typeof(IRespireBatchStreamCommands).GetMethods()
             .Select(method => Signature(method, immediate: false)).ToHashSet();
         var expected = immediate.Where(method => !clientOnly.Contains(method.Name)
-                && !(method.Name == nameof(IStreamCommands.ReadGroupAsync)
+                && !(method.Name == nameof(IRespireStreamCommands.ReadGroupAsync)
                     && method.ReturnType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>)))
             .Select(method => DeferredSignature(method, actual)).ToArray();
         await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
@@ -133,8 +133,8 @@ public class DeferredFacetParityTests
         // The string-field convenience preserves the existing scalar RespireKey result.
         // Deferred callers select that result explicitly with (RespireKey)field; a
         // bare string selects the existing params-string overload returning an array.
-        if (method.DeclaringType == typeof(IHashCommands)
-            && method.Name == nameof(IHashCommands.ExpiryAsync)
+        if (method.DeclaringType == typeof(IRespireHashCommands)
+            && method.Name == nameof(IRespireHashCommands.ExpiryAsync)
             && parameters.SequenceEqual([nameof(RespireKey), nameof(String)]))
         {
             parameters[1] = nameof(RespireKey);
@@ -155,7 +155,7 @@ public class DeferredFacetParityTests
         // Compare generic parameters by position; this shape audit does not compare their constraints.
         var name = immediate ? method.Name[..^"Async".Length] : method.Name;
         // Single-stream group pages distinguish themselves from existing consumer loops by name.
-        if (immediate && method.Name == nameof(IStreamCommands.ReadGroupOnceAsync)) name = nameof(IBatchStreamCommands.ReadGroup);
+        if (immediate && method.Name == nameof(IRespireStreamCommands.ReadGroupOnceAsync)) name = nameof(IRespireBatchStreamCommands.ReadGroup);
         parameters ??= CommandParameters(method, immediate);
         var result = method.ReturnType.GetGenericArguments().Single();
         return $"{name}`{method.GetGenericArguments().Length}({string.Join(", ", parameters)}): {TypeName(result)}";

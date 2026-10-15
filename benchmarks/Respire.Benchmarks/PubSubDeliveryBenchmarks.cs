@@ -31,12 +31,12 @@ public class PubSubDeliveryBenchmarks
         _readers = new IAsyncEnumerator<RespireMessage>[Subscribers];
         for (var i = 0; i < Subscribers; i++)
         {
-            var subscription = new RespireSubscription(hub, SubscriptionKind.Channel,
-                ["events"], 16, SubscriptionOverflow.DropOldest);
+            var subscription = new RespireSubscription(hub, RespireSubscriptionKind.Channel,
+                ["events"], 16, RespireSubscriptionOverflow.DropOldest);
             subscriptions.Add(subscription);
             _readers[i] = subscription.GetAsyncEnumerator();
         }
-        routes[(int)SubscriptionKind.Channel].Add("events", subscriptions);
+        routes[(int)RespireSubscriptionKind.Channel].Add("events", subscriptions);
         _frame = RespValue.Array(RespValue.BulkString("message"),
             RespValue.BulkString("events"), RespValue.BulkString("payload"));
 

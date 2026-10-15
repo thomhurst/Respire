@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IServerCommands",
+      "Type": "Respire.IRespireServerCommands",
       "OwnerType": "Respire.ServerCommands",
       "Members": [
         "PubSubChannelsAsync(RespireChannel?,bool,CancellationToken):ValueTask<RespireChannel[]>",

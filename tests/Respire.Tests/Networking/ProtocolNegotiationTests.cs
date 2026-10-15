@@ -57,7 +57,7 @@ public class ProtocolNegotiationTests
             },
         };
         await using var client = await RespireClient.ConnectAsync(Options(server) with { Connections = 2 });
-        var shapes = new HashSet<Respire.Protocol.RespDataType>();
+        var shapes = new HashSet<Respire.Protocol.RespireDataType>();
         for (var index = 0; index < 4; index++)
         {
             using var raw = await client.ExecuteAsync((RespireCommand)"HGETALL", ["hash"]);
@@ -66,7 +66,7 @@ public class ProtocolNegotiationTests
             await Assert.That(raw[0].AsString()).IsEqualTo("a");
             await Assert.That(raw[1].AsString()).IsEqualTo("1");
         }
-        await Assert.That(shapes).IsEquivalentTo([Respire.Protocol.RespDataType.Map, Respire.Protocol.RespDataType.Array]);
+        await Assert.That(shapes).IsEquivalentTo([Respire.Protocol.RespireDataType.Map, Respire.Protocol.RespireDataType.Array]);
         for (var index = 0; index < 4; index++)
             await Assert.That(await client.Hashes.GetAllAsync("hash"))
                 .IsEquivalentTo(new Dictionary<string, string> { ["a"] = "1" });
@@ -107,21 +107,21 @@ public class ProtocolNegotiationTests
     }
 
     [Test]
-    [Arguments("ERR proxy does not implement this operation", RespProtocol.Auto, false, true)]
-    [Arguments("ERR unknown command HELLO", RespProtocol.Auto, false, true)]
-    [Arguments("ERR authentication failed", RespProtocol.Auto, false, false)]
-    [Arguments("ERR invalid password", RespProtocol.Auto, false, false)]
-    [Arguments("ERR ACL denied", RespProtocol.Auto, false, false)]
-    [Arguments("ERR invalid credential", RespProtocol.Auto, false, false)]
-    [Arguments("ERR permission denied", RespProtocol.Auto, false, false)]
-    [Arguments("ERR authoritative proxy rejected HELLO", RespProtocol.Auto, false, false)]
-    [Arguments("WRONGPASS invalid username-password pair", RespProtocol.Auto, false, false)]
-    [Arguments("NOAUTH Authentication required", RespProtocol.Auto, false, false)]
-    [Arguments("NOPERM denied", RespProtocol.Auto, false, false)]
-    [Arguments("ERR proxy does not implement this operation", RespProtocol.Resp3, false, false)]
-    [Arguments("ERR proxy does not implement this operation", RespProtocol.Auto, true, false)]
+    [Arguments("ERR proxy does not implement this operation", RespireProtocol.Auto, false, true)]
+    [Arguments("ERR unknown command HELLO", RespireProtocol.Auto, false, true)]
+    [Arguments("ERR authentication failed", RespireProtocol.Auto, false, false)]
+    [Arguments("ERR invalid password", RespireProtocol.Auto, false, false)]
+    [Arguments("ERR ACL denied", RespireProtocol.Auto, false, false)]
+    [Arguments("ERR invalid credential", RespireProtocol.Auto, false, false)]
+    [Arguments("ERR permission denied", RespireProtocol.Auto, false, false)]
+    [Arguments("ERR authoritative proxy rejected HELLO", RespireProtocol.Auto, false, false)]
+    [Arguments("WRONGPASS invalid username-password pair", RespireProtocol.Auto, false, false)]
+    [Arguments("NOAUTH Authentication required", RespireProtocol.Auto, false, false)]
+    [Arguments("NOPERM denied", RespireProtocol.Auto, false, false)]
+    [Arguments("ERR proxy does not implement this operation", RespireProtocol.Resp3, false, false)]
+    [Arguments("ERR proxy does not implement this operation", RespireProtocol.Auto, true, false)]
     public async Task CompatibilityHintIsLimitedToUnclassifiedAutomaticHelloErrors(
-        string error, RespProtocol protocol, bool tracking, bool expectHint)
+        string error, RespireProtocol protocol, bool tracking, bool expectHint)
     {
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes("-" + error + "\r\n"));
         RespireConnectionException? failure = null;
@@ -146,7 +146,7 @@ public class ProtocolNegotiationTests
     public async Task ExplicitResp2DoesNotSendHello()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        await using var client = await RespireClient.ConnectAsync(Options(server) with { Protocol = RespProtocol.Resp2 });
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { Protocol = RespireProtocol.Resp2 });
         await client.PingAsync();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["PING"], CollectionOrdering.Matching);
     }
@@ -159,7 +159,7 @@ public class ProtocolNegotiationTests
         await using var server = new FakeRespServer("-NOPROTO unsupported protocol version\r\n"u8.ToArray());
         await Assert.That(async () => await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = caching ? RespProtocol.Auto : RespProtocol.Resp3,
+            Protocol = caching ? RespireProtocol.Auto : RespireProtocol.Resp3,
             ClientSideCache = caching ? new() : null,
         })).Throws<RespireConnectionException>();
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
@@ -172,7 +172,7 @@ public class ProtocolNegotiationTests
         await using var server = new FakeRespServer("-NOPROTO unsupported protocol version\r\n"u8.ToArray(),
             FakeRespServer.OkReply);
         await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { Protocol = RespProtocol.Auto, EnableClientTracking = true }))
+            new RespireConnectionOptions { Protocol = RespireProtocol.Auto, EnableClientTracking = true }))
             .Throws<RespireConnectionException>();
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
         await Assert.That(server.ReceivedCommands.All(command => !command.StartsWith("AUTH"))).IsTrue();
@@ -222,8 +222,8 @@ public class ProtocolNegotiationTests
     public async Task ConnectionStringsPreferResp3(string text)
     {
         var options = RespireOptions.Parse(text);
-        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Auto);
-        await Assert.That(options.ToConnectionOptions().Protocol).IsEqualTo(RespProtocol.Auto);
+        await Assert.That(options.Protocol).IsEqualTo(RespireProtocol.Auto);
+        await Assert.That(options.ToConnectionOptions().Protocol).IsEqualTo(RespireProtocol.Auto);
     }
 
     private static RespireOptions Options(FakeRespServer server) => new()

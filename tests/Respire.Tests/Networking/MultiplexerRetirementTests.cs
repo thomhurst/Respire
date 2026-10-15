@@ -32,7 +32,7 @@ public class MultiplexerRetirementTests
         var created = 0;
         var options = new RespireOptions
         {
-            Protocol = maintenance ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Protocol = maintenance ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             MaintenanceNotifications = maintenance
                 ? RespireMaintenanceNotificationMode.Enabled : RespireMaintenanceNotificationMode.Disabled,
         };

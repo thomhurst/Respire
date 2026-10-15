@@ -222,7 +222,7 @@ public class CanceledBulkDrainTests
     private static Task<RespireConnection> Connect(ScriptedStream stream, RespirePushHandler? pushHandler = null) => RespireConnection.ConnectAsync("scripted", 6379,
         new RespireConnectionOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             ReceiveBufferSize = ReceiveSize,
             PushHandler = pushHandler,
             TestingStreamFactory = (_, _, _) => ValueTask.FromResult<Stream>(stream),

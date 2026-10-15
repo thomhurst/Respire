@@ -264,7 +264,7 @@ public class CommandAdmissionTests
     private static Task<RespireConnection> ConnectAsync(FakeRespServer server)
         => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new RespireConnectionOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             CommandTimeout = null,
             MaxInflightCommands = 2, // ASKING plus the application command consume two slots.
         });

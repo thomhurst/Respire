@@ -419,7 +419,7 @@ public class ClusterReconnectBacklogTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp2, CommandTimeout = Limit, ConnectTimeout = Limit,
+            Protocol = RespireProtocol.Resp2, CommandTimeout = Limit, ConnectTimeout = Limit,
             ClusterTopologyRefreshInterval = null, RetryPolicy = null,
             TestingStreamFactory = async (host, port, token) =>
             {
@@ -643,7 +643,7 @@ public class ClusterReconnectBacklogTests
                 {
                     UseCluster = true, AllowAdmin = true, Endpoints = rejectedSeed is null ? [new("127.0.0.1", server.Port)]
                         : [new("127.0.0.1", rejectedSeed.Port), new("127.0.0.1", server.Port)], Connections = 1,
-                    Protocol = cache ? RespProtocol.Resp3 : RespProtocol.Resp2, Password = "test",
+                    Protocol = cache ? RespireProtocol.Resp3 : RespireProtocol.Resp2, Password = "test",
                     ConnectTimeout = Limit, CommandTimeout = commandTimeout ?? Limit, RetryPolicy = retryPolicy,
                     BacklogCapacity = capacity, BacklogPolicy = policy, ReconnectPolicy = reconnectPolicy,
                     ClientSideCache = cache ? new() : null,

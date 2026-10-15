@@ -398,30 +398,30 @@ Respire.RespireTransactionBase | method IPendingSink.Add`2(string, in TCommand, 
 Respire.RespireTransactionBase | method Increment(RespireKey, long) : RespirePending<long>
 # Designated test-inspection factory. New inspection access belongs in its nested view.
 Respire.RespireTransactionBase | method InspectForTests() : TestInspection
-Respire.RespireTransactionBase | method Set(RespireKey, RespireValue, RespireExpiry, SetWhen) : RespirePending<bool>
-Respire.RespireTransactionBase | method Set`1(RespireKey, T, RespireExpiry, SetWhen) : RespirePending<bool>
-Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<RespireGet<T>>
+Respire.RespireTransactionBase | method Set(RespireKey, RespireValue, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method Set`1(RespireKey, T, RespireExpiry, RespireSetWhen) : RespirePending<bool>
+Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<RespireGetResult<T>>
 Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : void
-Respire.RespireTransactionBase | property Arrays [public; get] : IBatchArrayCommands
-Respire.RespireTransactionBase | property Bitmaps [public; get] : IBatchBitmapCommands
+Respire.RespireTransactionBase | property Arrays [public; get] : IRespireBatchArrayCommands
+Respire.RespireTransactionBase | property Bitmaps [public; get] : IRespireBatchBitmapCommands
 Respire.RespireTransactionBase | property Count [public; get] : int
 Respire.RespireTransactionBase | property ExecutingConnection [internal; get, set] : RespireConnection?
-Respire.RespireTransactionBase | property Functions [public; get] : IBatchFunctionCommands
-Respire.RespireTransactionBase | property Geo [public; get] : IBatchGeoCommands
-Respire.RespireTransactionBase | property Hashes [public; get] : IBatchHashCommands
-Respire.RespireTransactionBase | property HyperLogLog [public; get] : IBatchHyperLogLogCommands
+Respire.RespireTransactionBase | property Functions [public; get] : IRespireBatchFunctionCommands
+Respire.RespireTransactionBase | property Geo [public; get] : IRespireBatchGeoCommands
+Respire.RespireTransactionBase | property Hashes [public; get] : IRespireBatchHashCommands
+Respire.RespireTransactionBase | property HyperLogLog [public; get] : IRespireBatchHyperLogLogCommands
 Respire.RespireTransactionBase | property IPendingSink.Client [explicit; get] : RespireClient
 Respire.RespireTransactionBase | property IPendingSink.DefersSerialization [explicit; get] : bool
 Respire.RespireTransactionBase | property IPendingSink.ImportSession [explicit; get] : RespireHashImportSession?
-Respire.RespireTransactionBase | property Keys [public; get] : IBatchKeyCommands
-Respire.RespireTransactionBase | property Lists [public; get] : IBatchListCommands
-Respire.RespireTransactionBase | property Scripts [public; get] : IBatchScriptCommands
-Respire.RespireTransactionBase | property Server [public; get] : IBatchServerCommands
-Respire.RespireTransactionBase | property Sets [public; get] : IBatchSetCommands
-Respire.RespireTransactionBase | property SortedSets [public; get] : IBatchSortedSetCommands
-Respire.RespireTransactionBase | property Streams [public; get] : IBatchStreamCommands
-Respire.RespireTransactionBase | property Strings [public; get] : IBatchStringCommands
-Respire.RespireTransactionBase | property VectorSets [public; get] : IBatchVectorSetCommands
+Respire.RespireTransactionBase | property Keys [public; get] : IRespireBatchKeyCommands
+Respire.RespireTransactionBase | property Lists [public; get] : IRespireBatchListCommands
+Respire.RespireTransactionBase | property Scripts [public; get] : IRespireBatchScriptCommands
+Respire.RespireTransactionBase | property Server [public; get] : IRespireBatchServerCommands
+Respire.RespireTransactionBase | property Sets [public; get] : IRespireBatchSetCommands
+Respire.RespireTransactionBase | property SortedSets [public; get] : IRespireBatchSortedSetCommands
+Respire.RespireTransactionBase | property Streams [public; get] : IRespireBatchStreamCommands
+Respire.RespireTransactionBase | property Strings [public; get] : IRespireBatchStringCommands
+Respire.RespireTransactionBase | property VectorSets [public; get] : IRespireBatchVectorSetCommands
 Respire.RespireTransactionBase | property RetryContext [private protected; get] : WatchedTransactionRetryContext?
 Respire.RespireTransactionBase | property WatchPool [private protected; get] : DedicatedConnectionPool?
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.

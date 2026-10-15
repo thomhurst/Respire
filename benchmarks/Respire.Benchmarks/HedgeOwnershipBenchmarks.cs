@@ -29,7 +29,7 @@ public class HedgeOwnershipBenchmarks
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var value) ? value : 6379;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new(host, port)],
         });
         _caller = DispatchResponseSource<int>.Start();

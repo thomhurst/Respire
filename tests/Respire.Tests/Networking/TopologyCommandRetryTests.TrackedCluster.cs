@@ -150,7 +150,7 @@ public partial class TopologyCommandRetryTests
         await using var source = TrackedClusterNode(command => command == "GET key" ? redirectReply : null);
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
@@ -181,7 +181,7 @@ public partial class TopologyCommandRetryTests
         });
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
         server.GateCommand("GET first", release.Task);
@@ -215,7 +215,7 @@ public partial class TopologyCommandRetryTests
             ? Interlocked.Increment(ref calls) % 2 == 1 || exhaust ? TryAgain : Value : null);
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
         for (var round = 0; round < 32; round++)
@@ -277,7 +277,7 @@ public partial class TopologyCommandRetryTests
                 var client = await RespireClient.ConnectAsync(options with
                 {
                     RetryPolicy = policy, CommandTimeout = timeout ?? TimeSpan.FromSeconds(5), Connections = 1,
-                    Protocol = RespProtocol.Resp3,
+                    Protocol = RespireProtocol.Resp3,
                     ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
                 });
                 return new(server, client, sentinel);

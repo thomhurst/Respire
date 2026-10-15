@@ -41,7 +41,7 @@ internal sealed partial class RespireCoherentHybridCache
         try
         {
             await using var subscription = await TrackingClient.SubscribeAsync(_tagChannel!,
-                new RespireSubscriptionOptions(options.TagInvalidationBufferSize, SubscriptionOverflow.DropOldest)
+                new RespireSubscriptionOptions(options.TagInvalidationBufferSize, RespireSubscriptionOverflow.DropOldest)
                 { MaxPayloadBytes = options.MaxTagInvalidationMessageBytes }, _tagLifetime.Token).ConfigureAwait(false);
             subscription.DeliveryGap += TagDeliveryGap;
             try

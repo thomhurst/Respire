@@ -5,7 +5,7 @@
       "OwnerType": "Respire.RespireServerNode",
       "Members": [
         "ClusterCancelSlotMigrationsAsync(CancellationToken):ValueTask",
-        "ClusterFlushSlotAsync(int,ServerFlushMode,CancellationToken):ValueTask",
+        "ClusterFlushSlotAsync(int,RespireServerFlushMode,CancellationToken):ValueTask",
         "ClusterGetSlotMigrationsAsync(CancellationToken):ValueTask<RespireValkeySlotMigration[]>",
         "ClusterMigrateSlotsAsync(ReadOnlySpan<RespireValkeySlotMigrationGroup>,CancellationToken):ValueTask"
       ],

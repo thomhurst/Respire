@@ -273,7 +273,7 @@ public class RespFramingTests
         writer = new RespWriter(buffer);
         try
         {
-            new SetCommand("key", "value", RespireExpiry.Persist, SetWhen.Always, false).Write(ref writer);
+            new SetCommand("key", "value", RespireExpiry.Persist, RespireSetWhen.Always, false).Write(ref writer);
             throw new InvalidOperationException("Invalid expiry was accepted.");
         }
         catch (ArgumentException) { }

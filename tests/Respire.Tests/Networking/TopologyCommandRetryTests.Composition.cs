@@ -220,7 +220,7 @@ public partial class TopologyCommandRetryTests
                 var client = await RespireClient.ConnectAsync(options with
                 {
                     RetryPolicy = policy, CommandTimeout = timeout ?? TimeSpan.FromSeconds(5), Connections = 1,
-                    Protocol = RespProtocol.Resp2,
+                    Protocol = RespireProtocol.Resp2,
                 });
                 return new(server, client, sentinel, null, shape);
             }

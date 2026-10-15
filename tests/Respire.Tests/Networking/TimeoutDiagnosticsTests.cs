@@ -41,7 +41,7 @@ public class TimeoutDiagnosticsTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)], UseCluster = true, Connections = 1,
             ClientName = "redirect-timeout", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
         });
@@ -94,7 +94,7 @@ public class TimeoutDiagnosticsTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", port)], Connections = 1, UseTls = true,
             ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
         });
@@ -149,7 +149,7 @@ public class TimeoutDiagnosticsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Database = 1, Connections = 1,
             ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
         });
@@ -215,7 +215,7 @@ public class TimeoutDiagnosticsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, CommandTimeout = null,
         });
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
@@ -282,7 +282,7 @@ public class TimeoutDiagnosticsTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", port) },
             Connections = 1, UseCluster = cluster, UseTls = true,
             CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromSeconds(5)
@@ -445,7 +445,7 @@ public class TimeoutDiagnosticsTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", cluster ? seed.Port : target.Port) },
             Connections = 1, UseCluster = cluster,
             CommandTimeout = TimeSpan.FromSeconds(2)
@@ -650,7 +650,7 @@ public class TimeoutDiagnosticsTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using RespireTransactionBase transaction = watched
@@ -866,7 +866,7 @@ public class TimeoutDiagnosticsTests
     private static ValueTask<RespireClient> ConnectAsync(int port)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", port) },
             Connections = 1, CommandTimeout = TimeSpan.FromMilliseconds(200)
         });

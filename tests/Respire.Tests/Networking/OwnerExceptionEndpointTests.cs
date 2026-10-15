@@ -27,7 +27,7 @@ public class OwnerExceptionEndpointTests
         ];
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 2, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 2, Endpoints = [new("127.0.0.1", server.Port)],
             ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero, JitterRatio = 0 },
         });
         var multiplexer = client.Core.Multiplexer;
@@ -175,7 +175,7 @@ public class OwnerExceptionEndpointTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var first = await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync())
             .ThrowsExactly<RespireServerException>();
@@ -229,7 +229,7 @@ public class OwnerExceptionEndpointTests
             ? [new("127.0.0.1", first.Port)] : [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)];
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = [new("127.0.0.1", first.Port)],
             ReplicaEndpoints = endpoints,
@@ -314,7 +314,7 @@ public class OwnerExceptionEndpointTests
         RespireEndpoint[] endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)];
         var error = await Assert.That(async () => await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
             Endpoints = endpoints, Password = "test-only",
         })).ThrowsExactly<RespireConnectionException>();
         await Assert.That(error!.Endpoint).IsNull();
@@ -365,7 +365,7 @@ public class OwnerExceptionEndpointTests
 
     private static RespireOptions SentinelOptions(params int[] ports) => new()
     {
-        Protocol = RespProtocol.Resp2,
+        Protocol = RespireProtocol.Resp2,
         Connections = 1,
         SentinelPrimaryName = "mymaster",
         Endpoints = ports.Select(port => new RespireEndpoint("127.0.0.1", port)).ToList(),

@@ -556,7 +556,7 @@ public class StandaloneReconnectBacklogTests
         byte[] SetValue() { value = "new"; return FakeRespServer.OkReply; }
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
         });
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -636,7 +636,7 @@ public class StandaloneReconnectBacklogTests
 
     private static RespireOptions Options(int port) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], Connections = 1, Protocol = RespProtocol.Resp2, Database = 1,
+        Endpoints = [new("127.0.0.1", port)], Connections = 1, Protocol = RespireProtocol.Resp2, Database = 1,
         RetryPolicy = null, ConnectTimeout = Limit, CommandTimeout = Limit,
     };
 

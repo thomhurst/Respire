@@ -31,7 +31,7 @@ public partial class ErrorMetricsTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
             CircuitBreaker = circuit ? new() : null,
         }, deadline.Token);
@@ -216,7 +216,7 @@ public partial class ErrorMetricsTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = true,
+            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = true,
             ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", first.Port)],
         }, deadline.Token);
         var pool = await client.Core.Cluster!.GetDedicatedPoolAsync(slot, deadline.Token, discovery: null, observation: default);

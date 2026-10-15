@@ -185,7 +185,7 @@ public class SentinelFenceTransitionTests
             .BindDownReportsToCurrentPrimary(new(hostname, currentPeer));
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
         };
         var validations = 0;
         var accepted = false;
@@ -222,7 +222,7 @@ public class SentinelFenceTransitionTests
         var endpoint = new RespireEndpoint("127.0.0.1", reporter.Port);
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster", Endpoints = [endpoint],
         };
         // This Sentinel has only observed A's outage. Another Sentinel may report B down,
         // but cannot authorize this stale reporter to replace B with its old ROLE-master A.
@@ -297,7 +297,7 @@ public class SentinelFenceTransitionTests
                 };
                 var options = new RespireOptions
                 {
-                    Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+                    Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
                     Endpoints = [new("127.0.0.1", reporter.Port)],
                 };
                 var state = new SentinelDiscoveryState(options.Endpoints);
@@ -369,7 +369,7 @@ public class SentinelFenceTransitionTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var validations = 0;

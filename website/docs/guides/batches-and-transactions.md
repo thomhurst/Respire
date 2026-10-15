@@ -222,7 +222,7 @@ These have no deferred form:
 
 Both queues expose `Server.FlushDatabase(mode)` and `Server.FlushAll(mode)`, which return `RespirePending<bool>` (`true` for `OK`). Enable `RespireOptions.AllowAdmin` before queuing them.
 
-- `ServerFlushMode.Default` uses the server's configured behavior. `Sync` and `Async` choose how memory is reclaimed. All modes remove keys logically before replying.
+- `RespireServerFlushMode.Default` uses the server's configured behavior. `Sync` and `Async` choose how memory is reclaimed. All modes remove keys logically before replying.
 - A client key prefix does not narrow the database-wide or server-wide scope.
 - A queued flush affects only its execution node. In Cluster batches, keyless flushes form a separate routing group, with no ordering relative to keyed groups. Transactions flush their selected node, including a node selected by keys queued later.
 - To flush every discovered primary, use immediate `redis.Server.FlushDatabaseAsync(mode, cancellationToken)` or `FlushAllAsync(mode, cancellationToken)`. That fan-out is not atomic across the Cluster.
@@ -233,14 +233,14 @@ The raw `Execute` queue method supports known nonblocking command forms; see [de
 
 ## Deferred Streams
 
-Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or more same-slot streams, with owned results. Both accept `StreamReadOptions`, but reject `WaitFor` when queued. See [stream reads](../commands/collections.md#reading-without-consumer-groups).
+Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or more same-slot streams, with owned results. Both accept `RespireStreamReadOptions`, but reject `WaitFor` when queued. See [stream reads](../commands/collections.md#reading-without-consumer-groups).
 
 | Method | Command |
 | --- | --- |
 | `Add` | XADD |
 | `Count` | XLEN |
 | `Range` | XRANGE / XREVRANGE |
-| `Remove` | XDEL, or XDELEX with a `StreamReferencePolicy` |
+| `Remove` | XDEL, or XDELEX with a `RespireStreamReferencePolicy` |
 | `Trim`, `TrimByMaxLength` | XTRIM |
 | `Acknowledge` | XACK |
 | `AcknowledgeAndRemove` | XACKDEL |
@@ -251,7 +251,7 @@ Both queues expose nonblocking `Streams.Read` and `Streams.ReadGroup` for one or
 - Parameters match the immediate methods, without cancellation tokens.
 - `Add` with `RespireStreamAddOptions` returns a nullable ID, null when NOMKSTREAM skips an absent stream.
 - `Range` supports inclusive bounds, count, and descending order.
-- `Trim` accepts `StreamTrimOptions`; see [stream trimming](../commands/collections.md#trimming).
+- `Trim` accepts `RespireStreamTrimOptions`; see [stream trimming](../commands/collections.md#trimming).
 
 ```csharp
 await using var transaction = redis.CreateTransaction();

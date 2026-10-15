@@ -33,7 +33,7 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
         await Message(subscriber, channel, "before exec");
         using (var executed = await transaction.CommandAsync("EXEC"))
         {
-            executed.Type.Should().Be(RespDataType.Array);
+            executed.Type.Should().Be(RespireDataType.Array);
             executed.AsArray().Length.Should().Be(2);
             executed.AsArray()[0].AsInteger().Should().Be(1);
             executed.AsArray()[1].AsInteger().Should().Be(1);
@@ -52,13 +52,13 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
         await using var session = await TestRespSession.ConnectAsync(Options(fake, 3));
         var channel = $"self:{Guid.NewGuid():N}";
         using (var subscribed = await session.CommandAsync("SUBSCRIBE", channel))
-            subscribed.Type.Should().Be(RespDataType.Push);
+            subscribed.Type.Should().Be(RespireDataType.Push);
         await Text(session, "OK", "MULTI");
         await Text(session, "QUEUED", "PUBLISH", channel, "payload");
         await Text(session, "QUEUED", "PING");
         using (var executed = await session.CommandAsync("EXEC"))
         {
-            executed.Type.Should().Be(RespDataType.Array);
+            executed.Type.Should().Be(RespireDataType.Array);
             executed.AsArray()[0].AsInteger().Should().Be(1);
             executed.AsArray()[1].AsString().Should().Be("PONG");
         }
@@ -99,7 +99,7 @@ public class FakeTransactionPubSubParityTests(ModernRedisTestContainer fixture)
     }
 
     private RespireOptions Options(RespireFakeServer? fake, int protocol)
-        => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol };
+        => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespireProtocol)protocol };
 
     private static async Task Text(TestRespSession session, string expected, params string[] arguments)
     {

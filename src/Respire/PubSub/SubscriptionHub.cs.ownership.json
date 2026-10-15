@@ -4,14 +4,14 @@
     {
       "Name": "pubsub-direct-activation",
       "Role": "helper",
-      "Member": "Respire.Internal.SubscriptionHub.SubscribeAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
+      "Member": "Respire.Internal.SubscriptionHub.SubscribeAsync(RespireSubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Start the final dispatch owner before subscription construction, admission or activation; complete after rollback and control-gate cleanup."
     },
     {
       "Name": "pubsub-borrowed-activation",
       "Role": "borrower",
-      "Member": "Respire.Internal.SubscriptionHub.SubscribeAsync(SubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireSubscription>",
+      "Member": "Respire.Internal.SubscriptionHub.SubscribeAsync(RespireSubscriptionKind,RespireChannel[],RespireSubscriptionOptions,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireSubscription>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Borrow the caller owner through subscription construction, activation, fan-out and rollback. Detached recovery never borrows a returned activation owner."
     },
@@ -25,7 +25,7 @@
     {
       "Name": "pubsub-ordinary-recovery-control",
       "Role": "internal",
-      "Member": "Respire.Internal.SubscriptionHub.SendRecoveryControlAsync(RespireConnection,SubscriptionKind,RespireChannel,CancellationToken):ValueTask",
+      "Member": "Respire.Internal.SubscriptionHub.SendRecoveryControlAsync(RespireConnection,RespireSubscriptionKind,RespireChannel,CancellationToken):ValueTask",
       "Owner": null,
       "Contract": "The control helper owns a failure-only internal replay attempt; no nested final publication and no error for subscription shutdown."
     }

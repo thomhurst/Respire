@@ -454,7 +454,7 @@ internal sealed class SentinelMonitoring(
             TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
             Protocol = !authDisabled && (options.SentinelCredentialProvider is not null
                 || (!useSeparateCredentials && options.CredentialProvider is not null)
-                ) ? RespProtocol.Resp3 : RespProtocol.Resp2,
+                ) ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ReconnectTelemetryScope = SentinelMonitorReconnectScope,
             ReconnectEpisodeStarted = reconnectEpisodeStarted,

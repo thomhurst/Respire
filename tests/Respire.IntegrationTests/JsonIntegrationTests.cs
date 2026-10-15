@@ -84,7 +84,7 @@ public partial class JsonIntegrationTests(ModernRedisTestContainer fixture)
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -128,7 +128,7 @@ public partial class JsonIntegrationTests(ModernRedisTestContainer fixture)
 
     private Task<RespireClient> ConnectAsync(int protocol)
         => RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol }).AsTask();
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol }).AsTask();
 
     internal sealed record Customer(string? Name, int Age);
 

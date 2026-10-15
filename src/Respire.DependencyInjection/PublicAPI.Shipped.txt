@@ -31,7 +31,7 @@ Respire.DependencyInjection.RespireOptionsBuilder.MaxInflightCommands.get -> int
 Respire.DependencyInjection.RespireOptionsBuilder.MaxInflightCommands.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.Password.get -> string?
 Respire.DependencyInjection.RespireOptionsBuilder.Password.set -> void
-Respire.DependencyInjection.RespireOptionsBuilder.Protocol.get -> Respire.RespProtocol
+Respire.DependencyInjection.RespireOptionsBuilder.Protocol.get -> Respire.RespireProtocol
 Respire.DependencyInjection.RespireOptionsBuilder.Protocol.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.PubSubPrefix.get -> Respire.RespireKey
 Respire.DependencyInjection.RespireOptionsBuilder.PubSubPrefix.set -> void
@@ -56,7 +56,7 @@ Respire.DependencyInjection.RespireOptionsBuilder.Serializer.get -> Respire.Seri
 Respire.DependencyInjection.RespireOptionsBuilder.Serializer.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionBufferSize.get -> int
 Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionBufferSize.set -> void
-Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionOverflow.get -> Respire.SubscriptionOverflow
+Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionOverflow.get -> Respire.RespireSubscriptionOverflow
 Respire.DependencyInjection.RespireOptionsBuilder.SubscriptionOverflow.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveInterval.get -> System.TimeSpan?
 Respire.DependencyInjection.RespireOptionsBuilder.TcpKeepAliveInterval.set -> void

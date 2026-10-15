@@ -151,7 +151,7 @@ public class RedisRateLimiterTests
     {
         await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Connections = 1,
         });
         await using var limiter = new RespireCoordination(client).RateLimiters.TokenBucket(
@@ -174,7 +174,7 @@ public class RedisRateLimiterTests
         await using var sentinel = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [fixture.SentinelEndpoints[0]],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
         });
         await using var limiter = new RespireCoordination(client).RateLimiters.FixedWindow(
             "failover", permitLimit: 1, TimeSpan.FromSeconds(90));

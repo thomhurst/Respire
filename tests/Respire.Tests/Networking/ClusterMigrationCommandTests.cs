@@ -202,7 +202,7 @@ public class ClusterMigrationCommandTests
     private static RespireOptions Options(int port, int protocol) => new()
     {
         Endpoints = [new("127.0.0.1", port)], AllowAdmin = true, Connections = 1,
-        Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3,
+        Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     };
 

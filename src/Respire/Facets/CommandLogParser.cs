@@ -38,27 +38,27 @@ internal static class CommandLogParser
 
     internal static long NonnegativeInteger(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer || value.AsInteger() < 0)
+        if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
             throw new RespireProtocolException("COMMANDLOG counts, IDs, timestamps, and metrics must be nonnegative integers.");
         return value.AsInteger();
     }
 
     internal static bool Ok(in RespValue value)
     {
-        if (value.Type != RespDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
+        if (value.Type != RespireDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))
             throw new RespireProtocolException("COMMANDLOG RESET must return OK.");
         return true;
     }
 
     private static ReadOnlySpan<RespValue> Array(in RespValue value)
     {
-        if (value.Type != RespDataType.Array) throw new RespireProtocolException("COMMANDLOG entries and arguments must be arrays.");
+        if (value.Type != RespireDataType.Array) throw new RespireProtocolException("COMMANDLOG entries and arguments must be arrays.");
         return value.AsArray();
     }
 
     private static byte[] Bytes(in RespValue value)
     {
-        if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
             throw new RespireProtocolException("COMMANDLOG arguments and client metadata must be strings.");
         return value.AsSpan().ToArray();
     }

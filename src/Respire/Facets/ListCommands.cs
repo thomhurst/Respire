@@ -24,7 +24,7 @@ public enum RespireListSide
 /// dedicated pooled connection, so blocking never stalls multiplexed traffic — use
 /// an explicit null to wait indefinitely.
 /// </summary>
-public partial interface IListCommands
+public partial interface IRespireListCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> LeftPushIfExistsAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
@@ -174,7 +174,7 @@ public partial interface IListCommands
     ValueTask<bool> TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class ListCommands(RespireClient client) : IListCommands
+internal sealed partial class ListCommands(RespireClient client) : IRespireListCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> LeftPushIfExistsAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)

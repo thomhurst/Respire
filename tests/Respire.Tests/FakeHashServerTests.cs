@@ -15,7 +15,7 @@ public class FakeHashServerTests
     {
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await client.Hashes.SetAsync("hash", "counter", 1);
         await Number(client, "PEXPIRE", "hash", 1000);
         await client.Hashes.SetAsync("hash", "other", "value");

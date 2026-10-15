@@ -56,7 +56,7 @@ public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
     {
         var name = $"follow-recreate-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespProtocol)protocol, ClientName = name });
+            with { Protocol = (RespireProtocol)protocol, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.TimeSeries.AddAsync(name, 10, 1, cancellationToken: timeout.Token);
@@ -107,7 +107,7 @@ public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
     {
         var name = $"ts-follow-{Guid.NewGuid():N}";
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
-        { Protocol = (RespProtocol)protocol, Connections = 1, ClientName = name });
+        { Protocol = (RespireProtocol)protocol, Connections = 1, ClientName = name });
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);

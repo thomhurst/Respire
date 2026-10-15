@@ -7,9 +7,9 @@ namespace Respire.IntegrationTests;
 public class GeneratedHashModelIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task RealRedisRoundTrips(RespProtocol protocol)
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task RealRedisRoundTrips(RespireProtocol protocol)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {

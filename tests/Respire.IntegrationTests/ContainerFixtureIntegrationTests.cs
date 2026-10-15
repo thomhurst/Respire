@@ -59,7 +59,7 @@ public class ContainerFixtureIntegrationTests
             // Assert readiness immediately: no test-side polling can hide early return.
             await using var sentinel = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [endpoint], Protocol = RespProtocol.Resp2, AllowAdmin = true,
+                Endpoints = [endpoint], Protocol = RespireProtocol.Resp2, AllowAdmin = true,
             });
             using var primary = await sentinel.ExecuteAsync(RespireCommands.Sentinel.SENTINEL_GET_MASTER_ADDR_BY_NAME,
                 RespireContainerFixture.SentinelServiceName);
@@ -76,7 +76,7 @@ public class ContainerFixtureIntegrationTests
             fields["port"].Should().Be(fixture.DataEndpoints[1].Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
             fields["flags"].Should().Be("slave");
         }
-        await using (var client = await RespireClient.ConnectAsync(options with { Protocol = RespProtocol.Resp3 }))
+        await using (var client = await RespireClient.ConnectAsync(options with { Protocol = RespireProtocol.Resp3 }))
         {
             // These hash tags cover all three primary slot ranges in the Cluster fixture.
             foreach (var key in new[] { "{a}:fixture", "{b}:fixture", "{c}:fixture" })

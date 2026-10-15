@@ -32,7 +32,7 @@ public class StandaloneReplicaRoutingBenchmarks
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(host, _primaryPort)], ReplicaEndpoints = [new(host, _replicaPort)],
-            Protocol = RespProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             // These cases isolate prepared reads. Expiry/revalidation is covered by routing tests.
             ReplicaRefreshInterval = TimeSpan.FromHours(1),
         }).ConfigureAwait(false);

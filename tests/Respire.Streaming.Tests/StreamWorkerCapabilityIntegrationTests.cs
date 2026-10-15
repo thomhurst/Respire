@@ -126,7 +126,7 @@ public class StreamWorkerCapabilityIntegrationTests(RedisTestContainer redis)
     public async Task ServingVersionUsesNativeCommandsOrCompatibleFallback(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
-            with { Protocol = (RespProtocol)protocol });
+            with { Protocol = (RespireProtocol)protocol });
         var info = await client.Server.InfoAsync("server");
         var line = info.Split('\n').Single(value => value.StartsWith("redis_version:"));
         var version = Version.Parse(line["redis_version:".Length..].Trim().Split('-')[0]);

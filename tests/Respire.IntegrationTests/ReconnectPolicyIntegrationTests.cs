@@ -17,7 +17,7 @@ public class ReconnectPolicyIntegrationTests
         var options = new RespireOptions
         {
             Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
-            Connections = 1, Protocol = (RespProtocol)protocol, AllowAdmin = true,
+            Connections = 1, Protocol = (RespireProtocol)protocol, AllowAdmin = true,
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromMilliseconds(25), JitterRatio = 0, MaxAttempts = 1 },
         };
         await using var client = await RespireClient.ConnectAsync(options);

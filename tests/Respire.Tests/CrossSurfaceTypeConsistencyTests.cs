@@ -8,11 +8,11 @@ namespace Respire.Tests;
 public class CrossSurfaceTypeConsistencyTests
 {
     [Test]
-    [Arguments(typeof(IKeyCommands), "RenameAsync", typeof(IBatchKeyCommands), "Rename")]
-    [Arguments(typeof(IListCommands), "TrimAsync", typeof(IBatchListCommands), "Trim")]
-    [Arguments(typeof(IHyperLogLogCommands), "MergeAsync", typeof(IBatchHyperLogLogCommands), "Merge")]
-    [Arguments(typeof(IStringCommands), "SetManyAsync", typeof(IBatchStringCommands), "SetMany")]
-    [Arguments(typeof(IStringCommands), "SetManyIfNotExistsAsync", typeof(IBatchStringCommands), "SetManyIfNotExists")]
+    [Arguments(typeof(IRespireKeyCommands), "RenameAsync", typeof(IRespireBatchKeyCommands), "Rename")]
+    [Arguments(typeof(IRespireListCommands), "TrimAsync", typeof(IRespireBatchListCommands), "Trim")]
+    [Arguments(typeof(IRespireHyperLogLogCommands), "MergeAsync", typeof(IRespireBatchHyperLogLogCommands), "Merge")]
+    [Arguments(typeof(IRespireStringCommands), "SetManyAsync", typeof(IRespireBatchStringCommands), "SetMany")]
+    [Arguments(typeof(IRespireStringCommands), "SetManyIfNotExistsAsync", typeof(IRespireBatchStringCommands), "SetManyIfNotExists")]
     public async Task Writes_MatchDeferredBooleanResults(
         Type immediate, string immediateName, Type deferred, string deferredName)
     {

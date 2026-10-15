@@ -66,7 +66,11 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         }
         if (errors.Count != 0) return new GeneratedInterface(null, null, errors.ToArray());
 
-        var className = type.Name + "Implementation";
+        // Concrete implementations use the type prefix, not the conventional interface I.
+        var stem = type.Name.Length > 1 && type.Name[0] == 'I' && char.IsUpper(type.Name[1])
+            ? type.Name.Substring(1)
+            : type.Name;
+        var className = stem + "Implementation";
         if (type.ContainingNamespace.GetTypeMembers(className).Length != 0)
             return GeneratedInterface.Failed(type, $"Generated type '{className}' already exists in this namespace.");
 

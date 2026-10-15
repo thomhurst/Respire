@@ -20,7 +20,7 @@ public class TestRespSessionTests
         var options = new RespireOptions
         {
             Endpoints = [new("localhost", 6379)],
-            Protocol = RespProtocol.Resp2,
+            Protocol = RespireProtocol.Resp2,
             Database = stage == "SELECT" ? 1 : 0,
             TestingStreamFactory = async (_, _, token) =>
             {

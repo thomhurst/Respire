@@ -47,7 +47,7 @@ public class PinnedReceiveBenchmarks
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", _server!.Port) },
-            Protocol = RespProtocol.Resp2, Connections = connections,
+            Protocol = RespireProtocol.Resp2, Connections = connections,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ThreadPoolMonitoring = false,
         });

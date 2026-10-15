@@ -7,7 +7,7 @@
         "ClearLocalCachesAsync(CancellationToken):ValueTask",
         "DisposeAsync():ValueTask",
         "FlushAsync(CancellationToken):ValueTask",
-        "GetAsync(TKey,CancellationToken):ValueTask<RespireGet<TValue>>",
+        "GetAsync(TKey,CancellationToken):ValueTask<RespireGetResult<TValue>>",
         "PreloadAsync(CancellationToken):ValueTask",
         "PreloadAsync(IEnumerable<TKey>,CancellationToken):ValueTask<int>",
         "RemoveAsync(TKey,CancellationToken):ValueTask<bool>",

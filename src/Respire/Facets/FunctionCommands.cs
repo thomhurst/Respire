@@ -13,7 +13,7 @@ namespace Respire;
 /// <summary>Redis Functions (Redis 7+). Immediate mutations reach all discovered Cluster primaries.</summary>
 /// <remarks>LIST, DUMP and STATS inspect one routing node in Cluster. Use a client connected directly
 /// to each primary when inspecting or backing up divergent server state. Fan-out mutations are not atomic.</remarks>
-public interface IFunctionCommands
+public interface IRespireFunctionCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -96,16 +96,16 @@ public interface IFunctionCommands
     /// <summary>Deletes a library on the server or all discovered Cluster primaries; true on OK. Redis: FUNCTION DELETE.</summary>
     ValueTask<bool> DeleteAsync(string libraryName, CancellationToken cancellationToken = default);
     /// <summary>Clears libraries on the server or all discovered Cluster primaries; true on OK. Redis: FUNCTION FLUSH.</summary>
-    ValueTask<bool> FlushAsync(FunctionFlushMode mode = FunctionFlushMode.Default, CancellationToken cancellationToken = default);
+    ValueTask<bool> FlushAsync(RespireFunctionFlushMode mode = RespireFunctionFlushMode.Default, CancellationToken cancellationToken = default);
     /// <summary>Returns an owned binary library backup from one server. Redis: FUNCTION DUMP.</summary>
     ValueTask<byte[]> DumpAsync(CancellationToken cancellationToken = default);
     /// <summary>Restores libraries on the server or all discovered Cluster primaries; true on OK. Keep payload bytes unchanged until completion.</summary>
-    ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, FunctionRestorePolicy policy = FunctionRestorePolicy.Append, CancellationToken cancellationToken = default);
+    ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy = RespireFunctionRestorePolicy.Append, CancellationToken cancellationToken = default);
     /// <summary>Returns owned execution/engine statistics from one server. Redis: FUNCTION STATS.</summary>
     ValueTask<RespireFunctionStats> StatsAsync(CancellationToken cancellationToken = default);
 }
 
-internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
+internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<RespireResult> ExecuteAsync(RespireFunction function, RespireKey key, RespireValue[]? args = null, CancellationToken cancellationToken = default)
@@ -428,7 +428,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
                 return state.Commands.MutateAsync("FUNCTION DELETE", new Cmd1(FunctionVerbs.Delete, state.Name),
                     static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation);
             });
-    public ValueTask<bool> FlushAsync(FunctionFlushMode mode = FunctionFlushMode.Default, CancellationToken cancellationToken = default)
+    public ValueTask<bool> FlushAsync(RespireFunctionFlushMode mode = RespireFunctionFlushMode.Default, CancellationToken cancellationToken = default)
         => DispatchResponseSource<bool>.Run((Commands: this, Mode: mode, Token: cancellationToken),
             static (state, observation) => state.Commands.MutateAsync("FUNCTION FLUSH", FlushCommand(state.Mode),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation));
@@ -436,7 +436,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         => DispatchResponseSource<byte[]>.Run((Commands: this, Token: cancellationToken),
             static (state, observation) => state.Commands.QueryAsync("FUNCTION DUMP", new Cmd(FunctionVerbs.Dump),
                 state.Token, static (FunctionCommands _, in RespValue value) => value.AsSpan().ToArray(), observation: observation));
-    public ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, FunctionRestorePolicy policy = FunctionRestorePolicy.Append, CancellationToken cancellationToken = default)
+    public ValueTask<bool> RestoreAsync(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy = RespireFunctionRestorePolicy.Append, CancellationToken cancellationToken = default)
         => DispatchResponseSource<bool>.Run((Commands: this, Payload: payload, Policy: policy, Token: cancellationToken),
             static (state, observation) => state.Commands.MutateAsync("FUNCTION RESTORE", RestoreCommand(state.Payload, state.Policy),
                 static (FunctionCommands _, in RespValue value) => ResponseReader.Ok(in value), state.Token, observation));
@@ -464,16 +464,16 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         };
         return new(FunctionVerbs.List, args);
     }
-    internal static CmdN FlushCommand(FunctionFlushMode mode)
+    internal static CmdN FlushCommand(RespireFunctionFlushMode mode)
         => new(FunctionVerbs.Flush, mode switch
         {
-            FunctionFlushMode.Default => [], FunctionFlushMode.Sync => ["SYNC"], FunctionFlushMode.Async => ["ASYNC"],
+            RespireFunctionFlushMode.Default => [], RespireFunctionFlushMode.Sync => ["SYNC"], RespireFunctionFlushMode.Async => ["ASYNC"],
             _ => throw new ArgumentOutOfRangeException(nameof(mode))
         });
-    internal static CmdN RestoreCommand(ReadOnlyMemory<byte> payload, FunctionRestorePolicy policy)
+    internal static CmdN RestoreCommand(ReadOnlyMemory<byte> payload, RespireFunctionRestorePolicy policy)
         => new(FunctionVerbs.Restore, [payload, policy switch
         {
-            FunctionRestorePolicy.Append => "APPEND", FunctionRestorePolicy.Flush => "FLUSH", FunctionRestorePolicy.Replace => "REPLACE",
+            RespireFunctionRestorePolicy.Append => "APPEND", RespireFunctionRestorePolicy.Flush => "FLUSH", RespireFunctionRestorePolicy.Replace => "REPLACE",
             _ => throw new ArgumentOutOfRangeException(nameof(policy))
         }]);
 

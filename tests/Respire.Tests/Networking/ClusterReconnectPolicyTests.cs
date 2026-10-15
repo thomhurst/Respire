@@ -22,7 +22,7 @@ public class ClusterReconnectPolicyTests
             "-ERR topology unavailable\r\n"u8.ToArray(), FakeRespServer.PongReply);
         var options = new RespireOptions
         {
-            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test",
+            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test",
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port), new("127.0.0.1", last.Port)],
             ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = null,
             ReconnectPolicy = configured ? new()
@@ -59,7 +59,7 @@ public class ClusterReconnectPolicyTests
         var clock = new GatedDiscoveryClock();
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
+            UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 JitterRatio = 0, MaxAttempts = 1 },
@@ -1338,7 +1338,7 @@ public class ClusterReconnectPolicyTests
 
     private static RespireOptions Options(params int[] ports) => new()
     {
-        UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
+        UseCluster = true, Protocol = RespireProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
         ConnectTimeout = TimeSpan.FromSeconds(5),
         Endpoints = ports.Select(port => new RespireEndpoint("127.0.0.1", port)).ToArray(),
         ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },

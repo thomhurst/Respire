@@ -62,26 +62,26 @@ internal static class FunctionResponseReader
     }
     private static ReadOnlySpan<RespValue> Map(in RespValue value)
     {
-        if (value.Type is not (RespDataType.Map or RespDataType.Array) || value.AsArray().Length % 2 != 0)
+        if (value.Type is not (RespireDataType.Map or RespireDataType.Array) || value.AsArray().Length % 2 != 0)
             throw new RespireProtocolException("FUNCTION response requires key/value pairs.");
         return value.AsArray();
     }
     private static ReadOnlySpan<RespValue> Array(in RespValue value, bool allowSet = false)
     {
-        if (value.Type != RespDataType.Array && !(allowSet && value.Type == RespDataType.Set))
+        if (value.Type != RespireDataType.Array && !(allowSet && value.Type == RespireDataType.Set))
             throw new RespireProtocolException("FUNCTION response requires an array.");
         return value.AsArray();
     }
     private static string? NullableText(in RespValue value) => value.IsNull ? null : Text(in value);
     private static string Text(in RespValue value)
     {
-        if (value.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
+        if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.VerbatimString))
             throw new RespireProtocolException("FUNCTION response requires a string.");
         return value.AsString();
     }
     private static long Integer(in RespValue value)
     {
-        if (value.Type != RespDataType.Integer) throw new RespireProtocolException("FUNCTION response requires an integer.");
+        if (value.Type != RespireDataType.Integer) throw new RespireProtocolException("FUNCTION response requires an integer.");
         return value.AsInteger();
     }
 }

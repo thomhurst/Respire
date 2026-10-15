@@ -35,7 +35,7 @@ public class ClientCacheQueryDependencyWireTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
-            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
+            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
             CommandTimeout = Limit, ConnectTimeout = Limit,
         });
         var cache = client.Core.ClientCache!;
@@ -143,7 +143,7 @@ public class ClientCacheQueryDependencyWireTests
         using var response = await client.ExecuteAsync((RespireCommand)(hash ? "HMGET" : "STRLEN"),
             hash ? ["first", "a", "missing"] : ["first"], cancellationToken: cancellation);
         if (response.IsError) throw new RespireServerException(response.ErrorMessage);
-        if (!hash && response.Type != RespDataType.Integer) throw new FormatException("Expected an integer query reply.");
+        if (!hash && response.Type != RespireDataType.Integer) throw new FormatException("Expected an integer query reply.");
     }
 
     private static FakeRespServer Server() => new(FakeRespServer.OkReply)
@@ -166,7 +166,7 @@ public class ClientCacheQueryDependencyWireTests
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, bool coalesce)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp3,
             ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce },
             CommandTimeout = Limit, ConnectTimeout = Limit,
         });

@@ -172,7 +172,7 @@ public class FilterTests(ModernRedisTestContainer fixture)
 
     private async Task WithCollection(int protocol, Func<RespireVectorStoreCollection<FilterRecord>, Task> test)
     {
-        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         using var store = new RespireVectorStore(client, "filters:" + Guid.NewGuid().ToString("N"));
         store.RegisterMapper(new FilterMapper());
         using var collection = store.GetHashCollection<FilterRecord>("records");

@@ -61,7 +61,7 @@ public class SearchConfigurationIntegrationTests
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)],
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
             Connections = 1,
             AllowAdmin = true,
             ThreadPoolMonitoring = false,

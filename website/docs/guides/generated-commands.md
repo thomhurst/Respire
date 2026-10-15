@@ -2,7 +2,7 @@
 title: Generated custom commands
 ---
 
-Declare an interface for custom Redis module commands, and a source generator implements it without reflection or runtime code generation. The generator ships in the `Respire` NuGet package. It creates a sealed `<InterfaceName>Implementation` class in the interface's namespace; construct it with an `IRespireClient`.
+Declare an interface for custom Redis module commands, and a source generator implements it without reflection or runtime code generation. The generator ships in the `Respire` NuGet package. It creates a sealed `<Name>Implementation` class in the interface's namespace; construct it with an `IRespireClient`. A conventional interface prefix (`I` followed by an uppercase letter) is removed: `IJsonCommands` produces `JsonCommandsImplementation`. Other names are kept, so `Inventory` produces `InventoryImplementation`.
 
 <!-- doc-test-ignore: Generator interfaces must be top-level; the documentation harness nests declarations. The packed-package Native AOT smoke project validates the same construction and command shapes. -->
 ```csharp
@@ -25,7 +25,7 @@ public interface IJsonCommands
 }
 ```
 
-Then call `new IJsonCommandsImplementation(client).GetAsync("document")`. The server must provide the module commands; the generator does not install modules or check server versions.
+Then call `new JsonCommandsImplementation(client).GetAsync("document")`. The server must provide the module commands; the generator does not install modules or check server versions.
 
 ## Declarations and arguments
 

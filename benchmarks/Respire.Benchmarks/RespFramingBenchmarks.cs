@@ -65,7 +65,7 @@ public class RespFramingSerializationBenchmarks
     public int WriteSetOptions()
     {
         _buffer.Reset();
-        var command = new SetCommand(_key, _value, _expiry, SetWhen.Exists, returnOld: true);
+        var command = new SetCommand(_key, _value, _expiry, RespireSetWhen.Exists, returnOld: true);
 #if RESERVED_RESP_WRITER
         var writer = new RespWriter(_buffer, command.GetWriteSizeHint());
 #else
@@ -107,7 +107,7 @@ public class RespFramingPublicBenchmarks
         }
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespireProtocol.Resp2, Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         await _client.SortedSets.AddAsync(_rangeKey, "one", 1);

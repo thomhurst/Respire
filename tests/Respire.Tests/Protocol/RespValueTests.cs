@@ -13,7 +13,7 @@ public class RespValueTests
     {
         var value = RespValue.SimpleString("OK");
         
-        await Assert.That(value.Type).IsEqualTo(RespDataType.SimpleString);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.SimpleString);
         await Assert.That(value.AsString()).IsEqualTo("OK");
     }
     
@@ -22,7 +22,7 @@ public class RespValueTests
     {
         var value = RespValue.Integer(42);
         
-        await Assert.That(value.Type).IsEqualTo(RespDataType.Integer);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.Integer);
         await Assert.That(value.AsInteger()).IsEqualTo(42);
     }
     
@@ -31,7 +31,7 @@ public class RespValueTests
     {
         var value = RespValue.BulkString("Hello World");
         
-        await Assert.That(value.Type).IsEqualTo(RespDataType.BulkString);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.BulkString);
         await Assert.That(value.AsString()).IsEqualTo("Hello World");
     }
     
@@ -40,7 +40,7 @@ public class RespValueTests
     {
         var value = RespValue.Null;
         
-        await Assert.That(value.Type).IsEqualTo(RespDataType.Null);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.Null);
         await Assert.That(value.IsNull).IsTrue();
     }
     
@@ -53,7 +53,7 @@ public class RespValueTests
             RespValue.Integer(3)
         );
         
-        await Assert.That(array.Type).IsEqualTo(RespDataType.Array);
+        await Assert.That(array.Type).IsEqualTo(RespireDataType.Array);
         var items = array.AsArray();
         await Assert.That(items.Length).IsEqualTo(3);
         // Note: For simplified test implementation, AsArray returns empty
@@ -65,7 +65,7 @@ public class RespValueTests
     {
         var value = RespValue.Error("ERR unknown command");
         
-        await Assert.That(value.Type).IsEqualTo(RespDataType.Error);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.Error);
         await Assert.That(value.IsError).IsTrue();
         await Assert.That(value.GetErrorMessage()).IsEqualTo("ERR unknown command");
     }
@@ -76,10 +76,10 @@ public class RespValueTests
         var trueValue = RespValue.Boolean(true);
         var falseValue = RespValue.Boolean(false);
         
-        await Assert.That(trueValue.Type).IsEqualTo(RespDataType.Boolean);
+        await Assert.That(trueValue.Type).IsEqualTo(RespireDataType.Boolean);
         await Assert.That(trueValue.AsBoolean()).IsTrue();
         
-        await Assert.That(falseValue.Type).IsEqualTo(RespDataType.Boolean);
+        await Assert.That(falseValue.Type).IsEqualTo(RespireDataType.Boolean);
         await Assert.That(falseValue.AsBoolean()).IsFalse();
     }
     
@@ -88,7 +88,7 @@ public class RespValueTests
     {
         var value = RespValue.Double(3.14159);
         
-        await Assert.That(value.Type).IsEqualTo(RespDataType.Double);
+        await Assert.That(value.Type).IsEqualTo(RespireDataType.Double);
         await Assert.That(value.AsDouble()).IsEqualTo(3.14159);
     }
 

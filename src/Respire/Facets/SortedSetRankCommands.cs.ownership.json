@@ -1,10 +1,10 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.ISortedSetCommands",
+      "Type": "Respire.IRespireSortedSetCommands",
       "OwnerType": "Respire.SortedSetCommands",
       "Members": [
-        "RankWithScoreAsync(RespireKey,RespireValue,bool,CancellationToken):ValueTask<SortedSetRank?>"
+        "RankWithScoreAsync(RespireKey,RespireValue,bool,CancellationToken):ValueTask<RespireSortedSetRankResult?>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

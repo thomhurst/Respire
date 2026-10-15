@@ -21,7 +21,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     public async Task BinaryAndListRoundTripsPreserveOwnedPayloads(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix($"dump:{Guid.NewGuid():N}:");
         byte[] bytes = [0, 255, 128, 13, 10, 1];
         await view.SetAsync("source", (RespireValue)bytes);
@@ -53,7 +53,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     public async Task ExpiryAndReplacementPreserveExplicitSemantics(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"restore-expiry:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         await view.SetAsync("source", "new", expiry: TimeSpan.FromMinutes(1));
@@ -88,7 +88,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     public async Task IdleTimeAndServerErrorsArePreserved(int protocol, Mode mode)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"restore-errors:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         await view.SetAsync("source", "a non-integer value");
@@ -118,7 +118,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Lfu.ConnectionString) with
         {
-            Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, Connections = 1
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3, Connections = 1
         });
         await client.SetAsync("source", "a non-integer value");
         var payload = (await client.Keys.DumpAsync("source"))!;
@@ -134,7 +134,7 @@ public class KeySerializationIntegrationTests(RedisTestContainer fixture)
     }
 
     private static async Task<T> Run<T>(IRespireClient client, Mode mode,
-        Func<IKeyCommands, ValueTask<T>> immediate, Func<IBatchKeyCommands, RespirePending<T>> deferred)
+        Func<IRespireKeyCommands, ValueTask<T>> immediate, Func<IRespireBatchKeyCommands, RespirePending<T>> deferred)
     {
         if (mode == Mode.Immediate) return await immediate(client.Keys);
         if (mode == Mode.Batch)

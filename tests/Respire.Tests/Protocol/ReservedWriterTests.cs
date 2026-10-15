@@ -69,7 +69,7 @@ public class ReservedWriterTests
             4 => new Cmd2N(Verbs.Set, key, arguments[1], arguments[2..]),
             5 => new DynamicCommand(["SET", .. arguments], 1),
             6 => new CatalogCommand(RespireCommands.String.SET, arguments),
-            7 => new SetCommand(key, "a\uD800z", RespireExpiry.In(TimeSpan.FromSeconds(3)), SetWhen.Exists, true),
+            7 => new SetCommand(key, "a\uD800z", RespireExpiry.In(TimeSpan.FromSeconds(3)), RespireSetWhen.Exists, true),
             8 => new GetExCommand(key, RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456))),
             9 => new Cmd2(Verbs.Set, key, arguments[1]),
             10 => new Cmd3(Verbs.Set, key, arguments[1], arguments[2]),

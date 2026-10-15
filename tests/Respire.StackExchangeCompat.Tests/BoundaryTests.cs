@@ -118,7 +118,7 @@ public class BoundaryTests(RedisTestContainer fixture)
         };
         await using var cancellationClient = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = (RespireProtocol)protocol, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var cancellation = new CancellationTokenSource();
         var pending = cancellationClient.ExecuteStackExchangeAsync("ECHO", ["value"], cancellationToken: cancellation.Token).AsTask();
@@ -226,9 +226,9 @@ public class ResultBoundaryTests
         using (parsed)
         using (var root = RespireResult.CreateOwned(in parsed))
         {
-            await Assert.That(root[0].NullWireType).IsEqualTo(RespDataType.BulkString);
-            await Assert.That(root[1].NullWireType).IsEqualTo(RespDataType.Array);
-            await Assert.That(root[2].NullWireType).IsEqualTo(RespDataType.Null);
+            await Assert.That(root[0].NullWireType).IsEqualTo(RespireDataType.BulkString);
+            await Assert.That(root[1].NullWireType).IsEqualTo(RespireDataType.Array);
+            await Assert.That(root[2].NullWireType).IsEqualTo(RespireDataType.Null);
             var result = root.ToStackExchangeResult();
             await Assert.That(result[0].Resp2Type).IsEqualTo(ResultType.BulkString);
             await Assert.That(result[1].Resp2Type).IsEqualTo(ResultType.Array);

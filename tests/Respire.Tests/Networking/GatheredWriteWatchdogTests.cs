@@ -73,7 +73,7 @@ public sealed class GatheredWriteWatchdogTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp3, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp3, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             ConnectionIdleReadTimeout = null, CommandTimeout = null,

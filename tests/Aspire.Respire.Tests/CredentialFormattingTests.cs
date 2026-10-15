@@ -20,7 +20,7 @@ public class CredentialFormattingTests
             new RespireOptionsBuilder { Password = "private-password", SentinelPassword = "private-sentinel-password" },
             new RespireCacheRegistrationOptions { ConnectionString = connectionString },
             new RespireClientSettings { ConnectionString = connectionString },
-            new AzureManagedRedisCredentialProvider(new PrivateCredential(), "private-user"),
+            new RespireAzureManagedRedisCredentialProvider(new PrivateCredential(), "private-user"),
         ];
 
         foreach (var configuration in configurations)

@@ -24,7 +24,7 @@ public class HashFieldLeaseTests
         var fixture = Redis74;
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Connections = 1,
             ClientSideCache = new(),
         });
@@ -50,10 +50,10 @@ public class HashFieldLeaseTests
         await using var replacement = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(replacement.OwnerToken == oldOwner.OwnerToken).IsFalse();
         await Assert.That(await oldOwner.ResetExpiryAsync(TimeSpan.FromSeconds(10))).IsFalse();
-        await Assert.That(await oldOwner.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+        await Assert.That(await oldOwner.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.NotOwned);
         await Assert.That(await independent.VerifyStillHeldAsync()).IsTrue();
-        await Assert.That(await replacement.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
-        await Assert.That(await independent.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await replacement.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
+        await Assert.That(await independent.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
     }
 
     [Test]
@@ -128,12 +128,12 @@ public class HashFieldLeaseTests
         var registry = SharedRespireContainer.Key("registry");
         await using var ownerClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
         await using var waiterClient = await RespireClient.ConnectAsync(fixture.CreateOptions() with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             ClientSideCache = new(),
         });
         var ownerCoordination = new RespireCoordination(ownerClient);
@@ -145,7 +145,7 @@ public class HashFieldLeaseTests
         var waiting = waiterCoordination.AcquireLeaseAsync(registry, "worker", TimeSpan.FromSeconds(20)).AsTask();
         await Task.Delay(100);
         await Assert.That(waiting.IsCompleted).IsFalse();
-        await Assert.That(await owner.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await owner.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
         await using var replacement = await waiting.WaitAsync(TimeSpan.FromSeconds(2));
         await Assert.That(replacement.OwnerToken == owner.OwnerToken).IsFalse();
     }
@@ -155,7 +155,7 @@ public class HashFieldLeaseTests
     {
         await using var client = await RespireClient.ConnectAsync(Cluster.CreateOptions() with
         {
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             Connections = 1,
         });
         var view = client.WithKeyPrefix(SharedRespireContainer.Prefix("coordination"));
@@ -168,7 +168,7 @@ public class HashFieldLeaseTests
         await Assert.That(await lease.ResetExpiryAsync(TimeSpan.FromSeconds(10))).IsTrue();
         await Assert.That(await view.Hashes.GetBytesAsync("{tenant}:leases", "{worker}:binary-field"u8.ToArray()))
             .IsEquivalentTo(lease.OwnerToken.Bytes.ToArray());
-        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await lease.ReleaseAsync()).IsEqualTo(RespireLockReleaseOutcome.Released);
     }
 
     [Test]
@@ -180,7 +180,7 @@ public class HashFieldLeaseTests
         {
             Endpoints = [fixture.Primary],
             Connections = 1,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             AllowAdmin = true,
         });
         var coordination = new RespireCoordination(primary);
@@ -196,7 +196,7 @@ public class HashFieldLeaseTests
         {
             Endpoints = [fixture.Replica],
             Connections = 1,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
             AllowAdmin = true,
         });
         using (var promotion = await promoted.ExecuteAsync(RespireCommands.Server.REPLICAOF, "NO", "ONE"))
@@ -207,7 +207,7 @@ public class HashFieldLeaseTests
         {
             Endpoints = [fixture.Replica],
             Connections = 1,
-            Protocol = RespProtocol.Resp3,
+            Protocol = RespireProtocol.Resp3,
         });
         await using var replacement = await new RespireCoordination(replacementClient)
             .TryAcquireLeaseAsync("registry", "worker", TimeSpan.FromSeconds(10))

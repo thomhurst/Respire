@@ -50,7 +50,7 @@ internal sealed class ClusterNotificationCoordinator
         }
     }
 
-    internal bool RemoveRoute(ClusterNotificationNode node, SubscriptionKind kind,
+    internal bool RemoveRoute(ClusterNotificationNode node, RespireSubscriptionKind kind,
         RespireSubscription subscription, RespireChannel name)
     {
         lock (Gate)

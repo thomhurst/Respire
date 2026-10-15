@@ -22,7 +22,7 @@ public class NativeResponseResetTests
     {
         var source = Rent(shape);
         // Invalid element count injects a disposal failure without renting array storage.
-        source.TrySetResult(RespValue.PooledAggregate(RespDataType.Array, new RespValue[1], 2));
+        source.TrySetResult(RespValue.PooledAggregate(RespireDataType.Array, new RespValue[1], 2));
         if (source is StringPendingResponseSource text) text.SetDirectResult("stale");
         if (source is BytesPendingResponseSource bytes) bytes.SetDirectResult([1]);
         try
@@ -117,7 +117,7 @@ public class NativeResponseResetTests
 
     private static int ConvertFreshResponse(object state, in RespValue value)
     {
-        if (value.Type == RespDataType.Array) return 0;
+        if (value.Type == RespireDataType.Array) return 0;
         if (value.AsString() == "fresh") return 42;
         throw new InvalidOperationException("Stale response.");
     }

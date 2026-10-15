@@ -227,7 +227,7 @@ public class ReadLatencySamplerTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = commandDeadline ? TimeSpan.FromMilliseconds(250) : null,
             ConnectionIdleReadTimeout = null,

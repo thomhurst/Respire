@@ -15,7 +15,7 @@ public class RespireResultTests
     public async Task Materialization_ReleasesSourceAndPreservesSerializer(bool asynchronous)
     {
         var serializer = new RecordingSerializer();
-        var value = RespParser.CopyToPooled(RespDataType.BulkString, "payload"u8);
+        var value = RespParser.CopyToPooled(RespireDataType.BulkString, "payload"u8);
         var lease = new RespireResult(in value, serializer);
         var source = new TaskCompletionSource<RespireResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var materialized = RespireResult.MaterializeAsync(asynchronous
@@ -37,7 +37,7 @@ public class RespireResultTests
     {
         using var memory = new FaultingCopyMemory();
         var value = RespValue.Array(
-            RespParser.CopyToPooled(RespDataType.BulkString, "first"u8),
+            RespParser.CopyToPooled(RespireDataType.BulkString, "first"u8),
             RespValue.BulkString(memory.Memory));
         var lease = new RespireResult(in value);
         var child = lease[0];

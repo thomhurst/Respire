@@ -14,15 +14,15 @@ public class ClusterNotificationCoordinatorTests
         var endpoint = new RespireEndpoint("127.0.0.1", 26379);
         var node = new ClusterNotificationNode(endpoint);
         var channel = new RespireChannel("events");
-        var first = new RespireSubscription(null!, SubscriptionKind.Channel, [channel], 4, SubscriptionOverflow.DropOldest);
-        var second = new RespireSubscription(null!, SubscriptionKind.Channel, [channel], 4, SubscriptionOverflow.DropOldest);
+        var first = new RespireSubscription(null!, RespireSubscriptionKind.Channel, [channel], 4, RespireSubscriptionOverflow.DropOldest);
+        var second = new RespireSubscription(null!, RespireSubscriptionKind.Channel, [channel], 4, RespireSubscriptionOverflow.DropOldest);
         coordinator.RegisterNode(node);
 
         await Assert.That(coordinator.AddRoute(node, first, channel)).IsTrue();
         await Assert.That(coordinator.AddRoute(node, second, channel)).IsFalse();
-        await Assert.That(coordinator.RemoveRoute(node, SubscriptionKind.Channel, first, channel)).IsFalse();
+        await Assert.That(coordinator.RemoveRoute(node, RespireSubscriptionKind.Channel, first, channel)).IsFalse();
         await Assert.That(coordinator.TryGetNode(endpoint)).IsSameReferenceAs(node);
-        await Assert.That(coordinator.RemoveRoute(node, SubscriptionKind.Channel, second, channel)).IsTrue();
+        await Assert.That(coordinator.RemoveRoute(node, RespireSubscriptionKind.Channel, second, channel)).IsTrue();
         await Assert.That(coordinator.TryRetireNode(node)).IsTrue();
         await Assert.That(coordinator.TryGetNode(endpoint)).IsNull();
         await Assert.That(coordinator.TryRetireNode(node)).IsFalse();

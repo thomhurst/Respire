@@ -19,7 +19,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
     public async Task Batch_FailureHandlingPreservesSuccessfulCommands(int protocol, bool inspect)
     {
         await using var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"batch:failure:{Guid.NewGuid():N}";
         await client.Hashes.SetAsync(key, "field", "value");
         using var batch = client.CreateBatch();
@@ -231,7 +231,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         // Helper code can queue into either host through the shared interface.
-        static RespirePending<long> QueueAudit(IBatchListCommands lists)
+        static RespirePending<long> QueueAudit(IRespireBatchListCommands lists)
             => lists.RightPush("shared:audit", "entry");
 
         var batch = client.CreateBatch();
@@ -260,7 +260,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var batchScript = batch.Scripts.Evaluate(script, ["deferred:typed"], ["batch"]);
         await batch.ExecuteAsync();
 
-        stored.Result.Should().Be(new RespireGet<int>(true, 0));
+        stored.Result.Should().Be(new RespireGetResult<int>(true, 0));
         missing.Result.Found.Should().BeFalse();
         using (var result = batchScript.Result)
         {

@@ -1,20 +1,20 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IStreamCommands",
+      "Type": "Respire.IRespireStreamCommands",
       "OwnerType": "Respire.StreamCommands",
       "Members": [
-        "ClaimAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamEntry[]>",
-        "ClaimAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamEntry[]>",
-        "ClaimAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamEntry[]>",
+        "ClaimAsync(RespireStreamClaimOptions,RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ClaimAsync(RespireStreamClaimOptions,RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamEntry[]>",
+        "ClaimAsync(RespireStreamClaimOptions,RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamEntry[]>",
         "ClaimIdsAsync(RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamId[]>",
         "ClaimIdsAsync(RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamId[]>",
         "ClaimIdsAsync(RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamId[]>",
-        "ClaimIdsAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamId[]>",
-        "ClaimIdsAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamId[]>",
-        "ClaimIdsAsync(StreamClaimOptions,RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamId[]>",
+        "ClaimIdsAsync(RespireStreamClaimOptions,RespireKey,string,string,TimeSpan,ReadOnlySpan<RespireStreamId>,CancellationToken):ValueTask<RespireStreamId[]>",
+        "ClaimIdsAsync(RespireStreamClaimOptions,RespireKey,string,string,TimeSpan,RespireStreamId,CancellationToken):ValueTask<RespireStreamId[]>",
+        "ClaimIdsAsync(RespireStreamClaimOptions,RespireKey,string,string,TimeSpan,params ReadOnlySpan<RespireStreamId>):ValueTask<RespireStreamId[]>",
         "ClaimPendingIdsAsync(RespireKey,string,string,TimeSpan,RespireStreamId?,int,CancellationToken):ValueTask<RespireStreamClaimIdsResult>",
-        "PendingAsync(StreamPendingOptions,RespireKey,string,CancellationToken):ValueTask<RespireStreamPendingEntry[]>"
+        "PendingAsync(RespireStreamPendingOptions,RespireKey,string,CancellationToken):ValueTask<RespireStreamPendingEntry[]>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
     }

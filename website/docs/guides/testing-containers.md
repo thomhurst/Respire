@@ -40,7 +40,7 @@ await using var fixture = await RespireContainerFixture.StartAsync(new()
     StartupTimeout = TimeSpan.FromMinutes(2)
 });
 await using var client = await RespireClient.ConnectAsync(
-    fixture.CreateOptions() with { Protocol = RespProtocol.Resp3 });
+    fixture.CreateOptions() with { Protocol = RespireProtocol.Resp3 });
 await client.SetAsync("{customer}:name", "Ada");
 ```
 

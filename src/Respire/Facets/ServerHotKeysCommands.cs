@@ -5,7 +5,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-public partial interface IServerCommands
+public partial interface IRespireServerCommands
 {
     /// <summary>Pins an existing connection for Redis 8.6+ node-local HOTKEYS operations; does not start tracking.</summary>
     /// <remarks>The handle never switches connections or nodes. Reacquire explicitly after disconnection.</remarks>

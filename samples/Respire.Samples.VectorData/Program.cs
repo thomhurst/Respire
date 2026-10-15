@@ -4,7 +4,7 @@ using Respire.Samples.VectorData;
 using Respire.VectorData;
 
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-foreach (var protocol in new[] { RespProtocol.Resp2, RespProtocol.Resp3 })
+foreach (var protocol in new[] { RespireProtocol.Resp2, RespireProtocol.Resp3 })
 {
     var options = RespireOptions.Parse(args.Length == 0 ? "redis://localhost:6379" : args[0]) with { Protocol = protocol };
     await using var client = await RespireClient.ConnectAsync(options, deadline.Token);

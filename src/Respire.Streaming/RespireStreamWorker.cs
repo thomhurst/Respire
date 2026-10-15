@@ -107,7 +107,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private async Task ConsumeAsync(string consumer, CancellationTokenSource readers)
     {
-        var readOptions = new StreamReadOptions { Count = options.BatchSize, WaitFor = options.ReadWait };
+        var readOptions = new RespireStreamReadOptions { Count = options.BatchSize, WaitFor = options.ReadWait };
         RespireStreamId? cursor = options.ConsumerName is null ? (RespireStreamId?)null : RespireStreamId.Beginning;
         var recoveryCursor = RespireStreamId.Beginning;
         var recoveryClock = Stopwatch.StartNew();

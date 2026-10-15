@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IFunctionCommands",
+      "Type": "Respire.IRespireFunctionCommands",
       "OwnerType": "Respire.FunctionCommands",
       "Members": [
         "DeleteAsync(string,CancellationToken):ValueTask<bool>",
@@ -20,11 +20,11 @@
         "ExecuteSpanAsync(RespireFunction,RespireKey,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
         "ExecuteStringAsync(RespireFunction,RespireKey,RespireValue[]?,CancellationToken):ValueTask<string?>",
         "ExecuteStringAsync(RespireFunction,RespireKey[]?,RespireValue[]?,CancellationToken):ValueTask<string?>",
-        "FlushAsync(FunctionFlushMode,CancellationToken):ValueTask<bool>",
+        "FlushAsync(RespireFunctionFlushMode,CancellationToken):ValueTask<bool>",
         "ListAsync(string?,bool,CancellationToken):ValueTask<RespireFunctionLibraryInfo[]>",
         "LoadAsync(RespireFunctionLibrary,CancellationToken):ValueTask<string>",
         "LoadAsync(string,bool,CancellationToken):ValueTask<string>",
-        "RestoreAsync(ReadOnlyMemory<byte>,FunctionRestorePolicy,CancellationToken):ValueTask<bool>",
+        "RestoreAsync(ReadOnlyMemory<byte>,RespireFunctionRestorePolicy,CancellationToken):ValueTask<bool>",
         "StatsAsync(CancellationToken):ValueTask<RespireFunctionStats>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."

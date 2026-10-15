@@ -1,7 +1,7 @@
 {
   "Surfaces": [
     {
-      "Type": "Respire.IBatchSetCommands",
+      "Type": "Respire.IRespireBatchSetCommands",
       "OwnerType": "Respire.BatchSetCommands",
       "Members": [
         "Add(RespireKey,params ReadOnlySpan<RespireValue>):RespirePending<long>",

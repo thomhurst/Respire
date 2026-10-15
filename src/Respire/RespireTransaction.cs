@@ -40,21 +40,21 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
     private protected virtual WatchedTransactionRetryContext? RetryContext => null;
 
-    private IBatchStringCommands? _strings;
-    private IBatchKeyCommands? _keys;
-    private IBatchServerCommands? _server;
-    private IBatchHashCommands? _hashes;
-    private IBatchListCommands? _lists;
-    private IBatchArrayCommands? _arrays;
-    private IBatchSetCommands? _sets;
-    private IBatchSortedSetCommands? _sortedSets;
-    private IBatchBitmapCommands? _bitmaps;
-    private IBatchHyperLogLogCommands? _hyperLogLog;
-    private IBatchGeoCommands? _geo;
-    private IBatchVectorSetCommands? _vectorSets;
-    private IBatchScriptCommands? _scripts;
-    private IBatchFunctionCommands? _functions;
-    private IBatchStreamCommands? _streams;
+    private IRespireBatchStringCommands? _strings;
+    private IRespireBatchKeyCommands? _keys;
+    private IRespireBatchServerCommands? _server;
+    private IRespireBatchHashCommands? _hashes;
+    private IRespireBatchListCommands? _lists;
+    private IRespireBatchArrayCommands? _arrays;
+    private IRespireBatchSetCommands? _sets;
+    private IRespireBatchSortedSetCommands? _sortedSets;
+    private IRespireBatchBitmapCommands? _bitmaps;
+    private IRespireBatchHyperLogLogCommands? _hyperLogLog;
+    private IRespireBatchGeoCommands? _geo;
+    private IRespireBatchVectorSetCommands? _vectorSets;
+    private IRespireBatchScriptCommands? _scripts;
+    private IRespireBatchFunctionCommands? _functions;
+    private IRespireBatchStreamCommands? _streams;
 
     internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection,
         int? watchSlot = null, RespireHashImportSession? importSession = null)
@@ -72,93 +72,93 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     // batch exposes, so helper code can queue into either. Created on first use.
 
     /// <summary>String (plain value) commands. Redis: GET, SET, INCR, …</summary>
-    public IBatchStringCommands Strings => _strings ??= new BatchStringCommands(this);
+    public IRespireBatchStringCommands Strings => _strings ??= new BatchStringCommands(this);
 
     /// <summary>Generic key management commands. Redis: DEL, EXPIRE, TYPE, …</summary>
-    public IBatchKeyCommands Keys => _keys ??= new BatchKeyCommands(this);
+    public IRespireBatchKeyCommands Keys => _keys ??= new BatchKeyCommands(this);
 
     /// <summary>Server flush commands affecting only this transaction's node.</summary>
-    public IBatchServerCommands Server => _server ??= new BatchServerCommands(this);
+    public IRespireBatchServerCommands Server => _server ??= new BatchServerCommands(this);
 
     /// <summary>Hash (field → value map) commands. Redis: HSET, HGET, HGETALL, …</summary>
-    public IBatchHashCommands Hashes => _hashes ??= new BatchHashCommands(this);
+    public IRespireBatchHashCommands Hashes => _hashes ??= new BatchHashCommands(this);
 
     /// <summary>List commands. Redis: LPUSH, RPUSH, LRANGE, …</summary>
-    public IBatchListCommands Lists => _lists ??= new BatchListCommands(this);
+    public IRespireBatchListCommands Lists => _lists ??= new BatchListCommands(this);
 
     /// <summary>Redis sparse array commands.</summary>
-    public IBatchArrayCommands Arrays => _arrays ??= new BatchArrayCommands(this);
+    public IRespireBatchArrayCommands Arrays => _arrays ??= new BatchArrayCommands(this);
 
     /// <summary>Set (unordered, unique members) commands. Redis: SADD, SMEMBERS, …</summary>
-    public IBatchSetCommands Sets => _sets ??= new BatchSetCommands(this);
+    public IRespireBatchSetCommands Sets => _sets ??= new BatchSetCommands(this);
 
     /// <summary>Sorted set (score-ordered members) commands. Redis: ZADD, ZRANGE, …</summary>
-    public IBatchSortedSetCommands SortedSets => _sortedSets ??= new BatchSortedSetCommands(this);
+    public IRespireBatchSortedSetCommands SortedSets => _sortedSets ??= new BatchSortedSetCommands(this);
 
     /// <summary>Bitmap commands. Redis: SETBIT, BITCOUNT, BITOP, …</summary>
-    public IBatchBitmapCommands Bitmaps => _bitmaps ??= new BatchBitmapCommands(this);
+    public IRespireBatchBitmapCommands Bitmaps => _bitmaps ??= new BatchBitmapCommands(this);
 
     /// <summary>HyperLogLog commands. Redis: PFADD, PFCOUNT, PFMERGE.</summary>
-    public IBatchHyperLogLogCommands HyperLogLog => _hyperLogLog ??= new BatchHyperLogLogCommands(this);
+    public IRespireBatchHyperLogLogCommands HyperLogLog => _hyperLogLog ??= new BatchHyperLogLogCommands(this);
 
     /// <summary>Geospatial commands. Redis: GEOADD, GEODIST, GEOSEARCH, …</summary>
-    public IBatchGeoCommands Geo => _geo ??= new BatchGeoCommands(this);
+    public IRespireBatchGeoCommands Geo => _geo ??= new BatchGeoCommands(this);
 
     /// <summary>Redis vector-set commands.</summary>
-    public IBatchVectorSetCommands VectorSets => _vectorSets ??= new BatchVectorSetCommands(this);
+    public IRespireBatchVectorSetCommands VectorSets => _vectorSets ??= new BatchVectorSetCommands(this);
 
     /// <summary>Lua script evaluation. Redis: EVAL.</summary>
-    public IBatchScriptCommands Scripts => _scripts ??= new BatchScriptCommands(this);
+    public IRespireBatchScriptCommands Scripts => _scripts ??= new BatchScriptCommands(this);
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
-    public IBatchFunctionCommands Functions => _functions ??= new BatchFunctionCommands(this);
+    public IRespireBatchFunctionCommands Functions => _functions ??= new BatchFunctionCommands(this);
 
     /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
-    public IBatchStreamCommands Streams => _streams ??= new BatchStreamCommands(this);
+    public IRespireBatchStreamCommands Streams => _streams ??= new BatchStreamCommands(this);
 
     // Root shortcuts, mirroring the client's.
 
-    /// <inheritdoc cref="IBatchStringCommands.GetString"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.GetString"/>
     public RespirePending<string?> GetString(RespireKey key) => Strings.GetString(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.Get{T}"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Get{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> Get<T>(RespireKey key) => Strings.Get<T>(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.TryGet{T}"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.TryGet{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key) => Strings.TryGet<T>(key);
+    public RespirePending<RespireGetResult<T>> TryGet<T>(RespireKey key) => Strings.TryGet<T>(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.GetBytes"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.GetBytes"/>
     public RespirePending<byte[]?> GetBytes(RespireKey key) => Strings.GetBytes(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.Set(RespireKey, RespireValue, RespireExpiry, SetWhen)"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Set(RespireKey, RespireValue, RespireExpiry, RespireSetWhen)"/>
     public RespirePending<bool> Set(
-        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always)
         => Strings.Set(key, value, expiry, when);
 
-    /// <inheritdoc cref="IBatchStringCommands.Set{T}(RespireKey, T, RespireExpiry, SetWhen)"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Set{T}(RespireKey, T, RespireExpiry, RespireSetWhen)"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<bool> Set<T>(
-        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, T value, RespireExpiry expiry = default, RespireSetWhen when = RespireSetWhen.Always)
         => Strings.Set(key, value, expiry, when);
 
-    /// <inheritdoc cref="IBatchKeyCommands.Delete(ReadOnlySpan{RespireKey})"/>
+    /// <inheritdoc cref="IRespireBatchKeyCommands.Delete(ReadOnlySpan{RespireKey})"/>
     public RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys) => Keys.Delete(keys);
 
-    /// <inheritdoc cref="IBatchKeyCommands.Exists"/>
+    /// <inheritdoc cref="IRespireBatchKeyCommands.Exists"/>
     public RespirePending<bool> Exists(RespireKey key) => Keys.Exists(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.Increment(RespireKey, long)"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Increment(RespireKey, long)"/>
     public RespirePending<long> Increment(RespireKey key, long by = 1) => Strings.Increment(key, by);
 
-    /// <inheritdoc cref="IBatchStringCommands.Decrement"/>
+    /// <inheritdoc cref="IRespireBatchStringCommands.Decrement"/>
     public RespirePending<long> Decrement(RespireKey key, long by = 1) => Strings.Decrement(key, by);
 
-    /// <inheritdoc cref="IBatchKeyCommands.Expire"/>
+    /// <inheritdoc cref="IRespireBatchKeyCommands.Expire"/>
     public RespirePending<bool> Expire(
         RespireKey key, RespireExpiry expiry, RespireExpireWhen when = RespireExpireWhen.Always)
         => Keys.Expire(key, expiry, when);
@@ -398,7 +398,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 return false;
             }
 
-            if (ConnectionPolicy.IsImportSession && result.Type != RespDataType.Array)
+            if (ConnectionPolicy.IsImportSession && result.Type != RespireDataType.Array)
             {
                 var error = new RespireProtocolException("A hash import EXEC must return an array reply.");
                 operationError = error;
@@ -662,7 +662,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }
                         admission.Success();
                         connection = ExecutingConnection ?? connection;
-                        if (ConnectionPolicy.IsImportSession && (reply.Type == RespDataType.Array || reply.IsNull
+                        if (ConnectionPolicy.IsImportSession && (reply.Type == RespireDataType.Array || reply.IsNull
                             || reply.TransactionStateCleared))
                             importTransactionStarted = false;
                     }
@@ -857,7 +857,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     responseError = ResponseReader.ServerError(in reply, "MULTI/EXEC", connection is null ? null : new(connection.Host, connection.Port));
                     return TryGetUnitRetryDelay(responseError, outcome, out delay);
                 }
-                if (reply.Type != RespDataType.Array) return false;
+                if (reply.Type != RespireDataType.Array) return false;
                 var elements = reply.AsArray();
                 for (var i = 0; i < Math.Min(elements.Length, _ops.Count); i++)
                 {

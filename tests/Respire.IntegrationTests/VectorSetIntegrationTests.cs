@@ -24,7 +24,7 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
         {
             Connections = 1,
-            Protocol = (RespProtocol)protocol,
+            Protocol = (RespireProtocol)protocol,
         });
         var key = $"vector-evaluation:{Guid.NewGuid():N}";
         var options = new RespireVectorAddOptions
@@ -87,8 +87,8 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
         {
             Connections = 1,
-            Protocol = (RespProtocol)protocol,
-            Serializer = new SystemTextJsonSerializer(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+            Protocol = (RespireProtocol)protocol,
+            Serializer = new RespireSystemTextJsonSerializer(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
         });
         // The Redis 8 fixture is shared, so every key carries this row's prefix.
         var prefix = $"vectors:{Guid.NewGuid():N}:";

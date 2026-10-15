@@ -30,7 +30,7 @@ public class ServerFlushCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, AllowAdmin = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, AllowAdmin = true, ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         topology = Topology(primary.Port, seed.Port);
@@ -48,13 +48,13 @@ public class ServerFlushCommandTests
     }
 
     [Test]
-    [Arguments(false, ServerFlushMode.Default, "")]
-    [Arguments(false, ServerFlushMode.Sync, " SYNC")]
-    [Arguments(false, ServerFlushMode.Async, " ASYNC")]
-    [Arguments(true, ServerFlushMode.Default, "")]
-    [Arguments(true, ServerFlushMode.Sync, " SYNC")]
-    [Arguments(true, ServerFlushMode.Async, " ASYNC")]
-    public async Task ClusterQueuesFlushOnlyTheirExecutionNode(bool transaction, ServerFlushMode mode, string suffix)
+    [Arguments(false, RespireServerFlushMode.Default, "")]
+    [Arguments(false, RespireServerFlushMode.Sync, " SYNC")]
+    [Arguments(false, RespireServerFlushMode.Async, " ASYNC")]
+    [Arguments(true, RespireServerFlushMode.Default, "")]
+    [Arguments(true, RespireServerFlushMode.Sync, " SYNC")]
+    [Arguments(true, RespireServerFlushMode.Async, " ASYNC")]
+    public async Task ClusterQueuesFlushOnlyTheirExecutionNode(bool transaction, RespireServerFlushMode mode, string suffix)
     {
         byte[][] replies = transaction
             ? [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 3), "*3\r\n+OK\r\n+OK\r\n+OK\r\n"u8.ToArray()]
@@ -71,7 +71,7 @@ public class ServerFlushCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, UseCluster = true, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2, UseCluster = true, AllowAdmin = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         using var batch = client.CreateBatch();
@@ -111,7 +111,7 @@ public class ServerFlushCommandTests
         await using var server = new FakeRespServer(replies);
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, AllowAdmin = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2, AllowAdmin = true, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         var client = owner.WithKeyPrefix("tenant:");
@@ -119,11 +119,11 @@ public class ServerFlushCommandTests
         await using var tx = client.CreateTransaction();
         IRespireCommandQueue queue = execution == 2 ? tx : batch;
         var pending = new List<RespirePending<bool>>();
-        foreach (var mode in new[] { ServerFlushMode.Default, ServerFlushMode.Sync, ServerFlushMode.Async })
+        foreach (var mode in new[] { RespireServerFlushMode.Default, RespireServerFlushMode.Sync, RespireServerFlushMode.Async })
         {
             if (execution == 0)
             {
-                if (mode == ServerFlushMode.Default)
+                if (mode == RespireServerFlushMode.Default)
                 {
                     await client.Server.FlushDatabaseAsync(default);
                     await client.Server.FlushAllAsync(default);
@@ -155,24 +155,24 @@ public class ServerFlushCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespProtocol.Resp2, AllowAdmin = allowAdmin, Connections = 1,
+            Protocol = RespireProtocol.Resp2, AllowAdmin = allowAdmin, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         if (allowAdmin)
         {
-            await Assert.That(async () => await client.Server.FlushDatabaseAsync((ServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
-            await Assert.That(async () => await client.Server.FlushAllAsync((ServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(async () => await client.Server.FlushDatabaseAsync((RespireServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(async () => await client.Server.FlushAllAsync((RespireServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
             foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
             {
-                await Assert.That(() => queue.Server.FlushDatabase((ServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
-                await Assert.That(() => queue.Server.FlushAll((ServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
+                await Assert.That(() => queue.Server.FlushDatabase((RespireServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
+                await Assert.That(() => queue.Server.FlushAll((RespireServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
             }
         }
         else
         {
-            foreach (var mode in Enum.GetValues<ServerFlushMode>())
+            foreach (var mode in Enum.GetValues<RespireServerFlushMode>())
             {
                 await Assert.That(async () => await client.Server.FlushDatabaseAsync(mode, default)).ThrowsExactly<NotSupportedException>();
                 await Assert.That(async () => await client.Server.FlushAllAsync(mode, default)).ThrowsExactly<NotSupportedException>();

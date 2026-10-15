@@ -10,19 +10,19 @@ namespace Respire.IntegrationTests;
 public class ClusterReadyReplyIntegrationTests(SharedRedisClusterFixture fixture)
 {
     [Test]
-    [Arguments(RespProtocol.Resp2, false, "string")]
-    [Arguments(RespProtocol.Resp2, false, "bytes")]
-    [Arguments(RespProtocol.Resp2, false, "integer")]
-    [Arguments(RespProtocol.Resp2, true, "string")]
-    [Arguments(RespProtocol.Resp2, true, "bytes")]
-    [Arguments(RespProtocol.Resp2, true, "integer")]
-    [Arguments(RespProtocol.Resp3, false, "string")]
-    [Arguments(RespProtocol.Resp3, false, "bytes")]
-    [Arguments(RespProtocol.Resp3, false, "integer")]
-    [Arguments(RespProtocol.Resp3, true, "string")]
-    [Arguments(RespProtocol.Resp3, true, "bytes")]
-    [Arguments(RespProtocol.Resp3, true, "integer")]
-    public async Task ReadyTypedReplySurvivesSlotMigration(RespProtocol protocol, bool asking, string shape)
+    [Arguments(RespireProtocol.Resp2, false, "string")]
+    [Arguments(RespireProtocol.Resp2, false, "bytes")]
+    [Arguments(RespireProtocol.Resp2, false, "integer")]
+    [Arguments(RespireProtocol.Resp2, true, "string")]
+    [Arguments(RespireProtocol.Resp2, true, "bytes")]
+    [Arguments(RespireProtocol.Resp2, true, "integer")]
+    [Arguments(RespireProtocol.Resp3, false, "string")]
+    [Arguments(RespireProtocol.Resp3, false, "bytes")]
+    [Arguments(RespireProtocol.Resp3, false, "integer")]
+    [Arguments(RespireProtocol.Resp3, true, "string")]
+    [Arguments(RespireProtocol.Resp3, true, "bytes")]
+    [Arguments(RespireProtocol.Resp3, true, "integer")]
+    public async Task ReadyTypedReplySurvivesSlotMigration(RespireProtocol protocol, bool asking, string shape)
     {
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions

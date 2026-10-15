@@ -6,7 +6,7 @@
       "Members": [
         "DisposeAsync():ValueTask",
         "KeepAliveAsync(CancellationToken):ValueTask<RespireLockKeepAlive>",
-        "ReleaseAsync(CancellationToken):ValueTask<LockReleaseOutcome>",
+        "ReleaseAsync(CancellationToken):ValueTask<RespireLockReleaseOutcome>",
         "ResetExpiryAsync(TimeSpan,CancellationToken):ValueTask<bool>",
         "VerifyStillHeldAsync(CancellationToken):ValueTask<bool>"
       ],

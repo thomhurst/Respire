@@ -35,7 +35,7 @@ public class ServerPubSubIntegrationTests
         (await server.PubSubChannelsAsync(pattern, sharded: true)).Should().Equal(shard);
         var shardCounts = await server.PubSubSubscriberCountsAsync([channel], sharded: true);
         shardCounts.Should().Equal(new RespireChannelSubscriberCount(shard, 1));
-        shardCounts[0].Channel.Kind.Should().Be(SubscriptionKind.Sharded);
+        shardCounts[0].Channel.Kind.Should().Be(RespireSubscriptionKind.Sharded);
         var nodes = await server.PubSubSubscriberCountsOnAllNodesAsync([channel]);
         nodes.Should().ContainSingle();
         nodes[0].IsSuccess.Should().BeTrue();

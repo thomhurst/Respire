@@ -123,7 +123,7 @@ public sealed partial class RespireClient
         RespireValue.ThrowIfNull(serialized, nameof(factory));
         var bytes = new byte[serialized.GetWireLength()];
         serialized.WriteWirePayload(bytes);
-        var command = new SetCommand(key.AsValue(), bytes, expiry, SetWhen.NotExists, returnOld: true);
+        var command = new SetCommand(key.AsValue(), bytes, expiry, RespireSetWhen.NotExists, returnOld: true);
         using var previous = await SendCoreAsync("SET", command, cancellationToken, RespireCommandFlags.None,
             allowReadFrom: true, cursorAffinity: null, observation: observation, observeErrors: false).ConfigureAwait(false);
         // Redis 7+ returns the existing winner even when NX refuses our write. A null reply

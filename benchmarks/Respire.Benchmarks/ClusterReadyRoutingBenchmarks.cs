@@ -30,7 +30,7 @@ public class ClusterReadyRoutingBenchmarks
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6380;
         var options = new RespireOptions
         {
-            Endpoints = [new(host, port)], Protocol = RespProtocol.Resp2,
+            Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2,
             Connections = 1, ThreadPoolMonitoring = false,
         };
         _cluster = await RespireClient.ConnectAsync(options with { UseCluster = true }).ConfigureAwait(false);
