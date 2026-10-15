@@ -8,14 +8,34 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
     TimeSpan? IJobRetry.RetryDelay => _retryDelay;
 
     private JobProgress? _progress;
+    private byte[]? _result;
+    byte[]? IJobDelivery.Result => _result;
 
     void IJobDelivery.Attach(JobProgress progress) => _progress = progress;
 
-    /// <summary>Compares the job envelope, excluding per-delivery progress and retry control state.</summary>
+    /// <summary>Returns Ack with an owned copy of a binary result for this flow node.</summary>
+    /// <remarks>Return this from the handler. Only a current, successful flow delivery persists the result.
+    /// Ordinary jobs do not retain results. Results must not exceed 4 KiB; flow state is rewritten on each completion.</remarks>
+    public RespireStreamWorkerResult Complete(byte[] result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (result.Length > JobQueueFlows.MaximumResultBytes)
+            throw new ArgumentOutOfRangeException(nameof(result), "Job results must not exceed 4096 bytes.");
+        _result = result.ToArray();
+        return RespireStreamWorkerResult.Ack;
+    }
+
+    /// <summary>Reads retained direct-child results for a hosted flow delivery; ordinary jobs return an empty list.</summary>
+    /// <remarks>Ignore policy omits failed children. Continue includes them with Status set to failed.</remarks>
+    public ValueTask<IReadOnlyList<RespireJobFlowResult>> GetChildResultsAsync(CancellationToken cancellationToken = default)
+        => (_progress ?? throw new InvalidOperationException("Child results require a hosted job delivery."))
+            .ReadChildrenAsync(cancellationToken);
+
+    /// <summary>Compares the job envelope, excluding per-delivery progress, result and retry control state.</summary>
     public bool Equals(RespireJob<T>? other) => other is not null
         && Id == other.Id && EqualityComparer<T>.Default.Equals(Payload, other.Payload) && EntryId == other.EntryId;
 
-    /// <summary>Hashes the job envelope, excluding per-delivery progress and retry control state.</summary>
+    /// <summary>Hashes the job envelope, excluding per-delivery progress, result and retry control state.</summary>
     public override int GetHashCode() => HashCode.Combine(Id, Payload, EntryId);
 
     /// <summary>Appends progress from 0 through 100 for this delivery; false means it is no longer current.</summary>

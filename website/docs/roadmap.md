@@ -97,7 +97,8 @@ Public interface compatibility and the post-2.0 extension policy are described i
   on dedicated connections.
 - [Typed job queues](guides/job-queues.md) with delayed scheduling, batch priority, TTL, durable
   retry backoff, bounded enqueue deduplication, scoped handlers, visibility recovery, dead letters,
-  fenced progress, retained completion events, and enqueue-to-processing trace links.
+  fenced progress, retained completion events, enqueue-to-processing trace links, and nested
+  parent/child flows with retained results and failure policies.
 - [Hosted stream consumers](guides/stream-workers.md) with bounded concurrency, scoped typed
   handlers, idle recovery, delivery limits, dead-lettering, graceful draining, metrics, and
   W3C trace propagation.

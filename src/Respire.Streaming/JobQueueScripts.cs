@@ -24,19 +24,20 @@ internal static class JobQueueScripts
 
     // No automatic trimming: a failed completion must not irreversibly evict another event.
     // Preflight all writes and compensate runtime failures before acknowledging the delivery.
-    private const string CompleteSource = Fence + """
+    private const string CompleteSource = Fence + JobQueueFlows.PrepareCompletion + """
         if KEYS[1] == KEYS[2] or (KEYS[3] and (KEYS[1] == KEYS[3] or KEYS[2] == KEYS[3])) then
             return redis.error_reply('ERR job streams must differ')
         end
         local fields = {'job_id', job, 'entry_id', ARGV[3], 'attempt', ARGV[4], 'kind', ARGV[5]}
-        if KEYS[3] then table.insert(fields, 'reason'); table.insert(fields, ARGV[6]) end
+        if flow then table.insert(fields, 'flow_key'); table.insert(fields, flow.key) end
+        if ARGV[5] == 'dead-letter' then table.insert(fields, 'reason'); table.insert(fields, ARGV[6]) end
         if not redis.acl_check_cmd('XADD', KEYS[2], '*', unpack(fields))
             or not redis.acl_check_cmd('XDEL', KEYS[2], '0-0')
             or not redis.acl_check_cmd('XACK', KEYS[1], ARGV[1], ARGV[3]) then
             return redis.error_reply('NOPERM job completion is not permitted')
         end
         local deadFields
-        if KEYS[3] then
+        if ARGV[5] == 'dead-letter' then
             if #entries[1][2] > 2048 then return redis.error_reply('ERR too many job fields') end
             deadFields = {'_respire.source_id', ARGV[3], '_respire.group', string.sub(ARGV[1], 1, 256),
                 '_respire.attempt', ARGV[4], '_respire.reason', string.sub(ARGV[6], 1, 64),
@@ -56,15 +57,15 @@ internal static class JobQueueScripts
                 return dead
             end
         end
-        local function acknowledge()
 
-        """;
+        """ + JobQueueFlows.CommitCompletion + "local function acknowledge()\n";
 
     private const string CompleteSuffix = """
 
         end
         local acknowledged = acknowledge()
         if type(acknowledged) == 'table' and acknowledged.err then
+            rollbackFlow()
             redis.call('XDEL', KEYS[2], event)
             if dead then redis.call('XDEL', KEYS[3], dead) end
             return acknowledged

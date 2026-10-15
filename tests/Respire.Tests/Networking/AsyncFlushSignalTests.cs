@@ -236,6 +236,32 @@ public class AsyncFlushSignalTests
         await Assert.That(error.Message).Contains($"MethodName={nameof(ReportControlAllocation)} ");
     }
 
+    [Test]
+    [Arguments(0)]
+    [Arguments(2)]
+    [Arguments(60)]
+    public async Task RuntimeReportPreservesMeasuredThreadEventsAfterBackgroundBudget(int backgroundBudget)
+    {
+        const long measuringThread = 1;
+        var timestamp = DateTime.UnixEpoch;
+        var entries = new List<DispatchedWakeEventLog.Entry>
+        {
+            new(timestamp, measuringThread, "MeasuredStart", ""),
+        };
+        for (var i = 0; i < backgroundBudget + 1; i++)
+            entries.Add(new(timestamp.AddTicks(i + 1), 2, $"Background{i}", ""));
+        var allocation = new DispatchedWakeEventLog.Entry(timestamp.AddSeconds(1), measuringThread,
+            "MethodJittingStarted", $" MethodName={nameof(ReportControlAllocation)} ");
+        entries.Add(allocation);
+
+        var reported = DispatchedWakeEventLog.SelectReportedEvents(entries, measuringThread, backgroundBudget).ToArray();
+
+        await Assert.That(reported.Length).IsEqualTo(backgroundBudget + 2);
+        await Assert.That(reported[0]).IsEqualTo(entries[0]);
+        await Assert.That(reported[^1]).IsEqualTo(allocation);
+        await Assert.That(reported.Any(e => e.Name == $"Background{backgroundBudget}")).IsFalse();
+    }
+
     internal static ProcessStartInfo CreateProbeStartInfo(string? processPath, string? dotnetHostPath, string assemblyPath)
     {
         var processName = Path.GetFileName(processPath);

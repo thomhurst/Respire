@@ -1,6 +1,6 @@
 ---
 title: Typed job queues
-description: Schedule deduplicated jobs with priority, retry backoff, progress, durable completion events and tracing.
+description: Schedule deduplicated jobs and parent/child flows with retries, retained results, completion events and tracing.
 ---
 
 # Typed job queues
@@ -10,6 +10,7 @@ deduplication to the [hosted stream worker](stream-workers.md). Workers share a 
 group, explicitly acknowledge jobs, and recover deliveries abandoned by another consumer.
 
 Jobs support immediate enqueue, delayed scheduling, priority, TTL and durable retry backoff.
+Parent/child flows coordinate nested jobs and retain their results with configurable failure policies.
 Handlers can report progress, observers can replay retained completion events, and tracing links
 each delivery attempt to its enqueue.
 
@@ -162,6 +163,86 @@ Entries retain `_respire.job.id` and binary `_respire.job.payload`, plus worker 
 `_respire.source_id`, `_respire.attempt`, and `_respire.reason`. For a controlled re-enqueue after
 fixing a poison job, choose a new application ID or wait for the original deduplication window
 and preserve an application-level idempotency key. Reading a dead letter does not requeue it.
+
+## Parent and child job flows
+
+`EnqueueFlowAsync` submits a tree of up to 256 jobs to one queue. Leaves run first; a parent
+becomes runnable only after every direct child reaches a terminal state. Nested parents follow
+the same rule. All nodes use the queue's existing codec and scoped handler.
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
+var created = await queue.EnqueueFlowAsync("report:2026-10-15",
+    new RespireJobFlow<string>("combine", "build-report")
+    {
+        Children = [new("region-a", "fetch-a"), new("region-b", "fetch-b")],
+    }, RespireJobFlowFailurePolicy.Continue);
+var snapshots = await queue.GetFlowResultsAsync("report:2026-10-15");
+```
+
+Inside the handler, `await job.GetChildResultsAsync(cancellationToken)` returns direct-child
+snapshots with `Id`, `Status`, and an optional owned `byte[] Result`. Return
+`job.Complete(resultBytes)` to acknowledge successfully and retain a binary result. Returning
+ordinary `Ack` succeeds with a null result; an empty byte array is distinct from null.
+The application chooses its result codec. Ordinary jobs do not retain results.
+
+The failure policy applies throughout the tree, after all siblings finish:
+
+| Policy | Parent behavior after a child fails |
+| --- | --- |
+| `FailParent` (default) | Fail without calling the handler; propagate that failure to its parent. |
+| `Ignore` | Run the handler with failed children omitted from child results. |
+| `Continue` | Run the handler with failed children included with `Status == "failed"` and a null result. |
+
+`Nack` and exceptions remain retryable until the worker's delivery limit; they do not finish
+a child early. Visibility recovery and configured durable retry backoff preserve flow membership.
+Flows enqueue immediately and do not expose per-node delay, priority, or TTL options.
+
+Child results, parent activation, completion events, and acknowledgement commit in one fenced
+Redis script. A crash before completion leaves the child recoverable; a crash or lost reply
+after completion leaves the parent queued. A stale attempt cannot replace results or activate
+a parent twice. Handlers must still make external side effects idempotent.
+
+`GetFlowResultsAsync` returns every node in breadth-first tree order, including failed nodes
+under `Ignore`, or an empty list for an unknown flow. Status is `waiting`, `ready`, `completed`,
+or `failed`; `ready` includes pending deliveries and retries. Completion events include `FlowKey`
+to distinguish identical job IDs in different flows. A parent failed without execution publishes
+a `dead-letter` event with reason `child-failed`, entry ID `0-0`, and attempt zero; it has no
+delivery to copy to the dead-letter stream.
+`ReadEventsAsync` parses these sentinel values normally. A failed root publishes the same
+terminal event, so consumers can wait for its job ID and `FlowKey`, or inspect the root snapshot.
+
+Flow IDs have permanent deduplication, independent of ordinary job enqueue IDs. Retry an ambiguous
+enqueue using the same flow ID: the first tree wins and later calls return `false`. Job IDs must
+be unique within each tree. Cycles, shared children, and cross-queue trees are not supported.
+Use a new flow ID for a new run and include that identity in application job IDs when needed
+for external idempotency. Each result is limited to **4 KiB**, and combined UTF-8 job IDs and
+serialized payloads are limited to **256 KiB** per flow. Store larger data externally and return
+a reference. Each completion rewrites the retained tree, bounded to 1 MiB of results plus
+256 KiB of input and coordination metadata. `Complete` rejects oversized results before copying;
+the completion script also checks the limit before changing Redis state.
+
+Flow payloads and results do not expire automatically. After a flow is terminal and its results
+are no longer needed, call `await queue.RemoveFlowAsync(flowId)`. This atomically verifies that
+every node is completed or failed and deletes the flow state and flow-ID reservation. It returns
+`false` for an absent flow and throws `RespireServerException` for an active flow. Queue entries
+and events keep their existing retention policy. A removed ID can be enqueued again, so use a
+new ID when consumers must distinguish historical runs. Do not delete, evict, or alter active
+flow state directly. Flow keys share the queue's Cluster slot and respect client key prefixes.
+The stored schema is versioned; reads, duplicate enqueues, completions, and removal reject an
+unknown version explicitly without mutating it.
+
+Flows require Redis 7.0 or later. On an older server, the completion script fails during its
+permission preflight, before any Redis mutation or acknowledgement. Its delivery remains
+pending and recoverable, but cannot finish until Redis is upgraded; do not downgrade a server
+with active flows. In addition to the ordinary queue commands, flows require `GET`, `SET`,
+`TYPE`, and (for removal) `DEL` on flow keys
+and `XADD`/`XDEL` on the ready stream for activation and rollback.
 
 ## Delay, priority and expiry
 

@@ -10,6 +10,48 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test]
+    public async Task OversizedFlowInputsAndResultsAreRejected()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", Encoding.UTF8.GetBytes);
+        // The budget counts UTF-8 bytes across all nodes, including IDs.
+        var tree = new RespireJobFlow<string>("root", new string('é', 65536))
+        { Children = [new("child", new string('é', 65536))] };
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", tree)).Throws<ArgumentException>();
+        var job = new RespireJob<string>("root", "payload", new("1-0"));
+        await Assert.That(() => job.Complete(new byte[4097])).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(job.Complete(new byte[4096])).IsEqualTo(RespireStreamWorkerResult.Ack);
+    }
+
+    [Test]
+    public async Task InvalidFlowTreesAreRejectedBeforeEnqueue()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", Encoding.UTF8.GetBytes);
+        var duplicate = new RespireJobFlow<string>("root", "payload") { Children = [new("root", "child")] };
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", duplicate)).Throws<ArgumentException>();
+        var children = new List<RespireJobFlow<string>>();
+        var cycle = new RespireJobFlow<string>("root", "payload") { Children = children };
+        children.Add(cycle);
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", cycle)).Throws<ArgumentException>();
+        var large = new RespireJobFlow<string>("root", "payload")
+        { Children = Enumerable.Range(0, 256).Select(i => new RespireJobFlow<string>(i.ToString(), "payload")).ToArray() };
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", large)).Throws<ArgumentException>();
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", new("root", "payload"), (RespireJobFlowFailurePolicy)42))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", new("root", "payload"), cancellationToken: new(true)))
+            .Throws<OperationCanceledException>();
+        var job = new RespireJob<string>("root", "payload", new("1-0"));
+        await Assert.That(async () => await job.GetChildResultsAsync()).Throws<InvalidOperationException>();
+        var equal = job with { };
+        job.Complete([1]);
+        await Assert.That(job.Equals(equal)).IsTrue();
+        await Assert.That(job.GetHashCode()).IsEqualTo(equal.GetHashCode());
+    }
+
+    [Test]
     public async Task ProgressRequiresAHostedDeliveryAndValidPercentage()
     {
         var job = new RespireJob<string>("id", "payload", new("1-0"));
