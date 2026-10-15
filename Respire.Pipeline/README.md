@@ -75,8 +75,14 @@ This will:
 2. Run tests
 3. Run benchmarks
 4. Create packages
-5. Copy packages to `~/.nuget/local-packages/`
-6. Add the local source to NuGet configuration
+5. Register `~/.nuget/local-packages/` as an enabled NuGet source
+6. Copy packages to the local folder
+
+Registration uses `dotnet nuget` and its normal configuration hierarchy. An existing
+source pointing at the folder is reused, regardless of its name, and enabled if
+necessary. Otherwise, the pipeline adds `RespireLocal` (or an unused numbered name
+if that name belongs to another source). Repeated runs do not add duplicate sources
+or change unrelated feeds. A registration failure stops the dependent local upload.
 
 ### Production Mode
 
