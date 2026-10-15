@@ -1922,6 +1922,31 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool keysResolved = false,
         bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
     {
+        if (_core.Options.CommandHook is not { } hook)
+            return CachedGetManyUnhookedAsync(keys, cancellationToken, converter, keysResolved, observeErrors, observation);
+
+        // Resolve, validate and snapshot the whole request before admission. A hook may
+        // mutate caller-owned keys, but cannot change the command it just admitted.
+        var resolved = new RespireKey[keys.Length];
+        int? slot = null;
+        for (var index = 0; index < keys.Length; index++)
+        {
+            resolved[index] = (keysResolved ? keys[index] : ResolveKey(keys[index])).Snapshot();
+            ValidateMGetClusterSlot(in resolved[index], ref slot);
+        }
+        return CommandHookScope.RunAsync(hook, "MGET", cancellationToken,
+            (Client: this, Keys: resolved, Token: cancellationToken, Converter: converter, Observe: observeErrors, Observation: observation),
+            static s => s.Client.CachedGetManyUnhookedAsync(s.Keys, s.Token, s.Converter,
+                keysResolved: true, observeErrors: s.Observe, observation: s.Observation));
+    }
+
+    private ValueTask<TResult[]> CachedGetManyUnhookedAsync<TResult>(
+        ReadOnlySpan<RespireKey> keys,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter,
+        bool keysResolved = false,
+        bool observeErrors = true, RespireTelemetry.ErrorObservation observation = default)
+    {
         var owner = observation.IsEmpty && observeErrors ? DispatchResponseSource<TResult[]>.Start() : null;
         observation = owner?.Observation ?? observation;
         try
@@ -2887,7 +2912,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         var keys = new RespireKey[query.ArgumentCount];
         for (var index = 0; index < keys.Length; index++) keys[index] = query.GetArgument(index).AsKey();
-        var values = await CachedGetManyAsync(keys, cancellationToken,
+        // Raw Execute already owns admission and its final result conversion.
+        var values = await CachedGetManyUnhookedAsync(keys, cancellationToken,
             static (RespireClient _, in RespValue value) => value.ToOwned(), keysResolved: true,
             observeErrors: false, observation: observation).ConfigureAwait(false);
         return RespValue.Array(values);

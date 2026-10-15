@@ -258,6 +258,11 @@ created and deleted before the `SET` runs, the computed value is stored.
 - The write invalidates other tracking clients but is not inserted into the local cache. The next
   `GET` registers tracking and populates it.
 
+With a [command hook](../guides/command-hooks.md#cache-operation-owners), each caller
+receives one `GETORSET` scope before cache lookup or factory execution, including hits
+and cache-bypass views. Completion includes serialization, insertion and final conversion;
+application commands inside the factory have independent scopes.
+
 Factory sharing follows `CoalesceConcurrentMisses`:
 
 - Enabled: calls on the same client with the same physical key, generic type, and expiry form/value

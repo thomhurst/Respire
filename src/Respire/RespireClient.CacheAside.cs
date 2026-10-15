@@ -25,12 +25,32 @@ public sealed partial class RespireClient
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private ValueTask<T?> GetOrSetCoreAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
         RespireExpiry expiry, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => _core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "GETORSET", cancellationToken,
+                (Client: this, Key: key.Snapshot(), Factory: factory, Expiry: expiry, Token: cancellationToken, Observation: observation),
+                static s => s.Client.GetOrSetUnhookedAsync(s.Key, s.Factory, s.Expiry, s.Token, s.Observation),
+                static s =>
+                {
+                    ValidateCacheAside(s.Factory, s.Expiry);
+                    return "GETORSET";
+                })
+            : GetOrSetUnhookedAsync(key, factory, expiry, cancellationToken, observation);
+
+    private static void ValidateCacheAside<T>(Func<CancellationToken, ValueTask<T?>> factory, RespireExpiry expiry)
     {
         ArgumentNullException.ThrowIfNull(factory);
         if (!(expiry.TryGetRelativeMilliseconds(out var milliseconds)
                 || expiry.TryGetAbsoluteUnixMilliseconds(out milliseconds)) || milliseconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(expiry),
                 "Expiry must be a relative duration of at least one millisecond or an absolute instant after the Unix epoch.");
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T?> GetOrSetUnhookedAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
+        RespireExpiry expiry, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        ValidateCacheAside(factory, expiry);
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         if (_core.ClientCache is null)

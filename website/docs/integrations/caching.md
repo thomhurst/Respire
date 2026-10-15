@@ -14,6 +14,11 @@ Use these packages to back Microsoft caching abstractions with Redis:
 
 ## Distributed cache
 
+When backed by a concrete `RespireClient`, [command hooks](../guides/command-hooks.md#cache-operation-owners)
+cover each adapter operation: `GET`, `SET`, `REFRESH`, or `UNLINK`. Admission precedes
+codecs and tracking setup; completion includes conversion, foreground TTL correction,
+and resource cleanup. Internal script attempts do not create separate callbacks.
+
 ```bash
 dotnet add package Respire.Caching
 ```
