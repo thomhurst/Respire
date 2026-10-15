@@ -147,6 +147,46 @@ public class CommonMisuseAnalyzerTests
     [Test]
     [Arguments("net8.0")]
     [Arguments("net10.0")]
+    public Task UnboundedSortedSetRanges(string framework) => Verify(framework, new UnboundedReadAnalyzer(), """
+        class Consumer
+        {
+            async Task Read(IRespireClient client, ISortedSetCommands sortedSets, long stop)
+            {
+                _ = await {|RESP011:client.SortedSets.RangeAsync("set")|};
+                _ = await {|RESP011:sortedSets.RangeAsync<int>("set")|};
+                const long All = -1;
+                _ = await {|RESP011:sortedSets.RangeAsync(stop: All, key: "set", start: 0, descending: true)|};
+                _ = await {|RESP011:sortedSets.RangeWithScoresAsync("set")|};
+                _ = await {|RESP011:sortedSets.RangeWithScoresAsync<int>("set", 0, -1, descending: true)|};
+                _ = await sortedSets.RangeAsync("set", 0, 99);
+                _ = await sortedSets.RangeAsync<int>("set", -10, -1);
+                _ = await sortedSets.RangeAsync("set", 0, stop);
+                _ = await sortedSets.RangeWithScoresAsync("set", 0, 99);
+                _ = await sortedSets.RangeWithScoresAsync<int>("set", -10, -1);
+                _ = await sortedSets.RangeWithScoresAsync("set", 0, stop);
+                await foreach (var entry in sortedSets.ScanAsync("set")) { }
+            }
+            void Queued(RespireBatch batch, RespireTransaction transaction, IBatchSortedSetCommands sortedSets, long stop)
+            {
+                _ = {|RESP011:batch.SortedSets.Range("set")|};
+                _ = {|RESP011:transaction.SortedSets.Range<int>("set", 0, -1)|};
+                _ = {|RESP011:sortedSets.Range(stop: -1, key: "set", start: 0, descending: true)|};
+                _ = {|RESP011:batch.SortedSets.RangeWithScores("set")|};
+                _ = {|RESP011:transaction.SortedSets.RangeWithScores<int>("set", descending: true)|};
+                _ = {|RESP011:sortedSets.RangeWithScores("set", 0, -1)|};
+                _ = batch.SortedSets.Range("set", 0, 9);
+                _ = transaction.SortedSets.Range<int>("set", -10, -1);
+                _ = sortedSets.Range("set", 0, stop);
+                _ = batch.SortedSets.RangeWithScores("set", 0, 9);
+                _ = transaction.SortedSets.RangeWithScores<int>("set", -10, -1);
+                _ = sortedSets.RangeWithScores("set", 0, stop);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("net8.0")]
+    [Arguments("net10.0")]
     public Task BlockingMessageConsumer(string framework) => Verify(framework, new BlockingSubscriptionHandlerAnalyzer(), """
         class Consumer
         {

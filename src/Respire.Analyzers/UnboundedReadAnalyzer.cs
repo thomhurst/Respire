@@ -29,7 +29,8 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
     {
         var call = (IInvocationOperation)context.Operation;
         var name = call.TargetMethod.Name;
-        if (name is not ("KeysAsync" or "MembersAsync" or "Members" or "GetAllAsync" or "GetAll" or "RangeAsync" or "Range")) return;
+        if (name is not ("KeysAsync" or "MembersAsync" or "Members" or "GetAllAsync" or "GetAll"
+            or "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores")) return;
         var type = call.TargetMethod.ContainingType;
         if (type.ContainingNamespace.ToDisplayString() != "Respire") return;
 
@@ -56,6 +57,12 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
                 if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
                 command = "LRANGE 0 -1";
                 alternative = "bounded LRANGE pages";
+                break;
+            case "ISortedSetCommands" or "SortedSetCommands" or "IBatchSortedSetCommands" or "BatchSortedSetCommands"
+                when name is "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores":
+                if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
+                command = "ZRANGE 0 -1";
+                alternative = "ZSCAN (SortedSets.ScanAsync) or bounded rank ranges";
                 break;
         }
 

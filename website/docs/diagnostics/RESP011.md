@@ -15,10 +15,12 @@ them. Batching these commands does not bound their replies.
 | `Sets.MembersAsync` / queued `Members` (`SMEMBERS`) | `client.Sets.ScanAsync` (`SSCAN`) |
 | `Hashes.GetAllAsync` / queued `GetAll` (`HGETALL`) | `client.Hashes.ScanAsync` (`HSCAN`) |
 | `Lists.RangeAsync` / queued `Range` with `start: 0, stop: -1` | Bounded `LRANGE` pages |
+| `SortedSets.RangeAsync` / `RangeWithScoresAsync` (or queued equivalents) with `start: 0, stop: -1` | `client.SortedSets.ScanAsync` (`ZSCAN`) or bounded rank ranges |
 
-Generic overloads and the interface facets are covered. List bounds include
-omitted defaults, named arguments and compile-time constants. Nonconstant bounds,
-raw commands, scripts and custom wrappers are not analyzed.
+Generic overloads and the interface facets are covered. List and sorted-set rank
+bounds include omitted defaults, named arguments and compile-time constants.
+Sorted-set ranges are checked in either ordering. Nonconstant bounds, score and
+lexicographic ranges, raw commands, scripts and custom wrappers are not analyzed.
 
 ```csharp
 async Task ReadAsync(IRespireClient client, Func<string, Task> processAsync)
@@ -39,8 +41,10 @@ async Task ReadAsync(IRespireClient client, Func<string, Task> processAsync)
 
 See [collections](../commands/collections.md) for the typed APIs. Scanning is not
 a snapshot: concurrent changes can affect iteration, duplicate entries are
-possible, and a scan count is a hint. List index paging also needs an explicit
-policy for concurrent mutations. No automatic code fix is offered because
+possible, and a scan count is a hint. Sorted-set scanning does not preserve rank
+order; use bounded rank ranges when ordering matters. List index and sorted-set
+rank paging also need an explicit policy for concurrent mutations.
+No automatic code fix is offered because
 changing a materialized result into iteration changes the caller's control flow
 and consistency assumptions. In particular, a scan outside a transaction does
 not preserve the transaction's atomicity.
