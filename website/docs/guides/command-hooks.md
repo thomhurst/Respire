@@ -93,15 +93,38 @@ unsubscribe. Client disposal, reconnect/resubscribe, topology recovery and messa
 are housekeeping, not new application operations. The setup hook does not remain open for
 the subscription's lifetime. Teardown has no cancellation token; setup uses its caller token.
 
+### Specialized server and cluster operations
+
+Specialized server operations are also covered: pinned client/HOTKEYS commands, `CLIENT ID`
+handle acquisition, explicit `OnNode` operations, server facet conversions and server fan-out.
+Explicit-node completion includes connection-pool disposal and mutation-fence cleanup.
+Cluster `DBSIZE`, `FLUSHDB`/`FLUSHALL`, and `SCRIPT LOAD`/`EXISTS`/`FLUSH` have one scope
+around all targets and their final conversion or reduction. Server fan-out APIs return
+per-node failures as data: publishing their result array is `Succeeded`, even if entries
+contain conversion errors or cancellation. Discovery errors that escape the operation are
+reported as `Failed` or `Canceled`.
+
+`ScanClusterPageAsync` has one `SCAN` scope per page, including resumable Valkey
+`CLUSTERSCAN`, redirects, capability fallback and final checkpoint conversion. Its topology,
+run-ID and capability probes do not generate separate callbacks. Direct
+`ScanValkeyClusterPageAsync` uses a `CLUSTERSCAN` scope. A completed cursor still receives
+admission and completion when asked for another page, even though it sends no command.
+
 The following paths do not yet have a complete hook contract: interpolated commands,
-script objects and NOSCRIPT fallback, cursor pages,
-dedicated blocking facets, pinned/node/fan-out APIs, multi-key
+function execution/library recovery, idempotent XADD fallback, script objects and NOSCRIPT
+fallback, ordinary cursor pages, dedicated blocking facets, multi-key
 cache reads, hash partial reads, custom facet conversions, imports, and composite helpers
 such as managed locks or cache-aside factories. Some invoke covered helpers internally;
 that does not make their entire public operation covered. Explicit batch and transaction
 members also remain outside this command hook. Use the separate
 [pipeline hook](batches-and-transactions.md#observe-or-reject-explicit-executions) for
 aggregate admission and completion.
+
+Tracked scripts and correction sends belong to the surrounding lock, cache or coordination
+operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
+transport leg would miss earlier setup and finish before correction cleanup. Imports and
+diagnostic aggregates such as `ProbeHealthAsync` also require the remaining composite audit.
+This coverage does not establish a client-wide blocking policy.
 
 ## Order and outcomes
 

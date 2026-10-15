@@ -14,6 +14,61 @@ namespace Respire.Tests.Networking;
 public class ClusterScanTests
 {
     [Test]
+    public async Task CommandHookIncludesCapabilityFallbackAndRejectsInvalidContinuationBeforeAdmission()
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        cluster.First.ClusterScan = _ => "-ERR unknown command 'CLUSTERSCAN'\r\n"u8.ToArray();
+        cluster.First.Scan = _ => Page("7", KeyInSlot(0));
+        var hook = new SpecializedCommandHookTests.RecordingHook();
+        await using var client = await cluster.ConnectAsync(hook: hook);
+        var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        await Assert.That(hook.Entered.Single().Command).IsEqualTo("SCAN");
+        await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Any(c => c.StartsWith("CLUSTERSCAN "))).IsTrue();
+        await Assert.That(cluster.First.Server.ReceivedCommands.Any(c => c.StartsWith("SCAN "))).IsTrue();
+
+        hook.Reset();
+        hook.Before = _ => throw new InvalidOperationException("Should not mask invalid continuation.");
+        var baseline = cluster.CommandCount;
+        await Assert.That(async () => await client.Keys.ScanClusterPageAsync(page.Cursor, match: "changed"))
+            .Throws<ArgumentException>();
+        await Assert.That(hook.Entered.Count).IsEqualTo(0);
+        await Assert.That(cluster.CommandCount).IsEqualTo(baseline);
+    }
+
+    [Test]
+    public async Task ScriptFanOutHookIncludesCrossPrimaryConversionAndReentrantCommands()
+    {
+        await using var cluster = new ScanCluster();
+        var first = cluster.First.Server.ReplyOverride!;
+        var second = cluster.Second.Server.ReplyOverride!;
+        cluster.First.Server.ReplyOverride = (id, command) => command.StartsWith("SCRIPT LOAD ")
+            ? Bulk("first") : first(id, command);
+        cluster.Second.Server.ReplyOverride = (id, command) => command.StartsWith("SCRIPT LOAD ")
+            ? Bulk("different") : second(id, command);
+        var hook = new SpecializedCommandHookTests.RecordingHook();
+        await using var client = await cluster.ConnectAsync(hook: hook);
+        Task? reentrant = null;
+        hook.Before = context =>
+        {
+            if (context.Command == "SCRIPT LOAD") reentrant = Ping();
+        };
+        var error = await Assert.That(async () => await client.Scripts.LoadAsync(RespireScript.Create("return 1")))
+            .Throws<RespireProtocolException>();
+        await reentrant!;
+        var result = hook.Completed.Single(c => c.Context.Command == "SCRIPT LOAD");
+        await Assert.That(result.Outcome).IsEqualTo(RespireCommandOutcome.Failed);
+        await Assert.That(result.Error).IsSameReferenceAs(error);
+        await Assert.That(hook.Entered.Count).IsEqualTo(2);
+        await Assert.That(hook.Completed.Count).IsEqualTo(2);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(c => c.StartsWith("SCRIPT LOAD "))).IsEqualTo(1);
+        await Assert.That(cluster.Second.Server.ReceivedCommands.Count(c => c.StartsWith("SCRIPT LOAD "))).IsEqualTo(1);
+
+        async Task Ping() { using var reply = await client.ExecuteAsync("PING"); }
+    }
+
+    [Test]
     public async Task CursorResumesNodeCursorAcrossClientsAndEmptyPages()
     {
         await using var cluster = new ScanCluster();
@@ -1182,10 +1237,11 @@ public class ClusterScanTests
             node.BeforeInfo?.Invoke();
             return Bulk($"# Server\r\nrun_id:{node.RunId}\r\n");
         }
-        internal ValueTask<RespireClient> ConnectAsync(int protocol = 2, int connections = 1) => RespireClient.ConnectAsync(new RespireOptions
+        internal ValueTask<RespireClient> ConnectAsync(int protocol = 2, int connections = 1, RespireCommandHook? hook = null) => RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Protocol = protocol == 2 ? RespProtocol.Resp2 : RespProtocol.Resp3, Connections = connections, MaxInflightCommands = 4,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Server.Port) },
+            CommandHook = hook,
         });
         private byte[] SlotsReply()
         {

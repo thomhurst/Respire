@@ -5,7 +5,8 @@ namespace Respire;
 /// Covers ordinary converted commands, single-key cached GET, non-interpolated Execute APIs,
 /// streaming results and explicit subscription setup/teardown. Downloads complete on stream
 /// transfer, not later payload consumption. Uploads retain borrowed buffers through completion.
-/// Other specialized operations and explicit aggregate members are not yet covered; this is not a
+/// Also covers specialized server dispatch and cluster scan pages. Other specialized owners
+/// and explicit aggregate members remain outside this contract; this is not a
 /// client-wide blocking policy. Callbacks may run concurrently and reentrantly. A command started
 /// by a callback has its own callbacks; applications must prevent unbounded recursion.
 /// </remarks>

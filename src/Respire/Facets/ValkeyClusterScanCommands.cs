@@ -56,7 +56,8 @@ internal sealed partial class KeyCommands
         if (slot is < 0 or >= ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(slot));
         var typeToken = FormatKeyType(type);
         ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
-        cancellationToken.ThrowIfCancellationRequested();
+        // The conversion scope admits configured calls before observing cancellation.
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         if (client.Core.Cluster is null) throw new InvalidOperationException("CLUSTERSCAN requires UseCluster.");
         var prefix = client.EncodedKeyPrefix;
         // A trailing high surrogate has both paired-text and replacement-byte encodings.

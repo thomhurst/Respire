@@ -19,6 +19,36 @@ internal sealed partial class KeyCommands
     public ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
         RespireClusterScanCursor cursor, string? match = null, RespireKeyType? type = null,
         int countHint = 250, CancellationToken cancellationToken = default)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "SCAN", cancellationToken,
+                (Commands: this, Cursor: cursor, Match: match, Type: type, Count: countHint, Token: cancellationToken),
+                static s => s.Commands.ScanClusterPageUnhookedAsync(s.Cursor, s.Match, s.Type, s.Count, s.Token),
+                static s => s.Commands.ValidateClusterScanHook(s.Cursor, s.Match, s.Type, s.Count))
+            : ScanClusterPageUnhookedAsync(cursor, match, type, countHint, cancellationToken);
+
+    private string ValidateClusterScanHook(RespireClusterScanCursor cursor, string? match, RespireKeyType? type, int countHint)
+    {
+        ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
+        var typeToken = FormatKeyType(type);
+        if (client.Core.Cluster is null) throw new InvalidOperationException("A Cluster scan requires UseCluster.");
+        var prefix = client.KeyPrefix;
+        var checkpointMatch = prefix?.Text is { } text ? EscapeGlob(text) + (match ?? "*") : match;
+        ValidateClusterScanIdentity(cursor, checkpointMatch, typeToken, prefix);
+        return "SCAN";
+    }
+
+    private void ValidateClusterScanIdentity(RespireClusterScanCursor cursor, string? checkpointMatch,
+        string? typeToken, KeyPrefix? prefix)
+    {
+        if (cursor.State is { } previous && (previous.Match != checkpointMatch || previous.Type != typeToken
+            || !previous.MatchesKeyPrefix(prefix) || previous.Database is { } database && database != client.Core.Options.Database))
+            throw new ArgumentException("Resume a Cluster scan with the same match, type, database and key prefix.", nameof(cursor));
+    }
+
+    private ValueTask<RespireClusterScanPage> ScanClusterPageUnhookedAsync(
+        RespireClusterScanCursor cursor, string? match, RespireKeyType? type,
+        int countHint, CancellationToken cancellationToken)
         => DispatchResponseSource<RespireClusterScanPage>.Run(
             (Commands: this, Cursor: cursor, Match: match, Type: type, Count: countHint, Token: cancellationToken),
             static (state, observation) => state.Commands.ScanClusterPageBorrowedAsync(
@@ -74,9 +104,7 @@ internal sealed partial class KeyCommands
         // their exact bytes, and Match records the caller's text pattern in that format.
         var checkpointMatch = prefix?.Text is { } text ? EscapeGlob(text) + (match ?? "*") : match;
         var binaryPrefix = prefix is { Text: null } ? prefix.Bytes : null;
-        if (cursor.State is { } previous && (previous.Match != checkpointMatch || previous.Type != typeToken
-            || !previous.MatchesKeyPrefix(prefix) || previous.Database is { } database && database != client.Core.Options.Database))
-            throw new ArgumentException("Resume a Cluster scan with the same match, type, database and key prefix.", nameof(cursor));
+        ValidateClusterScanIdentity(cursor, checkpointMatch, typeToken, prefix);
         if (cursor.IsComplete) return new(cursor, []);
         // Never mutate a published cursor. Failure/cancellation leaves the caller's checkpoint intact.
         var state = cursor.State?.Copy() ?? new ClusterScanState(checkpointMatch, typeToken, prefix?.Text) { BinaryPrefix = binaryPrefix };

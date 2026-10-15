@@ -438,8 +438,16 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         _ => throw new ArgumentOutOfRangeException(nameof(mode)),
     };
 
+    private ValueTask<bool[]> ExistsClusterAsync(ClusterRouter cluster, CmdN command,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "SCRIPT EXISTS", cancellationToken,
+                (Commands: this, Cluster: cluster, Argument: command, Token: cancellationToken, Observation: observation),
+                static s => s.Commands.ExistsClusterUnhookedAsync(s.Cluster, s.Argument, s.Token, s.Observation))
+            : ExistsClusterUnhookedAsync(cluster, command, cancellationToken, observation);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<bool[]> ExistsClusterAsync(
+    private async ValueTask<bool[]> ExistsClusterUnhookedAsync(
         ClusterRouter cluster, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         var results = await SendToPrimariesAsync(cluster, "SCRIPT EXISTS", command,
@@ -459,8 +467,16 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     }
 
     // The boolean result lets SCRIPT FLUSH share the caller's generic response owner.
+    private ValueTask<bool> FlushClusterAsync(ClusterRouter cluster, Cmd command,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "SCRIPT FLUSH", cancellationToken,
+                (Commands: this, Cluster: cluster, Argument: command, Token: cancellationToken, Observation: observation),
+                static s => s.Commands.FlushClusterUnhookedAsync(s.Cluster, s.Argument, s.Token, s.Observation))
+            : FlushClusterUnhookedAsync(cluster, command, cancellationToken, observation);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<bool> FlushClusterAsync(
+    private async ValueTask<bool> FlushClusterUnhookedAsync(
         ClusterRouter cluster, Cmd command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         _ = await SendToPrimariesAsync(cluster, "SCRIPT FLUSH", command,
@@ -490,8 +506,16 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
             "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken, this,
             static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), observation: observation);
 
+    private ValueTask<string> LoadClusterAsync(ClusterRouter cluster, RespireScript script,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "SCRIPT LOAD", cancellationToken,
+                (Commands: this, Cluster: cluster, Argument: script, Token: cancellationToken, Observation: observation),
+                static s => s.Commands.LoadClusterUnhookedAsync(s.Cluster, s.Argument, s.Token, s.Observation))
+            : LoadClusterUnhookedAsync(cluster, script, cancellationToken, observation);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<string> LoadClusterAsync(
+    private async ValueTask<string> LoadClusterUnhookedAsync(
         ClusterRouter cluster,
         RespireScript script,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)

@@ -93,14 +93,15 @@ internal sealed partial class ServerCommands
     private ValueTask<T> ExecuteDiagnosticAsync<T>(DiagnosticCall<T> call, CancellationToken cancellationToken)
     {
         if (call.RequiresAdmin) EnsureAdminAllowed(call.Operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        // Configured conversion owns cancellation after hook admission.
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync(call.Operation, call.Command, cancellationToken, call.Convert);
     }
 
     private ValueTask<RespireServerResult<T>[]> ExecuteDiagnosticOnAllNodesAsync<T>(DiagnosticCall<T> call, CancellationToken cancellationToken)
     {
         if (call.RequiresAdmin) EnsureAdminAllowed(call.Operation);
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return FanOutAsync(call.Operation, call.Command, cancellationToken, call.Convert);
     }
 

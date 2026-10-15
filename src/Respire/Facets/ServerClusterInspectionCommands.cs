@@ -133,7 +133,7 @@ internal sealed partial class ServerCommands
 
     private ValueTask<T> ExecuteClusterInspectionAsync<T>(ClusterInspectionCall<T> call, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync(call.Operation, call.Command, cancellationToken, call.Convert);
     }
 

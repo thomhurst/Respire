@@ -411,7 +411,14 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+    private ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "DBSIZE", cancellationToken,
+                (Server: this, Token: cancellationToken, Observation: observation),
+                static s => s.Server.DatabaseSizeClusterUnhookedAsync(s.Token, s.Observation))
+            : DatabaseSizeClusterUnhookedAsync(cancellationToken, observation);
+
+    private async ValueTask<long> DatabaseSizeClusterUnhookedAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
     {
 
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
@@ -427,7 +434,15 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         return total;
     }
 
-    private async ValueTask FlushClusterAsync(
+    private ValueTask FlushClusterAsync(string operation, Cmd command, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation = default)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Server: this, Operation: operation, Command: command, Token: cancellationToken, Observation: observation),
+                static s => s.Server.FlushClusterUnhookedAsync(s.Operation, s.Command, s.Token, s.Observation))
+            : FlushClusterUnhookedAsync(operation, command, cancellationToken, observation);
+
+    private async ValueTask FlushClusterUnhookedAsync(
         string operation,
         Cmd command,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation = default)
@@ -506,7 +521,13 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         where TCommand : struct, IRespCommand
         => observation.IsEmpty
             ? client.ConvertResponseAsync(operation, command, cancellationToken, this, converter)
-            : client.ConvertUnobservedResponseAsync(operation, command, cancellationToken, this, converter, observation);
+            : client.Core.Options.CommandHook is { } hook
+                ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                    (Client: client, Operation: operation, Command: command, Token: cancellationToken,
+                        State: this, Converter: converter, Observation: observation),
+                    static s => s.Client.ConvertUnobservedResponseAsync(s.Operation, s.Command, s.Token,
+                        s.State, s.Converter, s.Observation))
+                : client.ConvertUnobservedResponseAsync(operation, command, cancellationToken, this, converter, observation);
 
     internal static RespireServerClientInfo[] ParseClientList(in RespValue value)
     {

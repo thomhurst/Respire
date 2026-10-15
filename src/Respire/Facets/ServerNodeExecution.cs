@@ -44,14 +44,24 @@ internal sealed partial class ServerCommands
     private const int MaxFanOutConcurrency = 8;
     private static readonly Verb ClusterNodes = new(-1, "CLUSTER", "NODES");
 
-    private async ValueTask<RespireServerResult<T>[]> FanOutAsync<TCommand, T>(
+    private ValueTask<RespireServerResult<T>[]> FanOutAsync<TCommand, T>(
+        string operation, TCommand command, CancellationToken cancellationToken,
+        ResponseConverter<ServerCommands, T> convert, RespireTelemetry.ErrorObservation observation = default) where TCommand : struct, IRespCommand
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, operation, cancellationToken,
+                (Server: this, Operation: operation, Command: command, Token: cancellationToken,
+                    Convert: convert, Observation: observation),
+                static s => s.Server.FanOutUnhookedAsync(s.Operation, s.Command, s.Token, s.Convert, s.Observation))
+            : FanOutUnhookedAsync(operation, command, cancellationToken, convert, observation);
+
+    private async ValueTask<RespireServerResult<T>[]> FanOutUnhookedAsync<TCommand, T>(
         string operation, TCommand command, CancellationToken cancellationToken,
         ResponseConverter<ServerCommands, T> convert, RespireTelemetry.ErrorObservation observation = default) where TCommand : struct, IRespCommand
     {
         if (observation.IsEmpty)
             return await DispatchResponseSource<RespireServerResult<T>[]>.Run(
                 (Server: this, Operation: operation, Command: command, Token: cancellationToken, Convert: convert),
-                static (state, owner) => state.Server.FanOutAsync(state.Operation, state.Command,
+                static (state, owner) => state.Server.FanOutUnhookedAsync(state.Operation, state.Command,
                     state.Token, state.Convert, owner)).ConfigureAwait(false);
         ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
         cancellationToken.ThrowIfCancellationRequested();

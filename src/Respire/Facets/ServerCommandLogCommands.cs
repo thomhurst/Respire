@@ -68,13 +68,13 @@ internal sealed partial class ServerCommands
 
     public ValueTask<RespireCommandLogEntry[]> CommandLogAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync("COMMANDLOG GET", BuildCommandLogGet(type, count), cancellationToken, CommandLogConverter(type));
     }
 
     public ValueTask<long> CommandLogLengthAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync("COMMANDLOG LEN", new Cmd1(CommandLogLen, CommandLogTypeToken(type)), cancellationToken,
             static (ServerCommands _, in RespValue value) => CommandLogParser.NonnegativeInteger(in value));
     }
@@ -82,7 +82,7 @@ internal sealed partial class ServerCommands
     public ValueTask ResetCommandLogAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
         EnsureAdminAllowed("COMMANDLOG RESET");
-        cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
         return DiscardCommandLogResetAsync(ConvertAsync("COMMANDLOG RESET", new Cmd1(CommandLogReset, CommandLogTypeToken(type)),
             cancellationToken, static (ServerCommands _, in RespValue value) => CommandLogParser.Ok(in value)));
     }
@@ -94,7 +94,20 @@ internal sealed partial class ServerCommands
         => FanOutAsync("COMMANDLOG LEN", new Cmd1(CommandLogLen, CommandLogTypeToken(type)), cancellationToken,
             static (ServerCommands _, in RespValue value) => CommandLogParser.NonnegativeInteger(in value));
 
-    public async ValueTask<RespireServerResult<bool>[]> ResetCommandLogOnAllNodesAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
+    public ValueTask<RespireServerResult<bool>[]> ResetCommandLogOnAllNodesAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
+        => client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "COMMANDLOG RESET", cancellationToken,
+                (Server: this, Type: type, Token: cancellationToken),
+                static s => s.Server.ResetCommandLogOnAllNodesUnhookedAsync(s.Type, s.Token),
+                static s =>
+                {
+                    s.Server.EnsureAdminAllowed("COMMANDLOG RESET");
+                    _ = CommandLogTypeToken(s.Type);
+                    return "COMMANDLOG RESET";
+                })
+            : ResetCommandLogOnAllNodesUnhookedAsync(type, cancellationToken);
+
+    private async ValueTask<RespireServerResult<bool>[]> ResetCommandLogOnAllNodesUnhookedAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
         EnsureAdminAllowed("COMMANDLOG RESET");
         cancellationToken.ThrowIfCancellationRequested();
@@ -103,7 +116,7 @@ internal sealed partial class ServerCommands
         var fence = cache is null ? default : cache.BeforeCommand("COMMANDLOG RESET", command);
         try
         {
-            return await FanOutAsync("COMMANDLOG RESET", new MutationCommand<Cmd1>(command, fence), cancellationToken,
+            return await FanOutUnhookedAsync("COMMANDLOG RESET", new MutationCommand<Cmd1>(command, fence), cancellationToken,
                 static (ServerCommands _, in RespValue value) => CommandLogParser.Ok(in value)).ConfigureAwait(false);
         }
         finally
