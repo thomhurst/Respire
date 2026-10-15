@@ -4740,15 +4740,30 @@ public partial class SentinelRoutingTests
     }
 
     [Test]
-    [Arguments("transaction", false)]
-    [Arguments("transaction", true)]
-    [Arguments("identity", false)]
-    [Arguments("identity", true)]
-    public async Task OtherSentinelAcquisitionTimeoutsDoNotReportDiscoveryPeers(string kind, bool rediscovery)
+    [Arguments("transaction", false, "discovery")]
+    [Arguments("transaction", true, "discovery")]
+    [Arguments("identity", false, "discovery")]
+    [Arguments("identity", true, "discovery")]
+    [Arguments("transaction", false, "discoveryWithoutCommandTimeout")]
+    [Arguments("transaction", true, "discoveryWithoutCommandTimeout")]
+    [Arguments("identity", false, "discoveryWithoutCommandTimeout")]
+    [Arguments("identity", true, "discoveryWithoutCommandTimeout")]
+    [Arguments("transaction", false, "command")]
+    [Arguments("transaction", true, "command")]
+    [Arguments("identity", false, "command")]
+    [Arguments("identity", true, "command")]
+    [Arguments("transaction", false, "caller")]
+    [Arguments("transaction", true, "caller")]
+    [Arguments("identity", false, "caller")]
+    [Arguments("identity", true, "caller")]
+    public async Task OtherSentinelAcquisitionTimeoutsDoNotReportDiscoveryPeers(string kind, bool rediscovery, string winner)
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
-        await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = TimeSpan.FromSeconds(3) });
+        // The command deadline cannot fire within the test limit unless it is the chosen winner.
+        var timeout = winner == "command" ? TimeSpan.FromSeconds(3) : TimeSpan.FromMinutes(1);
+        var commandTimeout = winner == "discoveryWithoutCommandTimeout" ? (TimeSpan?)null : timeout;
+        await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = commandTimeout });
         if (rediscovery)
         {
             await client.PingAsync();
@@ -4757,6 +4772,9 @@ public partial class SentinelRoutingTests
             using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
             generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
         }
+        CancellationTokenSource? discoveryDeadline = null;
+        client.Core.Sentinel!.CreateDiscoveryTimeout = (token, _) =>
+            discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         sentinel.SuppressReply = command =>
         {
@@ -4766,14 +4784,79 @@ public partial class SentinelRoutingTests
         };
         await using var transaction = client.CreateTransaction();
         _ = transaction.Set("key", "value");
+        using var caller = new CancellationTokenSource();
+        var pending = kind == "transaction" ? transaction.CommitAsync(caller.Token).AsTask()
+            : (Task)client.EnsureReliableCorrectionOrderingAsync(caller.Token).AsTask();
+        await queried.Task.WaitAsync(Limit);
+        if (winner == "caller")
+        {
+            caller.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            var discoveryWins = winner is "discovery" or "discoveryWithoutCommandTimeout";
+            if (discoveryWins) discoveryDeadline!.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo(kind == "transaction" ? "MULTI/EXEC" : "CLIENT ID / CLIENT KILL");
+            await Assert.That(error.Timeout).IsEqualTo(commandTimeout ?? Limit);
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.Endpoint).IsNull();
+            await Assert.That(error.Endpoint).IsNull();
+            await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+            if (discoveryWins)
+            {
+                await Assert.That(error.InnerException).IsTypeOf<RespireTimeoutException>();
+                var discoveryError = (RespireTimeoutException)error.InnerException!;
+                await Assert.That(discoveryError.CommandName).IsEqualTo("SENTINEL GET-MASTER-ADDR-BY-NAME");
+                await Assert.That(discoveryError.Diagnostics.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", sentinel.Port));
+                await Assert.That(discoveryError.Endpoint).IsEqualTo(discoveryError.Diagnostics.Endpoint);
+            }
+        }
+        await Assert.That(primary.ReceivedCommands.Any(command => command is "CLIENT ID" or "MULTI")).IsFalse();
+    }
+
+    [Test]
+    [Arguments("transaction", false)]
+    [Arguments("transaction", true)]
+    [Arguments("identity", false)]
+    [Arguments("identity", true)]
+    public async Task SelectedPrimaryTimeoutKeepsDataEndpoint(string kind, bool commandTimeout)
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            CommandTimeout = commandTimeout ? TimeSpan.FromMinutes(1) : null,
+        });
+        await WaitForInitialSentinelValidationAsync(client, sentinel);
+        var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        primary.SuppressReply = command =>
+        {
+            if (command != (kind == "transaction" ? "EXEC" : "CLIENT ID")) return false;
+            submitted.TrySetResult();
+            return true;
+        };
+        await using var transaction = client.CreateTransaction();
+        _ = transaction.Set("key", "value");
         var pending = kind == "transaction" ? transaction.CommitAsync().AsTask()
             : (Task)client.EnsureReliableCorrectionOrderingAsync().AsTask();
-        await queried.Task.WaitAsync(Limit);
+        await submitted.Task.WaitAsync(Limit);
+        var connection = client.Core.Multiplexer.GetConnection();
+        using var limit = new CancellationTokenSource(Limit);
+        while (connection.InspectForTests().Inflight.Count != 1)
+            await Task.Delay(1, limit.Token);
+        await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var source)).IsTrue();
+        while (connection.CaptureTimeoutDiagnostics().ForCommand(source!.WriteStart, source.WriteEnd).Stage != RespireCommandStage.AwaitingReply)
+            await Task.Delay(1, limit.Token);
+        RespireTimeoutDiagnostics? diagnostics = null;
+        await Assert.That(source!.TrySetTimedOut(source.State, TimeSpan.FromSeconds(1), ref diagnostics, connection)).IsTrue();
         var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
-        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
-        await Assert.That(error.Diagnostics.Endpoint).IsNull();
-        await Assert.That(error.Diagnostics.ConnectionId).IsNull();
-        await Assert.That(primary.ReceivedCommands.Any(command => command is "CLIENT ID" or "MULTI")).IsFalse();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
+        await Assert.That(error.Diagnostics.Endpoint).IsEqualTo((RespireEndpoint?)new RespireEndpoint("127.0.0.1", primary.Port));
+        await Assert.That(error.Endpoint).IsEqualTo(error.Diagnostics.Endpoint);
+        await Assert.That(error.Diagnostics.ConnectionId).IsNotNull();
     }
 
     [Test]

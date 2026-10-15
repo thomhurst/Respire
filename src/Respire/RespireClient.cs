@@ -4697,37 +4697,40 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return;
         }
 
-        if (core.Options.CommandTimeout is not { } timeout)
-        {
-            if (core.Sentinel is not null)
-                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        var timeout = core.Options.CommandTimeout;
+        using var timeoutSource = timeout is { } duration ? CommandTimeoutCancellation.Create(cancellationToken, duration) : null;
+        var token = timeoutSource?.Token ?? cancellationToken;
         Infrastructure.RespireConnectionMultiplexer? selected = null;
         try
         {
             if (core.Sentinel is not null)
-                await core.EnsureConnectedAsync(timeoutSource.Token).ConfigureAwait(false);
+                await core.EnsureConnectedAsync(token).ConfigureAwait(false);
             selected = core.Multiplexer;
-            await selected.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
+            await selected.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeout is not null && !cancellationToken.IsCancellationRequested)
         {
             // No cache command is sent until identity setup completes, so timing this stage out
             // leaves no cache mutation to correct.
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout.Value, null,
                 selected?.CaptureConnectionWait() ?? (core.Sentinel is null
                     ? core.Multiplexer.CaptureConnectionWait()
                     : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)));
         }
+        catch (OperationCanceledException ex) when (timeoutSource is not null
+            && CommandTimeoutCancellation.IsFromLinkedToken(ex, cancellationToken, token))
+        {
+            throw new OperationCanceledException(ex.Message, ex, cancellationToken);
+        }
         catch (RespireTimeoutException ex)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (selected is null && core.Sentinel is not null)
+                throw RespireTimeoutException.BeforeConnectionSelection("CLIENT ID / CLIENT KILL", timeout ?? ex.Timeout, ex);
+            if (timeout is null) throw;
             // The deadline sweep expired an individual setup command; relabel it as the
             // whole identity-setup stage.
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout.Value, ex);
         }
     }
 

@@ -117,7 +117,8 @@ internal static class SentinelResolver
         Func<TResult, RespireEndpoint?>? getValidatedPeer = null,
         Func<TResult, ValueTask>? rejectPrimaryAsync = null,
         Action<RespireEndpoint>? acceptedReporter = null,
-        Func<CancellationToken, TimeSpan, CancellationTokenSource>? createConnectTimeout = null)
+        Func<CancellationToken, TimeSpan, CancellationTokenSource>? createConnectTimeout = null,
+        Func<CancellationToken, TimeSpan, CancellationTokenSource>? createDiscoveryTimeout = null)
     {
         if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
@@ -163,7 +164,7 @@ internal static class SentinelResolver
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
             var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
-            using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(cancellationToken, discoveryTimeout);
+            using var discoveryTimeoutSource = (createDiscoveryTimeout ?? CommandTimeoutCancellation.Create)(cancellationToken, discoveryTimeout);
             var discoveryCompleted = false;
             var candidateEndpoint = endpoint;
             try
