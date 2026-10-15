@@ -90,6 +90,10 @@ public class RedlockTests(RedlockRedisCluster fixture)
                 Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
                 Connections = 1,
             })).ToArray();
+            // The 100 ms bound tests a partition, not initial connection/authentication work.
+            // Establish healthy connections before stopping nodes so cold startup cannot
+            // consume their operation budgets and look like loss of quorum.
+            await Task.WhenAll(clients.Select(static client => client.PingAsync().AsTask()));
             var group = new RespireRedlockGroup(clients, new RespireRedlockOptions { NodeTimeout = TimeSpan.FromMilliseconds(100) });
             await containers[2].StopAsync();
 

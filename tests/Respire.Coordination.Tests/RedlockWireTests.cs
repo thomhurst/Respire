@@ -5,7 +5,7 @@ using TUnit.Core;
 
 namespace Respire.Coordination.Tests;
 
-public class RedlockWireTests
+public partial class RedlockWireTests
 {
     private static readonly byte[] Ok = "+OK\r\n"u8.ToArray();
     private static readonly byte[] Nil = "$-1\r\n"u8.ToArray();
@@ -146,31 +146,51 @@ public class RedlockWireTests
     [Test]
     public async Task RenewalCompletingAfterPreviousValidityCannotRestoreOwnership()
     {
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null);
-        foreach (var server in nodes.Servers) server.DelayReply(1, 200);
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true);
         var clock = new ManualClock();
-        var group = new RespireRedlockGroup(nodes.Clients, timeProvider: clock);
+        var group = new RespireRedlockGroup(nodes.Clients,
+            new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout }, timeProvider: clock);
         await using var attempt = await group.TryAcquireAsync("redlock:late-renewal", TimeSpan.FromMilliseconds(100));
         await Assert.That(attempt.Acquired).IsTrue();
 
-        var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10)).AsTask();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (nodes.Servers.Any(static server => server.CommandsSeen < 2))
-            await Task.Delay(5, timeout.Token);
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-
-        await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
-        await Assert.That(attempt.Lock.IsReleased).IsTrue();
-        await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+        // Advance the lease clock only after all renewal commands arrive, and before any
+        // can complete. A fixed reply delay can elapse while the test is descheduled.
+        var renewalReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = 0;
         foreach (var server in nodes.Servers)
-            await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
-                .IsEqualTo(1);
+            server.GateCommand("SET ", renewalReplies.Task, () =>
+            {
+                if (Interlocked.Increment(ref received) == nodes.Servers.Length)
+                    renewalReceived.TrySetResult();
+            });
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var renewal = attempt.Lock.ResetExpiryAsync(TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+            await renewalReceived.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            renewalReplies.SetResult();
+
+            await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(30))).IsFalse();
+            await Assert.That(attempt.Lock.IsReleased).IsTrue();
+            await Assert.That(attempt.Lock.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
+            foreach (var server in nodes.Servers)
+                await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
+                    .IsEqualTo(1);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            renewalReplies.TrySetResult();
+        }
     }
 
     [Test]
     public async Task CallerCancellationDuringRenewalEndsLeaseAndCleansUpEveryNode()
     {
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true);
+        var hooks = CreateHooks();
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true, hooks: hooks);
         var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout });
         await using var attempt = await group.TryAcquireAsync("redlock:renew-cancel", TimeSpan.FromSeconds(10));
         await Assert.That(attempt.Acquired).IsTrue();
@@ -193,6 +213,9 @@ public class RedlockWireTests
             renewalReplies.SetResult();
             await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
             await Assert.That(attempt.Lock.IsReleased).IsTrue();
+            foreach (var hook in hooks)
+                await Assert.That(hook.Completed.Single(static e => e.Context.Command == "REDLOCK RENEW").Outcome)
+                    .IsEqualTo(RespireCommandOutcome.Canceled);
             foreach (var server in nodes.Servers)
                 await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
         }
@@ -291,7 +314,8 @@ public class RedlockWireTests
         // clients have no command timeout and the node timeout is the maximum, so only the
         // caller's cancellation can end the SET wait; a timeout would start cleanup early.
         var setReplies = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true);
+        var hooks = CreateHooks();
+        await using var nodes = await Nodes.StartAsync(static (_, _) => null, untimedCommands: true, hooks: hooks);
         foreach (var server in nodes.Servers) server.GateCommand("SET ", setReplies.Task);
         var group = new RespireRedlockGroup(nodes.Clients, new RespireRedlockOptions { NodeTimeout = RespireRedlockNodes.MaxNodeTimeout });
         using var cancellation = new CancellationTokenSource();
@@ -311,6 +335,8 @@ public class RedlockWireTests
             // that follows on each single-connection node, so cleanup needs it open.
             setReplies.SetResult();
             await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
+            foreach (var hook in hooks)
+                await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
             foreach (var server in nodes.Servers)
                 await Assert.That(server.ReceivedCommands.Count(static c => c.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
         }
@@ -356,7 +382,8 @@ public class RedlockWireTests
         public RespireClient[] Clients { get; }
         public int CommandsSeen => Servers.Sum(static server => server.CommandsSeen);
 
-        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0, bool untimedCommands = false)
+        public static async Task<Nodes> StartAsync(Func<int, string, byte[]?> reply, int delayReleaseMs = 0,
+            bool untimedCommands = false, RespireCommandHook?[]? hooks = null)
         {
             var servers = new FakeRespServer[3];
             var clients = new RespireClient[3];
@@ -369,7 +396,7 @@ public class RedlockWireTests
                         ?? (command.StartsWith("DELEX ", StringComparison.Ordinal) ? One : Ok),
                 };
                 if (delayReleaseMs > 0) servers[i].DelayReply(1, delayReleaseMs);
-                clients[i] = !untimedCommands
+                clients[i] = !untimedCommands && hooks is null
                     ? await FakeRespServer.ConnectClientAsync(servers[i].Port)
                     // A gated command waits for the test, not the clock: disable the command timeout.
                     : await RespireClient.ConnectAsync(new RespireOptions
@@ -377,7 +404,8 @@ public class RedlockWireTests
                         Protocol = RespireProtocol.Resp2,
                         Endpoints = { new RespireEndpoint("127.0.0.1", servers[i].Port) },
                         Connections = 1,
-                        CommandTimeout = null,
+                        CommandTimeout = untimedCommands ? null : TimeSpan.FromSeconds(5),
+                        CommandHook = hooks?[i],
                     });
             }
 

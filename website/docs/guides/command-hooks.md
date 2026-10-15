@@ -315,10 +315,9 @@ clients and their views; opaque custom client decorators retain their own dispat
 conversion, compatibility fallback, wait teardown, cancellation and application reentrancy.
 
 This extends the tracked-owner inventory for [#1755](https://github.com/thomhurst/Respire/issues/1755)
-with [#1767](https://github.com/thomhurst/Respire/issues/1767) and rate limiters
-([#1768](https://github.com/thomhurst/Respire/issues/1768)). Multi-client Redlock groups
-([#1769](https://github.com/thomhurst/Respire/issues/1769)) still require their own composite
-boundaries. Their lower-level hooks do not establish a once-only outer operation contract.
+with countdown latches ([#1767](https://github.com/thomhurst/Respire/issues/1767)) and
+rate limiters ([#1768](https://github.com/thomhurst/Respire/issues/1768)), plus
+multi-client Redlock groups ([#1769](https://github.com/thomhurst/Respire/issues/1769)).
 
 The following paths also do not yet have a complete hook contract:
 remaining custom facet conversions and composite helpers.
@@ -330,6 +329,46 @@ Tracked scripts and correction sends belong to the surrounding lock, cache or co
 operation. Their internal dispatch helpers deliberately do not create scopes; admitting a
 transport leg would miss earlier setup and finish before correction cleanup.
 This coverage does not establish a client-wide blocking policy.
+
+### Multi-client Redlock
+
+`RespireRedlockGroup.TryAcquireAsync`, lease `ResetExpiryAsync`, `ReleaseAsync` and
+`DisposeAsync` use `REDLOCK ACQUIRE`, `REDLOCK RENEW`, `REDLOCK RELEASE` and
+`REDLOCK DISPOSE`. Each native lock facet's configured hook admits the **whole group
+operation**, in the order clients were supplied to the group. A shared hook instance is
+called once per participating client, with separate context and state. Clients without a
+hook add no admission requirement. Duration validation and acquisition key snapshotting
+precede admission; other operation validation remains inside the boundary.
+
+All required admissions finish before any node command, lease-state change, or operation
+gate acquisition. Rejection stops admission and sends nothing: the rejecting hook completes
+as `Rejected` with null state; previously admitted hooks complete as `Failed` (or `Canceled`
+for a cancellation exception), with the same error. Later hooks receive no callbacks.
+After admission, caller cancellation is checked even when already canceled on entry.
+Rejected renewal, release and disposal preserve the existing lease and can be retried.
+Disposal admission rejection propagates; admitted disposal retains best-effort release.
+
+Entered hooks complete once, in client order, after fan-out, quorum/drift decisions, final
+lease construction, foreground correction and operation-gate release. Every hook observes
+the group API outcome: unavailable nodes or lack of quorum can produce a successful
+`false`/unacquired result; they are not independent hook failures. Cancellation and exceptions
+escaping the API produce `Canceled` and `Failed`. Observer exceptions are ignored. Each
+explicit call has a scope, including a no-op on an already released lease. Disposing an
+unacquired attempt has no scope.
+
+Native SET/renewal/release legs and owed cleanup do not re-admit. Cleanup therefore cannot
+be vetoed after acquisition or renewal has started. Node timeouts still bound waiting;
+uncertain late writes can outlive cleanup and rely on expiry, as described in the
+[Redlock guide](./coordination.md#multi-node-redlock). Release ignores caller cancellation
+once node cleanup starts. Callbacks can start application commands with independent hooks;
+there is no ambient suppression.
+
+This policy covers clients exposing Respire's native lock facet, including prefixed views.
+An opaque custom client or lock-facet decorator cannot expose its underlying policy to the
+group: it retains its public per-node behavior, which can admit, reject or observe internal
+legs separately. Mixed groups therefore guarantee ordered group admission only for their
+native participants. This does not establish a client-wide blocking policy; the
+[#1708 audit](https://github.com/thomhurst/Respire/issues/1708) remains open.
 
 ### Explicit aggregate members and WATCH
 

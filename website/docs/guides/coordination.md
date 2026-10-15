@@ -279,6 +279,14 @@ Console.WriteLine($"Estimated lease time: {attempt.Lock.RemainingEstimate}");
 - `DisposeAsync` makes one best-effort attempt.
 - `RemainingEstimate` is local timing; it does not prove ownership.
 
+With command hooks, every native client's policy admits the group operation in constructor
+order before any node work. Acquisition, renewal, release and disposal use `REDLOCK ACQUIRE`,
+`REDLOCK RENEW`, `REDLOCK RELEASE` and `REDLOCK DISPOSE`. Rejected renewal or release preserves
+the lease; rejected disposal propagates and can be retried. With `await using`, a disposal
+rejection can replace an exception already being propagated from the body. Owed cleanup after an admitted
+attempt does not re-admit. See [multi-client hook semantics](./command-hooks.md#multi-client-redlock)
+for outcomes, shared hooks and opaque decorator limitations.
+
 :::warning No consensus or fencing
 Replication, failover, partitions and clock drift can violate mutual exclusion. An unreachable node
 keeps its lease until expiry. A node that exceeds `NodeTimeout` counts as failed, but its command

@@ -350,6 +350,11 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
             cancellationToken, observation);
     }
 
+    internal ValueTask<bool> TryTakeUnhookedAsync(
+        RespireKey key, RespireLockToken token, TimeSpan duration, CancellationToken cancellationToken)
+        => DispatchResponseSource<bool>.Run((Locks: this, Key: key, Token: token, Duration: duration, Cancellation: cancellationToken),
+            static (s, owner) => s.Locks.TryTakeBorrowedAsync(s.Key, s.Token, s.Duration, s.Cancellation, owner));
+
     public ValueTask<bool> ReleaseAsync(
         RespireKey key,
         RespireLockToken token,
@@ -473,6 +478,11 @@ internal sealed class LockCommands(RespireClient client) : IRespireLockCommands,
         var milliseconds = ValidateExpiry(newDuration, nameof(newDuration));
         return client.ExecuteLockAsync(key, token, milliseconds, cancellationToken, observation);
     }
+
+    internal ValueTask<bool> ResetExpiryUnhookedAsync(
+        RespireKey key, RespireLockToken token, TimeSpan duration, CancellationToken cancellationToken)
+        => DispatchResponseSource<bool>.Run((Locks: this, Key: key, Token: token, Duration: duration, Cancellation: cancellationToken),
+            static (s, owner) => s.Locks.ResetExpiryBorrowedAsync(s.Key, s.Token, s.Duration, s.Cancellation, owner));
 
     ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
         RespireKey key,
