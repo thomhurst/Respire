@@ -888,6 +888,15 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken = default)
     {
         var from = (startAt ?? RespireStreamId.New).Value;
+        if (client.Core.Options.CommandHook is { } hook)
+        {
+            // Construct before admission; BUSYGROUP reduction belongs inside the scope.
+            return createStream
+                ? await CreateGroupHookedAsync(hook,
+                    new Cmd4(Verbs.XGroupCreate, client.Key(in key), group, from, "MKSTREAM"), cancellationToken).ConfigureAwait(false)
+                : await CreateGroupHookedAsync(hook,
+                    new Cmd3(Verbs.XGroupCreate, client.Key(in key), group, from), cancellationToken).ConfigureAwait(false);
+        }
         try
         {
             if (createStream)
@@ -907,6 +916,30 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.BusyGroup)
         {
+            return false;
+        }
+    }
+
+    private ValueTask<bool> CreateGroupHookedAsync<TCommand>(RespireCommandHook hook, TCommand command, CancellationToken token)
+        where TCommand : struct, IRespCommand
+        => CommandHookScope.RunObservedAsync(hook, "XGROUP CREATE", token,
+            (Owner: this, Command: command, Token: token),
+            static (s, observation) => s.Owner.CreateGroupUnhookedAsync(s.Command, s.Token, observation));
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<bool> CreateGroupUnhookedAsync<TCommand>(TCommand command, CancellationToken token,
+        RespireTelemetry.ErrorObservation observation) where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            _ = await client.ConvertResponseUnhookedAsync("XGROUP CREATE", command, token, this,
+                static (StreamCommands _, in RespValue value) => ResponseReader.Ok(in value),
+                observation: observation).ConfigureAwait(false);
+            return true;
+        }
+        catch (RespireServerException error) when (error.Code == RespireErrorCodes.BusyGroup)
+        {
+            observation.Handled(error);
             return false;
         }
     }

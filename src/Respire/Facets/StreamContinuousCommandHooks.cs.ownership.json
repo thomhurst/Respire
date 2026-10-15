@@ -1,0 +1,13 @@
+{
+  "Surfaces": [],
+  "Boundaries": [
+    {
+      "Name": "stream-hooked-continuous-read",
+      "Role": "final",
+      "Member": "Respire.StreamCommands.ReadContinuouslyHookedAsync((RespireKeyKey,RespireStreamIdAfter)[],int,RespireCommandHook,CancellationToken):IAsyncEnumerable<RespireStreamReadEntry>",
+      "Owner": "Respire.StreamCommands.ReadContinuouslyHookedAsync((RespireKeyKey,RespireStreamIdAfter)[],int,RespireCommandHook,CancellationToken):IAsyncEnumerable<RespireStreamReadEntry>",
+      "Contract": "Retain the failure-only iterator owner through all page admissions, resolution, recovery, validation, buffered delivery and disposal. Internal attempts borrow its observation; each hook completes at the validated page boundary before yielding."
+    }
+  ],
+  "NonRoutes": []
+}
