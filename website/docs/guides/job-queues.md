@@ -13,6 +13,8 @@ Jobs support immediate enqueue, delayed scheduling, priority, TTL and durable re
 Handlers can report progress, observers can replay retained completion events, and tracing links
 each delivery attempt to its enqueue.
 
+For authorized inspection and dead-letter retry, see the [queue and stream dashboard](stream-dashboard.md).
+
 ## Register and enqueue
 
 Install `Respire.Streaming` and `Respire.DependencyInjection`, then register a client, explicit

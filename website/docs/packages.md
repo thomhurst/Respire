@@ -54,6 +54,7 @@ test checks this metadata without making network requests; reviewers verify that
 | [`Respire.FusionCache`](integrations/fusioncache.md) | FusionCache backplane and distributed locker sharing an existing Respire client |
 | [`Respire.SignalR`](integrations/signalr.md) | SignalR scale-out sharing an existing Respire client |
 | [`Respire.Streaming`](guides/stream-workers.md) | Hosted stream consumers with bounded concurrency and scoped handlers |
+| [`Respire.Streaming.Dashboard`](guides/stream-dashboard.md) | Authorized ASP.NET Core dashboard for job queues, stream groups, pending deliveries, and dead-letter actions |
 | [`Respire.StackExchangeCompat`](guides/stackexchange-interop.md) | Binary-safe value conversion, native command bridge, and a limited `IConnectionMultiplexer` adapter for incremental StackExchange.Redis migration |
 | [`Respire.Coordination`](guides/coordination.md) | Rate limiters, semaphores, read-write locks, latches, leases, and Redlock |
 | [`Respire.DependencyInjection`](integrations/dependency-injection.md) | .NET dependency injection registration |
@@ -73,7 +74,7 @@ test checks this metadata without making network requests; reviewers verify that
 
 ## Keep internal API consumers on the same version
 
-`Respire.Caching`, `Respire.Coordination`, `Respire.StackExchangeCompat`, `Respire.DataProtection`, `Respire.Json`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Testing`, and `Respire.Streaming` depend on core implementation details. Their NuGet packages require the exact `Respire` version they were built against, including the prerelease suffix. Upgrade these packages together with `Respire`; mixing versions can break internal calls at runtime.
+`Respire.Caching`, `Respire.Coordination`, `Respire.StackExchangeCompat`, `Respire.DataProtection`, `Respire.Json`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Testing`, `Respire.Streaming`, and `Respire.Streaming.Dashboard` depend on core implementation details. Their NuGet packages require the exact `Respire` version they were built against, including the prerelease suffix. Upgrade these packages together with `Respire`; mixing versions can break internal calls at runtime.
 
 ## Redis features and custom modules
 

@@ -568,6 +568,8 @@ jobs:
           suite fusioncache tests Respire.FusionCache.Tests Respire.FusionCache.Tests
           suite streaming TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.Streaming.Tests Respire.Streaming.Tests --minimum-expected-tests 42
+          suite streaming-dashboard TUNIT_DISABLE_HTML_REPORTER=true \
+            tests Respire.Streaming.Dashboard.Tests Respire.Streaming.Dashboard.Tests --minimum-expected-tests 25
           suite signalr TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.SignalR.Tests Respire.SignalR.Tests --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
           suite aspire-client TUNIT_DISABLE_HTML_REPORTER=true \
@@ -808,6 +810,7 @@ jobs:
           suite signalr TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.SignalR.Tests --minimum-expected-tests "$(cat .github/signalr-minimum-tests.txt)"
           suite streaming TUNIT_DISABLE_HTML_REPORTER=true tests Respire.Streaming.Tests --minimum-expected-tests 42
+          suite streaming-dashboard TUNIT_DISABLE_HTML_REPORTER=true tests Respire.Streaming.Dashboard.Tests --minimum-expected-tests 25
           suite fusioncache-leases TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.FusionCache.Tests \
             --treenode-filter '/*/*/(DistributedLockerTests)|(DistributedLockerWireTests)|(DistributedLockerRegistrationTests)|(IndependentLeaseLifetimeTests)|(IndependentLeaseLifetimeWireTests)/*' \

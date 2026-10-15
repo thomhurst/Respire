@@ -74,6 +74,7 @@ const sidebars = {
         'guides/blocking-queues',
         'guides/stream-workers',
         'guides/job-queues',
+        'guides/stream-dashboard',
         'guides/pub-sub',
         'guides/keyspace-notifications',
         'guides/pub-sub-introspection',

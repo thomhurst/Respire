@@ -1,0 +1,21 @@
+#nullable enable
+Respire.Streaming.Dashboard.RespireDashboardExtensions
+Respire.Streaming.Dashboard.RespireDashboardOptions
+Respire.Streaming.Dashboard.RespireDashboardOptions.EntryLimit.get -> int
+Respire.Streaming.Dashboard.RespireDashboardOptions.EntryLimit.set -> void
+Respire.Streaming.Dashboard.RespireDashboardOptions.RespireDashboardOptions() -> void
+Respire.Streaming.Dashboard.RespireDashboardOptions.Streams.get -> System.Collections.Generic.IList<Respire.Streaming.Dashboard.RespireDashboardStream!>!
+Respire.Streaming.Dashboard.RespireDashboardStream
+Respire.Streaming.Dashboard.RespireDashboardStream.DeadLetterStream.get -> string?
+Respire.Streaming.Dashboard.RespireDashboardStream.DeadLetterStream.set -> void
+Respire.Streaming.Dashboard.RespireDashboardStream.Group.get -> string!
+Respire.Streaming.Dashboard.RespireDashboardStream.Group.set -> void
+Respire.Streaming.Dashboard.RespireDashboardStream.IsJobQueue.get -> bool
+Respire.Streaming.Dashboard.RespireDashboardStream.IsJobQueue.set -> void
+Respire.Streaming.Dashboard.RespireDashboardStream.Name.get -> string!
+Respire.Streaming.Dashboard.RespireDashboardStream.Name.set -> void
+Respire.Streaming.Dashboard.RespireDashboardStream.RespireDashboardStream() -> void
+Respire.Streaming.Dashboard.RespireDashboardStream.Stream.get -> string!
+Respire.Streaming.Dashboard.RespireDashboardStream.Stream.set -> void
+static Respire.Streaming.Dashboard.RespireDashboardExtensions.AddRespireStreamingDashboard(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Respire.Streaming.Dashboard.RespireDashboardOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.Streaming.Dashboard.RespireDashboardExtensions.MapRespireStreamingDashboard(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder! endpoints, string! pattern, string! authorizationPolicy) -> Microsoft.AspNetCore.Builder.IEndpointConventionBuilder!

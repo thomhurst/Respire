@@ -45,6 +45,7 @@
       Respire.Search;
       Respire.SignalR;
       Respire.Streaming;
+      Respire.Streaming.Dashboard;
       Respire.StackExchangeCompat;
       Respire.TimeSeries;
       Respire.VectorData;
