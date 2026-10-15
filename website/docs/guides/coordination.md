@@ -17,6 +17,7 @@ Moving from RedLock.net or DistributedLock.Redis? Read the
 - [Distributed countdown latch](#distributed-countdown-latch)
 - [Distributed semaphores](#distributed-semaphores)
 - [Redis-backed rate limiters](#redis-backed-rate-limits)
+- [Idempotency claims and result replay](#idempotency-claims-and-result-replay)
 
 ```bash
 dotnet add package Respire.Coordination
@@ -26,6 +27,80 @@ With C# 14 or later, import `Respire.Coordination` and use the `client.Coordinat
 property on `RespireClient` or `IRespireClient`. It returns one wrapper per client (key-prefixed
 views get their own), including its `RateLimiters` factory, and does no network I/O. On older
 language versions, use `new RespireCoordination(client)`. The coordinator never disposes the client.
+
+## Idempotency claims and result replay
+
+`RespireIdempotency` stores a pending claim and then a binary result in a single Redis hash.
+It works with RESP2 and RESP3, including Redis 7. Each transition executes one Lua script;
+the normal script cache fallback may send `EVALSHA` followed by `EVAL` on a cache miss.
+Single-key scripts support Cluster routing and the client's configured key prefix.
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Coordination;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var idempotency = new RespireIdempotency(client);
+var key = "idempotency:tenant-42:create-invoice:request-123";
+var attempt = await idempotency.TryBeginAsync(
+    key, TimeSpan.FromMinutes(10), fingerprint: "sha256-of-canonical-request");
+
+switch (attempt.State)
+{
+    case RespireIdempotencyState.Started:
+        // Perform the work, then serialize its response to bytes.
+        var result = Encoding.UTF8.GetBytes("invoice-456");
+        if (!await idempotency.CompleteAsync(key, attempt.OwnerToken!, result))
+            throw new InvalidOperationException("The claim expired before completion.");
+        break;
+    case RespireIdempotencyState.Completed:
+        Console.WriteLine(Encoding.UTF8.GetString(attempt.Result.Span));
+        break;
+    case RespireIdempotencyState.InProgress:
+        Console.WriteLine("The original request is still running.");
+        break;
+    case RespireIdempotencyState.FingerprintMismatch:
+        Console.WriteLine("This key belongs to a different request.");
+        break;
+}
+```
+
+Only `Started` returns an owner token. Keep it private and pass it to `CompleteAsync` or
+`AbandonAsync`. Completion succeeds only for the current pending owner; a second completion
+returns `false` and preserves the first result. Empty and arbitrary binary results are supported,
+and the returned bytes remain valid independently of Redis response buffers. Completion copies
+the input bytes before asynchronous work. The store does not impose a result-size limit; bound
+serialized responses in your application.
+
+The TTL must be at least one millisecond and is truncated to whole milliseconds. It first bounds
+the pending claim, allowing recovery after a crash. Successful completion restarts that same TTL
+for the saved result. Pending and completed lookups, including mismatches, do not refresh expiry;
+the TTL supplied by a losing caller does not change the original claim's TTL. After expiry, a new
+caller can claim the key, and the old token cannot complete or abandon that replacement.
+
+`AbandonAsync(key, ownerToken)` removes only a pending claim owned by that token. Use it for work
+that is safe to retry or a response you deliberately do not want to retain. Do not automatically
+abandon after an exception if an external side effect may already have happened. Cancellation or
+connection loss can leave a transition's outcome uncertain; the command may have reached Redis.
+Scripts are not automatically retried after an ambiguous failure. A later `TryBeginAsync` can
+observe pending or completed state; an unreturned pending claim must expire before another
+caller starts.
+
+Use a dedicated key namespace, scoped by tenant/caller and operation. Supply the same fingerprint
+on every attempt, including retries; `null` means no request digest, and differs from an empty
+string. A different fingerprint returns `FingerprintMismatch` without exposing the result or
+owner token. Compute the digest over the relevant request fields in a deterministic form.
+
+Duplicate execution is suppressed only while Redis retains the claim or result. Choose a TTL
+longer than the expected operation duration and retry window. A handler that outlives its pending
+TTL may overlap a new handler. Eviction, failover data loss, or expiry can permit repeated side
+effects: use durable application transactions or downstream idempotency for payments and other
+effects that must survive Redis data loss. Reserve these hashes for this API; do not edit their
+fields directly.
+
+ASP.NET Core header handling, response replay, and a minimal API integration are tracked in
+[#1836](https://github.com/thomhurst/Respire/issues/1836).
 
 ## Fencing-token locks
 
