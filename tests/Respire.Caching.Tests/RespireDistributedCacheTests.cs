@@ -1120,33 +1120,49 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
     [Test]
     [NotInParallel(ClientPause), Category(ClientPause)]
-    public async Task Set_TimedOutWithoutExpiration_CannotOverwriteReplacementAfterFailure()
+    [Arguments(0)]
+    [Arguments(2500)]
+    public async Task Set_TimedOutWithoutExpiration_CannotOverwriteReplacementAfterFailure(int dispatchDelayMs)
     {
         await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = await StartServerPauseAsync(2000);
-
-        RespireTimeoutException? failure = null;
+        // WRITE parks EVALSHA but lets the control connection's CLIENT KILL finish.
+        // Release explicitly after the timeout/fence; the long expiry is only a safety net.
+        // A short ALL pause can expire before a busy runner submits the cache operation.
         try
         {
-            await timeoutCache.SetAsync(
-                "fenced-no-expiration", [1], new DistributedCacheEntryOptions())
-                .WaitAsync(TimeSpan.FromSeconds(5));
+            (await Client.ExecuteAsync("CLIENT", "PAUSE", 60_000, "WRITE")).Dispose();
+            // Exercise dispatch after the old two-second pause would already have expired.
+            await Task.Delay(dispatchDelayMs);
+            RespireTimeoutException? failure = null;
+            try
+            {
+                await timeoutCache.SetAsync(
+                    "fenced-no-expiration", [1], new DistributedCacheEntryOptions())
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (RespireTimeoutException ex)
+            {
+                failure = ex;
+            }
+            catch (TimeoutException)
+            {
+                Assert.Fail("Exact-connection fencing did not complete within 5 seconds.");
+            }
+
+            await Assert.That(failure).IsNotNull();
+            using var exists = await Client.ExecuteAsync("EXISTS", "fenced-no-expiration");
+            await Assert.That(exists.AsInteger()).IsEqualTo(0);
         }
-        catch (RespireTimeoutException ex)
+        finally
         {
-            failure = ex;
-        }
-        catch (TimeoutException)
-        {
-            Assert.Fail("Exact-connection fencing did not complete within 5 seconds.");
+            // Restore the dedicated server even if setup, timeout, or an assertion fails.
+            (await Client.ExecuteAsync("CLIENT", "UNPAUSE")).Dispose();
         }
 
-        await Assert.That(failure).IsNotNull();
         await Cache.SetAsync("fenced-no-expiration", [2], new DistributedCacheEntryOptions());
-        await stallObserved;
         await Task.Delay(100);
 
         var survivor = await Cache.GetAsync("fenced-no-expiration");
