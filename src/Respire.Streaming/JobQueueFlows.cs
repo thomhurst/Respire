@@ -2,7 +2,15 @@ namespace Respire.Streaming;
 
 internal static class JobQueueFlows
 {
+    internal const int MaximumResultBytes = 4096;
+    internal const int MaximumInputBytes = 262144;
+
     private const string Helpers = """
+        local function decode(data)
+            local flow = cmsgpack.unpack(data)
+            if flow.version ~= 1 then error('ERR unsupported job flow version') end
+            return flow
+        end
         local function permit(command, ...)
             if not redis.acl_check_cmd or not redis.acl_check_cmd(command, ...) then
                 error('NOPERM job flows require Redis 7.0 and queue command permissions')
@@ -27,12 +35,12 @@ internal static class JobQueueFlows
 
     internal static readonly RespireScript Enqueue = RespireScript.Create(Helpers + """
         local existing = redis.call('GET', KEYS[2])
-        if existing then return 0 end
+        if existing then decode(existing); return 0 end
         checktype(KEYS[1], 'stream')
         permit('SET', KEYS[2], 'value')
         permit('XADD', KEYS[1], '*', 'field', 'value')
         permit('XDEL', KEYS[1], '0-0')
-        local flow = {policy = tonumber(ARGV[1]), trace = ARGV[2], state = ARGV[3], key = ARGV[4], nodes = {}}
+        local flow = {version = 1, policy = tonumber(ARGV[1]), trace = ARGV[2], state = ARGV[3], key = ARGV[4], nodes = {}}
         for i = 5, #ARGV, 3 do
             table.insert(flow.nodes, {id = ARGV[i], payload = ARGV[i+1], parent = tonumber(ARGV[i+2]),
                 children = {}, remaining = 0, status = 'waiting'})
@@ -77,7 +85,7 @@ internal static class JobQueueFlows
             activated, failedParents, flowAppends, flowEvents = {}, {}, {}, {}
             originalFlow = redis.call('GET', KEYS[4])
             if not originalFlow then return redis.error_reply('ERR missing job flow state') end
-            flow = cmsgpack.unpack(originalFlow)
+            flow = decode(originalFlow)
             local index
             for i = 1, #entries[1][2], 2 do
                 if entries[1][2][i] == '_respire.job.node' then index = tonumber(entries[1][2][i+1]) end
@@ -87,7 +95,10 @@ internal static class JobQueueFlows
                 return redis.error_reply('ERR invalid job flow delivery')
             end
             node.status = ARGV[5] == 'completed' and 'completed' or 'failed'
-            if node.status == 'completed' and ARGV[8] == '1' then node.result = ARGV[9] end
+            if node.status == 'completed' and ARGV[8] == '1' then
+                if #ARGV[9] > 4096 then return redis.error_reply('ERR job flow result exceeds 4096 bytes') end
+                node.result = ARGV[9]
+            end
             local parentIndex = node.parent
             while parentIndex > 0 do
                 local parent = flow.nodes[parentIndex]
@@ -146,10 +157,22 @@ internal static class JobQueueFlows
 
         """;
 
-    private static readonly RespireScript Read = RespireScript.Create("""
+    internal static readonly RespireScript Remove = RespireScript.Create(Helpers + """
+        local data = redis.call('GET', KEYS[1])
+        if not data then return 0 end
+        local flow = decode(data)
+        for _, node in ipairs(flow.nodes) do
+            if node.status ~= 'completed' and node.status ~= 'failed' then
+                return redis.error_reply('ERR cannot remove an active job flow')
+            end
+        end
+        return redis.call('DEL', KEYS[1])
+        """);
+
+    private static readonly RespireScript Read = RespireScript.Create(Helpers + """
         local data = redis.call('GET', KEYS[1])
         if not data then return {} end
-        local flow = cmsgpack.unpack(data)
+        local flow = decode(data)
         local result = {}
         local index = tonumber(ARGV[1])
         local function add(node)

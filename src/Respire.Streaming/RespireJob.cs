@@ -15,10 +15,12 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
 
     /// <summary>Returns Ack with an owned copy of a binary result for this flow node.</summary>
     /// <remarks>Return this from the handler. Only a current, successful flow delivery persists the result.
-    /// Ordinary jobs do not retain results. Results should be small; flow state is rewritten on each completion.</remarks>
+    /// Ordinary jobs do not retain results. Results must not exceed 4 KiB; flow state is rewritten on each completion.</remarks>
     public RespireStreamWorkerResult Complete(byte[] result)
     {
         ArgumentNullException.ThrowIfNull(result);
+        if (result.Length > JobQueueFlows.MaximumResultBytes)
+            throw new ArgumentOutOfRangeException(nameof(result), "Job results must not exceed 4096 bytes.");
         _result = result.ToArray();
         return RespireStreamWorkerResult.Ack;
     }

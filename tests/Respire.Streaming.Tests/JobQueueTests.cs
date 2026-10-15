@@ -10,6 +10,21 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test]
+    public async Task OversizedFlowInputsAndResultsAreRejected()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", Encoding.UTF8.GetBytes);
+        // The budget counts UTF-8 bytes across all nodes, including IDs.
+        var tree = new RespireJobFlow<string>("root", new string('é', 65536))
+        { Children = [new("child", new string('é', 65536))] };
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", tree)).Throws<ArgumentException>();
+        var job = new RespireJob<string>("root", "payload", new("1-0"));
+        await Assert.That(() => job.Complete(new byte[4097])).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(job.Complete(new byte[4096])).IsEqualTo(RespireStreamWorkerResult.Ack);
+    }
+
+    [Test]
     public async Task InvalidFlowTreesAreRejectedBeforeEnqueue()
     {
         await using var server = new RespireFakeServer();

@@ -4,6 +4,7 @@ Respire.Streaming.RespireJob<T>.Complete(byte[]! result) -> Respire.Streaming.Re
 Respire.Streaming.RespireJob<T>.GetChildResultsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobFlowResult!>!>
 Respire.Streaming.RespireJobQueue<T>.EnqueueFlowAsync(string! flowId, Respire.Streaming.RespireJobFlow<T>! root, Respire.Streaming.RespireJobFlowFailurePolicy failurePolicy = Respire.Streaming.RespireJobFlowFailurePolicy.FailParent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobQueue<T>.GetFlowResultsAsync(string! flowId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobFlowResult!>!>
+Respire.Streaming.RespireJobQueue<T>.RemoveFlowAsync(string! flowId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobFlowFailurePolicy
 Respire.Streaming.RespireJobFlowFailurePolicy.FailParent = 0 -> Respire.Streaming.RespireJobFlowFailurePolicy
 Respire.Streaming.RespireJobFlowFailurePolicy.Ignore = 1 -> Respire.Streaming.RespireJobFlowFailurePolicy

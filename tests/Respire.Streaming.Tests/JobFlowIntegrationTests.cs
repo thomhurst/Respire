@@ -60,9 +60,92 @@ public partial class JobQueueIntegrationTests
             {
                 var events = await client.Streams.ReadAsync(queue.EventsStreamKey);
                 await Assert.That(events.Count(entry => entry.GetString("reason") == "child-failed")).IsEqualTo(2);
+                await using var reader = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
+                RespireJobEvent terminal;
+                do
+                {
+                    await Assert.That(await reader.MoveNextAsync()).IsTrue();
+                    terminal = reader.Current;
+                } while (terminal.JobId != "root");
+                await Assert.That(terminal.Kind).IsEqualTo("dead-letter");
+                await Assert.That(terminal.Reason).IsEqualTo("child-failed");
+                await Assert.That(terminal.EntryId.Value).IsEqualTo("0-0");
+                await Assert.That(terminal.Attempt).IsEqualTo(0);
+                await Assert.That(terminal.FlowKey).IsNotNull();
             }
         }
         finally { await worker.StopAsync(deadline.Token); }
+        // Both successful and failed terminal trees can be removed through a prefixed client.
+        await Assert.That(await queue.RemoveFlowAsync("flow")).IsTrue();
+        await Assert.That(await queue.RemoveFlowAsync("flow")).IsFalse();
+        await Assert.That(await queue.GetFlowResultsAsync("flow")).IsEmpty();
+        await Assert.That(await queue.EnqueueFlowAsync("flow", tree, policy)).IsTrue();
+    }
+
+    [Test]
+    public async Task FlowSizeBoundaryAndRemovalPreserveActiveDeliveries()
+    {
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        // One-byte ID plus payload exactly fills the 256 KiB input allowance.
+        await Assert.That(await queue.EnqueueFlowAsync("flow", new("r", new string('x', 262143)))).IsTrue();
+        await Assert.That(async () => await queue.RemoveFlowAsync("flow")).Throws<RespireServerException>();
+        await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+        var entry = (await client.Streams.ReadGroupOnceAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup,
+            "consumer", new() { Count = 1 })).Single();
+        RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey, entry.GetString("_respire.job.flow")!];
+        await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys,
+            [RespireJobQueue<string>.ConsumerGroup, "consumer", entry.Id.Value, 1, "completed", "", "", 1, new byte[4097]]))
+            .Throws<RespireServerException>();
+        await Assert.That((await queue.GetFlowResultsAsync("flow")).Single().Status).IsEqualTo("ready");
+        await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(0);
+        await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count)
+            .IsEqualTo(1);
+        await Assert.That(async () => await queue.RemoveFlowAsync("flow")).Throws<RespireServerException>();
+        var result = Enumerable.Repeat((byte)255, 4096).ToArray();
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys,
+            [RespireJobQueue<string>.ConsumerGroup, "consumer", entry.Id.Value, 1, "completed", "", "", 1, result])).IsEqualTo(1);
+        await Assert.That((await queue.GetFlowResultsAsync("flow")).Single().Result!).IsEquivalentTo(result);
+        var removed = await Task.WhenAll(queue.RemoveFlowAsync("flow").AsTask(), queue.RemoveFlowAsync("flow").AsTask());
+        await Assert.That(removed.Count(value => value)).IsEqualTo(1);
+        await Assert.That(await queue.GetFlowResultsAsync("flow")).IsEmpty();
+        await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(2)]
+    public async Task UnsupportedFlowVersionFailsWithoutMutation(int version)
+    {
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        var tree = new RespireJobFlow<string>("parent", "parent") { Children = [new("leaf", "leaf")] };
+        await queue.EnqueueFlowAsync("flow", tree);
+        await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+        var entry = (await client.Streams.ReadGroupOnceAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup,
+            "consumer", new() { Count = 1 })).Single();
+        var key = entry.GetString("_respire.job.flow")!;
+        var changeVersion = RespireScript.Create("""
+            local flow = cmsgpack.unpack(redis.call('GET', KEYS[1]))
+            flow.version = tonumber(ARGV[1])
+            if flow.version == 0 then flow.version = nil end
+            return redis.call('SET', KEYS[1], cmsgpack.pack(flow))
+            """);
+        using (await client.Scripts.ExecuteAsync(changeVersion, [key], [version])) { }
+        await Assert.That(async () => await queue.GetFlowResultsAsync("flow")).Throws<RespireServerException>();
+        await Assert.That(async () => await queue.EnqueueFlowAsync("flow", tree)).Throws<RespireServerException>();
+        await Assert.That(async () => await queue.RemoveFlowAsync("flow")).Throws<RespireServerException>();
+        RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey, key];
+        RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "consumer", entry.Id.Value, 1, "completed"];
+        await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys, args))
+            .Throws<RespireServerException>();
+        await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(0);
+        await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
+        await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count)
+            .IsEqualTo(1);
+        using (await client.Scripts.ExecuteAsync(changeVersion, [key], [1])) { }
+        await Assert.That((await queue.GetFlowResultsAsync("flow"))[0].Status).IsEqualTo("waiting");
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobScript("Complete"), keys, args)).IsEqualTo(1);
     }
 
     [Test]

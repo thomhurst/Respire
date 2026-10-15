@@ -212,18 +212,34 @@ or `failed`; `ready` includes pending deliveries and retries. Completion events 
 to distinguish identical job IDs in different flows. A parent failed without execution publishes
 a `dead-letter` event with reason `child-failed`, entry ID `0-0`, and attempt zero; it has no
 delivery to copy to the dead-letter stream.
+`ReadEventsAsync` parses these sentinel values normally. A failed root publishes the same
+terminal event, so consumers can wait for its job ID and `FlowKey`, or inspect the root snapshot.
 
 Flow IDs have permanent deduplication, independent of ordinary job enqueue IDs. Retry an ambiguous
 enqueue using the same flow ID: the first tree wins and later calls return `false`. Job IDs must
 be unique within each tree. Cycles, shared children, and cross-queue trees are not supported.
 Use a new flow ID for a new run and include that identity in application job IDs when needed
-for external idempotency. Keep payloads and results small: each completion rewrites the bounded
-tree's retained state. Flow payloads and results do not expire automatically; account for their
-storage and retention requirements. After a flow is terminal and its results are no longer needed,
-an operator can delete its event's logical `FlowKey` through the same client's key API. Deleting
-that state also removes flow-ID deduplication. Do not delete, evict, or alter flow state while jobs
-can still run or be retried. Flow keys share the queue's Cluster slot and respect client key prefixes.
-In addition to the ordinary queue commands, flows require `GET`, `SET`, and `TYPE` on flow keys
+for external idempotency. Each result is limited to **4 KiB**, and combined UTF-8 job IDs and
+serialized payloads are limited to **256 KiB** per flow. Store larger data externally and return
+a reference. Each completion rewrites the retained tree, bounded to 1 MiB of results plus
+256 KiB of input and coordination metadata. `Complete` rejects oversized results before copying;
+the completion script also checks the limit before changing Redis state.
+
+Flow payloads and results do not expire automatically. After a flow is terminal and its results
+are no longer needed, call `await queue.RemoveFlowAsync(flowId)`. This atomically verifies that
+every node is completed or failed and deletes the flow state and flow-ID reservation. It returns
+`false` for an absent flow and throws `RespireServerException` for an active flow. Queue entries
+and events keep their existing retention policy. A removed ID can be enqueued again, so use a
+new ID when consumers must distinguish historical runs. Do not delete, evict, or alter active
+flow state directly. Flow keys share the queue's Cluster slot and respect client key prefixes.
+The stored schema is versioned; reads, duplicate enqueues, completions, and removal reject an
+unknown version explicitly without mutating it.
+
+Flows require Redis 7.0 or later. On an older server, the completion script fails during its
+permission preflight, before any Redis mutation or acknowledgement. Its delivery remains
+pending and recoverable, but cannot finish until Redis is upgraded; do not downgrade a server
+with active flows. In addition to the ordinary queue commands, flows require `GET`, `SET`,
+`TYPE`, and (for removal) `DEL` on flow keys
 and `XADD`/`XDEL` on the ready stream for activation and rollback.
 
 ## Delay, priority and expiry
