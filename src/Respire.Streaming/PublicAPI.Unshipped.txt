@@ -27,6 +27,17 @@ override Respire.Streaming.RespireJobMetricBucket.GetHashCode() -> int
 override Respire.Streaming.RespireJobMetricBucket.ToString() -> string!
 static Respire.Streaming.RespireJobMetricBucket.operator ==(Respire.Streaming.RespireJobMetricBucket? left, Respire.Streaming.RespireJobMetricBucket? right) -> bool
 static Respire.Streaming.RespireJobMetricBucket.operator !=(Respire.Streaming.RespireJobMetricBucket? left, Respire.Streaming.RespireJobMetricBucket? right) -> bool
+Respire.Streaming.RespireJobGroupOptions
+Respire.Streaming.RespireJobGroupOptions.RespireJobGroupOptions() -> void
+Respire.Streaming.RespireJobGroupOptions.MaxConcurrency.get -> int?
+Respire.Streaming.RespireJobGroupOptions.MaxConcurrency.init -> void
+Respire.Streaming.RespireJobGroupOptions.RateLimit.get -> Respire.Streaming.RespireJobRateLimit?
+Respire.Streaming.RespireJobGroupOptions.RateLimit.init -> void
+Respire.Streaming.RespireJobGroupOptions.LeaseDuration.get -> System.TimeSpan
+Respire.Streaming.RespireJobGroupOptions.LeaseDuration.init -> void
+Respire.Streaming.RespireJobQueue<T>.SetGroupOptionsAsync(string! group, Respire.Streaming.RespireJobGroupOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireJobQueue<T>.PauseGroupAsync(string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.ResumeGroupAsync(string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJob<T>.Group.get -> string?
 Respire.Streaming.RespireJob<T>.Group.init -> void
 Respire.Streaming.RespireJobEnqueueOptions.Group.get -> string?

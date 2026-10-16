@@ -27,7 +27,7 @@ internal static class JobQueueScheduling
     // Every script checks types and all cleanup permissions before its first write.
     // Redis scripts are atomic, but errors do not undo writes: append/index failures
     // roll back only the new staged entry, leaving the original pending job intact.
-    private const string Helpers = """
+    internal const string Helpers = """
         local function now()
             local time = redis.call('TIME')
             return tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
@@ -62,7 +62,7 @@ internal static class JobQueueScheduling
                 local member = prefix .. string.format('%016.0f', due) .. '|' .. id
                 local indexed = redis.pcall('ZADD', grouped, 0, member)
                 if not (type(indexed) == 'table' and indexed.err) then
-                    indexed = redis.pcall('ZADD', order, 0, prefix)
+                    if not redis.call('ZSCORE', parked, prefix) then indexed = redis.pcall('ZADD', order, 0, prefix) end
                 end
                 if type(indexed) == 'table' and indexed.err then
                     unstage(fields, due, id)

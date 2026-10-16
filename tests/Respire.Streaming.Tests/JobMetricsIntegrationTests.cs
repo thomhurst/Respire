@@ -45,18 +45,29 @@ public partial class JobQueueIntegrationTests
     }
 
     [Test]
-    [Arguments(0)]
-    [Arguments(5)]
-    public async Task MetricsHostedConcurrentWorkersCountTerminalOutcomesOnly(int retention)
+    [Arguments(0, false, false)]
+    [Arguments(5, false, false)]
+    [Arguments(0, true, false)]
+    [Arguments(5, true, false)]
+    [Arguments(0, true, true)]
+    [Arguments(5, true, true)]
+    public async Task MetricsHostedConcurrentWorkersCountTerminalOutcomesOnly(int retention, bool grouped, bool delete)
     {
         await using var client = await ConnectAsync();
         var queue = Queue(client);
-        for (var i = 0; i < 20; i++) await queue.EnqueueAsync("job-" + i, i % 2 == 0 ? "ok" : "fail");
+        if (grouped) await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 2 });
+        for (var i = 0; i < 20; i++)
+        {
+            if (grouped)
+                await queue.EnqueueScheduledAsync("job-" + i, i % 2 == 0 ? "ok" : "fail", new() { Group = "a" });
+            else
+                await queue.EnqueueAsync("job-" + i, i % 2 == 0 ? "ok" : "fail");
+        }
         ServiceProvider Provider(string consumer)
         {
             var services = new ServiceCollection().AddSingleton<IRespireClient>(client);
             services.AddRespireJobQueue<MetricsHandler, string>("test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
-                new() { ConsumerName = consumer, ConsumerCount = 2, DeliveryLimit = 2,
+                new() { ConsumerName = consumer, ConsumerCount = 2, DeliveryLimit = 2, DeleteAcknowledgedEntries = delete,
                     ReadWait = TimeSpan.FromMilliseconds(10), RecoveryPollInterval = TimeSpan.FromMilliseconds(10) },
                 new() { MetricsRetentionMinutes = retention, RetryBackoff = TimeSpan.Zero,
                     SchedulingPollInterval = TimeSpan.FromMilliseconds(10) });

@@ -139,7 +139,9 @@ public class JobGroupIntegrationTests(RedisTestContainer redis)
 
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "groups", Encoding.UTF8.GetBytes);
     internal static RespireKey[] Keys(RespireJobQueue<string> queue) => [queue.StreamKey, queue.StreamKey + ":scheduled", queue.StreamKey + ":due",
-        queue.StreamKey + ":group-order", queue.StreamKey + ":group-jobs", queue.StreamKey + ":group-cursor"];
+        queue.StreamKey + ":group-order", queue.StreamKey + ":group-jobs", queue.StreamKey + ":group-cursor",
+        queue.StreamKey + ":group-policy", queue.StreamKey + ":group-leases", queue.StreamKey + ":group-owners",
+        queue.StreamKey + ":group-parked"];
     internal static async Task<RespireStreamEntry[]> Read(IRespireClient client, RespireJobQueue<string> queue, string consumer,
         int count = 1, int candidates = 64, RespireScript? script = null)
     {

@@ -1,5 +1,6 @@
 using System.Text;
 using Respire.Internal;
+using System.Reflection;
 using Respire.Testing.Containers;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -57,6 +58,24 @@ public class JobSchedulingClusterTests
             using (var denied = await JobQueueControlTests.Admit(client, queue, "ReadGrouped"))
                 await Assert.That(denied[3].AsInteger()).IsGreaterThan(0);
             await Assert.That((await queue.GetStateAsync()).RateLimitHits).IsEqualTo(1);
+
+            // Application-group controls use the same explicit keys even when a client prefix
+            // supplies the effective Cluster hash tag instead of the queue's own tag.
+            await queue.SetRateLimitAsync(null);
+            const string applicationGroup = "limited:{foreign}:東京";
+            await queue.SetGroupOptionsAsync(applicationGroup, new() { MaxConcurrency = 1 });
+            await queue.PauseGroupAsync(applicationGroup);
+            await queue.EnqueueScheduledAsync("limited-1", "p", new() { Group = applicationGroup });
+            await queue.EnqueueScheduledAsync("limited-2", "p", new() { Group = applicationGroup });
+            await Assert.That((await JobGroupIntegrationTests.Read(client, queue, "limited")).Length).IsEqualTo(0);
+            await queue.ResumeGroupAsync(applicationGroup);
+            var leased = (await JobGroupIntegrationTests.Read(client, queue, "limited")).Single();
+            await Assert.That((await JobGroupIntegrationTests.Read(client, queue, "limited")).Length).IsEqualTo(0);
+            var release = (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobGroupControls")!
+                .GetField("Release", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(release, keys, ["limited", leased.Id.Value, 1])).IsEqualTo(1);
+            await Assert.That((await JobGroupIntegrationTests.Read(client, queue, "limited")).Single()
+                .GetString("_respire.job.id")).IsEqualTo("limited-2");
         }
     }
 }

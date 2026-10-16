@@ -8,7 +8,7 @@ public sealed record RespireJobEnqueueOptions
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     /// <summary>Optional application group identity. Null means ungrouped; non-null values must be nonblank valid Unicode.</summary>
-    /// <remarks>Eligible groups rotate in Redis when scheduling-enabled workers read. Does not impose concurrency or rate limits.</remarks>
+    /// <remarks>Eligible groups rotate in Redis when scheduling-enabled workers read. Configure shared admission limits with SetGroupOptionsAsync.</remarks>
     public string? Group { get; init; }
 
     /// <summary>Delay before the job becomes eligible. Defaults to zero.</summary>

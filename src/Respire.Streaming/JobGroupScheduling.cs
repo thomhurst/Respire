@@ -5,7 +5,8 @@ namespace Respire.Streaming;
 internal static class JobGroupScheduling
 {
     internal static string[] Keys(string stream) =>
-        [.. JobQueueScheduling.Keys(stream), stream + ":group-order", stream + ":group-jobs", stream + ":group-cursor"];
+        [.. JobQueueScheduling.Keys(stream), stream + ":group-order", stream + ":group-jobs", stream + ":group-cursor",
+            stream + ":group-policy", stream + ":group-leases", stream + ":group-owners", stream + ":group-parked"];
 
     internal const string StageHelpers = """
         local order, grouped, cursor = KEYS[groupOffset], KEYS[groupOffset+1], KEYS[groupOffset+2]
@@ -14,7 +15,10 @@ internal static class JobGroupScheduling
             if name == '' then return nil end
             return (string.gsub(name, '.', function(c) return string.format('%02x', string.byte(c)) end)) .. '|'
         end
+
+        """ + JobGroupControls.Helpers + """
         local function groupPermissions()
+            controlPermissions()
             checktype(order, 'zset')
             checktype(grouped, 'zset')
             permit('ZRANGEBYLEX', grouped, '-', '+', 'LIMIT', 0, 1)
@@ -49,7 +53,10 @@ internal static class JobGroupScheduling
         permit('XDEL', KEYS[2], '0-0')
         permit('ZREM', order, 'group')
         permit('ZREM', grouped, 'job')
+        controlPermissions()
         local clock = now()
+        local dueGroups = redis.call('ZRANGEBYSCORE', parked, '-inf', clock, 'LIMIT', 0, 256)
+        for _, prefix in ipairs(dueGroups) do wake(prefix) end
         local last = redis.call('GET', cursor) or ''
         local selected = 0
         for visit = 1, tonumber(ARGV[3]) do
@@ -57,33 +64,48 @@ internal static class JobGroupScheduling
             if #groups == 0 then groups = redis.call('ZRANGEBYLEX', order, '-', '+', 'LIMIT', 0, 1) end
             if #groups == 0 then break end
             local prefix = groups[1]
-            local members = redis.call('ZRANGEBYLEX', grouped, '[' .. prefix,
-                '[' .. prefix .. string.format('%016.0f', clock) .. '|' .. string.char(255), 'LIMIT', 0, ARGV[4])
-            local chosen, fields, id, priority
-            for _, member in ipairs(members) do
-                local entryId = string.match(member, '|([^|]+)$')
-                local rows = redis.call('XRANGE', KEYS[2], entryId, entryId)
-                local candidate = #rows == 1 and rows[1][2] or nil
-                local rank = candidate and tonumber(field(candidate, '_respire.job.priority', '0')) or math.huge
-                local expires = candidate and tonumber(field(candidate, '_respire.job.expires', '0')) or 0
-                if expires > 0 and expires <= clock then candidate = nil; rank = math.huge end
-                if not chosen or rank > priority then
-                    chosen, fields, id, priority = member, candidate, entryId, rank
+            local due = eligible(prefix, clock)
+            if due > clock then
+                park(prefix, due)
+                last = prefix
+            else
+                local members = redis.call('ZRANGEBYLEX', grouped, '[' .. prefix,
+                    '[' .. prefix .. string.format('%016.0f', clock) .. '|' .. string.char(255), 'LIMIT', 0, ARGV[4])
+                local chosen, fields, id, priority
+                for _, member in ipairs(members) do
+                    local entryId = string.match(member, '|([^|]+)$')
+                    local rows = redis.call('XRANGE', KEYS[2], entryId, entryId)
+                    local candidate = #rows == 1 and rows[1][2] or nil
+                    local rank = candidate and tonumber(field(candidate, '_respire.job.priority', '0')) or math.huge
+                    local expires = candidate and tonumber(field(candidate, '_respire.job.expires', '0')) or 0
+                    if expires > 0 and expires <= clock then candidate = nil; rank = math.huge end
+                    if not chosen or rank > priority then
+                        chosen, fields, id, priority = member, candidate, entryId, rank
+                    end
                 end
+                local appended
+                local previousTat = redis.call('HGET', policy, prefix .. 'tat')
+                if fields then
+                    appended = redis.call('XADD', KEYS[1], '*', unpack(fields))
+                    local reserved = reserve(prefix, appended, ARGV[2] .. '|1', clock)
+                    if type(reserved) == 'table' then redis.call('XDEL', KEYS[1], appended); return reserved end
+                end
+                local saved = redis.pcall('SET', cursor, prefix)
+                if type(saved) == 'table' and saved.err then
+                    if appended then
+                        removeLease(appended); redis.call('XDEL', KEYS[1], appended)
+                        if previousTat then redis.call('HSET', policy, prefix .. 'tat', previousTat)
+                        else redis.call('HDEL', policy, prefix .. 'tat') end
+                    end
+                    return saved
+                end
+                if chosen then
+                    removeGrouped(prefix, chosen)
+                    redis.call('XDEL', KEYS[2], id)
+                end
+                if appended then selected = selected + 1 end
+                last = prefix
             end
-            local appended
-            if fields then appended = redis.call('XADD', KEYS[1], '*', unpack(fields)) end
-            local saved = redis.pcall('SET', cursor, prefix)
-            if type(saved) == 'table' and saved.err then
-                if appended then redis.call('XDEL', KEYS[1], appended) end
-                return saved
-            end
-            if chosen then
-                removeGrouped(prefix, chosen)
-                redis.call('XDEL', KEYS[2], id)
-            end
-            if appended then selected = selected + 1 end
-            last = prefix
         end
 
         """;
