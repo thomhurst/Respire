@@ -113,6 +113,163 @@ public partial class JobQueueIntegrationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task MetricsCompletionPreservesBatchKeyPositionsAndCountsCallbacks(bool cancel)
+    {
+        await using var root = await ConnectAsync();
+        var client = root.WithKeyPrefix("tenant:");
+        var queue = Queue(client);
+        await queue.CreateBatchAsync(new() { OnComplete = new("callback", "ok") }, "batch");
+        await queue.AddBatchJobAsync("batch", "member", "ok");
+        if (cancel) await queue.CancelBatchAsync("batch");
+        else await queue.SealBatchAsync("batch");
+        var services = new ServiceCollection().AddSingleton<IRespireClient>(client);
+        services.AddRespireJobQueue<MetricsHandler, string>("test", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
+            new() { ReadWait = TimeSpan.FromMilliseconds(10) }, new() { MetricsRetentionMinutes = 3 });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IHostedService>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await worker.StartAsync(deadline.Token);
+        try { await UntilAsync(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 2, deadline.Token); }
+        finally { await worker.StopAsync(deadline.Token); }
+        var status = (await queue.GetBatchStatusAsync("batch"))!;
+        await Assert.That(status.IsCompleted).IsTrue();
+        await Assert.That(status.Cancelled).IsEqualTo(cancel ? 1 : 0);
+        var buckets = await RespireJobMetrics.ReadAsync(client, queue.StreamKey);
+        await Assert.That(buckets.Sum(b => b.Completed)).IsEqualTo(cancel ? 1 : 2);
+        await Assert.That(buckets.Sum(b => b.Failed)).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("completed", false)]
+    [Arguments("dead-letter", false)]
+    [Arguments("completed", true)]
+    [Arguments("dead-letter", true)]
+    public async Task MetricsBatchTerminalCountsMatchEvents(string outcome, bool cancel)
+    {
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        await queue.CreateBatchAsync(batchId: "batch");
+        await queue.AddBatchJobAsync("batch", "member", "ok");
+        if (cancel) await queue.CancelBatchAsync("batch");
+        else await queue.SealBatchAsync("batch");
+        await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+        var member = (await ReadBatchJobs(client, queue)).Single();
+        RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey,
+            member.GetString("_respire.job.batch")!, queue.StreamKey + ":metrics"];
+        RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "batch-consumer", member.Id.Value, 1,
+            outcome, "explicit", "", 0, Array.Empty<byte>(), 3];
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobScript("CompleteWithMetrics"), keys, args)).IsEqualTo(cancel ? 2 : 1);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobScript("CompleteWithMetrics"), keys, args)).IsEqualTo(0);
+        var buckets = await RespireJobMetrics.ReadAsync(client, queue.StreamKey);
+        await Assert.That(buckets.Sum(b => b.Completed)).IsEqualTo(!cancel && outcome == "completed" ? 1 : 0);
+        await Assert.That(buckets.Sum(b => b.Failed)).IsEqualTo(!cancel && outcome == "dead-letter" ? 1 : 0);
+        var terminal = (await client.Streams.ReadAsync(queue.EventsStreamKey)).Single();
+        await Assert.That(terminal.GetString("kind")).IsEqualTo(cancel ? "cancelled" : outcome);
+    }
+
+    [Test]
+    [Arguments("wrong-type", false)]
+    [Arguments("wrong-type", true)]
+    [Arguments("retention", false)]
+    [Arguments("retention", true)]
+    [Arguments("hget", false)]
+    [Arguments("hget", true)]
+    [Arguments("hset", false)]
+    [Arguments("hset", true)]
+    [Arguments("pexpireat", false)]
+    [Arguments("pexpireat", true)]
+    public async Task MetricsErrorsDoNotBlockCancelledBatchCompletion(string failure, bool delete)
+    {
+        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
+        var queue = Queue(admin);
+        await queue.CreateBatchAsync(new() { OnComplete = new("callback", "ok") }, "batch");
+        await queue.AddBatchJobAsync("batch", "member", "ok");
+        await queue.CancelBatchAsync("batch");
+        await admin.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+        var member = (await ReadBatchJobs(admin, queue)).Single();
+        var metricsKey = queue.StreamKey + ":metrics";
+        var seed = failure == "wrong-type"
+            ? "redis.call('SET', KEYS[1], 'wrong')"
+            : "redis.call('HSET', KEYS[1], 'retention', 4)";
+        await admin.Scripts.ExecuteIntegerAsync(RespireScript.Create(seed + "; return 1"), [metricsKey], []);
+        var snapshot = RespireScript.Create("return redis.call('DUMP', KEYS[1])");
+        using var before = await admin.Scripts.ExecuteAsync(snapshot, [metricsKey], []);
+        var username = "cancel-metrics-" + Guid.NewGuid().ToString("N");
+        var permissions = new List<RespireValue> { "on", ">metrics-test", "~*", "+@all" };
+        if (failure is not ("wrong-type" or "retention")) permissions.Add("-" + failure);
+        await admin.Server.AclSetUserAsync(username, permissions.ToArray());
+        try
+        {
+            await using var limited = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)
+                with { Username = username, Password = "metrics-test" });
+            var script = JobScript(delete ? "CompleteAndDeleteWithMetrics" : "CompleteWithMetrics");
+            RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey,
+                member.GetString("_respire.job.batch")!, metricsKey];
+            RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "batch-consumer", member.Id.Value, 1,
+                "completed", "", "", 0, Array.Empty<byte>(), failure == "retention" ? 3 : 4];
+            // Cancellation still compensates its event, counts and callback when acknowledgement fails.
+            var failing = RespireScript.Create(script.Source.Replace("local acknowledged = acknowledge()",
+                "local acknowledged = {err = 'ERR injected acknowledgement failure'}", StringComparison.Ordinal));
+            await Assert.That(async () => await limited.Scripts.ExecuteIntegerAsync(failing, keys, args)).Throws<RespireServerException>();
+            await Assert.That((await queue.GetBatchStatusAsync("batch"))!.Pending).IsEqualTo(1);
+            await Assert.That(await admin.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
+            await Assert.That(await admin.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(0);
+            await Assert.That(await limited.Scripts.ExecuteIntegerAsync(script, keys, args)).IsEqualTo(2);
+            await Assert.That(await limited.Scripts.ExecuteIntegerAsync(script, keys, args)).IsEqualTo(0);
+            var status = (await queue.GetBatchStatusAsync("batch"))!;
+            await Assert.That(status.IsCompleted).IsTrue();
+            await Assert.That(status.Pending).IsEqualTo(0);
+            await Assert.That(status.Cancelled).IsEqualTo(1);
+            await Assert.That((await admin.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count).IsEqualTo(0);
+            await Assert.That((await admin.Streams.ReadAsync(queue.EventsStreamKey)).Single().GetString("kind")).IsEqualTo("cancelled");
+            await Assert.That((await ReadBatchJobs(admin, queue)).Single().GetString("_respire.job.id")).IsEqualTo("callback");
+            using var after = await admin.Scripts.ExecuteAsync(snapshot, [metricsKey], []);
+            await Assert.That(after.AsBytes()).IsEquivalentTo(before.AsBytes());
+        }
+        finally { using var removed = await admin.ExecuteAsync("ACL DELUSER", [username]); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MetricsAndBatchCallbacksRollbackTogether(bool failMetrics)
+    {
+        await using var client = await ConnectAsync();
+        var queue = Queue(client);
+        await queue.CreateBatchAsync(new() { OnComplete = new("callback", "ok") }, "batch");
+        await queue.AddBatchJobAsync("batch", "member", "ok");
+        await queue.SealBatchAsync("batch");
+        await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+        var member = (await ReadBatchJobs(client, queue)).Single();
+        RespireKey[] keys = [queue.StreamKey, queue.EventsStreamKey, queue.DeadLetterStreamKey,
+            member.GetString("_respire.job.batch")!, queue.StreamKey + ":metrics"];
+        RespireValue[] args = [RespireJobQueue<string>.ConsumerGroup, "batch-consumer", member.Id.Value, 1,
+            "completed", "", "", 0, Array.Empty<byte>(), 3];
+        var script = JobScript("CompleteWithMetrics");
+        var source = failMetrics
+            ? script.Source.Replace("redis.call('PEXPIREAT', metricsKey, (minute + retention) * 60000)",
+                "error('ERR injected metrics failure')", StringComparison.Ordinal)
+            : script.Source.Replace("return redis.pcall('XACK', KEYS[1], ARGV[1], ARGV[3])",
+                "return {err = 'ERR injected acknowledgement failure'}", StringComparison.Ordinal);
+        await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(RespireScript.Create(source), keys, args))
+            .Throws<RespireServerException>();
+        var status = (await queue.GetBatchStatusAsync("batch"))!;
+        await Assert.That(status.Pending).IsEqualTo(1);
+        await Assert.That(status.Succeeded).IsEqualTo(0);
+        await Assert.That(status.IsCompleted).IsFalse();
+        await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
+        await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(0);
+        await Assert.That((await RespireJobMetrics.ReadAsync(client, queue.StreamKey)).Count).IsEqualTo(0);
+        await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count).IsEqualTo(1);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, keys, args)).IsEqualTo(1);
+        await Assert.That((await queue.GetBatchStatusAsync("batch"))!.IsCompleted).IsTrue();
+        await Assert.That((await ReadBatchJobs(client, queue)).Single().GetString("_respire.job.id")).IsEqualTo("callback");
+        await Assert.That((await RespireJobMetrics.ReadAsync(client, queue.StreamKey)).Sum(b => b.Completed)).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task MetricsRollbackRestoresCountersAndExpiryWhenAcknowledgementFails(bool existing)
     {
         await using var client = await ConnectAsync();

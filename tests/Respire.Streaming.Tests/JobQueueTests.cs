@@ -21,6 +21,53 @@ public class JobQueueTests
     }
 
     [Test]
+    public async Task InvalidBatchIdentifiersAreRejectedBeforeSerialization()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", _ => throw new InvalidOperationException());
+        foreach (var id in new[] { "", " ", "\t\r\n" })
+        {
+            await Assert.That(async () => await queue.CreateBatchAsync(batchId: id)).Throws<ArgumentException>();
+            await Assert.That(async () => await queue.AddBatchJobAsync(id, "job", "payload")).Throws<ArgumentException>();
+            await Assert.That(async () => await queue.AddBatchJobAsync("batch", id, "payload")).Throws<ArgumentException>();
+            await Assert.That(async () => await queue.SealBatchAsync(id)).Throws<ArgumentException>();
+            await Assert.That(async () => await queue.CancelBatchAsync(id)).Throws<ArgumentException>();
+            await Assert.That(async () => await queue.GetBatchStatusAsync(id)).Throws<ArgumentException>();
+            await Assert.That(async () => await queue.RemoveBatchAsync(id)).Throws<ArgumentException>();
+        }
+        await Assert.That(async () => await queue.CreateBatchAsync(batchId: "\ud800")).Throws<EncoderFallbackException>();
+        await Assert.That(async () => await queue.AddBatchJobAsync("batch", "\ud800", "payload"))
+            .Throws<EncoderFallbackException>();
+        await Assert.That(async () => await queue.CreateBatchAsync(new() { OnSuccess = new(" ", "payload") }, "batch"))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await queue.CreateBatchAsync(new() { OnSuccess = new("id", "payload") }, "batch", new(true)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(async () => await queue.AddBatchJobAsync("batch", "id", "payload", new(true)))
+            .Throws<OperationCanceledException>();
+    }
+
+    [Test]
+    public async Task BatchInputBudgetCountsUtf8BytesAndCombinedCallbacks()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", Encoding.UTF8.GetBytes);
+        await Assert.That(async () => await queue.AddBatchJobAsync("batch", "id", new string('é', 131072)))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await queue.CreateBatchAsync(new()
+        {
+            OnSuccess = new("success", new string('é', 65536)),
+            OnComplete = new("complete", new string('é', 65536)),
+        }, "batch")).Throws<ArgumentException>();
+        var nullSerializer = new RespireJobQueue<string>(client, "queue", _ => null!);
+        await Assert.That(async () => await nullSerializer.AddBatchJobAsync("batch", "id", "payload"))
+            .Throws<InvalidOperationException>();
+        await Assert.That(async () => await nullSerializer.CreateBatchAsync(new() { OnComplete = new("id", "payload") }, "batch"))
+            .Throws<InvalidOperationException>();
+    }
+
+    [Test]
     public async Task GroupIsPartOfTheEnvelopeButDeliveryControlsAreNot()
     {
         var ungrouped = new RespireJob<string>("id", "payload", "1-0");

@@ -49,20 +49,36 @@ internal static class JobQueueScripts
 
     // No automatic trimming: a failed completion must not irreversibly evict another event.
     // Preflight all writes and compensate runtime failures before acknowledging the delivery.
-    private const string CompleteSource = JobQueueFlows.PrepareCompletion + """
+    private const string CompletePreparation = """
+        local isBatch = false
+        if KEYS[4] then
+            for i = 1, #entries[1][2], 2 do
+                if entries[1][2][i] == '_respire.job.batch' then isBatch = true; break end
+            end
+        end
+
+        """ + JobQueueFlows.PrepareCompletion + JobQueueBatches.PrepareCompletion + """
         if KEYS[1] == KEYS[2] or (KEYS[3] and (KEYS[1] == KEYS[3] or KEYS[2] == KEYS[3])) then
             return redis.error_reply('ERR job streams must differ')
         end
-        local fields = {'job_id', job, 'entry_id', ARGV[3], 'attempt', ARGV[4], 'kind', ARGV[5]}
+        local kind = batch and batch.cancel and 'cancelled' or ARGV[5]
+
+        """;
+
+    private const string CompleteSource = """
+        local fields = {'job_id', job, 'entry_id', ARGV[3], 'attempt', ARGV[4], 'kind', kind}
         if flow then table.insert(fields, 'flow_key'); table.insert(fields, flow.key) end
-        if ARGV[5] == 'dead-letter' then table.insert(fields, 'reason'); table.insert(fields, ARGV[6]) end
+        if batch then
+            table.insert(fields, 'batch_key'); table.insert(fields, batch.key)
+        end
+        if kind == 'dead-letter' then table.insert(fields, 'reason'); table.insert(fields, ARGV[6]) end
         if not redis.acl_check_cmd('XADD', KEYS[2], '*', unpack(fields))
             or not redis.acl_check_cmd('XDEL', KEYS[2], '0-0')
             or not redis.acl_check_cmd('XACK', KEYS[1], ARGV[1], ARGV[3]) then
             return redis.error_reply('NOPERM job completion is not permitted')
         end
         local deadFields
-        if ARGV[5] == 'dead-letter' then
+        if kind == 'dead-letter' then
             if #entries[1][2] > 2048 then return redis.error_reply('ERR too many job fields') end
             deadFields = {'_respire.source_id', ARGV[3], '_respire.group', string.sub(ARGV[1], 1, 256),
                 '_respire.attempt', ARGV[4], '_respire.reason', string.sub(ARGV[6], 1, 64),
@@ -83,7 +99,7 @@ internal static class JobQueueScripts
             end
         end
 
-        """ + JobQueueFlows.CommitCompletion;
+        """ + JobQueueFlows.CommitCompletion + JobQueueBatches.CommitCompletion;
 
     private const string CompleteSuffix = """
 
@@ -92,10 +108,13 @@ internal static class JobQueueScripts
         if type(acknowledged) == 'table' and acknowledged.err then
             if rollbackMetrics then rollbackMetrics() end
             rollbackFlow()
+            rollbackBatch()
             redis.call('XDEL', KEYS[2], event)
             if dead then redis.call('XDEL', KEYS[3], dead) end
             return acknowledged
         end
+        -- Distinguish cancelled members so hosted telemetry agrees with the terminal event.
+        if acknowledged == 1 and batch and batch.cancel then return 2 end
         return acknowledged
         """;
 
@@ -104,9 +123,10 @@ internal static class JobQueueScripts
         + "\nend\nlocal ok, result = pcall(ack)\nif not ok then return {err = result} end\nreturn result";
 
     private static RespireScript CreateCompletion(string acknowledge, bool metrics) => RespireScript.Create(
-        (metrics ? JobMetricsScripts.Key : "") + Fence
+        (metrics ? JobMetricsScripts.Key : "") + Fence + CompletePreparation
         + (metrics ? JobMetricsScripts.Prepare : "local rollbackMetrics\n") + CompleteSource
-        + (metrics ? JobMetricsScripts.Commit : "") + "local function acknowledge()\n" + acknowledge + CompleteSuffix);
+        + (metrics ? "if kind ~= 'cancelled' then\n" + JobMetricsScripts.Commit + "\nend\n" : "")
+        + "local function acknowledge()\n" + acknowledge + CompleteSuffix);
 
     internal static readonly RespireScript Complete = CreateCompletion(Acknowledge, false);
     internal static readonly RespireScript CompleteWithMetrics = CreateCompletion(Acknowledge, true);

@@ -31,54 +31,59 @@ internal static class JobMetricsScripts
     internal const string Key = "local metricsKey = table.remove(KEYS)\n";
 
     internal const string Prepare = """
-        local retention = tonumber(ARGV[10])
-        if not retention or retention < 1 or retention > 1440 or retention ~= math.floor(retention) then
-            return redis.error_reply('ERR invalid job metrics retention')
-        end
-        local storedRetention = redis.call('HGET', metricsKey, 'retention')
-        if storedRetention and tonumber(storedRetention) ~= retention then
-            return redis.error_reply('ERR job metrics retention must match all workers; stop workers and clear metrics to change it')
-        end
-        local clock = redis.call('TIME')
-        local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
-        local minute = math.floor(now / 60000)
-        local slot = tostring(minute % retention)
-        local oldBucket = redis.call('HGET', metricsKey, slot)
-        local oldTtl = redis.call('PTTL', metricsKey)
-        local bucket = oldBucket and cmsgpack.unpack(oldBucket) or {minute, 0, 0}
-        if bucket[1] ~= minute then bucket = {minute, 0, 0} end
-        local counter = ARGV[5] == 'completed' and 2 or 3
-        bucket[counter] = bucket[counter] + 1
-        local newBucket = cmsgpack.pack(bucket)
-        if not redis.acl_check_cmd('HSET', metricsKey, slot, newBucket, 'retention', retention)
-            or not redis.acl_check_cmd('HDEL', metricsKey, slot)
-            or not redis.acl_check_cmd('DEL', metricsKey)
-            or not redis.acl_check_cmd('PERSIST', metricsKey)
-            or not redis.acl_check_cmd('PEXPIREAT', metricsKey, (minute + retention) * 60000) then
-            return redis.error_reply('NOPERM job metrics update is not permitted')
-        end
-        local metricsSaved = false
-        local function rollbackMetrics()
-            if not metricsSaved then return end
-            if not storedRetention then redis.call('DEL', metricsKey); return end
-            if oldBucket then redis.call('HSET', metricsKey, slot, oldBucket)
-            else redis.call('HDEL', metricsKey, slot) end
-            if oldTtl >= 0 then redis.call('PEXPIREAT', metricsKey, now + oldTtl)
-            else redis.call('PERSIST', metricsKey) end
+        local saveMetrics, rollbackMetrics
+        -- Cancelled members do not contribute metrics and must not depend on metrics storage or ACLs.
+        if kind ~= 'cancelled' then
+            local retention = tonumber(ARGV[10])
+            if not retention or retention < 1 or retention > 1440 or retention ~= math.floor(retention) then
+                return redis.error_reply('ERR invalid job metrics retention')
+            end
+            local storedRetention = redis.call('HGET', metricsKey, 'retention')
+            if storedRetention and tonumber(storedRetention) ~= retention then
+                return redis.error_reply('ERR job metrics retention must match all workers; stop workers and clear metrics to change it')
+            end
+            local clock = redis.call('TIME')
+            local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+            local minute = math.floor(now / 60000)
+            local slot = tostring(minute % retention)
+            local oldBucket = redis.call('HGET', metricsKey, slot)
+            local oldTtl = redis.call('PTTL', metricsKey)
+            local bucket = oldBucket and cmsgpack.unpack(oldBucket) or {minute, 0, 0}
+            if bucket[1] ~= minute then bucket = {minute, 0, 0} end
+            local counter = ARGV[5] == 'completed' and 2 or 3
+            bucket[counter] = bucket[counter] + 1
+            local newBucket = cmsgpack.pack(bucket)
+            if not redis.acl_check_cmd('HSET', metricsKey, slot, newBucket, 'retention', retention)
+                or not redis.acl_check_cmd('HDEL', metricsKey, slot)
+                or not redis.acl_check_cmd('DEL', metricsKey)
+                or not redis.acl_check_cmd('PERSIST', metricsKey)
+                or not redis.acl_check_cmd('PEXPIREAT', metricsKey, (minute + retention) * 60000) then
+                return redis.error_reply('NOPERM job metrics update is not permitted')
+            end
+            local metricsSaved = false
+            rollbackMetrics = function()
+                if not metricsSaved then return end
+                if not storedRetention then redis.call('DEL', metricsKey); return end
+                if oldBucket then redis.call('HSET', metricsKey, slot, oldBucket)
+                else redis.call('HDEL', metricsKey, slot) end
+                if oldTtl >= 0 then redis.call('PEXPIREAT', metricsKey, now + oldTtl)
+                else redis.call('PERSIST', metricsKey) end
+            end
+            saveMetrics = function()
+                redis.call('HSET', metricsKey, slot, newBucket, 'retention', retention)
+                metricsSaved = true
+                redis.call('PEXPIREAT', metricsKey, (minute + retention) * 60000)
+            end
         end
 
         """;
 
     internal const string Commit = """
-        local function saveMetrics()
-            redis.call('HSET', metricsKey, slot, newBucket, 'retention', retention)
-            metricsSaved = true
-            redis.call('PEXPIREAT', metricsKey, (minute + retention) * 60000)
-        end
         local metricsOk, metricsError = pcall(saveMetrics)
         if not metricsOk then
             rollbackMetrics()
             rollbackFlow()
+            rollbackBatch()
             redis.call('XDEL', KEYS[2], event)
             if dead then redis.call('XDEL', KEYS[3], dead) end
             return redis.error_reply(metricsError)

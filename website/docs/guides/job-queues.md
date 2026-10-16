@@ -506,6 +506,91 @@ with active flows. In addition to the ordinary queue commands, flows require `GE
 `TYPE`, and (for removal) `DEL` on flow keys
 and `XADD`/`XDEL` on the ready stream for activation and rollback.
 
+## Batches and completion callbacks
+
+Use a **batch** for a flat set of independent jobs with aggregate progress and callbacks.
+Use a **flow** for a dependency tree where each parent consumes its children's results.
+Batch members can finish while membership is still open; callbacks become eligible only
+after you seal the batch and every member reaches a terminal outcome.
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
+// Use a stable ID so an ambiguous create/add/seal can be retried safely.
+var batchId = await queue.CreateBatchAsync(new RespireJobBatchOptions<string>
+{
+    OnSuccess = new("report-success", "notify-success:report-42"),
+    OnFailure = new("report-failure", "notify-failure:report-42"),
+    OnComplete = new("report-finished", "record-finish:report-42"),
+}, batchId: "report-42");
+await queue.AddBatchJobAsync(batchId, "part-1", "process-part-1");
+await queue.AddBatchJobAsync(batchId, "part-2", "process-part-2");
+await queue.SealBatchAsync(batchId);
+
+var status = await queue.GetBatchStatusAsync(batchId);
+Console.WriteLine($"{status!.Succeeded} succeeded; {status.Pending} pending");
+```
+
+`CreateBatchAsync` returns the supplied ID or generates one when omitted. Reusing an ID
+preserves the first callbacks. Member IDs are unique within a batch, independently of
+ordinary enqueue deduplication; adding an existing ID returns `false` and preserves its
+payload, even after sealing. Adding a new ID to a sealed batch fails. Each batch supports
+**256 members** and **256 KiB** of combined member/callback IDs and serialized payloads.
+Members enqueue immediately. Per-member scheduling, groups, priority, TTL, and flow
+dependencies are not available; configured worker retry backoff still applies.
+
+The status snapshot exposes `Pending`, `Succeeded`, `Failed`, `Cancelled`, `IsSealed`,
+`CancellationRequested`, and `IsCompleted`; an unknown ID returns `null`. Retried attempts
+remain pending. A job that fails an attempt and later succeeds contributes one success;
+only exhausted retries or explicit dead-letter completion contributes a failure.
+Terminal member events include `BatchKey` and use `completed`, `dead-letter`, or `cancelled`.
+
+Dashboard retries of dead-lettered members run as independent jobs with the original job ID
+and payload. They do not reopen the batch, change its terminal counts, or publish its callbacks
+again, and can run after the completed batch state has been removed.
+
+When a sealed batch has no pending members, Redis atomically publishes `OnSuccess` if
+all members succeeded, or `OnFailure` if any member failed or cancellation was requested.
+It also publishes `OnComplete`. An empty sealed batch succeeds. Each eligible callback
+is **enqueued once**, including concurrent final completions and repeated completion
+requests. The completion script commits counts, callback publication, the terminal event,
+and acknowledgement together; a rejected acknowledgement restores the previous state
+and removes the new callbacks/events. This requires exclusive use of the generated keys
+and intact Redis data, just like flows.
+
+Callbacks use the same queue, serializer, and handler as members. They are ordinary jobs
+and do not contribute to batch counts. `OnComplete` does not wait for the other callback
+to execute; workers may process callbacks concurrently. **Callback execution and external
+side effects are not exactly once.** Handlers must tolerate redelivery and use an
+application idempotency key for external effects. Include the batch identity in callback
+payloads when needed. `IsCompleted` means callbacks have been published, not that they
+have finished executing.
+
+Call `await queue.CancelBatchAsync(batchId)` to seal membership and request cancellation.
+Workers check cancellation before invoking a member's handler and acknowledge skipped
+members as cancelled. Already running handlers are not interrupted and can still produce
+side effects; any member completing after the cancellation request counts as cancelled.
+Earlier successes/failures retain their counts. Workers must drain remaining members,
+including delayed retries, before failure/completion callbacks run. Cancellation does not
+cancel callback jobs and leaves an already completed batch unchanged. Seal and cancel
+are idempotent; unknown IDs fail.
+
+Batch state has no automatic expiry. Once completed and no longer needed, call
+`await queue.RemoveBatchAsync(batchId)` to delete its state and ID reservation. Active
+batches cannot be removed. Stream entries, callbacks, and events have independent retention;
+removing state does not undo callback publication. Reusing a removed ID starts a new run.
+Do not evict, edit, or expire active batch state or trim unprocessed entries. Batch keys
+share the queue's Cluster slot and respect client key prefixes. Use batch-aware workers
+throughout the queue before adding batch members. Redis 7.0+ and `GET`, `SET`, `TYPE`,
+`XADD`, `XDEL`, `XACK` (plus `DEL` for removal) permissions are required.
+
+Dashboard batch presentation is tracked separately in
+[#1845](https://github.com/thomhurst/Respire/issues/1845); use `GetBatchStatusAsync` for progress.
+
 ## Delay, priority and expiry
 
 Use `EnqueueScheduledAsync` with `RespireJobEnqueueOptions` for scheduling. A producer sending
@@ -820,7 +905,7 @@ are bounded to 1440 buckets, and filter out expired slots. A missing hash return
 
 `Completed` counts acknowledged deliveries. `Failed` counts terminal dead letters, including
 explicit rejection and exhausted retries. Intermediate handler exceptions and retry attempts,
-expired jobs, and flow parents failed without being delivered are excluded. An operator retry
+expired jobs, cancelled batch members, and flow parents failed without being delivered are excluded. An operator retry
 creates a new delivery and may contribute a later completion. Empty minutes show zero; this also
 includes minutes before recording began and gaps while metrics were disabled. Retained history
 is shared across all workers for the queue, not partitioned by application job ID or job group.

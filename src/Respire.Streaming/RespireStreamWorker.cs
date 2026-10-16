@@ -337,6 +337,24 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
             throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
         var totalAttempts = delivery.Attempt;
+        if (options.JobEventsStream is { } batchEvents && delivery.Entry.GetString("_respire.job.batch") is { } batchKey)
+        {
+            JobQueueScheduling.ValidateKeys(client, [stream, batchKey]);
+            var cancelled = await client.Scripts.ExecuteIntegerAsync(JobQueueBatches.CheckCancellation, [stream, batchKey],
+                [group, consumer, delivery.Entry.Id.Value, delivery.Attempt],
+                processingToken).ConfigureAwait(false);
+            if (cancelled == -1) { observation.Outcome = "stale"; return; }
+            if (cancelled == 1)
+            {
+                var acknowledged = await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, options.DeleteAcknowledgedEntries),
+                    LeaseFenceKeys(delivery, CompletionKeys(delivery, batchEvents, false)),
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "cancelled", "", "",
+                        0, Array.Empty<byte>(), options.JobQueue?.MetricsRetentionMinutes ?? 0],
+                    processingToken).ConfigureAwait(false);
+                observation.Outcome = acknowledged == 2 ? "canceled" : "stale";
+                return;
+            }
+        }
         if (options.JobQueue is not null)
         {
             var previous = delivery.Entry.GetString("_respire.job.attempts");
@@ -406,7 +424,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     : await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
                         ? StreamWorkerScripts.AckAndDelete : StreamWorkerScripts.Ack, [stream],
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt], processingToken).ConfigureAwait(false);
-                observation.Outcome = acknowledged == 1 ? "ack" : "stale";
+                observation.Outcome = acknowledged switch { 1 => "ack", 2 => "canceled", _ => "stale" };
             }
             else if (result == RespireStreamWorkerResult.DeadLetter)
                 observation.Outcome = await DeadLetterAsync(delivery, consumer, "explicit", "", processingToken).ConfigureAwait(false);
@@ -448,20 +466,21 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, reason, failureType],
             processingToken).ConfigureAwait(false);
         if (completed == 1) _telemetry.DeadLetter(reason);
-        return completed switch { 1 => "dead-letter", -1 => "deleted", _ => "stale" };
+        return completed switch { 1 => "dead-letter", 2 => "canceled", -1 => "deleted", _ => "stale" };
     }
 
     private RespireKey[] CompletionKeys(Delivery delivery, string events, bool deadLetter)
     {
         RespireKey[] keys;
-        if (delivery.Entry.GetString("_respire.job.flow") is not { } flow)
+        var state = delivery.Entry.GetString("_respire.job.batch") ?? delivery.Entry.GetString("_respire.job.flow");
+        if (state is null)
             keys = deadLetter ? [stream, events, options.DeadLetterStream!] : [stream, events];
         else
         {
             JobQueueScheduling.ValidateKeys(client, options.JobQueue?.MetricsRetentionMinutes > 0
-                ? [stream, events, options.DeadLetterStream!, flow, stream + ":metrics"]
-                : [stream, events, options.DeadLetterStream!, flow]);
-            keys = [stream, events, options.DeadLetterStream!, flow];
+                ? [stream, events, options.DeadLetterStream!, state, stream + ":metrics"]
+                : [stream, events, options.DeadLetterStream!, state]);
+            keys = [stream, events, options.DeadLetterStream!, state];
         }
         return options.JobQueue?.MetricsRetentionMinutes > 0 ? [.. keys, stream + ":metrics"] : keys;
     }

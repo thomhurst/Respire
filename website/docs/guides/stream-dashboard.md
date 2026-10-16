@@ -211,7 +211,9 @@ action committed finds no entry; refresh the page to see the current state.
 
 For plain streams, retry removes only the five leading dead-letter metadata fields and
 preserves all original field names and values, including binary data and duplicate names.
-For job queues, it also resets `_respire.job.attempts` to zero and clears
+For job queues, retry detaches batch members from their original batch. The retried job runs
+independently, even after that batch's state has been removed; it does not reopen the batch,
+change its counts, or publish its callbacks again. It also resets `_respire.job.attempts` to zero and clears
 `_respire.job.expires`. This explicitly gives the job fresh delivery attempts without its old
 expiry. The job ID, payload, priority, and trace fields are preserved. Retry enters the ready
 stream immediately, bypassing enqueue deduplication and delayed scheduling. Handlers must

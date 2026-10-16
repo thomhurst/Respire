@@ -56,6 +56,24 @@ public class JobSchedulingClusterTests
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);
+            var batchQueue = new RespireJobQueue<string>(client, "batch-cluster", Encoding.UTF8.GetBytes);
+            await batchQueue.CreateBatchAsync(new() { OnComplete = new("callback", "done") }, "batch{untrusted}");
+            await batchQueue.AddBatchJobAsync("batch{untrusted}", "member", "payload");
+            await batchQueue.SealBatchAsync("batch{untrusted}");
+            await client.Streams.CreateGroupAsync(batchQueue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+            var member = (await client.Streams.ReadGroupOnceAsync(batchQueue.StreamKey,
+                RespireJobQueue<string>.ConsumerGroup, "owner", new() { Count = 1 })).Single();
+            var complete = (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobQueueScripts")!
+                .GetField("Complete", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(complete,
+                [batchQueue.StreamKey, batchQueue.EventsStreamKey, batchQueue.DeadLetterStreamKey,
+                    member.GetString("_respire.job.batch")!],
+                [RespireJobQueue<string>.ConsumerGroup, "owner", member.Id.Value, 1, "completed"]))
+                .IsEqualTo(1);
+            await Assert.That((await batchQueue.GetBatchStatusAsync("batch{untrusted}"))!.IsCompleted).IsTrue();
+            var callback = (await client.Streams.ReadGroupOnceAsync(batchQueue.StreamKey,
+                RespireJobQueue<string>.ConsumerGroup, "owner", new() { Count = 1 })).Single();
+            await Assert.That(callback.GetString("_respire.job.id")).IsEqualTo("callback");
             var queue = new RespireJobQueue<string>(client, "cluster", Encoding.UTF8.GetBytes);
             var keys = JobGroupIntegrationTests.Keys(queue);
             await queue.EnqueueScheduledAsync("id{untrusted}", "payload", new() { Group = "tenant:{other}:東京" });
