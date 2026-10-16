@@ -254,6 +254,39 @@ public class DedicatedPoolSizingTests
     }
 
     [Test]
+    public async Task DisconnectAfterRetentionCountDoesNotRetireAnotherHealthyConnection()
+    {
+        var clock = new PoolClock();
+        await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
+        await using var pool = CreatePool(server, new()
+        {
+            MinimumSize = 2, MaximumIdle = 3, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var first = await pool.RentAsync(deadline.Token);
+        var second = await pool.RentAsync(deadline.Token);
+        var third = await pool.RentAsync(deadline.Token);
+        pool.Return(first);
+        pool.Return(second);
+        pool.Return(third);
+
+        Task? disconnect = null;
+        // RetireIdle reads its timestamp between counting live entries and inspecting idle entries.
+        clock.BeforeNextTimestampRead = () => disconnect = first.DisposeAsync().AsTask();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await disconnect!.WaitAsync(deadline.Token);
+        await Assert.That(first.IsConnected).IsFalse();
+        await Assert.That(second.IsConnected).IsTrue();
+        await Assert.That(third.IsConnected).IsTrue();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        foreach (var connection in new[] { second, third })
+        {
+            using var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+            await Assert.That(response.AsString()).IsEqualTo("PONG");
+        }
+    }
+
+    [Test]
     public async Task ConnectingReservationDoesNotReplaceMinimumRetainedConnection()
     {
         var clock = new PoolClock();
@@ -440,9 +473,16 @@ public class DedicatedPoolSizingTests
         private readonly object _gate = new();
         private readonly List<ManualTimer> _timers = [];
         private long _ticks;
+        internal Action? BeforeNextTimestampRead;
         internal int ActiveTimers { get { lock (_gate) return _timers.Count; } }
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public override long GetTimestamp() { lock (_gate) return _ticks; }
+        public override long GetTimestamp()
+        {
+            var beforeRead = BeforeNextTimestampRead;
+            BeforeNextTimestampRead = null;
+            beforeRead?.Invoke();
+            lock (_gate) return _ticks;
+        }
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {

@@ -97,6 +97,7 @@ internal sealed partial class DedicatedConnectionPool(
         internal readonly RespireConnection Connection = connection;
         internal readonly DedicatedLeaseKind Kind = kind;
         internal State State = State.Rented;
+        internal bool CountedForIdleRetention;
         internal TaskCompletionSource? Closed;
         internal long IdleSince;
     }

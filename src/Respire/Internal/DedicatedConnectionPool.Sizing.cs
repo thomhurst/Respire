@@ -30,12 +30,22 @@ internal sealed partial class DedicatedConnectionPool
             // Pending handshakes and disconnected entries cannot protect the retention floor.
             var live = 0;
             foreach (var entry in _connections.Values)
-                if (entry.State != State.Closing && entry.Connection.IsConnected) live++;
+            {
+                entry.CountedForIdleRetention = entry.State != State.Closing && entry.Connection.IsConnected;
+                if (entry.CountedForIdleRetention) live++;
+            }
             var now = options.DedicatedPool.TimeProvider.GetTimestamp();
             for (var index = 0; index < _idle.Count;)
             {
                 var entry = _idle[index];
                 var connected = entry.Connection.IsConnected;
+                // A disconnect can race the count above. Remove its original contribution
+                // even if the entry has not expired, before considering another retirement.
+                if (!connected && entry.CountedForIdleRetention)
+                {
+                    entry.CountedForIdleRetention = false;
+                    live--;
+                }
                 if ((connected && live <= options.DedicatedPool.MinimumSize)
                     || options.DedicatedPool.TimeProvider.GetElapsedTime(entry.IdleSince, now) < timeout)
                 {
@@ -46,7 +56,7 @@ internal sealed partial class DedicatedConnectionPool
                 entry.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                 BeginCloseLocked(entry);
                 (closing ??= []).Add(entry);
-                if (connected) live--;
+                if (entry.CountedForIdleRetention) live--;
             }
             PauseIdleTimerIfEmptyLocked();
         }
