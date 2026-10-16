@@ -124,7 +124,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   GCRA rate limits and pause/resume,
   fenced progress and bounded per-job logs, retained completion events, enqueue-to-processing trace links, nested
   parent/child flows with retained results and failure policies, flat batches with atomic
-  success/failure/completion callback publication, progress counts and cooperative cancellation, and durable
+  success/failure/completion callback publication, progress counts, cooperative cancellation and dashboard monitoring, and durable
   UTC cron/fixed-interval schedules with cross-instance tick deduplication and missed-tick policies.
 - [Reliable message queues](guides/reliable-queues.md) with per-delivery visibility timeouts,
   receipt-fenced ACK, delayed NACK, delivery limits, dead letters and optional send deduplication.
@@ -133,7 +133,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   W3C trace propagation.
 - [Queue and stream dashboard](guides/stream-dashboard.md) for configured streams and job queues,
   with group statistics, pending deliveries, dead letters, queue pause state and limiter hits,
-  retained job logs, bounded completion/failure history charts, paginated application job group
+  retained job logs, configured batch progress, bounded completion/failure history charts, paginated application job group
   inspection and pause/resume, and authorized retry/delete actions.
 - [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): on Redis 8.6+,
   a retried `XADD` cannot duplicate the entry.
@@ -287,7 +287,7 @@ They track remaining work, not release commitments.
   release naming, package compatibility validation, and the remaining Orleans and
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
-  job groups and queue controls, batch dashboard progress,
+  job groups and queue controls,
   client-side encryption, coordination APIs, and testing support.
   [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),

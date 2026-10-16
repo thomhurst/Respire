@@ -6,12 +6,13 @@ namespace Respire.Streaming.Dashboard;
 internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> Streams);
 internal sealed record DashboardJobLogs(string QueueName, string JobId, string[] Lines);
 internal sealed record DashboardJobGroups(int Index, string QueueName, IReadOnlyList<RespireJobGroupInfo> Groups, string? NextCursor);
+internal sealed record DashboardJobBatch(string Id, RespireJobBatchStatus? Status, bool Unavailable = false);
 internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream Configuration,
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
     double? DeliveriesPerSecond, string? Error, bool SourceUnavailable = false, bool DeadLettersUnavailable = false,
     bool? IsPaused = null, long? RateLimitHits = null, IReadOnlyList<RespireJobMetricBucket>? Metrics = null,
-    RespireJobGroupPage? JobGroups = null);
+    RespireJobGroupPage? JobGroups = null, IReadOnlyList<DashboardJobBatch>? Batches = null);
 
 internal sealed class DashboardState
 {
@@ -19,6 +20,7 @@ internal sealed class DashboardState
     private readonly RespireDashboardStream[] _streams;
     private readonly int _limit;
     private readonly int _metricsHistoryMinutes;
+    private readonly RespireJobQueue<byte[]>?[] _batchQueues;
     private readonly (long Count, long Timestamp)?[] _samples;
     private readonly SemaphoreSlim _readGate = new(1, 1);
     private readonly TimeProvider _clock;
@@ -38,11 +40,17 @@ internal sealed class DashboardState
         _clock = clock ?? TimeProvider.System;
         _limit = options.EntryLimit;
         _metricsHistoryMinutes = options.MetricsHistoryMinutes;
-        _streams = options.Streams.Select(s => new RespireDashboardStream
+        _streams = options.Streams.Select(s =>
         {
-            Name = s.Name, Stream = s.Stream, Group = s.Group,
-            DeadLetterStream = s.DeadLetterStream, IsJobQueue = s.IsJobQueue,
+            var copy = new RespireDashboardStream
+            {
+                Name = s.Name, Stream = s.Stream, Group = s.Group,
+                DeadLetterStream = s.DeadLetterStream, IsJobQueue = s.IsJobQueue,
+            };
+            foreach (var id in s.BatchIds) copy.BatchIds.Add(id);
+            return copy;
         }).ToArray();
+        _batchQueues = _streams.Select(stream => CreateBatchReader(client, stream, _limit)).ToArray();
         var deadKeys = new HashSet<string>(StringComparer.Ordinal);
         var sourceKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var stream in _streams)
@@ -66,6 +74,28 @@ internal sealed class DashboardState
             throw new ArgumentException("A dead-letter stream cannot also be a configured source.", nameof(options));
         _samples = new (long, long)?[_streams.Length];
         _rates = new double?[_streams.Length];
+    }
+
+    private static RespireJobQueue<byte[]>? CreateBatchReader(IRespireClient client, RespireDashboardStream stream, int limit)
+    {
+        if (stream.BatchIds.Count == 0) return null;
+        if (!stream.IsJobQueue || stream.BatchIds.Count > limit)
+            throw new ArgumentException("Configure at most EntryLimit batch IDs on a job queue.");
+        const string prefix = "{respire-job:";
+        const string suffix = "}:ready";
+        if (stream.Stream is null || !stream.Stream.StartsWith(prefix, StringComparison.Ordinal)
+            || !stream.Stream.EndsWith(suffix, StringComparison.Ordinal) || stream.Stream.Length <= prefix.Length + suffix.Length)
+            throw new ArgumentException("Batch inspection requires the job queue's logical StreamKey.");
+        var utf8 = new UTF8Encoding(false, true);
+        foreach (var id in stream.BatchIds)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(id);
+            if (id.Length > 4096) throw new ArgumentException("Batch IDs must be at most 4096 characters.");
+            _ = utf8.GetByteCount(id);
+        }
+        // The runtime owns ID hashing, key prefixing and decoding. Inspection never uses a payload codec.
+        return new(client, stream.Stream[prefix.Length..^suffix.Length],
+            static _ => throw new InvalidOperationException("Dashboard batch readers cannot enqueue jobs."));
     }
 
     internal async Task<DashboardSnapshot> ReadAsync(CancellationToken cancellationToken)
@@ -92,8 +122,23 @@ internal sealed class DashboardState
                 long? rateLimitHits = null;
                 IReadOnlyList<RespireJobMetricBucket>? metrics = null;
                 RespireJobGroupPage? jobGroups = null;
+                var batches = new List<DashboardJobBatch>(stream.BatchIds.Count);
                 if (stream.IsJobQueue)
                 {
+                    if (_batchQueues[i] is { } queue)
+                    {
+                        foreach (var id in stream.BatchIds)
+                        {
+                            try
+                            {
+                                batches.Add(new(id, await queue.GetBatchStatusAsync(id, token).ConfigureAwait(false)));
+                            }
+                            catch (RespireException)
+                            {
+                                batches.Add(new(id, null, Unavailable: true));
+                            }
+                        }
+                    }
                     try
                     {
                         jobGroups = await RespireJobGroups.ReadAsync(_client, stream.Stream, _limit,
@@ -167,7 +212,7 @@ internal sealed class DashboardState
                     _samples[i] = (current, now);
                 }
                 result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
-                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups);
+                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups, batches);
             }).ConfigureAwait(false);
             _snapshot = new(result);
             _snapshotTimestamp = _clock.GetTimestamp();
