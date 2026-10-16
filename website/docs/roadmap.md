@@ -193,7 +193,9 @@ are described in the guides below; the remaining pre-release work is tracked sep
   wire-command or arbitrary-wrapper authorization policy.
 - [Configuration binding and named options](integrations/dependency-injection.md#bind-appsettingsjson-and-validate-at-startup),
   with a generated builder covering every client option and validation at host startup.
-- An [in-memory test server](guides/in-memory-testing.md) with controlled server time and `KEYS`/`SCAN` enumeration, [Redis/Valkey container fixtures](guides/testing-containers.md),
+- An [in-memory test server](guides/in-memory-testing.md) with controlled server time, `KEYS`/`SCAN` enumeration,
+  and [command expectations](guides/in-memory-testing.md#command-expectations) with argument matching, reply overrides,
+  and invocation verification; [Redis/Valkey container fixtures](guides/testing-containers.md),
   and a [test sample](guides/testing-sample.md).
 - A focused [Garnet, Dragonfly and KeyDB compatibility suite](guides/server-compatibility.md)
   runs weekly or on request, with pinned server versions and explicit incompatibility skips.
