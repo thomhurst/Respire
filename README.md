@@ -1,7 +1,7 @@
 # Respire
 
 **A fast, modern Redis client for .NET. Plain C# types in, plain C# types out, and the hard parts
-of Redis are one call each.**
+of Redis are one call each**
 
 Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 
