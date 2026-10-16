@@ -99,8 +99,8 @@ effects: use durable application transactions or downstream idempotency for paym
 effects that must survive Redis data loss. Reserve these hashes for this API; do not edit their
 fields directly.
 
-ASP.NET Core header handling, response replay, and a minimal API integration are tracked in
-[#1836](https://github.com/thomhurst/Respire/issues/1836).
+For ASP.NET Core header handling, bounded response replay, and a minimal API example, see
+the [HTTP idempotency integration](../integrations/idempotency.md).
 
 ## Fencing-token locks
 

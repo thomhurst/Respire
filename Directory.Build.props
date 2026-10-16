@@ -38,6 +38,7 @@
       Respire.DataProtection;
       Respire.DependencyInjection;
       Respire.HealthChecks;
+      Respire.Idempotency;
       Respire.Json;
       Respire.OutputCaching;
       Respire.Probabilistic;

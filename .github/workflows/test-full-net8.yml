@@ -44,6 +44,7 @@ jobs:
             tests/Respire.Resilience.Tests \
             tests/Respire.IntegrationTests \
             tests/Respire.Coordination.Tests \
+            tests/Respire.Idempotency.Tests \
             tests/Respire.Azure.Tests \
             tests/Respire.DataProtection.Tests \
             tests/Respire.Caching.Tests \

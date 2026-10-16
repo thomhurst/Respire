@@ -8,6 +8,7 @@
       "tests/Respire.Resilience.Tests/Respire.Resilience.Tests.csproj",
       "tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj",
       "tests/Respire.Coordination.Tests/Respire.Coordination.Tests.csproj",
+      "tests/Respire.Idempotency.Tests/Respire.Idempotency.Tests.csproj",
       "tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj",
       "tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj",
       "tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj",
