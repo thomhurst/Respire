@@ -25,10 +25,14 @@ internal static class DashboardScripts
         if not found then return -1 end
         local fields = {}
         for i = 11, #f, 2 do
-            table.insert(fields, f[i])
-            local value = f[i+1]
-            if ARGV[4] == '1' and (f[i] == '_respire.job.attempts' or f[i] == '_respire.job.expires') then value = '0' end
-            table.insert(fields, value)
+            -- Operator retries are independent jobs: the original flow node is already terminal,
+            -- and its retained state may have been removed. Plain streams preserve these names.
+            if ARGV[4] ~= '1' or (f[i] ~= '_respire.job.flow' and f[i] ~= '_respire.job.node') then
+                table.insert(fields, f[i])
+                local value = f[i+1]
+                if ARGV[4] == '1' and (f[i] == '_respire.job.attempts' or f[i] == '_respire.job.expires') then value = '0' end
+                table.insert(fields, value)
+            end
         end
         if not redis.acl_check_cmd('XADD', KEYS[1], '*', unpack(fields))
             or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0')
