@@ -12,6 +12,40 @@ public class JobSchedulingClusterTests
 {
     [Test]
     [NotInParallel]
+    public async Task TransactionalEnqueueSharesCallerHashSlotAndRejectsCrossSlotWrites()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new()
+        {
+            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+        });
+        await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        foreach (var prefix in new[] { "tenant:", "{tenant}:" })
+        {
+            var client = root.WithKeyPrefix(prefix);
+            var queue = new RespireJobQueue<string>(client, "transaction", Encoding.UTF8.GetBytes);
+            await using var transaction = client.CreateTransaction();
+            var saved = transaction.Set("{respire-job:transaction}:order", "paid");
+            var immediate = queue.Enqueue(transaction, "immediate", "payload");
+            var delayed = queue.EnqueueScheduled(transaction, "delayed", "payload", new() { Delay = TimeSpan.FromHours(1) });
+            var grouped = queue.EnqueueScheduled(transaction, "grouped", "payload", new() { Group = "group" });
+            await transaction.CommitAsync();
+            await Assert.That(saved.Result).IsTrue();
+            await Assert.That(immediate.Result.Enqueued).IsTrue();
+            await Assert.That(delayed.Result.Enqueued).IsTrue();
+            await Assert.That(grouped.Result.Enqueued).IsTrue();
+            await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(1);
+            await Assert.That(await client.Streams.CountAsync(queue.StreamKey + ":scheduled")).IsEqualTo(2);
+        }
+        var otherQueue = new RespireJobQueue<string>(root, "cross-slot", Encoding.UTF8.GetBytes);
+        await using var invalid = root.CreateTransaction();
+        _ = invalid.Set("{different}:order", "paid");
+        await Assert.That(() => otherQueue.Enqueue(invalid, "id", "payload")).Throws<InvalidOperationException>();
+        await Assert.That(invalid.Count).IsEqualTo(1);
+        await Assert.That(await root.Streams.CountAsync(otherQueue.StreamKey)).IsEqualTo(0);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task PrefixedEnqueuePromotionAndRetryExecuteInOneRealClusterSlot()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()

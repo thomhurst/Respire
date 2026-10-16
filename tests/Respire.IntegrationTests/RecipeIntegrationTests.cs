@@ -62,6 +62,7 @@ public class RecipeIntegrationTests(VersionedServerFixture fixture)
         await using var client = await RespireClient.ConnectAsync(server.ConnectionString(protocol));
         var outbox = new Outbox(client);
         var id = await outbox.SaveOrderAsync("order-42", "paid", "event-42");
+        (await outbox.SaveOrderAsync("order-42", "paid", "event-42")).Should().Be(id);
         (await client.Hashes.GetStringAsync(Outbox.StateKey, "order-42")).Should().Be("paid");
         (await outbox.InitializeRelayAsync()).Should().BeTrue();
         (await outbox.InitializeRelayAsync()).Should().BeFalse();
@@ -77,9 +78,10 @@ public class RecipeIntegrationTests(VersionedServerFixture fixture)
         (await outbox.RelayPageAsync("replacement", TimeSpan.FromSeconds(30), (entry, _) =>
         {
             published.Add(entry.Id);
-            entry.GetString("event-id").Should().Be("event-42");
-            entry.GetString("order-id").Should().Be("order-42");
-            entry.GetString("state").Should().Be("paid");
+            entry.GetString("_respire.job.id").Should().Be("event-42");
+            using var payload = System.Text.Json.JsonDocument.Parse(entry["_respire.job.payload"]!);
+            payload.RootElement.GetProperty("OrderId").GetString().Should().Be("order-42");
+            payload.RootElement.GetProperty("State").GetString().Should().Be("paid");
             entry.PreviousIdleTime.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMinutes(1));
             return Task.CompletedTask;
         })).Should().Be(1);

@@ -102,7 +102,7 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         // Inject an invalid expiry directly into the production script: the public API rejects it,
         // but Redis accepts XADD before SET fails, exercising runtime rollback after ACL preflight.
         var script = (RespireScript)typeof(RespireJobQueue<string>)
-            .GetField("Enqueue", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+            .GetField("EnqueueScript", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(null)!;
         var deduplicationKey = queue.StreamKey + ":dedup:" + Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("recoverable")));

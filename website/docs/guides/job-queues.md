@@ -99,6 +99,54 @@ Retry with the same job ID within the window. An expired or evicted deduplicatio
 another enqueue, so handlers still need idempotent side effects. A deduplicated submission returns
 the earlier stream ID even if an operator has since deleted that entry.
 
+## Transactional enqueue
+
+Use `Enqueue(transaction, ...)` or `EnqueueScheduled(transaction, ..., options)` to queue a
+job alongside business writes in an existing `RespireTransaction` or `RespireWatchedTransaction`.
+Create the transaction from the **same client instance**, including its key-prefix view, as
+the queue. These synchronous methods serialize immediately and return
+`RespirePending<RespireJobEnqueueResult>`; read the result only after committing.
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "email", Encoding.UTF8.GetBytes);
+await using var transaction = client.CreateTransaction();
+var saved = transaction.Set("{respire-job:email}:order:42", "paid");
+var job = queue.Enqueue(transaction, "receipt:42", "customer@example.com");
+var reminder = queue.EnqueueScheduled(transaction, "reminder:42", "customer@example.com",
+    new() { Delay = TimeSpan.FromDays(1) });
+await transaction.CommitAsync();
+_ = saved.Result;
+Console.WriteLine($"Receipt {job.Result.EntryId}, reminder {reminder.Result.EntryId}");
+```
+
+No queue or deduplication writes occur before `EXEC`. Disposing without commit discards the
+queued job; when WATCH detects a changed key, commit returns false and the pending results
+are aborted. A successful EXEC runs the enqueue script together with the caller's writes
+without other clients interleaving. A `RespireBatch` only pipelines commands and cannot
+provide this guarantee.
+
+Redis transactions **do not roll back runtime errors**. A wrong-type business write can fail
+while enqueue succeeds, or enqueue can fail while another write succeeds. Reserve key types,
+validate inputs, and inspect every pending result, even after commit succeeds. This API is not
+an atomic transaction with an external SQL database. See the [outbox recipe](recipes.mdx#transactional-outbox-relay-over-streams).
+
+All transaction keys must resolve to one Cluster slot. Queue keys contain
+`{respire-job:email}` in this example, so give business keys the same tag, or use a shared
+hash-tagged prefix such as `{tenant}:` on the client. A different queue tag cannot share the
+transaction unless the resolved keys share a slot.
+
+Enqueue uses `EVAL` with the complete existing Lua script, avoiding script-cache misses inside
+EXEC. Redis 7.0+ and the usual script/queue command permissions are required. Deduplication,
+delay, priority, TTL and groups keep their ordinary enqueue semantics; their clocks start at
+server execution, not local queueing. Delayed jobs still need a scheduling-enabled worker.
+The ambient W3C trace context is captured when queueing. Retry an ambiguous commit using the
+same job IDs within the deduplication window, and make the business writes idempotent too.
+
 ## Job groups and fair scheduling
 
 Set `RespireJobEnqueueOptions.Group` when calling `EnqueueScheduledAsync` to attach an

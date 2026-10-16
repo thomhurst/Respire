@@ -99,7 +99,9 @@ turn a timeout into a newly authenticated session. See
 
 This recipe stores **both business state and the outbox in Redis**. Call
 `SaveOrderAsync("order-42", "paid", "event-42")` with a stable, application-assigned event
-ID. The transaction saves the order state and appends the event in the same Cluster slot.
+ID. The transaction saves the order state and uses the [job queue](job-queues.md#transactional-enqueue)
+to enqueue the event in the same Cluster slot. `Respire.Streaming` supplies the typed producer;
+the job ID is the event ID and its JSON payload contains the order ID and state.
 At relay startup call `InitializeRelayAsync`; it starts the group at `0-0`, so entries
 written before the group existed are included. Calling it again is safe.
 
@@ -114,11 +116,14 @@ processed. `XREADGROUP CLAIM` delivers eligible abandoned entries as well as new
 
 Publication failures leave entries pending. A process crash after publication but before
 `XACK` causes redelivery, so this is **at-least-once delivery**. The receiver must atomically
-deduplicate by `event-id` with its own business update. Retrying an uncertain producer
-transaction can also append the event again; reuse the same event ID for deduplication.
+deduplicate by `_respire.job.id` with its own business update. Read the JSON event from
+`_respire.job.payload`. Retrying an uncertain producer transaction with the same event ID
+deduplicates enqueue within the default one-day window; business writes must also be idempotent.
+After that window expires, the event can be appended again.
 Do not retry with a new ID. `XACK` removes the pending record, not the stream entry.
 
-Reserve the two Redis key types: `MULTI`/`EXEC` has no rollback for runtime command errors.
+Reserve the business hash and the queue's stream/deduplication key namespace:
+`MULTI`/`EXEC` has no rollback for runtime command errors. Inspect both pending results.
 Configure persistence, replication, and eviction for durable business data. Do not apply
 a TTL or arbitrary `MAXLEN` trim to unprocessed outbox entries. Set a retention policy
 that accounts for every consumer group's progress, monitor pending age/delivery counts,
