@@ -1,8 +1,9 @@
 # Respire
 
-**A fast, modern Redis client for .NET, with distributed locks, rate limiters, and server-assisted client caching.**
+**A fast, modern Redis client for .NET. Plain C# types in, plain C# types out, and the hard parts
+of Redis are one call each.**
 
-Works with Redis, Valkey, KeyDB, and other RESP-compatible servers
+Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 
 [Documentation](https://thomhurst.github.io/Respire/) ·
 [Getting started](https://thomhurst.github.io/Respire/docs/getting-started) ·
@@ -13,11 +14,6 @@ Works with Redis, Valkey, KeyDB, and other RESP-compatible servers
 dotnet add package Respire
 ```
 
-This command selects the latest stable NuGet package. The public API may change
-before the first supported major release, targeted at **2.0.0**, including APIs
-without an experimental opt-in. To try a published `2.0.0-rc.N` candidate, follow
-the [release candidate installation instructions](https://thomhurst.github.io/Respire/docs/getting-started#release-candidates).
-
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
@@ -25,106 +21,123 @@ await redis.SetAsync("user:1", new User("Ada", 36), expiry: TimeSpan.FromMinutes
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-See the [roadmap](https://thomhurst.github.io/Respire/docs/roadmap) for supported features
-and the [experimental API policy](https://thomhurst.github.io/Respire/docs/experimental-apis)
-for surfaces that require an explicit opt-in.
+That is the whole setup. No multiplexer to configure, no `RedisValue` to unwrap.
+
+> The public API may change before the first supported major release, **2.0.0**. See
+> [release candidates](https://thomhurst.github.io/Respire/docs/getting-started#release-candidates),
+> the [roadmap](https://thomhurst.github.io/Respire/docs/roadmap), and the
+> [experimental API policy](https://thomhurst.github.io/Respire/docs/experimental-apis).
 
 ## Why Respire?
 
-- **Plain .NET types.** Get `string?`, `long`, `bool`, or your own `T?`, not protocol wrappers.
-- **Fast by default.** Concurrent calls are pipelined. Blocking commands get their own
-  connection, so they never stall other calls.
-- **Hot reads from memory.** Turn on client-side caching and Redis tells Respire when to evict.
-- **Every command.** Typed APIs for each data type, and a generated catalog of every Redis 8.10
-  and Valkey 9.1 command.
-- **Ready for production.** Cluster, Sentinel, reconnection, OpenTelemetry, and dependency
-  injection are built in.
+- **Real return types.** `string?`, `long`, `bool`, `TimeSpan`, or your own `T?`.
+- **Reads from memory.** Server-assisted client-side caching: a cached string `GET` takes
+  about 150 ns and allocates nothing. Redis tells Respire when to evict.
+- **Pipelined by default.** Concurrent calls share socket writes. No batching switch.
+- **Blocking commands that work.** `BLPOP` and blocking stream reads get their own connections,
+  so they never stall other calls.
+- **Coordination built in.** Locks, rate limiters, semaphores, leader election, queues, and
+  stream workers. No extra library to glue on.
+- **Tests without Docker.** An in-memory server with a fake clock runs your real client code.
+- **Every command.** Typed facets per data type, plus a generated catalog of every Redis 8.10 and
+  Valkey 9.1 command.
 
-## Batteries included
+## The hard parts, one call each
 
-| You need | With Respire |
-| --- | --- |
-| [A distributed lock](https://thomhurst.github.io/Respire/docs/guides/distributed-locks) | `redis.Locks.AcquireAsync(key, expiry)` |
-| [A shared rate limit](https://thomhurst.github.io/Respire/docs/guides/coordination#redis-backed-rate-limits) | `redis.Coordination.RateLimiters.SlidingWindow(...)` |
-| [A cross-process semaphore](https://thomhurst.github.io/Respire/docs/guides/coordination#distributed-semaphores) | `redis.Coordination.CreateSemaphore(key, capacity)` |
-| [A work queue](https://thomhurst.github.io/Respire/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
-| [Pub/sub](https://thomhurst.github.io/Respire/docs/guides/pub-sub) | `await foreach` over `await redis.SubscribeAsync(channel)` |
-| [Unix domain sockets](https://thomhurst.github.io/Respire/docs/guides/unix-sockets) | `RespireClient.ConnectAsync("unix:///run/redis/redis.sock")` |
-| [Stream consumer groups](https://thomhurst.github.io/Respire/docs/commands/collections#consumer-groups) | `await foreach` over `redis.Streams.ReadGroupAsync(...)` |
-| [Hot reads without a round trip](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching) | `ClientSideCache = new()` |
-| [`IDistributedCache` and `HybridCache`](https://thomhurst.github.io/Respire/docs/integrations/caching) | `services.AddRespireHybridCache(connectionString)` |
-| [.NET Aspire](https://thomhurst.github.io/Respire/docs/integrations/aspire) | `builder.AddRespireClient("cache")` |
-| [Tests without Docker](https://thomhurst.github.io/Respire/docs/guides/in-memory-testing) | `new RespireFakeServer()` |
-
-### Distributed locks
-
-Run a job on one instance only. Disposing the attempt releases the lock.
+**Cache-aside with stampede protection.** Memory hit, else Redis, else your factory. Concurrent
+misses share one factory call.
 
 ```csharp
-await using var attempt = await redis.Locks.AcquireAsync("locks:nightly-report", TimeSpan.FromSeconds(30));
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    ClientSideCache = new() { CoalesceConcurrentMisses = true },
+});
+
+User? user = await redis.GetOrSetAsync<User>("user:42", LoadUserAsync, TimeSpan.FromMinutes(5));
+
+static ValueTask<User?> LoadUserAsync(CancellationToken cancellationToken) => new(new User("Ada", 36));
+```
+
+**A distributed lock that renews itself.** Disposing the attempt releases the lock.
+
+```csharp
+await using var attempt = await redis.Locks.AcquireAsync(
+    "locks:nightly-report", TimeSpan.FromSeconds(30), keepAlive: true);
+
 if (attempt.Acquired)
 {
-    await RunReportAsync();
+    await RunReportAsync(attempt.Lock.KeepAliveCancellationToken);
 }
 ```
 
-Waiting and keep-alive renewal are one call each: see the
-[locks guide](https://thomhurst.github.io/Respire/docs/guides/distributed-locks).
-
-### Rate limiting
-
-`Respire.Coordination` returns standard .NET `RateLimiter` instances, shared by every process
-that uses the same key. They work with the ASP.NET Core rate-limiting middleware.
+**A rate limit shared by every server.** A standard .NET `RateLimiter`, so the ASP.NET Core
+middleware accepts it.
 
 ```csharp
-using System.Threading.RateLimiting;
 using Respire.Coordination;
 
 await using var limiter = redis.Coordination.RateLimiters.SlidingWindow(
     $"limits:api:{userId}", permitLimit: 100, window: TimeSpan.FromMinutes(1), segments: 6);
 
 using var lease = await limiter.AcquireAsync(1, cancellationToken);
-if (!lease.IsAcquired && lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retryAfter))
+if (!lease.IsAcquired)
 {
-    Console.WriteLine($"Slow down. Try again in {retryAfter}.");
+    return; // Over the limit: reject the request, for example with HTTP 429.
 }
 ```
 
-### Semaphores and more
-
-Allow at most four exports at once across all servers.
-
-```csharp
-using Respire.Coordination;
-
-var exports = redis.Coordination.CreateSemaphore("permits:exports", capacity: 4);
-await using var attempt = await exports.TryAcquireAsync(TimeSpan.FromSeconds(30));
-if (attempt.Acquired)
-{
-    await RunReportAsync();
-}
-```
-
-The package also has read-write locks, countdown latches, leases, and Redlock: see the
-[coordination guide](https://thomhurst.github.io/Respire/docs/guides/coordination).
-
-### Client-side caching
-
-Set one option. Repeated reads come from local memory; Redis invalidates them when the key
-changes. A hit takes hundreds of nanoseconds instead of a round trip.
+**Optimistic transactions with retries.** Read, decide, write. If another client changes the key
+first, Respire runs the callback again.
 
 ```csharp
-await using var cachedRedis = await RespireClient.ConnectAsync(new RespireOptions
+await redis.RunTransactionWithReadsAsync(["stock:42"], async (reads, transaction, token) =>
 {
-    Endpoints = { new RespireEndpoint("localhost") },
-    ClientSideCache = new(),
+    long stock = long.Parse(await reads.GetStringAsync("stock:42", token) ?? "0");
+    if (stock > 0)
+        transaction.Set("stock:42", stock - 1);
 });
-
-string? name = await cachedRedis.GetStringAsync("user:42:name"); // Cached after the first read.
 ```
-### Tests without Docker
 
-`Respire.Testing` runs your real client code against an in-memory server with a fake clock.
+**A reliable queue.** Deduplicated sends, visibility timeouts, and redelivery when a worker dies.
+
+```csharp
+using System.Text;
+using Respire.Streaming;
+
+var queue = new RespireReliableQueue<string>(redis, "emails", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString);
+await queue.SendAsync("welcome:ada@example.com", deduplicationId: "welcome:42");
+
+foreach (var message in await queue.ReceiveAsync(visibilityTimeout: TimeSpan.FromSeconds(30)))
+{
+    await HandleAsync(message.Payload);
+    await queue.AckAsync(message);
+}
+```
+
+**Pub/sub as `await foreach`.**
+
+```csharp
+await using var orders = await redis.SubscribeAsync("orders");
+
+await foreach (var message in orders)
+{
+    Console.WriteLine(message.Text);
+}
+```
+
+**Many commands, one round trip.** Results are typed.
+
+```csharp
+await using var batch = redis.CreateBatch();
+var name = batch.GetString("name");
+var visits = batch.Increment("visits");
+await batch.ExecuteAsync();
+
+Console.WriteLine($"{name.Result}: {visits.Result}");
+```
+
+**Tests without Docker.** Expire a key by moving the clock, not by waiting.
 
 ```csharp
 using Respire.Testing;
@@ -138,60 +151,36 @@ clock.Advance(TimeSpan.FromMinutes(21));
 string? expired = await client.GetStringAsync("session"); // null
 ```
 
-### Batches and Cluster
+## More in the box
 
-Queue commands, send them in one flush, and read typed results.
-
-```csharp
-using var batch = redis.CreateBatch();
-var name = batch.GetString("name");
-var visits = batch.Increment("visits");
-await batch.ExecuteAsync();
-
-Console.WriteLine($"{name.Result}: {visits.Result}");
-```
-
-For Redis Cluster, add `?cluster=true` to the connection string; Respire handles slot routing
-and redirects. See [transactions](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions),
-[connections](https://thomhurst.github.io/Respire/docs/fundamentals/connections), and
-[Cluster administration](https://thomhurst.github.io/Respire/docs/guides/cluster-administration).
-
-### ASP.NET Core
-
-```csharp
-builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
-builder.Services.AddRespireHybridCache(cache => cache.InstanceName = "myapp:");
-```
-
-- The client connects lazily, so startup never waits for Redis.
-- Without its own connection string, the cache reuses the registered client.
-- Cache entries use the `Microsoft.Extensions.Caching.StackExchangeRedis` layout, so existing
-  entries keep working.
+| You need | With Respire |
+| --- | --- |
+| [ASP.NET Core registration](https://thomhurst.github.io/Respire/docs/integrations/dependency-injection) | `services.AddRespire(connectionString)` |
+| [`IDistributedCache` and `HybridCache`](https://thomhurst.github.io/Respire/docs/integrations/caching) | `services.AddRespireHybridCache(...)` |
+| [.NET Aspire](https://thomhurst.github.io/Respire/docs/integrations/aspire) | `builder.AddRespireClient("cache")` |
+| [Stream consumer workers](https://thomhurst.github.io/Respire/docs/guides/stream-workers) | `services.AddRespireStreamWorker<THandler>(stream, group)` |
+| [Job queues with retries and scheduling](https://thomhurst.github.io/Respire/docs/guides/job-queues) | `services.AddRespireJobQueue<THandler, TJob>(...)` |
+| [Leader election with fencing tokens](https://thomhurst.github.io/Respire/docs/guides/coordination) | `new RespireLeaderElection(...)` |
+| [Semaphores, read-write locks, latches, Redlock](https://thomhurst.github.io/Respire/docs/guides/coordination) | `redis.Coordination.CreateSemaphore(key, capacity)` |
+| [A blocking work queue](https://thomhurst.github.io/Respire/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
+| [Cluster and Sentinel](https://thomhurst.github.io/Respire/docs/fundamentals/connections) | `?cluster=true` for Cluster, `?serviceName=mymaster` for Sentinel |
+| [OpenTelemetry](https://thomhurst.github.io/Respire/docs/integrations/observability) | Traces and metrics built in |
+| [NativeAOT](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization#nativeaot-and-trimming) | Pass a source-generated `JsonSerializerContext` |
 
 ## Packages
 
 | Package | Adds |
 | --- | --- |
 | `Respire` | The client, locks, pub/sub, streams, batches, Cluster, and Sentinel |
-| `Respire.Coordination` | Rate limiters, semaphores, read-write locks, latches, and Redlock |
+| `Respire.Coordination` | Rate limiters, semaphores, read-write locks, latches, leader election, and Redlock |
+| `Respire.Streaming` | Reliable queues, job queues, and stream workers |
 | `Respire.DependencyInjection` | `AddRespire` and keyed clients |
-| `Respire.HealthChecks` | ASP.NET Core health checks using existing client connections |
 | `Respire.Caching`, `Respire.Caching.Hybrid` | `IDistributedCache` and `HybridCache` |
-| `Respire.FusionCache` | FusionCache backplane on a shared Respire client |
-| `Respire.SignalR` | SignalR scale-out, Microsoft backplane interoperability, and opt-in sharded pub/sub |
-| [`Respire.DataProtection`](https://thomhurst.github.io/Respire/docs/integrations/data-protection) | ASP.NET Core DataProtection keys in a Redis list |
-| `Respire.OutputCaching` | [ASP.NET Core output caching](https://thomhurst.github.io/Respire/docs/integrations/output-caching), including buffer APIs and tag eviction |
 | `Respire.Json`, `.Search`, `.TimeSeries`, `.Probabilistic` | Typed module APIs such as `redis.Json` |
 | `Respire.Testing`, `Respire.Testing.Containers` | An in-memory server, or Redis in a container |
 
-See [all packages](https://thomhurst.github.io/Respire/docs/packages).
-
-## Learn more
-
-- [Documentation](https://thomhurst.github.io/Respire/)
-- [Benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks)
-- [NativeAOT and custom serializers](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization#nativeaot-and-trimming)
-- [StackExchange.Redis comparison and migration](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
+Plus SignalR, DataProtection, output caching, health checks, FusionCache, and more:
+see [all packages](https://thomhurst.github.io/Respire/docs/packages).
 
 ## License
 

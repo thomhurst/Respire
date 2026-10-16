@@ -94,26 +94,30 @@ function Frame({lines}) {
   );
 }
 
-function WireTrace() {
-  const [active, setActive] = useState(traces[0].id);
-  const trace = traces.find((item) => item.id === active);
-
-  // Arrow keys, Home and End move between tabs, as in the WAI-ARIA tabs pattern.
-  const onKeyDown = (event) => {
-    const index = traces.findIndex((item) => item.id === active);
+// Arrow keys, Home and End move between tabs, as in the WAI-ARIA tabs pattern.
+function tabKeyHandler(items, active, setActive, idPrefix) {
+  return (event) => {
+    const index = items.findIndex((item) => item.id === active);
     const next = {
-      ArrowRight: (index + 1) % traces.length,
-      ArrowLeft: (index - 1 + traces.length) % traces.length,
+      ArrowRight: (index + 1) % items.length,
+      ArrowLeft: (index - 1 + items.length) % items.length,
       Home: 0,
-      End: traces.length - 1,
+      End: items.length - 1,
     }[event.key];
     if (next === undefined) {
       return;
     }
     event.preventDefault();
-    setActive(traces[next].id);
-    document.getElementById(`trace-tab-${traces[next].id}`)?.focus();
+    setActive(items[next].id);
+    document.getElementById(`${idPrefix}${items[next].id}`)?.focus();
   };
+}
+
+function WireTrace() {
+  const [active, setActive] = useState(traces[0].id);
+  const trace = traces.find((item) => item.id === active);
+
+  const onKeyDown = tabKeyHandler(traces, active, setActive, 'trace-tab-');
 
   return (
     <div className={styles.trace}>
@@ -248,6 +252,199 @@ function Section({fragment, title, children, aside, className}) {
   );
 }
 
+const quickStart = `await using var redis =
+    await RespireClient.ConnectAsync("redis://localhost");
+
+await redis.SetAsync("user:1", new User("Ada", 36),
+    expiry: TimeSpan.FromMinutes(5));
+
+User? user = await redis.GetAsync<User>("user:1");`;
+
+const reasons = [
+  ['Real return types', <><code>string?</code>, <code>long</code>, <code>bool</code>, or your own <code>T?</code>. No value wrapper to unwrap.</>],
+  ['Reads from memory', 'Server-assisted client caching. A cached string GET takes about 150 ns and allocates nothing.'],
+  ['Pipelined by default', 'Concurrent calls share socket writes. There is no batching switch.'],
+  ['Blocking commands that work', <><code>BLPOP</code> and blocking stream reads get their own connections.</>],
+  ['Coordination built in', 'Locks, rate limiters, semaphores, leader election, queues, and stream workers.'],
+  ['Tests without Docker', 'An in-memory server with a fake clock runs your real client code.'],
+];
+
+function QuickStart() {
+  return (
+    <Section
+      fragment={[['+', 'OK']]}
+      title="Connect, set, get. That is the setup."
+      aside={
+        <>
+          <CodeBlock language="csharp" title="Program.cs">{quickStart}</CodeBlock>
+          <ul className={styles.reasons}>
+            {reasons.map(([title, text]) => (
+              <li key={title}>
+                <strong>{title}</strong>
+                <span>{text}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      }>
+      <p>
+        One package, one connection string. There is no multiplexer to configure and no value wrapper to unwrap.
+      </p>
+      <Link to="/docs/getting-started">Build a small app in five minutes</Link>
+    </Section>
+  );
+}
+
+const recipes = [
+  {
+    id: 'cache-aside',
+    label: 'Cache-aside',
+    summary: 'Memory hit, else Redis, else your factory. Concurrent misses share one factory call.',
+    to: '/docs/fundamentals/client-side-caching',
+    code: `var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    ClientSideCache = new() { CoalesceConcurrentMisses = true },
+});
+
+User? user = await redis.GetOrSetAsync<User>(
+    "user:42", LoadUserAsync, TimeSpan.FromMinutes(5));`,
+  },
+  {
+    id: 'lock',
+    label: 'Lock',
+    summary: 'A distributed lock that renews itself. Disposing the attempt releases it.',
+    to: '/docs/guides/distributed-locks',
+    code: `await using var attempt = await redis.Locks.AcquireAsync(
+    "locks:report", TimeSpan.FromSeconds(30), keepAlive: true);
+
+if (attempt.Acquired)
+{
+    await RunReportAsync(attempt.Lock.KeepAliveCancellationToken);
+}`,
+  },
+  {
+    id: 'rate-limit',
+    label: 'Rate limit',
+    summary: 'A standard .NET RateLimiter shared by every server. The ASP.NET Core middleware accepts it.',
+    to: '/docs/guides/coordination#redis-backed-rate-limits',
+    code: `await using var limiter =
+    redis.Coordination.RateLimiters.SlidingWindow(
+        $"limits:api:{userId}",
+        permitLimit: 100,
+        window: TimeSpan.FromMinutes(1),
+        segments: 6);
+
+using var lease = await limiter.AcquireAsync(1);
+if (!lease.IsAcquired)
+    return Results.StatusCode(429); // Over the limit.`,
+  },
+  {
+    id: 'transaction',
+    label: 'Transaction',
+    summary: 'Read, decide, write. If another client changes the key first, Respire runs the callback again.',
+    to: '/docs/guides/batches-and-transactions#automatic-watched-transaction-retries',
+    code: `await redis.RunTransactionWithReadsAsync(["stock:42"],
+    async (reads, transaction, token) =>
+    {
+        var text = await reads.GetStringAsync("stock:42", token);
+        long stock = long.Parse(text ?? "0");
+        if (stock > 0)
+            transaction.Set("stock:42", stock - 1);
+    });`,
+  },
+  {
+    id: 'queue',
+    label: 'Queue',
+    summary: 'Deduplicated sends, visibility timeouts, and redelivery when a worker dies.',
+    to: '/docs/guides/reliable-queues',
+    code: `var queue = new RespireReliableQueue<string>(redis, "emails",
+    Encoding.UTF8.GetBytes, Encoding.UTF8.GetString);
+
+await queue.SendAsync("ada@example.com", deduplicationId: "42");
+
+var timeout = TimeSpan.FromSeconds(30);
+foreach (var message in await queue.ReceiveAsync(timeout))
+{
+    await SendEmailAsync(message.Payload);
+    await queue.AckAsync(message);
+}`,
+  },
+  {
+    id: 'pubsub',
+    label: 'Pub/sub',
+    summary: 'A subscription is an IAsyncEnumerable. Read it with await foreach.',
+    to: '/docs/guides/pub-sub',
+    code: `await using var orders = await redis.SubscribeAsync("orders");
+
+await foreach (var message in orders)
+{
+    Console.WriteLine(message.Text);
+}`,
+  },
+  {
+    id: 'testing',
+    label: 'Tests',
+    summary: 'An in-memory server with a fake clock. Expire a key by moving the clock, not by waiting.',
+    to: '/docs/guides/in-memory-testing',
+    code: `var clock = new RespireFakeClock();
+await using var server = new RespireFakeServer(clock);
+await using var client =
+    await RespireClient.ConnectAsync(server.CreateOptions());
+
+await client.SetAsync("session", "abc",
+    expiry: TimeSpan.FromMinutes(20));
+clock.Advance(TimeSpan.FromMinutes(21));
+
+string? expired = await client.GetStringAsync("session"); // null`,
+  },
+];
+
+function Recipes() {
+  const [active, setActive] = useState(recipes[0].id);
+  const recipe = recipes.find((item) => item.id === active);
+  const onKeyDown = tabKeyHandler(recipes, active, setActive, 'recipe-tab-');
+
+  return (
+    <Section
+      className={styles.recipesSection}
+      fragment={[['*', String(recipes.length)]]}
+      title="The hard parts, one call each"
+      aside={
+        <div className={styles.trace}>
+          <div className={styles.traceTabs} role="tablist" aria-label="Recipes">
+            {recipes.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`recipe-tab-${item.id}`}
+                aria-selected={item.id === active}
+                aria-controls="recipe-panel"
+                tabIndex={item.id === active ? 0 : -1}
+                className={clsx(styles.traceTab, item.id === active && styles.traceTabActive)}
+                onClick={() => setActive(item.id)}
+                onKeyDown={onKeyDown}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className={styles.recipePanel} id="recipe-panel" role="tabpanel" aria-labelledby={`recipe-tab-${recipe.id}`} tabIndex={0}>
+            <p>{recipe.summary}</p>
+            <CodeBlock language="csharp">{recipe.code}</CodeBlock>
+            <Link to={recipe.to}>Read the guide</Link>
+          </div>
+        </div>
+      }>
+      <p>
+        Locks, rate limits, queues, and retrying transactions are where Redis code usually gets long. In Respire
+        each one is a method on the client you already have.
+      </p>
+      <Link to="/docs/guides/coordination">See every coordination primitive</Link>
+    </Section>
+  );
+}
+
 const catalogue = [
   {
     title: 'Data types',
@@ -354,6 +551,8 @@ export default function Home() {
       <main className={styles.home}>
         <Hero />
         <WireTicker />
+        <QuickStart />
+        <Recipes />
         <Section
           fragment={[['$', '3'], ['', 'Ada']]}
           title="Replies come back as C# types"
