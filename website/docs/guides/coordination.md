@@ -178,6 +178,10 @@ A dead leader's server lease expires within `LeaseDuration` of its last renewal.
 contender retries within `RetryDelay` after expiry, plus scheduling and network latency.
 Contention and transient acquisition failures are retried with `RetryDelay`, including
 `LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, `MASTERDOWN`, and `READONLY` server replies.
+`READONLY` retries allow campaigning to resume after a Redis failover window.
+Authentication failures and exhausted connection recovery budgets are terminal and fault
+the service instead of retrying. Correct the credentials or recreate the client after
+reconnect exhaustion before restarting the election.
 Invalid configuration and permanent server errors (such as `NOPERM`, `WRONGTYPE`, or an
 invalid fencing counter) fault the service. An accepted acquisition whose reply is lost can hold the
 lease until expiry without electing a local leader.

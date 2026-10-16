@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -512,6 +513,60 @@ public class LeaderElectionTests
             await Assert.That(async () => await election.ExecuteTask!.WaitAsync(Timeout)).Throws<RespireServerException>();
         }
         await Assert.That(elected.Task.IsCompleted).IsFalse();
+    }
+
+    [Test]
+    [Arguments("authentication")]
+    [Arguments("reconnect-limit")]
+    [Arguments("connection")]
+    public async Task ConnectionAcquisitionRetriesOnlyRecoverableFailures(string failureKind)
+    {
+        var clock = new Clock();
+        var client = DispatchProxy.Create<IRespireClient, FailingAcquisitionClient>();
+        var proxy = (FailingAcquisitionClient)client;
+        proxy.Failure = failureKind switch
+        {
+            "authentication" => new RespireAuthenticationException("credentials rejected"),
+            "reconnect-limit" => new RespireReconnectLimitException("recovery exhausted"),
+            _ => new RespireConnectionException("connection lost"),
+        };
+        var elected = Signal<RespireLeadership>();
+        using var election = Election(client, clock, elected);
+        try
+        {
+            await election.StartAsync(default);
+            await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+            if (failureKind == "connection")
+            {
+                await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+                await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+                await Assert.That(proxy.Attempts).IsEqualTo(2);
+            }
+            else
+            {
+                await Assert.That(election.ExecuteTask!.IsFaulted).IsTrue();
+                await Assert.That(ReferenceEquals(election.ExecuteTask.Exception!.InnerException, proxy.Failure)).IsTrue();
+                await Assert.That(clock.HasTimer(TimeSpan.FromSeconds(1))).IsFalse();
+                await Assert.That(proxy.Attempts).IsEqualTo(1);
+            }
+            await Assert.That(elected.Task.IsCompleted).IsFalse();
+            await Assert.That(election.CurrentLeadership).IsNull();
+        }
+        finally { await election.StopAsync(default).WaitAsync(Timeout); }
+    }
+
+    public class FailingAcquisitionClient : DispatchProxy
+    {
+        internal Exception Failure = null!;
+        internal int Attempts;
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name != "get_Scripts") throw new NotSupportedException();
+            Interlocked.Increment(ref Attempts);
+            throw Failure;
+        }
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]

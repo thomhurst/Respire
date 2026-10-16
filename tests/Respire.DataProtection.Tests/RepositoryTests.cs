@@ -70,7 +70,6 @@ public class RepositoryTests(RedisTestContainer fixture)
             Database = fixture.Database,
             ReplicaEndpoints = [new("127.0.0.1", 1)],
             ReadFrom = RespireReadFrom.Replica,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
         });
         var view = client.WithKeyPrefix("app:").WithReadFrom(RespireReadFrom.Replica);
         var repository = new RespireXmlRepository(() => view, $"keys:{Guid.NewGuid():N}");

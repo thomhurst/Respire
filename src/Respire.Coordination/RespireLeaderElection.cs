@@ -68,7 +68,9 @@ public sealed class RespireLeaderElection : BackgroundService
                     _key, _counter, _options.LeaseDuration, acquisition.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception error) when (error is RespireConnectionException or RespireTimeoutException
+            catch (Exception error) when (error is RespireConnectionException
+                and not (RespireAuthenticationException or RespireReconnectLimitException)
+                or RespireTimeoutException
                 or RespireCircuitOpenException or OperationCanceledException
                 or RespireServerException { IsTransient: true }
                 or RespireServerException { Code: RespireErrorCodes.ReadOnly })
