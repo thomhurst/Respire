@@ -132,7 +132,7 @@ internal static class DashboardPage
         else
         {
             html.Append("<div class=\"key muted\">").Append(E(config.DeadLetterStream)).Append("</div><p class=\"note\">Oldest entries first; the configured entry limit applies. Retry moves one entry back to the source stream for all its consumer groups.");
-            if (config.IsJobQueue) html.Append(" Job retries keep the job ID and payload, reset attempts, and remove the original expiry.");
+            if (config.IsJobQueue) html.Append(" Job retries keep the job ID and payload, reset attempts, and remove the original expiry. Retried batch members run independently without changing the original batch or repeating its callbacks.");
             html.Append("</p>");
             if (stream.DeadLettersUnavailable) html.Append("<p class=\"notice\">Dead-letter inspection unavailable.</p>");
             else if (stream.DeadLetters.Length == 0) html.Append("<p class=\"empty\">No dead letters. Failed entries will appear here when workers move them to this stream.</p>");

@@ -84,6 +84,83 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await Assert.That(await client.Streams.CountAsync(dead)).IsEqualTo(0);
     }
 
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DeadLetteredBatchMemberRetriesIndependentlyOfRetainedBatch(bool removeBatch, bool rejectRetry)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var queue = new RespireJobQueue<string>(client, "dashboard-batch", System.Text.Encoding.UTF8.GetBytes);
+        await queue.CreateBatchAsync(new() { OnComplete = new("callback", "callback") }, "batch");
+        await queue.AddBatchJobAsync("batch", "member", "original");
+        await queue.SealBatchAsync("batch");
+        var handler = new RetryBatchMember { RejectRetry = rejectRetry };
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IRespireClient>(client);
+        services.AddSingleton(handler);
+        services.AddRespireJobQueue<RetryBatchMember, string>("dashboard-batch", System.Text.Encoding.UTF8.GetBytes,
+            System.Text.Encoding.UTF8.GetString, new() { ReadWait = TimeSpan.FromMilliseconds(50) });
+        await using var provider = services.BuildServiceProvider();
+        var worker = provider.GetRequiredService<IHostedService>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await worker.StartAsync(deadline.Token);
+        try
+        {
+            await using var events = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
+            while (await events.MoveNextAsync())
+                if (events.Current.JobId == "callback" && events.Current.Kind == "completed") break;
+            var original = (await queue.GetBatchStatusAsync("batch"))!;
+            await Assert.That(original.IsCompleted).IsTrue();
+            await Assert.That(original.Failed).IsEqualTo(1);
+            if (removeBatch) await Assert.That(await queue.RemoveBatchAsync("batch")).IsTrue();
+            var dead = (await client.Streams.RangeAsync(queue.DeadLetterStreamKey)).Single();
+            var options = new RespireDashboardOptions();
+            options.Streams.Add(new() { Name = "jobs", Stream = queue.StreamKey,
+                Group = RespireJobQueue<string>.ConsumerGroup, DeadLetterStream = queue.DeadLetterStreamKey, IsJobQueue = true });
+            await Assert.That(await new DashboardState(client, options).MutateAsync(0, dead.Id.ToString(), true, deadline.Token)).IsEqualTo(1);
+            var retried = (await client.Streams.RangeAsync(queue.StreamKey)).Last();
+            await Assert.That(retried.GetString("_respire.job.batch")).IsNull();
+            await Assert.That(retried.GetString("_respire.job.member")).IsNull();
+            await Assert.That(retried.GetString("_respire.job.id")).IsEqualTo("member");
+            await Assert.That(retried.GetString("_respire.job.payload")).IsEqualTo("original");
+            while (await events.MoveNextAsync())
+                if (events.Current.JobId == "member" && events.Current.Kind == (rejectRetry ? "dead-letter" : "completed")) break;
+            await Assert.That(handler.MemberCalls).IsEqualTo(2);
+            await Assert.That(handler.CallbackCalls).IsEqualTo(1);
+            await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(rejectRetry ? 1 : 0);
+            var status = await queue.GetBatchStatusAsync("batch");
+            if (removeBatch) await Assert.That(status).IsNull();
+            else
+            {
+                await Assert.That(status!.IsCompleted).IsTrue();
+                await Assert.That(status.Failed).IsEqualTo(1);
+                await Assert.That(status.Pending + status.Succeeded + status.Cancelled).IsEqualTo(0);
+            }
+            // The original member, callback, and independent retry are the only publications.
+            await Assert.That(await client.Streams.CountAsync(queue.StreamKey)).IsEqualTo(3);
+            var groups = await client.Streams.GroupInfoAsync(queue.StreamKey);
+            await Assert.That(groups.Single().Pending).IsEqualTo(0);
+        }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
+    public sealed class RetryBatchMember : IRespireStreamHandler<RespireJob<string>>
+    {
+        public int MemberCalls;
+        public int CallbackCalls;
+        public bool RejectRetry;
+        public ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
+        {
+            if (job.Id == "callback") Interlocked.Increment(ref CallbackCalls);
+            else if (Interlocked.Increment(ref MemberCalls) == 1 || RejectRetry)
+                return ValueTask.FromResult(RespireStreamWorkerResult.DeadLetter);
+            return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+        }
+    }
+
     public sealed class RejectEntry : IRespireStreamHandler<RespireStreamEntry>
     {
         public ValueTask<RespireStreamWorkerResult> HandleAsync(RespireStreamEntry entry, CancellationToken cancellationToken)
@@ -170,7 +247,8 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
             "_respire.group", "g", "_respire.attempt", "3", "_respire.reason", "explicit", "_respire.exception_type", "",
             new byte[] { 255, 0 }, new byte[] { 0, 255, 13, 10 }, "_respire.source_id", "original",
             "_respire.job.flow", "application-flow", "_respire.job.node", "application-node",
-            "_respire.job.flow", new byte[] { 0, 255 }])) { }
+            "_respire.job.flow", new byte[] { 0, 255 },
+            "_respire.job.batch", "application-batch", "_respire.job.member", "application-member"])) { }
         var state = new DashboardState(client, DashboardSecurityTests.Options());
         var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => state.MutateAsync(0, "1-0", true, default).AsTask()));
         await Assert.That(results.Sum()).IsEqualTo(1);
@@ -181,13 +259,17 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await Assert.That(rows[0][1][1].AsBytes().SequenceEqual(new byte[] { 0, 255, 13, 10 })).IsTrue();
         await Assert.That(rows[0][1][2].AsString()).IsEqualTo("_respire.source_id");
         await Assert.That(rows[0][1][3].AsString()).IsEqualTo("original");
-        await Assert.That(rows[0][1].Count).IsEqualTo(10);
+        await Assert.That(rows[0][1].Count).IsEqualTo(14);
         await Assert.That(rows[0][1][4].AsString()).IsEqualTo("_respire.job.flow");
         await Assert.That(rows[0][1][5].AsString()).IsEqualTo("application-flow");
         await Assert.That(rows[0][1][6].AsString()).IsEqualTo("_respire.job.node");
         await Assert.That(rows[0][1][7].AsString()).IsEqualTo("application-node");
         await Assert.That(rows[0][1][8].AsString()).IsEqualTo("_respire.job.flow");
         await Assert.That(rows[0][1][9].AsBytes().SequenceEqual(new byte[] { 0, 255 })).IsTrue();
+        await Assert.That(rows[0][1][10].AsString()).IsEqualTo("_respire.job.batch");
+        await Assert.That(rows[0][1][11].AsString()).IsEqualTo("application-batch");
+        await Assert.That(rows[0][1][12].AsString()).IsEqualTo("_respire.job.member");
+        await Assert.That(rows[0][1][13].AsString()).IsEqualTo("application-member");
     }
 
     [Test]

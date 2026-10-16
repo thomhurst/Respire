@@ -549,6 +549,10 @@ remain pending. A job that fails an attempt and later succeeds contributes one s
 only exhausted retries or explicit dead-letter completion contributes a failure.
 Terminal member events include `BatchKey` and use `completed`, `dead-letter`, or `cancelled`.
 
+Dashboard retries of dead-lettered members run as independent jobs with the original job ID
+and payload. They do not reopen the batch, change its terminal counts, or publish its callbacks
+again, and can run after the completed batch state has been removed.
+
 When a sealed batch has no pending members, Redis atomically publishes `OnSuccess` if
 all members succeeded, or `OnFailure` if any member failed or cancellation was requested.
 It also publishes `OnComplete`. An empty sealed batch succeeds. Each eligible callback
