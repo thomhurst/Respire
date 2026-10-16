@@ -707,7 +707,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task ClientIdSetup_DisposalTerminatesPendingOperation()
+    [Arguments(0)]
+    [Arguments(1_500)]
+    public async Task ClientIdSetup_DisposalTerminatesPendingOperation(int schedulingDelayMilliseconds)
     {
         var identityReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
@@ -730,6 +732,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         // Keep CLIENT ID unanswered until disposal, regardless of runner scheduling.
         var pending = cache.GetAsync("dispose-during-identity");
         await identityReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pending.IsCompleted).IsFalse();
+
+        // Exercise a continuation delayed beyond the old one-second CLIENT PAUSE window.
+        // Receipt, not this delay, establishes ordering; the reply stays suppressed throughout.
+        await Task.Delay(schedulingDelayMilliseconds);
         await Assert.That(pending.IsCompleted).IsFalse();
 
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
