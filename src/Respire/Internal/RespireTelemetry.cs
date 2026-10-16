@@ -39,7 +39,10 @@ internal static partial class RespireTelemetry
     internal static readonly Counter<long> ConnectionsClosed = Meter.CreateCounter<long>(
         "redis.client.connection.closed", "{connection}", "Physical connections closed, including unsuccessful handshakes.");
     internal static readonly Histogram<double> ConnectionWaitTime = Meter.CreateHistogram<double>(
-        "db.client.connection.wait_time", "s", "Time waiting for a newly created dedicated connection to become available.");
+        "db.client.connection.wait_time", "s", "Successful dedicated acquisition time, including capacity waiting and connection setup; immediate idle reuse is omitted.");
+    internal static readonly ObservableUpDownCounter<long> DedicatedPoolSize = Meter.CreateObservableUpDownCounter(
+        "respire.dedicated_pool.size", ConnectionTelemetry.ObserveDedicatedPoolSize, "{connection}",
+        "Dedicated pool capacity occupied by connecting, rented, idle and closing connections.");
     internal static readonly ObservableUpDownCounter<long> ConnectionRelaxedTimeout = Meter.CreateObservableUpDownCounter(
         "redis.client.connection.relaxed_timeout", ConnectionTelemetry.ObserveRelaxedTimeouts, "{relaxation}",
         "Connections whose configured timeout allowance is currently increased by maintenance.");

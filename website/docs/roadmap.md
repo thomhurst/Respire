@@ -56,6 +56,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   snapshots, scheduling diagnostics, and StackExchange.Redis v3 message equivalents.
 - [Physical connection hooks](guides/connection-hooks.md) for auditing, timing, and rejection,
   including reconnects, dedicated connections, Cluster, replicas, and Sentinel.
+- [Dedicated pool sizing](fundamentals/connections.md#dedicated-connection-pools) with opt-in
+  total limits, cancellation-aware acquisition, timed idle retirement and pool metrics.
 - [Connections](fundamentals/connections.md) from Redis URIs, pasted Azure portal strings, StackExchange.Redis connection
   strings, or `RespireOptions`, with lazy or eager connect, TLS, and automatic pipelining.
 - [Independent liveness bounds](fundamentals/connections.md#independent-liveness-bounds) for
@@ -285,7 +287,6 @@ They track remaining work, not release commitments.
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
   job groups and queue controls, batch callbacks,
-  adaptive dedicated pools,
   client-side encryption, coordination APIs, and testing support.
   [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),

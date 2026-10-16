@@ -191,7 +191,7 @@ on the `Respire` meter. They carry `redis.client.library=Respire:<version>` and
 | `redis.client.connection.relaxed_timeout` | `ConnectionBasic` | `{relaxation}` | Connections with a timeout currently raised by a maintenance window |
 | `redis.client.connection.handoff` | `ConnectionBasic` | `1` | Old connections replaced by a published `MOVING` handoff |
 | `db.client.connection.pending_requests` | `ConnectionAdvanced` | `{request}` | Replies still owed, including cancelled ones still draining |
-| `db.client.connection.wait_time` | `ConnectionAdvanced` | `s` | Waiting for a new dedicated connection; reusing an idle one emits nothing |
+| `db.client.connection.wait_time` | `ConnectionAdvanced` | `s` | Successful dedicated acquisition, including capacity waiting and connection setup; immediate idle reuse emits nothing |
 | `redis.client.connection.closed` | `ConnectionAdvanced` | `{connection}` | Connected sockets that close, including failed handshakes |
 | `db.client.operation.duration` | `Command` | `s` | Logical operation latency |
 | `redis.client.csc.requests` | `ClientSideCaching` | `{request}` | One per cache lookup; `redis.client.csc.result=hit` or `miss` |
@@ -211,6 +211,26 @@ cache statistics are independent of exported totals.
 
 `redis.client.geofailover.failovers` excludes initial selection and transitions to or from
 having no healthy endpoint. `respire.failover.endpoint.switches` counts those too.
+
+### Dedicated pool metrics
+
+`respire.dedicated_pool.size` (`ConnectionBasic`, `{connection}`) reports capacity occupied
+by connecting, leased, idle and closing dedicated connections. Closing sockets count until
+cleanup completes; a successful handshake transfers its reservation without double counting.
+The existing `db.client.connection.count` reports only ready sockets: `used` is a dedicated
+lease, including a lease between commands, and `idle` is a returned connection.
+
+These observations share `db.client.connection.pool.name` and the connection library/system
+tags. Pools with the same endpoint, database and purpose aggregate into one series, including
+overlapping routing generations and clients. Thus the aggregate can exceed one pool's
+configured maximum. The existing registry cardinality limit and overflow series also apply.
+
+`db.client.connection.wait_time` (`ConnectionAdvanced`, seconds) includes capacity waiting
+even when acquisition eventually reuses an idle connection. New connections include setup
+and recovery time. Immediate idle reuse, canceled waits and failed acquisitions emit no
+sample. Delivery uses the existing bounded asynchronous connection telemetry queue, so
+listeners do not run under pool ownership locks. Timed idle retirement uses the existing
+`redis.client.connection.closed` reason `pool_eviction_idle`.
 
 ### Endpoint circuit metrics
 

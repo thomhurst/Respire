@@ -54,6 +54,7 @@ await using var redis = await RespireClient.ConnectAsync(options);
 | `ConnectTimeout` | 10 s | Bounds each TCP/TLS connection attempt. |
 | `CommandTimeout` | 10 s | Reply budget; `null` disables it. Blocking commands use their own wait. |
 | `Connections` | 1 | Multiplexed connections (at least 1). Raise only when profiling shows one socket is saturated. |
+| `DedicatedPool` | Unlimited total, four idle | Limits and idle retention for dedicated leases; see below. |
 | `Database` | 0 | Logical database. |
 | `Protocol` | `Auto` | See [Protocol negotiation](#protocol-negotiation). |
 | `AllowAdmin` | `false` | Set `true` only for callers allowed to run high-risk commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`. |
@@ -71,6 +72,68 @@ For expiring passwords or tokens, use a caller-owned [`IRespireCredentialProvide
 - Caller cancellation throws `OperationCanceledException` with the caller's token, and wins if both fire.
 - The Redis handshake after TCP/TLS setup uses `CommandTimeout`.
 - `ConnectTimeout` bounds each attempt, not a whole dedicated-connection rental. A pool replacement can trigger reselection, which never replays an admitted command. Cluster limits these retries; standalone and Sentinel rentals retry until success, cancellation, disposal, or a terminal failure.
+
+## Dedicated connection pools
+
+Blocking commands, watched transactions, durability operations and streamed uploads rent
+dedicated connections. Each pool creates them on demand. Configure its bounds with:
+
+```csharp
+var options = new RespireOptions
+{
+    DedicatedPool = new RespireDedicatedPoolOptions
+    {
+        MinimumSize = 2,
+        MaximumSize = 32,
+        MaximumIdle = 8,
+        IdleTimeout = TimeSpan.FromMinutes(1),
+    },
+};
+```
+
+- `MaximumSize` limits connecting, rented, idle and closing connections together. A socket
+  remains charged until receive/flush cleanup finishes. With no compatible idle connection
+  or creation capacity, acquisition waits until capacity changes or the caller cancels.
+  Retirement and client disposal release waiting acquisitions. The pool has no independent
+  acquisition timeout: `ConnectTimeout` starts when connecting, and a command's server-side
+  blocking timeout does not bound this queue. Pass a cancellation token with a deadline when
+  all slots might be occupied by indefinitely blocking commands. An operation that supplies
+  its own acquisition deadline, such as a streamed upload, retains that deadline.
+  Waiters are broadcast to because ordinary and streaming leases can be incompatible;
+  no FIFO fairness is promised, and a waiter can starve under sustained contention.
+- `MaximumIdle` bounds retained idle connections across ordinary and streaming leases.
+  Surplus returns close. It is independent of `MaximumSize`: eight idle slots do not limit
+  the number of concurrently rented connections to eight. Zero disables idle reuse.
+- `MinimumSize` is a floor for timed idle retirement, reached through demand; it does not
+  prewarm connections or replace failed ones. It must be nonnegative, no larger than
+  `MaximumIdle`, and no larger than a configured `MaximumSize`.
+- `IdleTimeout` retires idle connections above that floor. Leased connections are never
+  selected. The timer scans at this interval, so an idle connection normally closes between
+  one and two intervals after return. The interval must be one millisecond to one day.
+
+Defaults are `MinimumSize = 0`, `MaximumSize = null`, `MaximumIdle = 4`, and
+`IdleTimeout = null`: unlimited demand-driven creation, four retained idle connections,
+and no timed retirement. Configure these through `RespireOptions` or its DI builder.
+
+Limits apply per pool, not across the client or deployment. Endpoints, replica roles,
+corrective connections and replacement routing generations can own separate pools.
+An old generation drains its leases while a new generation admits its own rentals.
+Ordinary and maintenance-enabled streaming leases share capacity but retain their protocol
+compatibility. At the cap, an incompatible idle connection is closed before its replacement
+is created; fresh-connection operations similarly retire idle entries when necessary.
+Minimum retention does not prevent these replacements, disconnection cleanup or disposal.
+
+Avoid application dependencies that need another lease from an exhausted pool before an
+existing operation can finish (for example, a streamed upload source that awaits another
+dedicated operation on the same client with `MaximumSize = 1`). Reserve enough capacity or
+use a separate client, and pass cancellation deadlines. Internal upload redirects and
+retirement retries return their source lease before renting the next one; corrective fences
+use separate pools.
+
+Use `respire.dedicated_pool.size` to observe occupied capacity and
+`db.client.connection.count` with `db.client.connection.state=used` to observe ready leased
+connections. Capacity waits and connection setup contribute to `db.client.connection.wait_time`.
+See [connection metric semantics](../integrations/observability.md#dedicated-pool-metrics).
 
 ## URI query options
 

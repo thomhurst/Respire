@@ -55,6 +55,7 @@ internal static class RespireConfiguration
         ThreadPoolMonitoring = section.GetValue("ThreadPoolMonitoring", options.ThreadPoolMonitoring),
         ThreadPoolWarningThreshold = section.GetValue("ThreadPoolWarningThreshold", options.ThreadPoolWarningThreshold),
         Connections = section.GetValue("Connections", options.Connections),
+        DedicatedPool = DedicatedPool(section.GetSection("DedicatedPool"), options.DedicatedPool),
         ClientSideCache = ClientSideCache(section.GetSection("ClientSideCache"), options.ClientSideCache),
         TcpKeepAliveTime = OptionalTimeSpan(section, "TcpKeepAliveTime", options.TcpKeepAliveTime),
         TcpKeepAliveInterval = OptionalTimeSpan(section, "TcpKeepAliveInterval", options.TcpKeepAliveInterval),
@@ -91,6 +92,18 @@ internal static class RespireConfiguration
         {
             Delay = section.GetValue("Delay", options.Delay),
             MaximumExtraLoadPercent = section.GetValue("MaximumExtraLoadPercent", options.MaximumExtraLoadPercent),
+        };
+    }
+
+    private static RespireDedicatedPoolOptions DedicatedPool(IConfigurationSection section, RespireDedicatedPoolOptions options)
+    {
+        if (!section.Exists()) return options;
+        return options with
+        {
+            MinimumSize = section.GetValue("MinimumSize", options.MinimumSize),
+            MaximumSize = OptionalInt32(section, "MaximumSize", options.MaximumSize),
+            MaximumIdle = section.GetValue("MaximumIdle", options.MaximumIdle),
+            IdleTimeout = OptionalTimeSpan(section, "IdleTimeout", options.IdleTimeout),
         };
     }
 
