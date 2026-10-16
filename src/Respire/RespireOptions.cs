@@ -318,6 +318,9 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
+    /// <summary>Dedicated connection limits and idle retention for blocking commands, transactions and streaming leases.</summary>
+    public RespireDedicatedPoolOptions DedicatedPool { get; init; } = new();
+
     /// <summary>Admission policy during standalone, Sentinel primary, replica-read and Cluster recovery. Defaults to bounded FIFO waiting.</summary>
     /// <remarks>Cluster queues preserve slot ordering and reselect the current owner and configured read policy.
     /// Replica reads reapply their original policy to the current topology. Does not replay accepted commands
@@ -597,6 +600,8 @@ public sealed record RespireOptions
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
+        if (DedicatedPool is null) throw new RespireConfigurationException("RespireOptions.DedicatedPool cannot be null.");
+        DedicatedPool.Validate();
         Require(Enum.IsDefined(BacklogPolicy), nameof(BacklogPolicy), "must be a defined backlog policy");
         Require(BacklogCapacity > 0, nameof(BacklogCapacity), "must be positive");
         Require(ClusterTopologyRefreshInterval is null || ClusterTopologyRefreshInterval >= TimeSpan.Zero
@@ -721,6 +726,7 @@ public sealed record RespireOptions
             FailoverMaintenance = enableMaintenanceNotifications ? FailoverMaintenance : null,
             ClientName = ClientName,
             Database = Database,
+            DedicatedPool = DedicatedPool,
             RequireClusterDatabaseSupport = UseCluster && Database != 0,
             DiscoverAvailabilityZone = ClientAvailabilityZone is not null,
             Protocol = Protocol,

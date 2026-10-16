@@ -180,6 +180,59 @@ public class ConnectionMetricTests
     }
 
     [Test]
+    public async Task DedicatedCapacityWaitIsMeasuredWhenItReusesAnIdleLease()
+    {
+        using var configuration = new MetricConfigurationScope();
+        await using var server = new FakeRespServer(1, FakeRespServer.PongReply);
+        using var capture = new Capture(server.Port);
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new() { Protocol = RespireProtocol.Resp2, DedicatedPool = new() { MaximumSize = 1 } }, null);
+        var first = await pool.RentAsync(default);
+        capture.Observe();
+        await Assert.That(capture.Current("respire.dedicated_pool.size")).IsEqualTo(1d);
+        var waiting = pool.RentAsync(default).AsTask();
+        await Assert.That(waiting.IsCompleted).IsFalse();
+        pool.Return(first);
+        var reused = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reused).IsSameReferenceAs(first);
+        await WaitUntil(() => ConnectionTelemetry.PendingMeasurements == 0);
+        await Assert.That(capture.Events.Count(item => item.Name == "db.client.connection.wait_time")).IsEqualTo(2);
+        capture.Observe();
+        await Assert.That(capture.Current("db.client.connection.count", "used")).IsEqualTo(1d);
+        await Assert.That(capture.Current("respire.dedicated_pool.size")).IsEqualTo(1d);
+        await pool.DisposeAsync();
+        capture.Observe();
+        await Assert.That(capture.Current("respire.dedicated_pool.size")).IsEqualTo(0d);
+    }
+
+    [Test]
+    public async Task DedicatedSizeIncludesConnectingAndHonorsMetricGroups()
+    {
+        using var configuration = new MetricConfigurationScope();
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ => { handshake.TrySetResult(); return true; },
+        };
+        using var capture = new Capture(server.Port);
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new() { Protocol = RespireProtocol.Resp2, Database = 1 }, null);
+        var acquisition = pool.RentAsync(default).AsTask();
+        await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        capture.Observe();
+        await Assert.That(capture.Current("respire.dedicated_pool.size")).IsEqualTo(1d);
+        await Assert.That(capture.Current("db.client.connection.count")).IsEqualTo(0d);
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.None });
+        capture.Observe();
+        await Assert.That(capture.Observations.Any(item => item.Name == "respire.dedicated_pool.size")).IsFalse();
+        RespireMetrics.Configure(new() { Groups = RespireMetricGroups.ConnectionBasic });
+        await pool.DisposeAsync();
+        await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
+        capture.Observe();
+        await Assert.That(capture.Current("respire.dedicated_pool.size")).IsEqualTo(0d);
+    }
+
+    [Test]
     public async Task DedicatedIdleCapacityClosesOverflowOnce()
     {
         using var configuration = new MetricConfigurationScope();
@@ -1268,7 +1321,8 @@ public class ConnectionMetricTests
             {
                 if (instrument.Meter.Name == "Respire" &&
                     (instrument.Name.StartsWith("db.client.connection.", StringComparison.Ordinal) ||
-                     instrument.Name.StartsWith("redis.client.connection.", StringComparison.Ordinal)))
+                     instrument.Name.StartsWith("redis.client.connection.", StringComparison.Ordinal) ||
+                     instrument.Name == "respire.dedicated_pool.size"))
                 {
                     _instruments.Add(instrument);
                     listener.EnableMeasurementEvents(instrument);

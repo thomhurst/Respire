@@ -1,0 +1,47 @@
+namespace Respire.Internal;
+
+internal sealed partial class DedicatedConnectionPool
+{
+    internal int CaptureSize()
+    {
+        lock (_gate) return _creating + _connections.Count;
+    }
+
+    // Broadcast state changes, rather than reserving a permit for a particular lease kind.
+    // Cancellation belongs to each wait, so one canceled caller cannot consume a wakeup.
+    private void SignalAvailabilityLocked()
+    {
+        var availability = _availability;
+        _availability = null;
+        availability?.TrySetResult();
+    }
+
+    private void RetireIdle()
+    {
+        List<Entry>? closing = null;
+        lock (_gate)
+        {
+            if (_stopping || options.DedicatedPool.IdleTimeout is not { } timeout) return;
+            var live = _creating;
+            foreach (var entry in _connections.Values)
+                if (entry.State != State.Closing) live++;
+            var now = options.DedicatedPool.TimeProvider.GetTimestamp();
+            for (var index = 0; index < _idle.Count && live > options.DedicatedPool.MinimumSize;)
+            {
+                var entry = _idle[index];
+                if (options.DedicatedPool.TimeProvider.GetElapsedTime(entry.IdleSince, now) < timeout)
+                {
+                    index++;
+                    continue;
+                }
+                _idle.RemoveAt(index);
+                entry.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
+                BeginCloseLocked(entry);
+                (closing ??= []).Add(entry);
+                live--;
+            }
+        }
+        if (closing is not null)
+            foreach (var entry in closing) _ = CloseAsync(entry);
+    }
+}

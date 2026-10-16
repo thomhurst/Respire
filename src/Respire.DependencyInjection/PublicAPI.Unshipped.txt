@@ -1,4 +1,6 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
+Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.BacklogCapacity.get -> int

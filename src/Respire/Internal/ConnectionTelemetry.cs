@@ -38,6 +38,22 @@ internal static class ConnectionTelemetry
         return state;
     }
 
+    internal static void TrackDedicatedPool(DedicatedConnectionPool pool, string host, int port, int database)
+    {
+        _ = RespireTelemetry.Meter;
+        Pools.ForPool(host, port, database, "dedicated").Add(pool);
+    }
+
+    internal static IEnumerable<Measurement<long>> ObserveDedicatedPoolSize()
+    {
+        if (!RespireMetrics.Current.Includes(RespireMetricGroups.ConnectionBasic)) yield break;
+        foreach (var pool in Pools.Snapshot)
+        {
+            var size = pool.ReadDedicatedSize();
+            if (size is { } count) yield return new(count, pool.Tags);
+        }
+    }
+
     private static Pool ForConnection(string host, int port, RespireConnectionOptions options)
     {
         var purpose = options switch
@@ -256,6 +272,8 @@ internal static class ConnectionTelemetry
     {
         private readonly Lock _gate = new();
         private readonly HashSet<State> _connections = [];
+        private readonly List<WeakReference<DedicatedConnectionPool>> _dedicatedPools = [];
+        private int _nextPoolPruneCount = 64;
         private int _nextPruneCount = 64;
         internal readonly bool PubSub;
         internal readonly KeyValuePair<string, object?>[] Tags;
@@ -280,6 +298,35 @@ internal static class ConnectionTelemetry
                 // when no listener ever observes the pool. Live targets remain untouched.
                 if (_connections.Count >= _nextPruneCount) PruneCollected();
             }
+        }
+
+        internal void Add(DedicatedConnectionPool pool)
+        {
+            lock (_gate)
+            {
+                _dedicatedPools.Add(new(pool));
+                if (_dedicatedPools.Count >= _nextPoolPruneCount)
+                {
+                    _dedicatedPools.RemoveAll(static reference => !reference.TryGetTarget(out _));
+                    _nextPoolPruneCount = (int)Math.Min(int.MaxValue, Math.Max(64L, 2L * _dedicatedPools.Count));
+                }
+            }
+        }
+
+        internal long? ReadDedicatedSize()
+        {
+            WeakReference<DedicatedConnectionPool>[] snapshot;
+            lock (_gate)
+            {
+                if (_dedicatedPools.Count == 0) return null;
+                _dedicatedPools.RemoveAll(static reference => !reference.TryGetTarget(out _));
+                snapshot = [.. _dedicatedPools];
+            }
+            long size = 0;
+            // Never acquire a pool's ownership gate while holding the telemetry registry gate.
+            foreach (var reference in snapshot)
+                if (reference.TryGetTarget(out var pool)) size += pool.CaptureSize();
+            return size;
         }
 
         internal void Remove(State state)

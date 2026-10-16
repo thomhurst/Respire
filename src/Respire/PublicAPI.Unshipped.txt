@@ -1,4 +1,23 @@
 #nullable enable
+Respire.RespireDedicatedPoolOptions
+Respire.RespireDedicatedPoolOptions.<Clone>$() -> Respire.RespireDedicatedPoolOptions!
+Respire.RespireDedicatedPoolOptions.Equals(Respire.RespireDedicatedPoolOptions? other) -> bool
+Respire.RespireDedicatedPoolOptions.IdleTimeout.get -> System.TimeSpan?
+Respire.RespireDedicatedPoolOptions.IdleTimeout.init -> void
+Respire.RespireDedicatedPoolOptions.MaximumIdle.get -> int
+Respire.RespireDedicatedPoolOptions.MaximumIdle.init -> void
+Respire.RespireDedicatedPoolOptions.MaximumSize.get -> int?
+Respire.RespireDedicatedPoolOptions.MaximumSize.init -> void
+Respire.RespireDedicatedPoolOptions.MinimumSize.get -> int
+Respire.RespireDedicatedPoolOptions.MinimumSize.init -> void
+Respire.RespireDedicatedPoolOptions.RespireDedicatedPoolOptions() -> void
+Respire.RespireOptions.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
+Respire.RespireOptions.DedicatedPool.init -> void
+override Respire.RespireDedicatedPoolOptions.Equals(object? obj) -> bool
+override Respire.RespireDedicatedPoolOptions.GetHashCode() -> int
+override Respire.RespireDedicatedPoolOptions.ToString() -> string!
+static Respire.RespireDedicatedPoolOptions.operator !=(Respire.RespireDedicatedPoolOptions? left, Respire.RespireDedicatedPoolOptions? right) -> bool
+static Respire.RespireDedicatedPoolOptions.operator ==(Respire.RespireDedicatedPoolOptions? left, Respire.RespireDedicatedPoolOptions? right) -> bool
 Respire.RespireOptions.SplitCrossSlotCommands.get -> bool
 Respire.RespireOptions.SplitCrossSlotCommands.init -> void
 Respire.RespireClusterPartitionException
