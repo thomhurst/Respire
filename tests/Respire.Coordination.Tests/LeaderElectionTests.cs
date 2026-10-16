@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -384,6 +386,53 @@ public class LeaderElectionTests
         await Assert.That(election.CurrentLeadership).IsNull();
         await Assert.That(await client.GetStringAsync("{election}:lease")).IsNull();
     }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OpenCircuitAcquisitionRetriesAndCanStopDuringDelay(bool stopDuringDelay)
+    {
+        var clock = new Clock();
+        await using var server = new RespireFakeServer(clock);
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromSeconds(2) },
+        });
+        await client.GetStringAsync("warm");
+        var circuit = client.Core.Circuits!.GetForTests(client.Endpoint);
+        CircuitClock(circuit) = clock;
+        await Assert.That(circuit.TryAcquire(out var permit, out _)).IsTrue();
+        circuit.Complete(ref permit, CircuitOutcome.Failure);
+        var elected = Signal<RespireLeadership>();
+        using var election = Election(client, clock, elected);
+        try
+        {
+            await election.StartAsync(default);
+            await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+            await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+            await Assert.That(elected.Task.IsCompleted).IsFalse();
+            if (stopDuringDelay)
+            {
+                await election.StopAsync(default).WaitAsync(Timeout);
+                await Assert.That(elected.Task.IsCompleted).IsFalse();
+                return;
+            }
+
+            // Another rejection while open must also leave the contender alive.
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+            await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+            await Assert.That(elected.Task.IsCompleted).IsFalse();
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var term = await elected.Task.WaitAsync(Timeout);
+            await Assert.That(term.FencingToken).IsEqualTo(1);
+            await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
+        }
+        finally { await election.StopAsync(default).WaitAsync(Timeout); }
+    }
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
+    private static extern ref TimeProvider CircuitClock(EndpointCircuitBreaker circuit);
 
     private static async Task UntilAsync(Func<bool> predicate)
     {
