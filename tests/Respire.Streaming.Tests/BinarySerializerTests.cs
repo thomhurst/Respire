@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using MemoryPack;
 using MessagePack;
 using Microsoft.Extensions.DependencyInjection;
@@ -90,6 +91,72 @@ public class BinarySerializerTests
         serializer.Serialize(writer, typeof(SerializerPayload), null);
         await Assert.That(serializer.Deserialize(typeof(SerializerPayload), writer.WrittenSpan)).IsNull();
     }
+
+    [Test]
+    public Task MemoryPackConcurrentFirstGenericReads()
+        => VerifyMemoryPackFirstUse<FirstGenericRead>(runtimeType: false, writeNull: false);
+
+    [Test]
+    public Task MemoryPackConcurrentFirstRuntimeReads()
+        => VerifyMemoryPackFirstUse<FirstRuntimeRead>(runtimeType: true, writeNull: false);
+
+    [Test]
+    public Task MemoryPackConcurrentFirstGenericNullWrites()
+        => VerifyMemoryPackFirstUse<FirstGenericNullWrite>(runtimeType: false, writeNull: true);
+
+    [Test]
+    public Task MemoryPackConcurrentFirstRuntimeNullWrites()
+        => VerifyMemoryPackFirstUse<FirstRuntimeNullWrite>(runtimeType: true, writeNull: true);
+
+    private static async Task VerifyMemoryPackFirstUse<TScenario>(bool runtimeType, bool writeNull)
+    {
+        // Each scenario uses a distinct closed model type that no other test touches.
+        // Do not construct it or call the native serializer before releasing the callers.
+        IRespireSerializer serializer = new RespireMemoryPackSerializer();
+        using var start = new Barrier(9);
+        // Race formatter lookup against independent model initialization, as happens
+        // when another thread first constructs the model while an incoming read starts.
+        var initialize = Task.Factory.StartNew(() =>
+        {
+            if (!start.SignalAndWait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("Model initializer did not reach the start barrier.");
+            RuntimeHelpers.RunClassConstructor(typeof(MemoryPackFirstUsePayload<TScenario>).TypeHandle);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        var callers = Enumerable.Range(0, 8).Select(_ => Task.Factory.StartNew(() =>
+        {
+            if (!start.SignalAndWait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("First-use callers did not reach the start barrier.");
+
+            if (writeNull)
+            {
+                var writer = new ArrayBufferWriter<byte>();
+                if (runtimeType)
+                    serializer.Serialize(writer, typeof(MemoryPackFirstUsePayload<TScenario>), null);
+                else
+                    serializer.Serialize<MemoryPackFirstUsePayload<TScenario>?>(writer, null);
+
+                // MemoryPack's null-object header; reading it here would warm another API.
+                return writer.WrittenSpan.SequenceEqual(new byte[] { 255 });
+            }
+
+            // One Int32 member with value 42, encoded without initializing the target model.
+            byte[] payload = [1, 42, 0, 0, 0];
+            var value = runtimeType
+                ? (MemoryPackFirstUsePayload<TScenario>?)serializer.Deserialize(typeof(MemoryPackFirstUsePayload<TScenario>), payload)
+                : serializer.Deserialize<MemoryPackFirstUsePayload<TScenario>>(payload);
+            return value?.Value == 42;
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
+
+        // Observe and join every dedicated thread even when one of the callers fails.
+        await Task.WhenAll(callers.Append(initialize));
+        var results = await Task.WhenAll(callers);
+        await Assert.That(results.All(success => success)).IsTrue();
+    }
+
+    public sealed class FirstGenericRead;
+    public sealed class FirstRuntimeRead;
+    public sealed class FirstGenericNullWrite;
+    public sealed class FirstRuntimeNullWrite;
 
     [Test]
     public async Task ProtobufRejectsRootNullButAcceptsDefaultValuedMessages()
@@ -209,4 +276,10 @@ public partial class SerializerPayload
 {
     [Key(0), ProtoMember(1)] public string Name { get; set; } = "";
     [Key(1), ProtoMember(2)] public int Age { get; set; }
+}
+
+[MemoryPackable]
+public partial class MemoryPackFirstUsePayload<TScenario>
+{
+    public int Value { get; set; }
 }
