@@ -39,6 +39,7 @@
     <Project Path="src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
     <Project Path="src/Respire.DataProtection/Respire.DataProtection.csproj" />
     <Project Path="src/Respire.HealthChecks/Respire.HealthChecks.csproj" />
+    <Project Path="src/Respire.Idempotency/Respire.Idempotency.csproj" />
     <Project Path="src/Respire.Resilience/Respire.Resilience.csproj" />
     <Project Path="src/Respire.Json/Respire.Json.csproj" />
     <Project Path="src/Respire.OutputCaching/Respire.OutputCaching.csproj" />
@@ -64,6 +65,7 @@
     <Project Path="tests/Aspire.Respire.IntegrationTests/Aspire.Respire.IntegrationTests.csproj" />
     <Project Path="tests/Aspire.Respire.Tests/Aspire.Respire.Tests.csproj" />
     <Project Path="tests/Respire.HealthChecks.Tests/Respire.HealthChecks.Tests.csproj" />
+    <Project Path="tests/Respire.Idempotency.Tests/Respire.Idempotency.Tests.csproj" />
     <Project Path="tests/Respire.Resilience.Tests/Respire.Resilience.Tests.csproj" />
     <Project Path="tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj" />
     <Project Path="tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj" />

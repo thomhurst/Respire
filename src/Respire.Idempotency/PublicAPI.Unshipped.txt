@@ -1,0 +1,20 @@
+#nullable enable
+Respire.Idempotency.RespireIdempotencyExtensions
+Respire.Idempotency.RespireIdempotencyOptions
+Respire.Idempotency.RespireIdempotencyOptions.RespireIdempotencyOptions() -> void
+Respire.Idempotency.RespireIdempotencyOptions.CallerScope.get -> System.Func<Microsoft.AspNetCore.Http.HttpContext!, string?>?
+Respire.Idempotency.RespireIdempotencyOptions.CallerScope.set -> void
+Respire.Idempotency.RespireIdempotencyOptions.KeyPrefix.get -> string!
+Respire.Idempotency.RespireIdempotencyOptions.KeyPrefix.set -> void
+Respire.Idempotency.RespireIdempotencyOptions.TimeToLive.get -> System.TimeSpan
+Respire.Idempotency.RespireIdempotencyOptions.TimeToLive.set -> void
+Respire.Idempotency.RespireIdempotencyOptions.VerifyRequestBody.get -> bool
+Respire.Idempotency.RespireIdempotencyOptions.VerifyRequestBody.set -> void
+Respire.Idempotency.RespireIdempotencyOptions.MaxRequestBodyBytes.get -> int
+Respire.Idempotency.RespireIdempotencyOptions.MaxRequestBodyBytes.set -> void
+Respire.Idempotency.RespireIdempotencyOptions.MaxResponseBodyBytes.get -> int
+Respire.Idempotency.RespireIdempotencyOptions.MaxResponseBodyBytes.set -> void
+Respire.Idempotency.RespireIdempotencyOptions.StoredStatusCodes.get -> System.Collections.Generic.ISet<int>!
+static Respire.Idempotency.RespireIdempotencyExtensions.AddRespireIdempotency(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Respire.Idempotency.RespireIdempotencyOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Respire.Idempotency.RespireIdempotencyExtensions.UseRespireIdempotency(this Microsoft.AspNetCore.Builder.IApplicationBuilder! app) -> Microsoft.AspNetCore.Builder.IApplicationBuilder!
+static Respire.Idempotency.RespireIdempotencyExtensions.WithRespireIdempotency<TBuilder>(this TBuilder builder, string! endpointName) -> TBuilder

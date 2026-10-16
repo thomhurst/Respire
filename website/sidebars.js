@@ -166,6 +166,7 @@ const sidebars = {
         'integrations/aspire',
         'integrations/caching',
         'integrations/output-caching',
+        'integrations/idempotency',
         'integrations/data-protection',
         'integrations/fusioncache',
         'integrations/signalr',

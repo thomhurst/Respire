@@ -85,8 +85,9 @@ are described in the guides below; the remaining pre-release work is tracked sep
 ### Commands and coordination
 
 - [Idempotency claims and binary result replay](guides/coordination.md#idempotency-claims-and-result-replay)
-  provide expiring ownership, request fingerprints, and atomic completion/abandon. ASP.NET Core
-  response replay remains tracked in [#1836](https://github.com/thomhurst/Respire/issues/1836).
+  provide expiring ownership, request fingerprints, and atomic completion/abandon.
+  [HTTP idempotency middleware](integrations/idempotency.md) adds caller-scoped response replay
+  and bounded request/response buffering for ASP.NET Core endpoints.
 
 - Bundled warnings for [short-lived clients](diagnostics/RESP010.md),
   [unbounded collection reads](diagnostics/RESP011.md), and
