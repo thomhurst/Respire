@@ -88,6 +88,60 @@ public class TransactionClusterTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task UnconditionalImportAcquisitionPreservesTimeoutAndCancellation(bool cancel, bool dedicated)
+    {
+        await using var source = new FakeRespServer(16, FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(16, FakeRespServer.OkReply);
+        Configure(source, target);
+        var setup = source.ReplyOverride!;
+        source.ReplyOverride = (id, command) => command switch
+        {
+            "GET key" => Ask(target),
+            "EXEC" => "-EXECABORT Transaction discarded\r\n"u8.ToArray(),
+            _ => setup(id, command),
+        };
+        using var cancellation = new CancellationTokenSource();
+        var handshakes = 0;
+        target.SuppressReply = command =>
+        {
+            if (command != "CLIENT SETNAME import-timeout"
+                || Interlocked.Increment(ref handshakes) != (dedicated ? 2 : 1)) return false;
+            if (cancel) cancellation.Cancel();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            ClientName = "import-timeout",
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+        });
+        await using var transaction = await client.CreateCompatibilityTransactionAsync([], default);
+        var pending = transaction.GetString("key");
+        if (cancel)
+        {
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await transaction.CommitAsync(cancellation.Token));
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+            var pendingError = Assert.ThrowsAny<OperationCanceledException>(() => pending.Result);
+            Assert.Equal(cancellation.Token, pendingError.CancellationToken);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<RespireTimeoutException>(async () => await transaction.CommitAsync());
+            Assert.Throws<RespireTimeoutException>(() => pending.Result);
+        }
+        Assert.Equal(dedicated ? 2 : 1, Volatile.Read(ref handshakes));
+        Assert.Single(source.ReceivedCommands.Where(command => command == "EXEC"));
+        Assert.DoesNotContain("ASKING", target.ReceivedCommands);
+        Assert.DoesNotContain("MULTI", target.ReceivedCommands);
+        Assert.DoesNotContain("GET key", target.ReceivedCommands);
+    }
+
+    [Test]
     public async Task UnconditionalPartialExecResultIsNotReplayed()
     {
         await using var source = new FakeRespServer(16, FakeRespServer.OkReply);

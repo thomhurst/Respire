@@ -808,12 +808,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         {
                             // The complete unconditional frame was rejected before any member
                             // executed. Rent an exclusive importing socket for ASKING/MULTI/EXEC.
-                            using var redirectAcquisition = new CommandAcquisitionScope(cancellationToken, deadline, timeout);
+                            // Keep the scope visible to the outer catch so acquisition failures
+                            // retain the command timeout or the original caller token.
+                            acquisition.CheckDeadline("MULTI/EXEC", core);
                             var pool = await cluster.GetRedirectDedicatedPoolAsync(redirect, connection,
-                                redirectAcquisition.Token, slot, discovery, observation).ConfigureAwait(false);
+                                acquisition.Token, slot, discovery, observation).ConfigureAwait(false);
                             (askingPool, askingConnection) = await cluster.RentDedicatedConnectionAsync(pool,
                                 new ClusterRouter.DedicatedRoute(slot, AskRedirect: redirect, RedirectSource: connection),
-                                redirectAcquisition.Token, discovery, observation).ConfigureAwait(false);
+                                acquisition.Token, discovery, observation).ConfigureAwait(false);
                             connection = askingConnection;
                             observation.Handled(redirect);
                             routingAttempt++;
