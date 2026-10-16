@@ -39,6 +39,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     internal RespireConnection? ExecutingConnection { get; set; }
 
     private protected virtual WatchedTransactionRetryContext? RetryContext => null;
+    private protected virtual bool WatchRequiresAsking => false;
+    private protected virtual bool AllowUnwatchedAsk => false;
 
     private IRespireBatchStringCommands? _strings;
     private IRespireBatchKeyCommands? _keys;
@@ -295,6 +297,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var importTransactionStarted = false;
         RespireConnection.CredentialSequenceLease credentialSequence = default;
         var returnWatchConnection = false;
+        DedicatedConnectionPool? askingPool = null;
+        RespireConnection? askingConnection = null;
+        var returnAskingConnection = false;
         var sendAttempted = false;
         var clusterBacklogDispatch = false;
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
@@ -347,10 +352,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }, observation).ConfigureAwait(false)
                     : await SendAsync().ConfigureAwait(false);
 
-                // SendTransactionAsync drains through EXEC before completing, including when it
-                // returns a queue error or a null watched-abort reply. Redis has therefore cleared
-                // WATCH and the dedicated connection is safe to pool again.
-                returnWatchConnection = ReferenceEquals(connection, _watchConnection);
+                // Draining EXEC does not prove it ran: an ACL rejection can leave MULTI
+                // and its queued commands active. Pool exclusive sockets only when the
+                // reply proves Redis cleared transaction state, including queue aborts.
+                var transactionStateCleared = result.Type == RespireDataType.Array || result.IsNull
+                    || result.TransactionStateCleared;
+                returnWatchConnection = transactionStateCleared && ReferenceEquals(connection, _watchConnection);
+                returnAskingConnection = transactionStateCleared && ReferenceEquals(connection, askingConnection);
             }
             catch (Exception ex)
             {
@@ -492,7 +500,15 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
             try
             {
-                await ReleaseAsync(returnWatchConnection).ConfigureAwait(false);
+                try
+                {
+                    if (askingPool is not null && askingConnection is not null)
+                    {
+                        if (returnAskingConnection) askingPool.Return(askingConnection);
+                        else await askingPool.DiscardAsync(askingConnection).ConfigureAwait(false);
+                    }
+                }
+                finally { await ReleaseAsync(returnWatchConnection).ConfigureAwait(false); }
             }
             catch (Exception) when (operationError is not null)
             {
@@ -613,28 +629,31 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             connection.ThrowIfRetired();
                             admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
                         }
-                        if (ConnectionPolicy.IsImportSession)
+                        if (ConnectionPolicy.IsImportSession || WatchRequiresAsking || askingPool is not null)
                         {
                             if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
                                 credentialSequence = await connection.AcquireCredentialSequenceAsync(
                                     acquisition.Token).ConfigureAwait(false);
                             acquisition.Dispose();
                             acquisition.CheckDeadline("MULTI/EXEC", core, connection);
-                            // This lease is exclusive: confirm MULTI before any import can
-                            // reach Redis, including when ACLs allow HIMPORT but deny MULTI.
+                            // This lease is exclusive: confirm MULTI before sending writes.
+                            // ASKING must immediately precede MULTI on the watched socket;
+                            // Redis retains its flag through EXEC. The credential lease keeps
+                            // maintenance commands out of this stateful sequence.
                             importSubmissionAttempted = true;
                             sendAttempted = true;
-                            // Import-only MULTI cannot reroute; keep this decision in the shared policy.
+                            // Both imports and watched transactions must keep their socket.
                             using var multi = await _client.SendOnConnectionAsync("MULTI", connection,
-                                new ProtocolCommand<Cmd>(new Cmd(RespireCommands.Transaction.MULTI.Verb)), cancellationToken, commandDeadline: deadline,
-                                allowStreamingConnectionReroute: ConnectionPolicy.CanReplayRejectedCommands,
+                                new ProtocolCommand<Cmd>(new Cmd(RespireCommands.Transaction.MULTI.Verb)), cancellationToken,
+                                sendAsking: WatchRequiresAsking || askingPool is not null, commandDeadline: deadline,
+                                allowStreamingConnectionReroute: askingPool is null && ConnectionPolicy.CanReplayRejectedCommands,
                                 pinToConnection: core.Circuits is not null).ConfigureAwait(false);
                             ResponseReader.ExpectOk(in multi);
                             importTransactionStarted = true;
                         }
                         // Only reaching transport submission lets an empty commit name this node. Local
                         // capacity validation submits nothing, so run it before marking the send.
-                        try { connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession); }
+                        try { connection.ValidateTransactionCapacity(_ops.Count, includeMulti: !ConnectionPolicy.IsImportSession && !WatchRequiresAsking && askingPool is null); }
                         catch { observation.UseEndpoint(null); throw; }
                         sendAttempted = true;
                         if (retryUnit)
@@ -655,9 +674,9 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         else
                         {
                             reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
-                                    cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession, commandDeadline: deadline,
+                                    cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession && !WatchRequiresAsking && askingPool is null, commandDeadline: deadline,
                                     transaction: this, observation: observation, mutationFence: mutationFence,
-                                    pinToConnection: core.Circuits is not null, writeObservation: RetryContext?.WriteObservation)
+                                    pinToConnection: core.Circuits is not null || askingPool is not null, writeObservation: RetryContext?.WriteObservation)
                                 .ConfigureAwait(false);
                         }
                         admission.Success();
@@ -667,7 +686,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             importTransactionStarted = false;
                     }
                     catch (RespireConnectionRetiredException retirement) when (core.Circuits is not null
-                        && ConnectionPolicy.CanReplayRejectedCommands && !_hasCursorContinuation
+                        && askingPool is null && ConnectionPolicy.CanReplayRejectedCommands && !_hasCursorContinuation
                         && _client.TryRerouteCircuit(connection, deadline, out var target, out var rerouted, preferredZone: null))
                     {
                         // Retirement rejected every frame before dispatch. Release this permit
@@ -680,7 +699,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         continue;
                     }
                     catch (RespireConnectionRetiredException retirement) when (cluster is not null
-                        && ConnectionPolicy.CanRetryRetirement(cluster, routingAttempt, cancellationToken))
+                        && askingPool is null && ConnectionPolicy.CanRetryRetirement(cluster, routingAttempt, cancellationToken))
                     {
                         if (unitAttemptCounted) unitAttempts--;
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
@@ -757,6 +776,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                     }
 
                     reply.Dispose();
+                    // Once an importing attempt has begun, keep its socket and never replay it.
+                    if (askingPool is not null) throw redirect;
                     if (routingAttempt >= ClusterRouter.RedirectLimit)
                     {
                         // Throw within the owning round so its outcome and queued operations
@@ -782,6 +803,24 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
                     if (redirect.Code == RespireErrorCodes.Ask)
                     {
+                        if (AllowUnwatchedAsk && ClusterRouter.TryParseRedirect(redirect, connection.Host, out var askSlot, out _)
+                            && askSlot == slot)
+                        {
+                            // The complete unconditional frame was rejected before any member
+                            // executed. Rent an exclusive importing socket for ASKING/MULTI/EXEC.
+                            // Keep the scope visible to the outer catch so acquisition failures
+                            // retain the command timeout or the original caller token.
+                            acquisition.CheckDeadline("MULTI/EXEC", core);
+                            var pool = await cluster.GetRedirectDedicatedPoolAsync(redirect, connection,
+                                acquisition.Token, slot, discovery, observation).ConfigureAwait(false);
+                            (askingPool, askingConnection) = await cluster.RentDedicatedConnectionAsync(pool,
+                                new ClusterRouter.DedicatedRoute(slot, AskRedirect: redirect, RedirectSource: connection),
+                                acquisition.Token, discovery, observation).ConfigureAwait(false);
+                            connection = askingConnection;
+                            observation.Handled(redirect);
+                            routingAttempt++;
+                            continue;
+                        }
                         discovery?.RecordCommandFailure(redirect, discoveryPending: false, slot);
                         throw new RespireConnectionException(
                             "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
@@ -1149,19 +1188,23 @@ public sealed class RespireWatchedTransaction : RespireTransactionBase
     internal WatchedTransactionRetryContext? HelperRetryContext { get; set; }
     private protected override WatchedTransactionRetryContext? RetryContext => HelperRetryContext;
 
-    internal RespireWatchedTransaction(RespireClient client)
+    internal RespireWatchedTransaction(RespireClient client, bool allowUnwatchedAsk = false)
         : base(client, watchConnection: null)
     {
+        AllowUnwatchedAsk = allowUnwatchedAsk;
     }
 
     internal RespireWatchedTransaction(RespireClient client, RespireConnection watchConnection,
-        DedicatedConnectionPool watchPool, int? watchSlot)
+        DedicatedConnectionPool watchPool, int? watchSlot, bool requiresAsking = false)
         : base(client, ValidateLease(watchConnection, watchPool), watchSlot)
     {
         WatchPool = watchPool;
+        WatchRequiresAsking = requiresAsking;
     }
 
     private protected override DedicatedConnectionPool? WatchPool { get; }
+    private protected override bool WatchRequiresAsking { get; }
+    private protected override bool AllowUnwatchedAsk { get; }
 
     private static RespireConnection ValidateLease(RespireConnection connection, DedicatedConnectionPool pool)
     {

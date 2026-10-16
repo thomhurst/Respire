@@ -48,12 +48,15 @@ public class UnitRetryBenchmarks
         var options = new RespireOptions
         {
             Endpoints = [new(host, port)], Connections = 1, ThreadPoolMonitoring = false,
-            Protocol = RespireProtocol.Resp2,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             SentinelPrimaryName = Owner == "Sentinel" ? "mymaster" : null,
             UseCluster = Owner == "Cluster",
             ClusterTopologyRefreshInterval = null,
         };
+        // The historical control calls this enum RespProtocol. Resolve it only during
+        // setup so both builds use RESP2 without depending on either enum's name.
+        var protocol = typeof(RespireOptions).GetProperty(nameof(RespireOptions.Protocol))!;
+        protocol.SetValue(options, Enum.Parse(protocol.PropertyType, "Resp2"));
         SetPolicy(options);
         _client = await RespireClient.ConnectAsync(options).ConfigureAwait(false);
         await _client.SetAsync(_first, "value").ConfigureAwait(false);

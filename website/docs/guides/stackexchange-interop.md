@@ -274,6 +274,10 @@ Conditions:
 - A failed check discards the transaction. A Redis error during a check counts as unsatisfied.
 - A change between `WATCH` and `EXEC` returns `false` and cancels all tasks. `WasWatchConflict` tells this apart from a failed check.
 - In Cluster, watched and queued keys must share a slot.
+- During ASK migration, rejected WATCH setup can establish a fresh watch on the importing node within
+  the redirect limit and command timeout. Conditions are checked before `ASKING`/`MULTI`/`EXEC` on that
+  watched socket. Unconditional transactions can follow a complete ASK rejection once on an exclusive
+  importing socket. Commit failures after WATCH, partial EXEC results, and ambiguous outcomes are not replayed.
 
 Errors:
 
