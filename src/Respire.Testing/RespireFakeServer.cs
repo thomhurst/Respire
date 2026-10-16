@@ -187,7 +187,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     }
 
     private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope,
-        out ListMoveWaiters? listMoveChanged, bool allowListMoveWait = false)
+        out ListMoveWaiters? listMoveChanged, bool allowListMoveWait = false, FakeReply? expectedReply = null)
     {
         listMoveChanged = null;
         // Keep synchronous state protection outside the async receive state machine,
@@ -202,7 +202,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 // EXEC and all its commands share one server-time sample.
                 _commandTimestamp = _clock.GetUtcNow();
                 _commandTime = _commandTimestamp.ToUnixTimeMilliseconds();
-                var result = Execute(connection, arguments);
+                var result = Execute(connection, arguments, expectedReply);
                 if (allowListMoveWait && ReferenceEquals(result, FakeReply.NullArray))
                 {
                     if (!_listMoveWaiters.TryGetValue(arguments[1], out listMoveChanged))
@@ -231,12 +231,22 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         }
     }
 
-    private FakeReply Execute(Connection connection, byte[][] args)
+    private FakeReply Execute(Connection connection, byte[][] args, FakeReply? expectedReply = null)
     {
         var command = Token(args[0]);
         if (command == "HIMPORT" && args.Length > 1) command += " " + Token(args[1]);
         try
         {
+            // Overrides represent command execution, not a synthetic QUEUED acknowledgement.
+            // Control-command overrides are rejected at registration.
+            if (expectedReply is not null)
+            {
+                if (connection.IsResp2Subscribed && command != "PING")
+                    return FakeReply.Error($"ERR Can't execute '{command.ToLowerInvariant()}': only SUBSCRIBE / UNSUBSCRIBE / PING are supported in this context");
+                return connection.Transaction is not null
+                    ? QueueTransaction(connection, args, expectedReply)
+                    : expectedReply;
+            }
             if (!Commands.TryGetValue(command, out var handler))
                 return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}"));
             // Redis command-table arity is either exact or a minimum. Optional-argument
@@ -410,7 +420,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         internal int PendingPushBytes;
         internal bool ExecutingReply;
         internal List<Outbound>? DeferredPushes;
-        internal List<byte[][]>? Transaction { get; set; }
+        internal List<QueuedCommand>? Transaction { get; set; }
         internal long QueuedBytes { get; set; }
         internal bool TransactionError { get; set; }
         internal bool WatchChanged { get; set; }

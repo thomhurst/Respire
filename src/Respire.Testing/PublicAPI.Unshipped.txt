@@ -1,1 +1,32 @@
 #nullable enable
+Respire.Testing.RespireFakeArgument
+Respire.Testing.RespireFakeCommand
+Respire.Testing.RespireFakeCommand.Arguments.get -> System.Collections.Generic.IReadOnlyList<System.ReadOnlyMemory<byte>>!
+Respire.Testing.RespireFakeCommand.Command.get -> string!
+Respire.Testing.RespireFakeCommand.ConnectionId.get -> long
+Respire.Testing.RespireFakeCommand.Matched.get -> bool
+Respire.Testing.RespireFakeCommand.Sequence.get -> long
+Respire.Testing.RespireFakeExpectationMode
+Respire.Testing.RespireFakeExpectationMode.Disabled = 0 -> Respire.Testing.RespireFakeExpectationMode
+Respire.Testing.RespireFakeExpectationMode.Loose = 1 -> Respire.Testing.RespireFakeExpectationMode
+Respire.Testing.RespireFakeExpectationMode.Strict = 2 -> Respire.Testing.RespireFakeExpectationMode
+Respire.Testing.RespireFakeResponse
+Respire.Testing.RespireFakeServer.CommandHistory.get -> System.Collections.Generic.IReadOnlyList<Respire.Testing.RespireFakeCommand!>!
+Respire.Testing.RespireFakeServer.Expect(string! command, System.Collections.Generic.IReadOnlyList<Respire.Testing.RespireFakeArgument!>! arguments, int occurrences = 1, Respire.Testing.RespireFakeResponse? response = null) -> void
+Respire.Testing.RespireFakeServer.ExpectationMode.get -> Respire.Testing.RespireFakeExpectationMode
+Respire.Testing.RespireFakeServer.ExpectationMode.set -> void
+Respire.Testing.RespireFakeServer.ResetExpectations() -> void
+Respire.Testing.RespireFakeServer.VerifyAllExpectations() -> void
+override Respire.Testing.RespireFakeArgument.ToString() -> string!
+override Respire.Testing.RespireFakeCommand.ToString() -> string!
+static Respire.Testing.RespireFakeArgument.Any.get -> Respire.Testing.RespireFakeArgument!
+static Respire.Testing.RespireFakeArgument.Exact(string! value) -> Respire.Testing.RespireFakeArgument!
+static Respire.Testing.RespireFakeArgument.Exact(System.ReadOnlyMemory<byte> value) -> Respire.Testing.RespireFakeArgument!
+static Respire.Testing.RespireFakeArgument.implicit operator Respire.Testing.RespireFakeArgument!(string! value) -> Respire.Testing.RespireFakeArgument!
+static Respire.Testing.RespireFakeResponse.Array(params Respire.Testing.RespireFakeResponse![]! values) -> Respire.Testing.RespireFakeResponse!
+static Respire.Testing.RespireFakeResponse.Bulk(string! value) -> Respire.Testing.RespireFakeResponse!
+static Respire.Testing.RespireFakeResponse.Bulk(System.ReadOnlyMemory<byte> value) -> Respire.Testing.RespireFakeResponse!
+static Respire.Testing.RespireFakeResponse.Error(string! message) -> Respire.Testing.RespireFakeResponse!
+static Respire.Testing.RespireFakeResponse.Integer(long value) -> Respire.Testing.RespireFakeResponse!
+static Respire.Testing.RespireFakeResponse.Null.get -> Respire.Testing.RespireFakeResponse!
+static Respire.Testing.RespireFakeResponse.Simple(string! value) -> Respire.Testing.RespireFakeResponse!

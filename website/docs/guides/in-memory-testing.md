@@ -318,6 +318,98 @@ test), and dispose clients before the fixture. Container server time follows its
 in a separate test project or CI job so they run alongside fast fake tests instead of remaining
 silently skipped.
 
+## Command expectations
+
+Use expectations when a test needs to verify the exact commands your application sends or return a
+configured response. They run through the real client transport, so typed facets, raw commands, batches,
+and transactions share the same matching rules. Arguments are the **serialized wire bytes**, including
+key prefixes and options, rather than the original application objects.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+server.ExpectationMode = RespireFakeExpectationMode.Strict;
+server.Expect("SET", ["user:42", RespireFakeArgument.Any]);
+server.Expect("GET", ["user:42"], occurrences: 2,
+    response: RespireFakeResponse.Bulk("configured value"));
+
+await client.SetAsync("user:42", "stored value");
+var first = await client.GetStringAsync("user:42");
+var second = await client.GetStringAsync("user:42");
+server.VerifyAllExpectations();
+```
+
+`Expect` enables loose matching if recording was disabled. Enable expectations **after connecting** to
+exclude initialization commands. When enabled before connection or during reconnect, handshake commands
+are recorded and must also have expectations in strict mode. There are no implicit command exemptions.
+
+| Mode | Unmatched command | Verification |
+| --- | --- | --- |
+| `Disabled` (default) | Normal fake behavior; no history | Existing counts and history remain available |
+| `Loose` | Normal fake behavior | Checks every configured count; unrelated calls are allowed |
+| `Strict` | Returns `ERR Unexpected command` without executing | Also fails for every strict rejection |
+
+- Names ignore case; arguments match exact, case-sensitive bytes and the complete argument count.
+  Strings convert to UTF-8 matchers. Use `RespireFakeArgument.Exact(binaryMemory)` for binary arguments.
+  `Any` matches **one** argument, including empty bytes; it does not match a variable number of arguments.
+- Counts must be positive and are exact. The first matching expectation with occurrences left wins, in
+  registration order. Once all matching expectations are exhausted, further matching calls fail verification
+  even in loose mode (and run normal fake behavior there). An unmatched argument list does not consume a rule.
+- Expectations impose no call ordering. Matching, counts, and history order are atomic across connections;
+  concurrent callers have no predetermined order. Await calls or use one batch when order matters.
+- `VerifyAllExpectations()` throws `InvalidOperationException` with expected/received counts and the command
+  history, including mismatched arguments and unexpected commands. Await your callers first: verification
+  observes receipt, not successful execution, and does not wait. Disposal does not verify automatically.
+- `CommandHistory` returns an owned snapshot with `Sequence`, `ConnectionId`, `Command`, `Arguments`
+  (excluding the name), and `Matched`. Diagnostics escape binary bytes. History can contain sensitive keys
+  and values and grows until reset; keep test workloads small.
+- `ResetExpectations()` clears rules and history and disables recording. It keeps server data, existing
+  faults, and response overrides already queued in transactions.
+
+### Reply overrides and faults
+
+Omit `response` to verify a command while using its normal fake handler. Supply `RespireFakeResponse.Simple`,
+`Bulk`, `Integer`, `Array`, `Null`, or `Error` to replace execution entirely: an overridden write does **not**
+change stored data or invalidate watches. Arrays can contain nested replies and errors. Choose the RESP
+shape expected by the client API. Overrides can supply replies for commands the fake does not implement;
+this tests your application's interaction, not that command's Redis behavior.
+
+Connection, subscription, and transaction control (`HELLO`, `CLIENT`, `SUBSCRIBE`, `UNSUBSCRIBE`, `MULTI`,
+`EXEC`, `DISCARD`, `WATCH`, `UNWATCH`) can be observed but cannot have reply overrides. Overrides are also
+rejected while a connection is in RESP2 subscribed mode, except `PING`. A subscribed RESP2 `PING`
+override must use its normal array shape (for example, `Array(Bulk("pong"), Bulk("payload"))`).
+
+Commands are observed before fault selection. A strict rejection wins without consuming a fault rule.
+For accepted commands, existing `InjectFault` rules still apply: a before-execution error or disconnect
+wins over a configured response; delays and pauses surround normal execution or the override. Counts
+remain consumed even when a fault prevents execution. Use the existing fault API for transport timing and
+disconnect scenarios; `RespireFakeResponse.Error("ERR rejected")` supports complete-argument error matching.
+
+### Transactions and batches
+
+Every received command is counted once, including `MULTI`, each queued command, and `EXEC` or `DISCARD`.
+Internal execution at `EXEC` does not match again or add history. Register control-command expectations
+when using strict mode. Batches use the same rule: one receipt per command, preserving wire order within
+their connection.
+
+A queued reply override returns `QUEUED` initially and replaces its result slot at `EXEC`. An overridden
+error is an execution error in that slot and does not roll back other commands. A strict unexpected
+command instead rejects queueing and invalidates the transaction, so `EXEC` fails with `EXECABORT`.
+`DISCARD`, a failed watch, or disconnection do not undo receipt counts; verification alone does not prove
+a transaction committed. Assert `CommitAsync()` and its results separately. Existing fault rules continue
+to act on receipt/queueing and on `EXEC`, never on its internal command traversal.
+
+### Choosing a test tool
+
+| Tool | Use it for |
+| --- | --- |
+| Fake behavior without expectations | Stateful application tests using supported Redis commands |
+| `InjectFault` | Timing, disconnects, and command/first-argument rejection rules |
+| Expectations | Complete-argument and count assertions, strict interaction tests, configured replies |
+| [Containers](testing-containers.md) | Redis/Valkey compatibility, real scripts, unsupported operations, and operational behavior |
+
 ## Controlled faults
 
 Inject faults to test how your code handles paused, delayed, disconnected, or rejected commands.

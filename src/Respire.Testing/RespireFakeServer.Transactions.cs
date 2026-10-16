@@ -14,7 +14,9 @@ public sealed partial class RespireFakeServer
         return FakeReply.Ok;
     }
 
-    private FakeReply QueueTransaction(Connection connection, byte[][] args)
+    private sealed record QueuedCommand(byte[][] Arguments, FakeReply? ExpectedReply);
+
+    private FakeReply QueueTransaction(Connection connection, byte[][] args, FakeReply? expectedReply = null)
     {
         // Subscription control and protocol changes inside EXEC need mixed framing, which
         // this bounded transaction subset deliberately rejects instead of inventing replies.
@@ -27,7 +29,7 @@ public sealed partial class RespireFakeServer
         if (bytes > MaximumTransactionBytes - connection.QueuedBytes)
             return RejectCommand(connection, command, FakeReply.Error("ERR Respire.Testing transaction queue exceeds 16 MiB"));
         // ReadArguments already copied every argument out of reusable request storage.
-        connection.Transaction!.Add(args);
+        connection.Transaction!.Add(new(args, expectedReply));
         connection.QueuedBytes += bytes;
         return FakeReply.Simple("QUEUED");
     }
@@ -45,7 +47,8 @@ public sealed partial class RespireFakeServer
         var replies = new FakeReply[commands.Count];
         // _gate remains held for the complete sequence; expected command errors are elements,
         // not rollbacks. Faults apply to received commands/EXEC, never this internal traversal.
-        for (var index = 0; index < commands.Count; index++) replies[index] = Execute(connection, commands[index]);
+        for (var index = 0; index < commands.Count; index++)
+            replies[index] = Execute(connection, commands[index].Arguments, commands[index].ExpectedReply);
         return FakeReply.Array(replies);
     }
 

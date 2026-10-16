@@ -79,6 +79,17 @@ public sealed partial class RespireFakeServer
 
     private async Task<Outbound?> ExecuteWithFaultAsync(Connection connection, byte[][] arguments)
     {
+        var expectation = ObserveCommand(connection, arguments);
+        if (expectation.Rejected)
+        {
+            lock (_gate)
+            {
+                var rejection = QueueOutputLocked(connection,
+                    RejectCommand(connection, Token(arguments[0]), expectation.Response!).Encode(connection.Resp3), push: false);
+                rejection?.Ready.TrySetResult();
+                return rejection;
+            }
+        }
         var scope = MatchFault(arguments);
         var fault = scope?.Fault;
         if (fault is { AfterExecution: false })
@@ -97,7 +108,9 @@ public sealed partial class RespireFakeServer
             await ApplyWaitAsync(connection, scope).ConfigureAwait(false);
         }
         connection.Lifetime.Token.ThrowIfCancellationRequested();
-        var reply = Token(arguments[0]) switch
+        var reply = expectation.Response is not null
+            ? ExecuteLocked(connection, arguments, scope, out _, expectedReply: expectation.Response)
+            : Token(arguments[0]) switch
         {
             "BLMOVEM" => await ExecuteBlockingListMoveAsync(connection, arguments, scope).ConfigureAwait(false),
             "XREAD" or "XREADGROUP" => await ExecuteStreamReadAsync(connection, arguments, scope).ConfigureAwait(false),
