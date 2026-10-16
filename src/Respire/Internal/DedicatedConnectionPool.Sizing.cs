@@ -27,15 +27,17 @@ internal sealed partial class DedicatedConnectionPool
         lock (_gate)
         {
             if (_stopping || _idle.Count == 0 || options.DedicatedPool.IdleTimeout is not { } timeout) return;
-            // Pending handshakes can fail: only established connections protect the retention floor.
+            // Pending handshakes and disconnected entries cannot protect the retention floor.
             var live = 0;
             foreach (var entry in _connections.Values)
-                if (entry.State != State.Closing) live++;
+                if (entry.State != State.Closing && entry.Connection.IsConnected) live++;
             var now = options.DedicatedPool.TimeProvider.GetTimestamp();
-            for (var index = 0; index < _idle.Count && live > options.DedicatedPool.MinimumSize;)
+            for (var index = 0; index < _idle.Count;)
             {
                 var entry = _idle[index];
-                if (options.DedicatedPool.TimeProvider.GetElapsedTime(entry.IdleSince, now) < timeout)
+                var connected = entry.Connection.IsConnected;
+                if ((connected && live <= options.DedicatedPool.MinimumSize)
+                    || options.DedicatedPool.TimeProvider.GetElapsedTime(entry.IdleSince, now) < timeout)
                 {
                     index++;
                     continue;
@@ -44,7 +46,7 @@ internal sealed partial class DedicatedConnectionPool
                 entry.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                 BeginCloseLocked(entry);
                 (closing ??= []).Add(entry);
-                live--;
+                if (connected) live--;
             }
             PauseIdleTimerIfEmptyLocked();
         }

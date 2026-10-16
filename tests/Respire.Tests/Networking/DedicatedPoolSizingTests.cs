@@ -224,6 +224,36 @@ public class DedicatedPoolSizingTests
     }
 
     [Test]
+    [Arguments(3, 0)]
+    [Arguments(3, 2)]
+    [Arguments(4, 0)]
+    [Arguments(4, 3)]
+    public async Task DisconnectedEntryDoesNotReplaceMinimumRetainedConnection(int total, int disconnectedIndex)
+    {
+        var clock = new PoolClock();
+        await using var server = new FakeRespServer(total, FakeRespServer.PongReply);
+        await using var pool = CreatePool(server, new()
+        {
+            MinimumSize = 2, MaximumIdle = total, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var connections = new List<RespireConnection>();
+        for (var index = 0; index < total; index++) connections.Add(await pool.RentAsync(deadline.Token));
+        foreach (var connection in connections) pool.Return(connection);
+        // Leave the disconnected socket registered as idle, just as after a peer disconnect.
+        await connections[disconnectedIndex].DisposeAsync();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(connections.Count(connection => connection.IsConnected)).IsEqualTo(2);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(connections.Count(connection => connection.IsConnected)).IsEqualTo(2);
+        foreach (var connection in connections.Where(connection => connection.IsConnected))
+        {
+            using var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+            await Assert.That(response.AsString()).IsEqualTo("PONG");
+        }
+    }
+
+    [Test]
     public async Task ConnectingReservationDoesNotReplaceMinimumRetainedConnection()
     {
         var clock = new PoolClock();
