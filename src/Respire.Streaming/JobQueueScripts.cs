@@ -49,7 +49,7 @@ internal static class JobQueueScripts
 
     // No automatic trimming: a failed completion must not irreversibly evict another event.
     // Preflight all writes and compensate runtime failures before acknowledging the delivery.
-    private const string CompleteSource = """
+    private const string CompletePreparation = """
         local isBatch = false
         if KEYS[4] then
             for i = 1, #entries[1][2], 2 do
@@ -62,6 +62,10 @@ internal static class JobQueueScripts
             return redis.error_reply('ERR job streams must differ')
         end
         local kind = batch and batch.cancel and 'cancelled' or ARGV[5]
+
+        """;
+
+    private const string CompleteSource = """
         local fields = {'job_id', job, 'entry_id', ARGV[3], 'attempt', ARGV[4], 'kind', kind}
         if flow then table.insert(fields, 'flow_key'); table.insert(fields, flow.key) end
         if batch then
@@ -119,7 +123,7 @@ internal static class JobQueueScripts
         + "\nend\nlocal ok, result = pcall(ack)\nif not ok then return {err = result} end\nreturn result";
 
     private static RespireScript CreateCompletion(string acknowledge, bool metrics) => RespireScript.Create(
-        (metrics ? JobMetricsScripts.Key : "") + Fence
+        (metrics ? JobMetricsScripts.Key : "") + Fence + CompletePreparation
         + (metrics ? JobMetricsScripts.Prepare : "local rollbackMetrics\n") + CompleteSource
         + (metrics ? "if kind ~= 'cancelled' then\n" + JobMetricsScripts.Commit + "\nend\n" : "")
         + "local function acknowledge()\n" + acknowledge + CompleteSuffix);
