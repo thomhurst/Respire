@@ -346,10 +346,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             if (cancelled == -1) { observation.Outcome = "stale"; return; }
             if (cancelled == 1)
             {
-                var acknowledged = await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
-                        ? JobQueueScripts.CompleteAndDelete : JobQueueScripts.Complete,
+                var acknowledged = await client.Scripts.ExecuteIntegerAsync(CompletionScript(options.DeleteAcknowledgedEntries),
                     CompletionKeys(delivery, batchEvents, false),
-                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "cancelled"],
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "cancelled", "", "",
+                        0, Array.Empty<byte>(), options.JobQueue?.MetricsRetentionMinutes ?? 0],
                     _handlers.Token).ConfigureAwait(false);
                 observation.Outcome = acknowledged == 2 ? "canceled" : "stale";
                 return;

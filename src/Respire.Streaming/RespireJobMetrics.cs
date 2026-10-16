@@ -79,6 +79,7 @@ internal static class JobMetricsScripts
         if not metricsOk then
             rollbackMetrics()
             rollbackFlow()
+            rollbackBatch()
             redis.call('XDEL', KEYS[2], event)
             if dead then redis.call('XDEL', KEYS[3], dead) end
             return redis.error_reply(metricsError)

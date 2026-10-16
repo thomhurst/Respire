@@ -901,7 +901,7 @@ are bounded to 1440 buckets, and filter out expired slots. A missing hash return
 
 `Completed` counts acknowledged deliveries. `Failed` counts terminal dead letters, including
 explicit rejection and exhausted retries. Intermediate handler exceptions and retry attempts,
-expired jobs, and flow parents failed without being delivered are excluded. An operator retry
+expired jobs, cancelled batch members, and flow parents failed without being delivered are excluded. An operator retry
 creates a new delivery and may contribute a later completion. Empty minutes show zero; this also
 includes minutes before recording began and gaps while metrics were disabled. Retained history
 is shared across all workers for the queue, not partitioned by application job ID or job group.

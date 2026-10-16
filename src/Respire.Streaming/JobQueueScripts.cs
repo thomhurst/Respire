@@ -121,7 +121,8 @@ internal static class JobQueueScripts
     private static RespireScript CreateCompletion(string acknowledge, bool metrics) => RespireScript.Create(
         (metrics ? JobMetricsScripts.Key : "") + Fence
         + (metrics ? JobMetricsScripts.Prepare : "local rollbackMetrics\n") + CompleteSource
-        + (metrics ? JobMetricsScripts.Commit : "") + "local function acknowledge()\n" + acknowledge + CompleteSuffix);
+        + (metrics ? "if kind ~= 'cancelled' then\n" + JobMetricsScripts.Commit + "\nend\n" : "")
+        + "local function acknowledge()\n" + acknowledge + CompleteSuffix);
 
     internal static readonly RespireScript Complete = CreateCompletion(Acknowledge, false);
     internal static readonly RespireScript CompleteWithMetrics = CreateCompletion(Acknowledge, true);
