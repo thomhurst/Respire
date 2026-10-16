@@ -70,7 +70,7 @@ public sealed class RespireReliableQueue<T>
         var dedupKey = StreamKey + ":dedup:" + (deduplicationId is null ? "unused"
             : Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(deduplicationId))));
         string[] keys = [StreamKey, dedupKey];
-        JobQueueScheduling.ValidateKeys(_client, keys);
+        JobQueueScheduling.ValidateKeys(_client, [.. _keys, dedupKey]);
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The message serializer returned null.");
         using var reply = await _client.Scripts.ExecuteAsync(ReliableQueueScripts.Send, [.. keys],
             [bytes, deduplicationId is null ? 0 : 1, (long)Math.Ceiling(window.TotalMilliseconds)], cancellationToken).ConfigureAwait(false);

@@ -48,6 +48,9 @@ a `Payload`, a `DeliveryCount` starting at one, and an opaque `Receipt`. Pass th
 message to `AckAsync` or `NackAsync`; either can be called through another instance
 using the same queue and client key prefix.
 
+Start with small batches: recovery runs in one atomic script, so larger batches
+can increase latency for other clients sharing the server.
+
 The server's clock sets the visibility deadline for each delivery. Different
 receivers can use different durations. Until the deadline, other receivers cannot
 receive that message. Once it expires, the next receiver can redeliver it with a
@@ -90,6 +93,10 @@ first payload, even after ACK or dead-lettering. They do not extend the window.
 Reuse the same ID when retrying a send after an uncertain network outcome. Without
 an ID, every call appends a new message. Deduplication does not make processing
 exactly once. Window expiry removes only deduplication metadata, never messages.
+
+Choose a window long enough to cover send retries, including retries after ACK or
+dead-lettering. Each distinct deduplication ID retains a separate string key for
+that window; shorter windows reduce memory use at high send rates.
 
 Queue names must be nonblank and contain no braces. Generated keys share the hash
 tag `{respire-queue:<name>}` and support Redis Cluster and client key prefixes.
