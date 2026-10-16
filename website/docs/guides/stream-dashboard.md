@@ -206,7 +206,8 @@ dashboard. Registration copies the list, so subsequent changes to the options ob
 change the allowlist; update the application registration to monitor a different set of IDs.
 The dashboard does not discover batches or scan Redis. Request parameters cannot add IDs,
 select another queue, or raise the limit. Each snapshot reads each configured batch once,
-sequentially per queue, sharing the existing two-second cache and four-queue concurrency limit.
+with up to four batch reads per queue and four queues read concurrently (at most sixteen
+batch reads at once), sharing the existing two-second snapshot cache.
 Each batch status is atomic; different batches may reflect different instants.
 
 Batch state has no automatic expiry. It remains until the application calls `RemoveBatchAsync`
