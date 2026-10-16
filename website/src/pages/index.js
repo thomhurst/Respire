@@ -262,7 +262,7 @@ User? user = await redis.GetAsync<User>("user:1");`;
 
 const reasons = [
   ['Real return types', <><code>string?</code>, <code>long</code>, <code>bool</code>, or your own <code>T?</code>. No value wrapper to unwrap.</>],
-  ['Reads from memory', 'Server-assisted client caching. A hit takes about 150 ns and allocates nothing.'],
+  ['Reads from memory', 'Server-assisted client caching. A cached string GET takes about 150 ns and allocates nothing.'],
   ['Pipelined by default', 'Concurrent calls share socket writes. There is no batching switch.'],
   ['Blocking commands that work', <><code>BLPOP</code> and blocking stream reads get their own connections.</>],
   ['Coordination built in', 'Locks, rate limiters, semaphores, leader election, queues, and stream workers.'],
@@ -335,7 +335,9 @@ if (attempt.Acquired)
         window: TimeSpan.FromMinutes(1),
         segments: 6);
 
-using var lease = await limiter.AcquireAsync(1);`,
+using var lease = await limiter.AcquireAsync(1);
+if (!lease.IsAcquired)
+    return Results.StatusCode(429); // Over the limit.`,
   },
   {
     id: 'transaction',

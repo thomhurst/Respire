@@ -31,8 +31,8 @@ That is the whole setup. No multiplexer to configure, no `RedisValue` to unwrap.
 ## Why Respire?
 
 - **Real return types.** `string?`, `long`, `bool`, `TimeSpan`, or your own `T?`.
-- **Reads from memory.** Server-assisted client-side caching: a hit takes about 150 ns and
-  allocates nothing. Redis tells Respire when to evict.
+- **Reads from memory.** Server-assisted client-side caching: a cached string `GET` takes
+  about 150 ns and allocates nothing. Redis tells Respire when to evict.
 - **Pipelined by default.** Concurrent calls share socket writes. No batching switch.
 - **Blocking commands that work.** `BLPOP` and blocking stream reads get their own connections,
   so they never stall other calls.
@@ -81,6 +81,10 @@ await using var limiter = redis.Coordination.RateLimiters.SlidingWindow(
     $"limits:api:{userId}", permitLimit: 100, window: TimeSpan.FromMinutes(1), segments: 6);
 
 using var lease = await limiter.AcquireAsync(1, cancellationToken);
+if (!lease.IsAcquired)
+{
+    return; // Over the limit: reject the request, for example with HTTP 429.
+}
 ```
 
 **Optimistic transactions with retries.** Read, decide, write. If another client changes the key
@@ -159,7 +163,7 @@ string? expired = await client.GetStringAsync("session"); // null
 | [Leader election with fencing tokens](https://thomhurst.github.io/Respire/docs/guides/coordination) | `new RespireLeaderElection(...)` |
 | [Semaphores, read-write locks, latches, Redlock](https://thomhurst.github.io/Respire/docs/guides/coordination) | `redis.Coordination.CreateSemaphore(key, capacity)` |
 | [A blocking work queue](https://thomhurst.github.io/Respire/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
-| [Cluster and Sentinel](https://thomhurst.github.io/Respire/docs/fundamentals/connections) | `?cluster=true` in the connection string |
+| [Cluster and Sentinel](https://thomhurst.github.io/Respire/docs/fundamentals/connections) | `?cluster=true` for Cluster, `?serviceName=mymaster` for Sentinel |
 | [OpenTelemetry](https://thomhurst.github.io/Respire/docs/integrations/observability) | Traces and metrics built in |
 | [NativeAOT](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization#nativeaot-and-trimming) | Pass a source-generated `JsonSerializerContext` |
 
