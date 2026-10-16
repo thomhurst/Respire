@@ -1,7 +1,7 @@
 <Project>
   <!-- NuGet gathers the referenced projects' actual PackageVersion values immediately
-       before GenerateNuspec. Pin only shipping friends of core, leaving public-only
-       consumers and external dependencies with their normal ranges. -->
+       before GenerateNuspec. Pin shipping friends and packages that explicitly opt
+       into lockstep versions, leaving other dependencies with their normal ranges. -->
   <Target Name="_RespirePinCoreInternalsDependency"
           AfterTargets="_GetProjectReferenceVersions"
           Condition="'$(IsRespirePackageProject)' == 'true' And '$(MSBuildProjectName)' != 'Respire'">
@@ -12,7 +12,7 @@
     <PropertyGroup>
       <_RespireCoreFriends>;@(_RespireCoreFriend);</_RespireCoreFriends>
     </PropertyGroup>
-    <ItemGroup Condition="$(_RespireCoreFriends.Contains(';$(AssemblyName);'))">
+    <ItemGroup Condition="$(_RespireCoreFriends.Contains(';$(AssemblyName);')) Or '$(RespirePinCoreDependency)' == 'true'">
       <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)"
                                      Condition="'%(_ProjectReferencesWithVersions.Filename)' == 'Respire'">
         <ProjectVersion>[%(_ProjectReferencesWithVersions.ProjectVersion)]</ProjectVersion>

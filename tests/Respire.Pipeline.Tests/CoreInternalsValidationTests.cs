@@ -24,9 +24,10 @@ public class CoreInternalsValidationTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ValidationPropagatesInvalidPackageFailure(bool invalid)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ValidationPropagatesInvalidPackageFailure(bool invalid, bool serializer)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Directory.Build.props")))
@@ -42,12 +43,17 @@ public class CoreInternalsValidationTests
             var frameworks = props.Descendants("TargetFrameworks").First().Value.Split(';');
             var core = XDocument.Load(Path.Combine(root.FullName, "src", "Respire", "Respire.csproj"));
             var friends = core.Descendants("InternalsVisibleTo").Select(x => x.Attribute("Include")!.Value)
-                .Where(shipping.Contains).ToArray();
+                .Where(shipping.Contains)
+                .Concat(shipping.Where(id => !string.IsNullOrWhiteSpace(id) &&
+                    XDocument.Load(Path.Combine(root.FullName, "src", id, id + ".csproj"))
+                        .Descendants("RespirePinCoreDependency").Any(x => x.Value == "true")))
+                .Distinct().ToArray();
             foreach (var id in friends.Prepend("Respire"))
             {
                 using var archive = ZipFile.Open(Path.Combine(packages.FullName, $"{id}.{version}.nupkg"), ZipArchiveMode.Create);
                 using var writer = new StreamWriter(archive.CreateEntry($"{id}.nuspec").Open());
-                var dependencyVersion = invalid && id == friends[0] ? version : $"[{version}]";
+                var invalidPackage = serializer ? "Respire.Serialization.MessagePack" : friends[0];
+                var dependencyVersion = invalid && id == invalidPackage ? version : $"[{version}]";
                 var metadata = new XElement("metadata", new XElement("id", id), new XElement("version", version),
                     new XElement("dependencies", frameworks.Select(f => new XElement("group", new XAttribute("targetFramework", f),
                         new XElement("dependency", new XAttribute("id", "Respire"), new XAttribute("version", dependencyVersion))))));

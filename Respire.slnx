@@ -45,6 +45,9 @@
     <Project Path="src/Respire.OutputCaching/Respire.OutputCaching.csproj" />
     <Project Path="src/Respire.Search/Respire.Search.csproj" />
     <Project Path="src/Respire.SignalR/Respire.SignalR.csproj" />
+    <Project Path="src/Respire.Serialization.MessagePack/Respire.Serialization.MessagePack.csproj" />
+    <Project Path="src/Respire.Serialization.MemoryPack/Respire.Serialization.MemoryPack.csproj" />
+    <Project Path="src/Respire.Serialization.Protobuf/Respire.Serialization.Protobuf.csproj" />
     <Project Path="src/Respire.Streaming/Respire.Streaming.csproj" />
     <Project Path="src/Respire.Streaming.Dashboard/Respire.Streaming.Dashboard.csproj" />
     <Project Path="src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />

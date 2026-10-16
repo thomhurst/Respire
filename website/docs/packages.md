@@ -73,6 +73,9 @@ for the released-package baseline, intentional-break process, and experimental A
 | [`Aspire.Respire`](integrations/aspire.md) | .NET Aspire client registration, configuration, health checks, and telemetry |
 | [`Aspire.Respire.DistributedCaching`](integrations/aspire.md), [`Aspire.Respire.HybridCaching`](integrations/aspire.md), [`Aspire.Respire.OutputCaching`](integrations/aspire.md) | `IDistributedCache`, `HybridCache`, and output caching on an Aspire-registered client |
 | [`Respire.Compression.Lz4`](guides/value-codecs.md) | Optional LZ4 value codec |
+| [`Respire.Serialization.MessagePack`](fundamentals/values-and-serialization.md#binary-serializer-packages) | MessagePack serializer and DI registration |
+| [`Respire.Serialization.Protobuf`](fundamentals/values-and-serialization.md#binary-serializer-packages) | protobuf-net serializer and DI registration |
+| [`Respire.Serialization.MemoryPack`](fundamentals/values-and-serialization.md#binary-serializer-packages) | MemoryPack serializer and DI registration |
 | [`Respire.Compression.Zstd`](guides/value-codecs.md) | Optional Zstandard value codec |
 | [`Respire.Testing`](guides/in-memory-testing.md) | In-memory RESP test server |
 | [`Respire.Testing.Containers`](guides/testing-containers.md) | Redis and Valkey container fixtures |
@@ -85,6 +88,9 @@ for the released-package baseline, intentional-break process, and experimental A
 ## Keep internal API consumers on the same version
 
 `Respire.Caching`, `Respire.Coordination`, `Respire.StackExchangeCompat`, `Respire.DataProtection`, `Respire.Json`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Testing`, `Respire.Streaming`, and `Respire.Streaming.Dashboard` depend on core implementation details. Their NuGet packages require the exact `Respire` version they were built against, including the prerelease suffix. Upgrade these packages together with `Respire`; mixing versions can break internal calls at runtime.
+
+The three `Respire.Serialization.*` adapters also pin their core dependency exactly so
+serializer and client packages are upgraded together, even though they use public APIs.
 
 ## Redis features and custom modules
 
