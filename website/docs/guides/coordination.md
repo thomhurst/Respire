@@ -102,6 +102,95 @@ fields directly.
 For ASP.NET Core header handling, bounded response replay, and a minimal API example, see
 the [HTTP idempotency integration](../integrations/idempotency.md).
 
+## Hosted leader election
+
+`RespireLeaderElection` is a `BackgroundService` (and `IHostedService`) that campaigns
+for a fenced lease, renews it halfway through its duration, and revokes leadership when
+renewal fails, the local deadline elapses, or the host shuts down.
+
+Call this registration helper with your host's service collection and scheduled-work
+callback. Register the caller-owned `IRespireClient` before starting the host.
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Respire;
+using Respire.Coordination;
+
+static void RegisterLeaderElection(IServiceCollection services,
+    Func<long, CancellationToken, Task> runScheduledWorkAsync)
+{
+    services.AddHostedService(provider => new RespireLeaderElection(
+        provider.GetRequiredService<IRespireClient>(),
+        "{scheduler}:leader", "{scheduler}:fence",
+        new RespireLeaderElectionOptions
+        {
+            LeaseDuration = TimeSpan.FromSeconds(30),
+            RetryDelay = TimeSpan.FromSeconds(1),
+            OnElected = async leadership =>
+            {
+                while (!leadership.CancellationToken.IsCancellationRequested)
+                {
+                    // Send leadership.FencingToken with each protected write.
+                    // The receiving resource must reject stale tokens atomically.
+                    await runScheduledWorkAsync(leadership.FencingToken,
+                        leadership.CancellationToken);
+                    await Task.Delay(TimeSpan.FromSeconds(1), leadership.CancellationToken);
+                }
+            },
+            OnRevoked = leadership => Task.CompletedTask,
+        }));
+}
+```
+
+Every contender uses the same two distinct keys in one Cluster slot. The client remains
+caller-owned. Renewal requires Redis ACL access to `CLIENT ID` and `CLIENT KILL`.
+You can also construct the service directly and call `StartAsync` and `StopAsync`.
+Call `StopAsync` and let it drain before disposing the service or client.
+
+`OnElected` receives an immutable term with a `FencingToken` and `CancellationToken`.
+Returning from the callback voluntarily relinquishes leadership. `OnRevoked` runs once
+after the term is cancelled; it can overlap the elected callback while that callback
+drains. Both must finish before this instance campaigns again. Callback exceptions fault
+the hosted service after lease cleanup. Observe cancellation and do not launch detached
+work. Host shutdown deadlines can stop waiting for uncooperative work; renewal still
+stops and the server lease expires.
+
+For a leader that only needs to hold its term until revocation, keep the callback pending:
+
+```csharp
+using Respire.Coordination;
+
+var electionOptions = new RespireLeaderElectionOptions
+{
+    OnElected = term => Task.Delay(Timeout.Infinite, term.CancellationToken),
+};
+```
+
+`CurrentLeadership` returns the current local term or null when its token is cancelled.
+It is a local observation, not a server ownership check. `LeadershipChanged` reports
+election and revocation; keep event handlers short. Observer exceptions are isolated.
+The `Respire.Coordination.LeaderElection` meter emits
+`respire.leader_election.changes` with `state=elected|revoked`, and
+`respire.leader_election.acquire_failures` for transient acquisition failures. Neither
+instrument includes Redis keys or owner tokens as tags.
+
+A dead leader's server lease expires within `LeaseDuration` of its last renewal. A healthy
+contender retries within `RetryDelay` after expiry, plus scheduling and network latency.
+Contention and transient acquisition failures are retried with `RetryDelay`, including
+`LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, `MASTERDOWN`, and `READONLY` server replies.
+`READONLY` retries allow campaigning to resume after a Redis failover window.
+Authentication failures and exhausted connection recovery budgets are terminal and fault
+the service instead of retrying. Correct the credentials or recreate the client after
+reconnect exhaustion before restarting the election.
+Invalid configuration and permanent server errors (such as `NOPERM`, `WRONGTYPE`, or an
+invalid fencing counter) fault the service. An accepted acquisition whose reply is lost can hold the
+lease until expiry without electing a local leader.
+
+This has the [same fencing guarantees](#keep-the-counters-history) as the underlying lock:
+one unexpired server lease per key in a retained Redis history. A token is not a capability
+that can stop a paused process. Downstream writes must atomically reject older tokens,
+and Redis failover or restore that rolls back the counter can invalidate monotonicity.
+
 ## Fencing-token locks
 
 A fencing lock carries a random `RespireLockToken` for ownership and a positive 64-bit fencing

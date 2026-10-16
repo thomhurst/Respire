@@ -74,7 +74,7 @@ public sealed partial class RespireFakeServer
         var source = Encoding.UTF8.GetString(args[1]);
         var script = WorkerScripts.SingleOrDefault(candidate => (sha ? candidate.Sha1 : candidate.Source) == source);
         if (sha && !_workerScriptCache.Contains(source)) return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
-        if (script is null) return FakeReply.Error("ERR fake server supports only the built-in stream worker scripts");
+        if (script is null) return FakeReply.Error("ERR fake server supports only the built-in stream worker and lock scripts");
         if (script == StreamWorkerScripts.DeadLetter)
         {
             if (Integer(args[2]) != 2 || args.Length != 11) return Syntax("EVAL");

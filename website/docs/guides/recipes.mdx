@@ -137,6 +137,10 @@ worker with recovery and dead-letter handling.
 
 ## Leader election with a renewable lease
 
+For hosted applications, use the [RespireLeaderElection API](coordination.md#hosted-leader-election)
+for automatic campaigning, renewal, revocation callbacks, and leadership metrics.
+The recipe below shows a single acquisition for applications that own their retry loop.
+
 Every contender calls `LeaderElection.TryRunAsync(client, leaderWork, stoppingToken)`.
 A `false` result means another contender holds the lease; the caller can retry with jitter
 and a cancellation-aware delay. A successful contender runs its callback under a renewable

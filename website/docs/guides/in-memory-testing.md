@@ -55,7 +55,8 @@ uses one response slot, so later commands still work.
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST`, `KEYS`, `SCAN` with `MATCH` and `COUNT` |
 | Server time | `TIME`, using the supplied `TimeProvider` with microsecond precision |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
-| Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
+| Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME`, `CLIENT KILL ID` (optional `SKIPME yes`) |
+| Locks | `EVAL`/`EVALSHA` for Respire's built-in fenced acquisition and owner-checked lock renewal/release scripts; supports [leader-election](coordination.md#hosted-leader-election) tests |
 | Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
 
 ### Explicitly unsupported
@@ -281,7 +282,7 @@ Behavior follows [Redis transactions](https://redis.io/docs/latest/develop/using
 ## Remaining limits
 
 - Only database 0 and standalone mode.
-- Not simulated: authentication, TLS, Cluster, Sentinel, general scripts and functions (only the built-in stream worker scripts), client-side tracking, persistence, and admin diagnostics. Unsupported handshake features fail initialization.
+- Not simulated: authentication, TLS, Cluster, Sentinel, general scripts and functions (only the built-in stream worker and lock scripts), client-side tracking, persistence, and admin diagnostics. Unsupported handshake features fail initialization.
 - Requests are limited to 16 MiB; larger requests close the connection.
 - No eviction or memory limit: keep test data small.
 - Not a throughput benchmark.
@@ -291,7 +292,7 @@ The [shared testing sample](testing-sample.md) runs the same scenarios against t
 
 ## Testing script-heavy code
 
-The fake recognizes only Respire's built-in stream worker scripts. It does not embed a Lua
+The fake recognizes only Respire's built-in stream worker and lock scripts. It does not embed a Lua
 interpreter: arbitrary `RespireScript` execution, `SCRIPT LOAD`, `redis.call`/`redis.pcall`, and
 `cjson` require a real server. An embedded interpreter alone would not reproduce Redis's Lua
 environment, conversion rules, and command behavior.

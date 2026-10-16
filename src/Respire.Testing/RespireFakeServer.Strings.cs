@@ -24,6 +24,9 @@ public sealed partial class RespireFakeServer
                 case "NX" when !xx: nx = true; break;
                 case "XX" when !nx: xx = true; break;
                 case "GET": get = true; break;
+                // Redis 7 rejects conditional SET before mutation. Native lock renewal
+                // recognizes this precise error and executes the owner-checked Lua script.
+                case "IFEQ": return FakeReply.Error("ERR syntax error");
                 case "KEEPTTL" when expiration is null: keepTtl = true; break;
                 case "EX" or "PX" or "EXAT" or "PXAT"
                     when !keepTtl && (expiration is null || expiration == option) && index + 1 < args.Length:

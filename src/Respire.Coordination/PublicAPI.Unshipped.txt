@@ -13,6 +13,26 @@ Respire.Coordination.RespireIdempotencyState.Started = 0 -> Respire.Coordination
 Respire.Coordination.RespireIdempotencyState.InProgress = 1 -> Respire.Coordination.RespireIdempotencyState
 Respire.Coordination.RespireIdempotencyState.Completed = 2 -> Respire.Coordination.RespireIdempotencyState
 Respire.Coordination.RespireIdempotencyState.FingerprintMismatch = 3 -> Respire.Coordination.RespireIdempotencyState
+Respire.Coordination.RespireLeaderElection
+Respire.Coordination.RespireLeaderElection.RespireLeaderElection(Respire.IRespireClient! client, Respire.RespireKey key, Respire.RespireKey fencingCounterKey, Respire.Coordination.RespireLeaderElectionOptions! options) -> void
+Respire.Coordination.RespireLeaderElection.CurrentLeadership.get -> Respire.Coordination.RespireLeadership?
+Respire.Coordination.RespireLeaderElection.LeadershipChanged -> System.EventHandler<Respire.Coordination.RespireLeadershipChangedEventArgs!>?
+Respire.Coordination.RespireLeaderElectionOptions
+Respire.Coordination.RespireLeaderElectionOptions.RespireLeaderElectionOptions() -> void
+Respire.Coordination.RespireLeaderElectionOptions.LeaseDuration.get -> System.TimeSpan
+Respire.Coordination.RespireLeaderElectionOptions.LeaseDuration.init -> void
+Respire.Coordination.RespireLeaderElectionOptions.RetryDelay.get -> System.TimeSpan
+Respire.Coordination.RespireLeaderElectionOptions.RetryDelay.init -> void
+Respire.Coordination.RespireLeaderElectionOptions.OnElected.get -> System.Func<Respire.Coordination.RespireLeadership!, System.Threading.Tasks.Task!>!
+Respire.Coordination.RespireLeaderElectionOptions.OnElected.init -> void
+Respire.Coordination.RespireLeaderElectionOptions.OnRevoked.get -> System.Func<Respire.Coordination.RespireLeadership!, System.Threading.Tasks.Task!>?
+Respire.Coordination.RespireLeaderElectionOptions.OnRevoked.init -> void
+Respire.Coordination.RespireLeadership
+Respire.Coordination.RespireLeadership.FencingToken.get -> long
+Respire.Coordination.RespireLeadership.CancellationToken.get -> System.Threading.CancellationToken
+Respire.Coordination.RespireLeadershipChangedEventArgs
+Respire.Coordination.RespireLeadershipChangedEventArgs.Leadership.get -> Respire.Coordination.RespireLeadership!
+Respire.Coordination.RespireLeadershipChangedEventArgs.IsLeader.get -> bool
 Respire.Coordination.RespireRateLimitUpdateMode
 Respire.Coordination.RespireRateLimitUpdateMode.Adopt = 1 -> Respire.Coordination.RespireRateLimitUpdateMode
 Respire.Coordination.RespireRateLimitUpdateMode.Migrate = 0 -> Respire.Coordination.RespireRateLimitUpdateMode

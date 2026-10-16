@@ -248,7 +248,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                     : expectedReply;
             }
             if (!Commands.TryGetValue(command, out var handler))
-                return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}"));
+                return RejectCommand(connection, command, FakeReply.Error(command is "DELEX" or "DELIFEQ"
+                    // Native lock commands probe capabilities before selecting the built-in
+                    // Lua fallback. Match Redis 7's definitive rejection without executing.
+                    ? $"ERR unknown command '{command}', with args beginning with:"
+                    : $"ERR Respire.Testing does not support command or arguments: {command}"));
             // Redis command-table arity is either exact or a minimum. Optional-argument
             // upper bounds (PING, LPOP/RPOP) are checked by the handler, including in EXEC.
             if (args.Length < handler.MinimumArity
@@ -261,10 +265,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             if (command == "CLIENT")
             {
                 var subcommand = Token(args[1]);
-                var arity = subcommand switch { "ID" or "GETNAME" => 2, "SETNAME" => 3, _ => 0 };
+                var arity = subcommand switch { "ID" or "GETNAME" => 2, "SETNAME" => 3, "KILL" => -4, _ => 0 };
                 if (arity == 0)
                     return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support CLIENT {subcommand}"));
-                if (args.Length != arity) return RejectCommand(connection, command, WrongArity($"CLIENT|{subcommand}"));
+                if (arity > 0 && args.Length != arity || arity < 0 && args.Length < -arity)
+                    return RejectCommand(connection, command, WrongArity($"CLIENT|{subcommand}"));
             }
             if (connection.Transaction is not null && command is not ("MULTI" or "EXEC" or "DISCARD" or "WATCH"))
                 return QueueTransaction(connection, args);
@@ -287,9 +292,24 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         return connection.Resp3 ? FakeReply.Map(fields) : FakeReply.Array(fields);
     }
 
-    private static FakeReply Client(Connection connection, byte[][] args)
+    private FakeReply Client(Connection connection, byte[][] args)
     {
         if (args.Length == 2 && Token(args[1]) == "ID") return FakeReply.Integer(connection.Id);
+        if (Token(args[1]) == "KILL")
+        {
+            // Managed lock renewal probes its own ID with SKIPME yes, then fences a
+            // retired connection from a separate control connection by its exact ID.
+            if (args.Length is not (4 or 6) || Token(args[2]) != "ID"
+                || args.Length == 6 && (Token(args[4]) != "SKIPME" || Token(args[5]) != "YES"))
+                return Syntax("CLIENT KILL");
+            var id = Integer(args[3]);
+            if (id <= 0) return Syntax("CLIENT KILL");
+            var victim = _connections.FirstOrDefault(candidate => candidate.Id == id && candidate != connection
+                && !candidate.Closed && !candidate.Lifetime.IsCancellationRequested);
+            if (victim is null) return FakeReply.Integer(0);
+            StopConnectionLocked(victim);
+            return FakeReply.Integer(1);
+        }
         if (args.Length == 2 && Token(args[1]) == "GETNAME") return FakeReply.Bulk(connection.Name);
         if (args.Length == 3 && Token(args[1]) == "SETNAME")
         {
