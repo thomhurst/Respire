@@ -1,4 +1,18 @@
 #nullable enable
+Respire.Coordination.RespireIdempotency
+Respire.Coordination.RespireIdempotency.RespireIdempotency(Respire.IRespireClient! client) -> void
+Respire.Coordination.RespireIdempotency.TryBeginAsync(Respire.RespireKey key, System.TimeSpan ttl, string? fingerprint = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Coordination.RespireIdempotencyResult!>
+Respire.Coordination.RespireIdempotency.CompleteAsync(Respire.RespireKey key, string! ownerToken, System.ReadOnlyMemory<byte> result, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireIdempotency.AbandonAsync(Respire.RespireKey key, string! ownerToken, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Coordination.RespireIdempotencyResult
+Respire.Coordination.RespireIdempotencyResult.State.get -> Respire.Coordination.RespireIdempotencyState
+Respire.Coordination.RespireIdempotencyResult.OwnerToken.get -> string?
+Respire.Coordination.RespireIdempotencyResult.Result.get -> System.ReadOnlyMemory<byte>
+Respire.Coordination.RespireIdempotencyState
+Respire.Coordination.RespireIdempotencyState.Started = 0 -> Respire.Coordination.RespireIdempotencyState
+Respire.Coordination.RespireIdempotencyState.InProgress = 1 -> Respire.Coordination.RespireIdempotencyState
+Respire.Coordination.RespireIdempotencyState.Completed = 2 -> Respire.Coordination.RespireIdempotencyState
+Respire.Coordination.RespireIdempotencyState.FingerprintMismatch = 3 -> Respire.Coordination.RespireIdempotencyState
 Respire.Coordination.RespireRateLimitUpdateMode
 Respire.Coordination.RespireRateLimitUpdateMode.Adopt = 1 -> Respire.Coordination.RespireRateLimitUpdateMode
 Respire.Coordination.RespireRateLimitUpdateMode.Migrate = 0 -> Respire.Coordination.RespireRateLimitUpdateMode
