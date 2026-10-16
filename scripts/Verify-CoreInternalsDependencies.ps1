@@ -23,6 +23,12 @@ $shippingProjects = $props.SelectSingleNode('/Project/PropertyGroup/RespirePacka
 $frameworks = $props.SelectSingleNode('/Project/PropertyGroup/TargetFrameworks').InnerText -split ';'
 $friends = @($core.SelectNodes('/Project/ItemGroup/InternalsVisibleTo/@Include') |
     ForEach-Object { $_.Value } | Where-Object { $_ -in $shippingProjects })
+$friends += @($shippingProjects | Where-Object {
+    [xml]$project = Get-Content (Join-Path $repositoryRoot "src/$_/$_.csproj") -Raw
+    $pin = $project.SelectSingleNode('/Project/PropertyGroup/RespirePinCoreDependency')
+    $null -ne $pin -and $pin.InnerText -eq 'true'
+})
+$friends = @($friends | Select-Object -Unique)
 if ($friends.Count -eq 0) { throw 'No shipping core friends found; package validation cannot proceed.' }
 
 function Read-PackageNuspec([string]$packageId) {

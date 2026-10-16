@@ -1,0 +1,9 @@
+#nullable enable
+Respire.Serialization.Protobuf.RespireProtobufSerializer
+Respire.Serialization.Protobuf.RespireProtobufSerializer.RespireProtobufSerializer(ProtoBuf.Meta.TypeModel? model = null) -> void
+Respire.Serialization.Protobuf.RespireProtobufSerializer.Serialize<T>(System.Buffers.IBufferWriter<byte>! destination, T value) -> void
+Respire.Serialization.Protobuf.RespireProtobufSerializer.Deserialize<T>(System.ReadOnlySpan<byte> payload) -> T?
+Respire.Serialization.Protobuf.RespireProtobufSerializer.Serialize(System.Buffers.IBufferWriter<byte>! destination, System.Type! type, object? value) -> void
+Respire.Serialization.Protobuf.RespireProtobufSerializer.Deserialize(System.Type! type, System.ReadOnlySpan<byte> payload) -> object?
+Respire.Serialization.Protobuf.RespireProtobufServiceCollectionExtensions
+static Respire.Serialization.Protobuf.RespireProtobufServiceCollectionExtensions.AddRespireProtobufSerializer(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, ProtoBuf.Meta.TypeModel? model = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Serialization.Protobuf</PackageId>
+    <Description>Protobuf serialization for Respire.</Description>
+    <RespirePinCoreDependency>true</RespirePinCoreDependency>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="protobuf-net" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+</Project>

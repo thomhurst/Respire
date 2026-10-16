@@ -277,7 +277,8 @@ They track remaining work, not release commitments.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
   job groups and queue controls, batch callbacks, transactional enqueue, dashboard history,
   additional tracking modes, adaptive dedicated pools,
-  serializer packages, client-side encryption, coordination APIs, and testing support.
+  client-side encryption, coordination APIs, and testing support.
+  [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),
   [typed queries](guides/generated-search-schemas.md#typed-queries), and
   [near-cache map](guides/near-cache-map.md) are already available.

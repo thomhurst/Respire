@@ -123,6 +123,28 @@ jobs:
           assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), sys.argv[1]
           PY
           done
+      - name: Compare binary serializers with System.Text.Json
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidate
+          for job in Dry Short; do
+            dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" -- \
+              --filter '*BinarySerializerBenchmarks*' --job "$job" --exporters json markdown \
+              --artifacts "$GITHUB_WORKSPACE/results/serializers-$job" \
+              > "$GITHUB_WORKSPACE/serializers-$job.log" 2>&1
+          done
+          python - "$GITHUB_WORKSPACE/results/serializers-Short" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          reports = list(Path(sys.argv[1], 'results').glob('*-report-full-compressed.json'))
+          assert len(reports) == 1, 'Missing serializer comparison report'
+          cases = json.loads(reports[0].read_text())['Benchmarks']
+          expected = {f'{name}{operation}' for name in ('Json', 'MessagePack', 'MemoryPack', 'Protobuf') for operation in ('Read', 'Write')}
+          assert len(cases) == 16 and {case['Method'] for case in cases} == expected, 'Incomplete serializer comparison'
+          assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases), 'Invalid serializer measurements'
+          PY
       - name: Publish allocation and latency reports
         shell: python
         run: |
@@ -134,6 +156,8 @@ jobs:
               for phase in ('baseline-a', 'candidate', 'baseline-b'):
                   summary.write(f'\n### {phase}\n\n')
                   summary.write(next(Path('results', phase, 'results').glob('*-report-github.md')).read_text())
+              summary.write('\n## Binary serializers versus JSON\n\nSame model and reused output buffer, at 64 and 4096 characters. Read rows include MessagePack\'s required owned input copy. These candidate-only rows compare formats, not repository revisions.\n\n')
+              summary.write(next(Path('results/serializers-Short/results').glob('*-report-github.md')).read_text())
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

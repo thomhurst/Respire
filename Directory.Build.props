@@ -44,6 +44,9 @@
       Respire.Resilience;
       Respire.Search;
       Respire.SignalR;
+      Respire.Serialization.MessagePack;
+      Respire.Serialization.MemoryPack;
+      Respire.Serialization.Protobuf;
       Respire.Streaming;
       Respire.Streaming.Dashboard;
       Respire.StackExchangeCompat;

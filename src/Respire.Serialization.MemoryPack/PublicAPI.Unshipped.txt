@@ -1,0 +1,9 @@
+#nullable enable
+Respire.Serialization.MemoryPack.RespireMemoryPackSerializer
+Respire.Serialization.MemoryPack.RespireMemoryPackSerializer.RespireMemoryPackSerializer(MemoryPack.MemoryPackSerializerOptions? options = null) -> void
+Respire.Serialization.MemoryPack.RespireMemoryPackSerializer.Serialize<T>(System.Buffers.IBufferWriter<byte>! destination, T value) -> void
+Respire.Serialization.MemoryPack.RespireMemoryPackSerializer.Deserialize<T>(System.ReadOnlySpan<byte> payload) -> T?
+Respire.Serialization.MemoryPack.RespireMemoryPackSerializer.Serialize(System.Buffers.IBufferWriter<byte>! destination, System.Type! type, object? value) -> void
+Respire.Serialization.MemoryPack.RespireMemoryPackSerializer.Deserialize(System.Type! type, System.ReadOnlySpan<byte> payload) -> object?
+Respire.Serialization.MemoryPack.RespireMemoryPackServiceCollectionExtensions
+static Respire.Serialization.MemoryPack.RespireMemoryPackServiceCollectionExtensions.AddRespireMemoryPackSerializer(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, MemoryPack.MemoryPackSerializerOptions? options = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

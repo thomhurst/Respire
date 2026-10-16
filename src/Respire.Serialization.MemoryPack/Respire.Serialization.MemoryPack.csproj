@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Serialization.MemoryPack</PackageId>
+    <Description>MemoryPack serialization for Respire.</Description>
+    <RespirePinCoreDependency>true</RespirePinCoreDependency>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="MemoryPack" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+</Project>

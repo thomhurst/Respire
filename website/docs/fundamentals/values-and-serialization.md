@@ -97,12 +97,12 @@ else if (hits == 0) { /* key holds 0 */ }
 
 `SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for objects. The default is `RespireSystemTextJsonSerializer`. Supply an `IRespireSerializer` for another format:
 
-<!-- doc-test-ignore: MyMessagePackSerializer is the application's omitted IRespireSerializer implementation. -->
+<!-- doc-test-ignore: Optional serializer package; shown with application connection options. -->
 ```csharp
 var options = new RespireOptions
 {
     Endpoints = { new("localhost") },
-    Serializer = new MyMessagePackSerializer(),
+    Serializer = new Respire.Serialization.MessagePack.RespireMessagePackSerializer(),
 };
 ```
 
@@ -122,6 +122,84 @@ This changes the stored format for `ReadOnlyMemory<byte>`, `Memory<byte>`, and `
 :::
 
 Facets that take a single payload have a generic overload beside the `RespireValue` one: `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument typed as `RespireValue` selects the raw overload; anything else selects the generic one. Generic byte-memory and `char` writes keep their `RespireValue` encoding. Collection-member overloads also preserve raw non-finite floating-point values; generic string writes reject them.
+
+## Binary serializer packages
+
+Install the adapter for your format; each package pins the matching core Respire version.
+Both generic and runtime-Type methods implement the existing `IRespireSerializer` contract.
+
+| Package | Serializer | Model setup | Adapter copies |
+| --- | --- | --- | --- |
+| `Respire.Serialization.MessagePack` | `RespireMessagePackSerializer` | `[MessagePackObject]` and `[Key]`, or custom resolvers | Direct writer; reads copy the span into one owned array |
+| `Respire.Serialization.Protobuf` | `RespireProtobufSerializer` | protobuf-net `[ProtoContract]` / `[ProtoMember]`, or a supplied `TypeModel` | Direct writer and span; no adapter payload copy |
+| `Respire.Serialization.MemoryPack` | `RespireMemoryPackSerializer` | `[MemoryPackable]` on a partial type; reference MemoryPack in the model project for its generator | Direct writer and span; no adapter payload copy |
+
+MessagePack defaults to `Standard.WithSecurity(MessagePackSecurity.UntrustedData)`.
+Its read copy is necessary because the upstream serializer accepts memory or a sequence,
+not a span. The copy is owned rather than pooled so custom formatters can retain memory.
+Protobuf has no root null representation: this adapter rejects null writes; an empty
+protobuf message represents a default-valued object. MemoryPack and MessagePack support
+null roots. Configure options and models before sharing a serializer between threads;
+custom converters must also support concurrent calls.
+
+Each package provides a DI helper in its matching namespace. Registration supplies a
+singleton `IRespireSerializer`; explicitly select it in the client options factory:
+
+<!-- doc-test-ignore: Requires the optional MessagePack serializer package and application DI setup. -->
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Respire.DependencyInjection;
+using Respire.Serialization;
+using Respire.Serialization.MessagePack;
+
+services.AddRespireMessagePackSerializer();
+services.AddRespire(provider => RespireOptions.Parse("localhost:6379") with
+{
+    Serializer = provider.GetRequiredService<IRespireSerializer>(),
+});
+```
+
+Use `AddRespireProtobufSerializer(model)` or `AddRespireMemoryPackSerializer(options)`
+in the same way. Registration does not reconfigure existing clients or automatically
+choose serializers for keyed clients. Register one default serializer, or construct
+separate instances in each keyed client's options factory.
+
+Typed values and `GetOrSetAsync<T>` use the client serializer. Job queues and near-cache
+maps take explicit byte delegates; connect the same adapter to those delegates:
+
+<!-- doc-test-ignore: Optional adapter, application Order model, and existing client with ClientSideCache enabled. -->
+```csharp
+byte[] Encode(Order order)
+{
+    var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+    serializer.Serialize(buffer, order);
+    return buffer.WrittenSpan.ToArray();
+}
+Order Decode(ReadOnlyMemory<byte> bytes) => serializer.Deserialize<Order>(bytes.Span)!;
+
+var queue = new Respire.Streaming.RespireJobQueue<Order>(redis, "orders", Encode);
+await using var map = new RespireMap<string, Order>(redis, "orders:map", key => key, Encode, Decode);
+// Pass Encode and bytes => Decode(bytes) to AddRespireJobQueue when registering a worker.
+```
+
+Those delegate APIs require owned arrays, so encoding copies the written bytes regardless
+of format. The typed-serialization benchmark workflow compares these adapters with
+System.Text.Json on small and large models, including MessagePack's read copy in its
+latency and allocation measurements.
+
+**Trimming and AOT:** MemoryPack and MessagePack need generated/preserved formatters for
+every model. Their reflection fallback and runtime-Type dispatch are not a general AOT
+guarantee. Protobuf-net's default runtime model and this adapter's runtime-Type writer
+use runtime metadata/generic dispatch; they are not advertised as NativeAOT-safe. All
+adapters retain the interface's trimming and dynamic-code warnings. For Respire's
+supported reflection-free path, use the generated JSON context below; validate any
+binary configuration against your own published model graph.
+
+See the upstream [MessagePack](https://github.com/MessagePack-CSharp/MessagePack-CSharp),
+[MemoryPack](https://github.com/Cysharp/MemoryPack), and
+[protobuf-net](https://github.com/protobuf-net/protobuf-net) model and compatibility guidance.
+Formats are not interchangeable: migrate stored data or use a new key namespace when
+switching serializers, and configure every producer and consumer consistently.
 
 ## NativeAOT and trimming
 

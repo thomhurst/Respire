@@ -6,6 +6,11 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Respire.Streaming/Respire.Streaming.csproj" />
+    <ProjectReference Include="../../src/Respire.Serialization.MessagePack/Respire.Serialization.MessagePack.csproj" />
+    <ProjectReference Include="../../src/Respire.Serialization.MemoryPack/Respire.Serialization.MemoryPack.csproj" />
+    <ProjectReference Include="../../src/Respire.Serialization.Protobuf/Respire.Serialization.Protobuf.csproj" />
+    <ProjectReference Include="../../src/Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
+    <PackageReference Include="MemoryPack" />
     <ProjectReference Include="../../src/Respire.Testing/Respire.Testing.csproj" />
     <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
