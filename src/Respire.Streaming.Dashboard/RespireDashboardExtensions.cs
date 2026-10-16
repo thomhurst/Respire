@@ -22,8 +22,12 @@ public static class RespireDashboardExtensions
         // Freeze the allowlist when registration completes, before any request can observe it.
         var frozen = new RespireDashboardOptions { EntryLimit = options.EntryLimit, MetricsHistoryMinutes = options.MetricsHistoryMinutes };
         foreach (var stream in options.Streams)
-            frozen.Streams.Add(new() { Name = stream.Name, Stream = stream.Stream, Group = stream.Group,
-                DeadLetterStream = stream.DeadLetterStream, IsJobQueue = stream.IsJobQueue });
+        {
+            var copy = new RespireDashboardStream { Name = stream.Name, Stream = stream.Stream, Group = stream.Group,
+                DeadLetterStream = stream.DeadLetterStream, IsJobQueue = stream.IsJobQueue };
+            foreach (var id in stream.BatchIds) copy.BatchIds.Add(id);
+            frozen.Streams.Add(copy);
+        }
         services.AddAntiforgery();
         services.AddSingleton(provider => new DashboardState(provider.GetRequiredService<IRespireClient>(), frozen));
         return services;

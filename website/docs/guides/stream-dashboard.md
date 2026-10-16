@@ -9,7 +9,7 @@ description: Inspect stream workers and reliable job queues with an authorized A
 [stream workers](stream-workers.md) and [typed job queues](job-queues.md). It shows configured
 streams, consumer groups, pending deliveries, dead letters, and a sampled delivery rate.
 Operators can retry or permanently delete individual dead letters, inspect retained job logs,
-and inspect, pause, or resume application job groups.
+inspect configured batch progress, and inspect, pause, or resume application job groups.
 
 Install `Respire.Streaming.Dashboard` and `Respire.DependencyInjection` in an ASP.NET Core app.
 The dashboard supports .NET 8 and .NET 10 and requires Redis 7 or later for retry permission
@@ -51,6 +51,7 @@ builder.Services.AddRespireStreamingDashboard(options =>
         Group = "respire-jobs",
         DeadLetterStream = "{respire-job:email}:ready:dead",
         IsJobQueue = true,
+        BatchIds = { "monthly-newsletter" },
     });
 });
 
@@ -181,6 +182,44 @@ requires the existing [group-control permissions](job-queues.md#group-concurrenc
 on that queue's fixed scheduling keys. A denied write returns HTTP 403; other Redis failures
 return HTTP 503 with a generic message. An inspection failure leaves other dashboard sections
 available.
+
+## Inspect batch progress
+
+For `IsJobQueue = true`, add the IDs returned by `CreateBatchAsync` to the registration's
+`BatchIds` collection. Set `Stream` to that queue's logical `StreamKey`, such as
+`{respire-job:email}:ready`, before the client's key prefix. The dashboard uses the runtime's
+`GetBatchStatusAsync` API with its registered client, preserving prefix and Cluster key routing.
+The example above displays the `monthly-newsletter` batch from the `email` queue.
+
+**Batch progress** displays configured IDs in configuration order, with pending, succeeded,
+failed, and cancelled member counts, open/sealed membership, terminal status, and whether
+cancellation was requested. Pending includes retries: an unsuccessful attempt is not a terminal
+failure. Callback jobs are excluded from these counts. An open batch with zero pending members
+is not terminal; terminal means sealed, all members finished, and eligible callbacks published.
+It does not mean the callbacks have executed. Cancellation is cooperative and leaves already
+running handlers uninterrupted. See [job batches](job-queues.md#batches-and-completion-callbacks)
+for the runtime's completion and cancellation rules.
+
+Configure at most `EntryLimit` IDs per queue (default 50, maximum 200). IDs must be nonblank,
+valid UTF-8, and at most 4096 characters. Invalid configuration is rejected when mapping the
+dashboard. Registration copies the list, so subsequent changes to the options object do not
+change the allowlist; update the application registration to monitor a different set of IDs.
+The dashboard does not discover batches or scan Redis. Request parameters cannot add IDs,
+select another queue, or raise the limit. Each snapshot reads each configured batch once,
+with up to four batch reads per queue and four queues read concurrently (at most sixteen
+batch reads at once), sharing the existing two-second snapshot cache.
+Each batch status is atomic; different batches may reflect different instants.
+
+Batch state has no automatic expiry. It remains until the application calls `RemoveBatchAsync`
+after completion. Removing state does not remove the ID from dashboard configuration. Unknown
+or removed IDs display **No retained batch data**, rather than zero counts. A Redis read failure
+displays **Batch data unavailable** for that row while other batches and dashboard sections
+remain visible. With no configured IDs, the section explains how to enable monitoring.
+
+Batch reads use the existing operator authorization policy, HTML escaping, and `no-store`
+response headers. Grant the dashboard Redis identity script execution (`EVAL`/`EVALSHA` and
+script loading) and `GET` on the configured queues' `:batch:*` keys. The dashboard does not
+modify, seal, cancel, or remove batches, and never displays raw Redis error details.
 
 ## Inspect job logs
 

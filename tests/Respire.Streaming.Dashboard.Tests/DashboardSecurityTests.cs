@@ -173,7 +173,7 @@ public class DashboardSecurityTests(RedisTestContainer redis)
     }
 
     internal static async Task<WebApplication> CreateApplication(IRespireClient client, string mappedPolicy = "operators", bool nested = false,
-        bool jobs = false, int entryLimit = 50, bool kestrel = false)
+        bool jobs = false, int entryLimit = 50, bool kestrel = false, Action<RespireDashboardOptions>? configure = null)
     {
         var builder = WebApplication.CreateBuilder();
         if (kestrel) builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
@@ -185,6 +185,7 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         {
             options.EntryLimit = entryLimit;
             options.Streams.Add(Options(jobs).Streams[0]);
+            configure?.Invoke(options);
         });
         var app = builder.Build();
         if (nested) app.UsePathBase("/tenant");

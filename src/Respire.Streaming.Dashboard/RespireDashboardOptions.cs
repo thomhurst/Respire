@@ -6,7 +6,8 @@ public sealed class RespireDashboardOptions
     /// <summary>The streams to inspect. No Redis key discovery is performed.</summary>
     public IList<RespireDashboardStream> Streams { get; } = new List<RespireDashboardStream>();
 
-    /// <summary>Maximum pending and dead-letter entries displayed per stream, from 1 to 200. Defaults to 50.</summary>
+    /// <summary>Maximum pending entries, dead letters, application groups per page, and configured batch IDs
+    /// per stream, from 1 to 200. Defaults to 50.</summary>
     public int EntryLimit { get; set; } = 50;
 
     /// <summary>Maximum one-minute history buckets displayed per job queue, from 1 to 1440. Defaults to 60.</summary>
@@ -26,4 +27,9 @@ public sealed class RespireDashboardStream
     public string? DeadLetterStream { get; set; }
     /// <summary>Whether retry resets reliable job attempt and expiry fields. Defaults to false for plain streams.</summary>
     public bool IsJobQueue { get; set; }
+
+    /// <summary>Batch IDs to inspect in configuration order, at most EntryLimit. Requires IsJobQueue
+    /// and the queue's logical StreamKey. IDs must be nonblank valid UTF-8, at most 4096 characters.
+    /// No batch discovery is performed; registration freezes this list.</summary>
+    public IList<string> BatchIds { get; } = new List<string>();
 }

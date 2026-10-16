@@ -2,6 +2,7 @@
 
 An ASP.NET Core dashboard for configured Redis stream workers and reliable job queues.
 Inspect consumer groups, pending deliveries, dead letters, and the group delivery rate.
+Monitor configured job batch IDs with member counts, sealed/terminal state, and cancellation status.
 Retry or delete individual dead letters using authorized, antiforgery-protected forms.
 
 ## Install

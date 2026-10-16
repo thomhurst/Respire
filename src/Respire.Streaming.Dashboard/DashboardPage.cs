@@ -99,6 +99,7 @@ internal static class DashboardPage
                 .Append(stream.RateLimitHits is { } hits ? N(hits) : "—")
                 .Append("</dd></div></dl><p class=\"note\">Cumulative denied reader admissions. Jobs remain queued and retain their retry budget.</p></section>");
             RenderMetrics(html, stream.Metrics);
+            RenderBatches(html, stream.Batches);
             RenderJobGroups(html, stream.Index, stream.JobGroups?.Groups, stream.JobGroups?.NextCursor,
                 path, tokenFieldName, requestToken);
         }
@@ -164,6 +165,40 @@ internal static class DashboardPage
                 .Append("<p class=\"note\">Look up retained log lines from any attempt, including completed and failed jobs.</p></section>");
         }
         html.Append("</article>");
+    }
+
+    private static void RenderBatches(StringBuilder html, IReadOnlyList<DashboardJobBatch>? batches)
+    {
+        html.Append("""
+            <section class="section"><h3>Batch progress</h3>
+            """);
+        if (batches is null || batches.Count == 0)
+            html.Append("""<p class="empty">No batch IDs configured. Add BatchIds to this job queue's dashboard registration.</p>""");
+        else
+        {
+            html.Append("""
+                <div class="table-wrap"><table><thead><tr><th scope="col">Batch ID</th><th scope="col">Pending</th><th scope="col">Succeeded</th><th scope="col">Failed</th><th scope="col">Cancelled</th><th scope="col">Membership</th><th scope="col">Terminal</th><th scope="col">Cancellation requested</th></tr></thead><tbody>
+                """);
+            foreach (var batch in batches)
+            {
+                html.Append("<tr><td>").Append(E(batch.Id)).Append("</td>");
+                if (batch.Status is not { } status)
+                    html.Append("""<td colspan="7" class="notice">""").Append(batch.Unavailable
+                        ? "Batch data unavailable. Check Redis permissions and the configured queue."
+                        : "No retained batch data. The ID may be unknown or its state may have been removed.").Append("</td>");
+                else
+                    html.Append("<td>").Append(N(status.Pending)).Append("</td><td>").Append(N(status.Succeeded))
+                        .Append("</td><td>").Append(N(status.Failed)).Append("</td><td>").Append(N(status.Cancelled))
+                        .Append("</td><td>").Append(status.IsSealed ? "Sealed" : "Open")
+                        .Append("</td><td>").Append(status.IsCompleted ? "Yes" : "No")
+                        .Append("</td><td>").Append(status.CancellationRequested ? "Yes" : "No").Append("</td>");
+                html.Append("</tr>");
+            }
+            html.Append("</tbody></table></div>");
+        }
+        html.Append("""
+            <p class="note">Configured IDs only, in configuration order. Pending includes retries; callback jobs are excluded from counts. Terminal means sealed with no pending members and eligible callbacks published, not executed. Cancellation leaves running handlers uninterrupted. Batch state is retained until explicitly removed.</p></section>
+            """);
     }
 
     private static void RenderJobGroups(StringBuilder html, int index, IReadOnlyList<RespireJobGroupInfo>? groups,

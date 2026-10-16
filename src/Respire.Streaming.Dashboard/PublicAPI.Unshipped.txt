@@ -1,4 +1,5 @@
 #nullable enable
+Respire.Streaming.Dashboard.RespireDashboardStream.BatchIds.get -> System.Collections.Generic.IList<string!>!
 Respire.Streaming.Dashboard.RespireDashboardOptions.MetricsHistoryMinutes.get -> int
 Respire.Streaming.Dashboard.RespireDashboardOptions.MetricsHistoryMinutes.set -> void
 Respire.Streaming.Dashboard.RespireDashboardExtensions
