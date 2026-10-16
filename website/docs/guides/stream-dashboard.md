@@ -149,6 +149,8 @@ a visible group with zero active work. Use **Inspect application group** for an 
 whose policy remains configured. A missing group displays zero counts and default policy.
 Dashboard lookup and control names are limited to 4096 characters. Pagination reflects live
 state, so groups added before the cursor appear after restarting from the dashboard.
+Lookup and pagination forms send identities in POST bodies so long names do not exceed
+server URL limits. Pause/resume redirects to the queue's first group page.
 
 **Pause group** prevents new attempts while leaving in-flight leases running. **Resume group**
 restores eligibility subject to concurrency and rate policies; repeating either action is safe.
@@ -159,6 +161,12 @@ changes scheduler state. Dedicated group pages read fresh state.
 Applications can use the same API with a logical stream key and their existing prefixed client:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
 var page = await RespireJobGroups.ReadAsync(client, queue.StreamKey, count: 50);
 if (page.NextCursor is { } cursor)
     page = await RespireJobGroups.ReadAsync(client, queue.StreamKey, count: 50, cursor: cursor);

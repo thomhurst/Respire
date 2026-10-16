@@ -127,8 +127,8 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await Assert.That(homeHtml).Contains("Consumer groups");
         await Assert.That(homeHtml).Contains("Next groups");
         await Assert.That(homeHtml).DoesNotContain("<td>zzz</td>");
-        var next = WebUtility.HtmlDecode(Regex.Match(homeHtml, "href=\"([^\"]+)\">Next groups").Groups[1].Value);
-        using var nextPage = await http.GetAsync(next);
+        http.DefaultRequestHeaders.Add("Cookie", home.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
+        using var nextPage = await SubmitForm(http, homeHtml, "Next groups");
         var nextHtml = await nextPage.Content.ReadAsStringAsync();
         await Assert.That(nextHtml).Contains("<td>zzz</td>");
         await Assert.That(nextHtml).DoesNotContain("Next groups");
@@ -142,7 +142,6 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await Assert.That(html).Contains("action=\"" + path + "/0/pause-group\"");
         var token = WebUtility.HtmlDecode(Regex.Match(html, "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value);
         var groupToken = Regex.Match(html, "name=\"groupToken\" value=\"([^\"]+)\"").Groups[1].Value;
-        http.DefaultRequestHeaders.Add("Cookie", page.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
         foreach (var action in new[] { "pause-group", "pause-group", "resume-group" })
         {
             using var response = await http.PostAsync(path + "/0/" + action, new FormUrlEncodedContent(new Dictionary<string, string>
@@ -150,7 +149,7 @@ public class DashboardGroupTests(RedisTestContainer redis)
                 ["groupToken"] = groupToken, ["__RequestVerificationToken"] = token,
             }));
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(response.Headers.Location!.OriginalString).IsEqualTo(path + "/0/groups?group=" + Uri.EscapeDataString(name));
+            await Assert.That(response.Headers.Location!.OriginalString).IsEqualTo(path + "/0/groups");
             var info = await RespireJobGroups.GetAsync(client, stream, name);
             await Assert.That(info.IsPaused).IsEqualTo(action == "pause-group");
             using var updated = await http.GetAsync(path + "/");
@@ -197,6 +196,68 @@ public class DashboardGroupTests(RedisTestContainer redis)
     }
 
     private static string Prefix(string name) => Convert.ToHexString(Encoding.UTF8.GetBytes(name)).ToLowerInvariant() + "|";
+
+    [Test]
+    [Arguments("a")]
+    [Arguments("東")]
+    public async Task LongGroupFormsWorkThroughKestrelWithDefaultRequestLineLimit(string character)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var name = new string(character[0], 4096);
+        // Seed the next group with a distinct, supported identity ordered after the long name.
+        var nextName = name[..^1] + (char)(character[0] + 1);
+        await SeedLease(client, "{dash}:source", name, false);
+        await SeedLease(client, "{dash}:source", nextName, false);
+        await using var app = await DashboardSecurityTests.CreateApplication(client, jobs: true, entryLimit: 1, kestrel: true);
+        using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = new Uri(app.Urls.Single()) };
+        http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
+        using var home = await http.GetAsync("/workers/");
+        var homeHtml = await home.Content.ReadAsStringAsync();
+        await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var lookup = await SubmitForm(http, homeHtml, "View group", name);
+        await Assert.That(lookup.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var lookupHtml = await lookup.Content.ReadAsStringAsync();
+        await Assert.That(lookupHtml).Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(name)));
+        foreach (var action in new[] { "Pause group", "Resume group" })
+        {
+            using var mutation = await SubmitForm(http, lookupHtml, action);
+            await Assert.That(mutation.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(mutation.Headers.Location!.OriginalString).IsEqualTo("/workers/0/groups");
+            using var redirected = await http.GetAsync(mutation.Headers.Location);
+            await Assert.That(redirected.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await RespireJobGroups.GetAsync(client, "{dash}:source", name)).IsPaused).IsEqualTo(action == "Pause group");
+            using var refreshed = await SubmitForm(http, homeHtml, "View group", name);
+            lookupHtml = await refreshed.Content.ReadAsStringAsync();
+        }
+        using var next = await SubmitForm(http, homeHtml, "Next groups");
+        await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var nextHtml = await next.Content.ReadAsStringAsync();
+        await Assert.That(nextHtml).DoesNotContain("Next groups");
+        var expectedNext = StringComparer.Ordinal.Compare(Prefix(name), Prefix(nextName)) < 0 ? nextName : name;
+        await Assert.That(nextHtml).Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(expectedNext)));
+    }
+
+    [Test]
+    [Arguments("max")]
+    [Arguments("burst")]
+    public async Task InspectionRejectsPolicyIntegersThatCannotFitThePublicContract(string field)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return redis.call('HSET', KEYS[1], ARGV[1], '2147483648')"),
+            ["{overflow}:source:group-policy"], [Prefix("tenant") + field]);
+        await Assert.That(async () => await RespireJobGroups.GetAsync(client, "{overflow}:source", "tenant")).Throws<OverflowException>();
+    }
+
+    private static Task<HttpResponseMessage> SubmitForm(HttpClient http, string html, string button, string? group = null)
+    {
+        var form = Regex.Matches(html, "<form[^>]*>.*?</form>")
+            .Single(match => match.Value.Contains(">" + button + "</button>", StringComparison.Ordinal)).Value;
+        var action = WebUtility.HtmlDecode(Regex.Match(form, "action=\"([^\"]+)\"").Groups[1].Value);
+        var values = Regex.Matches(form, "name=\"([^\"]+)\" value=\"([^\"]*)\"")
+            .ToDictionary(match => WebUtility.HtmlDecode(match.Groups[1].Value), match => WebUtility.HtmlDecode(match.Groups[2].Value));
+        if (group is not null) values["group"] = group;
+        return http.PostAsync(action, new FormUrlEncodedContent(values));
+    }
 
     [Test]
     [Arguments("hset")]

@@ -82,12 +82,25 @@ public static class RespireDashboardExtensions
                     "Job logs are unavailable. Check Redis permissions and the configured queue.").ConfigureAwait(false);
             }
         });
-        group.MapGet("/{index:int}/groups", async (HttpContext context) =>
+        group.MapMethods("/{index:int}/groups", ["GET", "POST"], async (HttpContext context) =>
         {
             ProtectResponse(context);
             var returnPath = DashboardPath(context, true);
+            var antiforgery = context.RequestServices.GetRequiredService<IAntiforgery>();
             var names = context.Request.Query["group"];
             var cursors = context.Request.Query["cursor"];
+            if (HttpMethods.IsPost(context.Request.Method))
+            {
+                try { await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false); }
+                catch (AntiforgeryValidationException)
+                {
+                    await WriteErrorAsync(context, returnPath, 400, "The form expired or could not be verified. Refresh the dashboard and try again.").ConfigureAwait(false);
+                    return;
+                }
+                var form = await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
+                names = form["group"];
+                cursors = form["cursor"];
+            }
             if (names.Count > 1 || cursors.Count > 1 || (names.Count != 0 && cursors.Count != 0)
                 || (names.Count == 1 && !IsGroupName(names[0])) || (cursors.Count == 1 && cursors[0]!.Length > 32769))
             {
@@ -157,7 +170,7 @@ public static class RespireDashboardExtensions
                     }
                     context.Response.StatusCode = StatusCodes.Status303SeeOther;
                     context.Response.Headers.Location = returnPath.TrimEnd('/') + "/" + index.ToString(CultureInfo.InvariantCulture)
-                        + "/groups?group=" + Uri.EscapeDataString(id!);
+                        + "/groups";
                     return;
                 }
                 var result = await state.MutateAsync(index, id!, action == "retry", context.RequestAborted).ConfigureAwait(false);

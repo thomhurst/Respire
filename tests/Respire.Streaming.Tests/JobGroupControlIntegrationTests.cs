@@ -76,6 +76,27 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    public async Task InspectionRateStateMatchesAdmissionAtTheBurstBoundary()
+    {
+        await using var client = await Connect();
+        var queue = Queue(client);
+        // An indivisible window exercises the same interval rounding in both scripts.
+        await queue.SetGroupOptionsAsync("a", new() { RateLimit = new() { PermitLimit = 2, Window = TimeSpan.FromMilliseconds(3600001) } });
+        await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
+        for (var i = 0; i < 3; i++) await queue.EnqueueScheduledAsync("job-" + i, "p", new() { Group = "a" });
+        for (var i = 0; i < 3; i++)
+        {
+            var info = await RespireJobGroups.GetAsync(client, queue.StreamKey, "a");
+            await Assert.That(info.IsRateLimited).IsEqualTo(i == 2);
+            await Assert.That(info.IsEligible).IsEqualTo(i < 2);
+            await Assert.That((await Read(client, queue, "reader")).Length).IsEqualTo(i < 2 ? 1 : 0);
+        }
+        await queue.SetGroupOptionsAsync("a", null);
+        await Assert.That((await RespireJobGroups.GetAsync(client, queue.StreamKey, "a")).IsRateLimited).IsFalse();
+        await Assert.That((await Read(client, queue, "reader")).Length).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task SharedRateBurstDoesNotBlockOtherGroupsAndRemovingPolicyWakesTheGroup()
     {
         await using var first = await Connect();

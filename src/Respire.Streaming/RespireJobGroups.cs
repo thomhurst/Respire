@@ -67,7 +67,8 @@ public static class RespireJobGroups
 
     /// <summary>Reads up to 200 groups with staged work or retained leases, without scanning job payloads.</summary>
     /// <remarks>Idle policy-only groups can be inspected with GetAsync. Expired lease entries may keep a group
-    /// visible with zero active deliveries. This read does not clean up or mutate scheduler state.</remarks>
+    /// visible with zero active deliveries. This read does not clean up or mutate scheduler state.
+    /// The script blocks Redis while it runs; cost grows with the page size, not the job backlog.</remarks>
     public static ValueTask<RespireJobGroupPage> ReadAsync(IRespireClient client, string streamKey,
         int count = 50, string? cursor = null, CancellationToken cancellationToken = default)
     {
@@ -108,7 +109,9 @@ public static class RespireJobGroups
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentException.ThrowIfNullOrWhiteSpace(streamKey);
-        string[] keys = [streamKey + ":group-jobs", streamKey + ":group-leases", streamKey + ":group-policy"];
+        var schedulingKeys = JobGroupScheduling.Keys(streamKey);
+        // Project the grouped-jobs, leases and policy slots from the scheduler's fixed key layout.
+        string[] keys = [schedulingKeys[4], schedulingKeys[7], schedulingKeys[6]];
         JobQueueScheduling.ValidateKeys(client, keys);
         using var reply = await client.Scripts.ExecuteAsync(JobGroupInspection.Read, [.. keys],
             [count, prefix, single ? 1 : 0], cancellationToken).ConfigureAwait(false);
@@ -118,8 +121,8 @@ public static class RespireJobGroups
         {
             var row = rows[i];
             var encoded = row[0].AsString();
-            var maximum = (int)row[6].AsInteger();
-            var burst = (int)row[7].AsInteger();
+            var maximum = checked((int)row[6].AsInteger());
+            var burst = checked((int)row[7].AsInteger());
             groups[i] = new(StrictUtf8.GetString(Convert.FromHexString(encoded[..^1])),
                 row[1].AsInteger(), row[2].AsInteger(), row[3].AsInteger(), row[4].AsInteger() == 1,
                 row[5].AsInteger() == 1, maximum == 0 ? null : maximum,
@@ -149,6 +152,7 @@ internal static class JobGroupInspection
             local leases = redis.call('ZRANGEBYLEX', KEYS[2], lower, '+', 'LIMIT', 0, 1)
             local a = queued[1] and string.match(queued[1], '^([^|]+|)')
             local b = leases[1] and string.match(leases[1], '^([^|]+|)')
+            -- Redis uses the C locale, matching byte ordering for these hex-encoded prefixes.
             if a and b then return a < b and a or b end
             return a or b
         end

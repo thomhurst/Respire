@@ -201,9 +201,14 @@ internal static class DashboardPage
             html.Append("</tbody></table></div>");
         }
         if (cursor is not null)
-            html.Append("<p><a href=\"").Append(E(route + "/groups?cursor=" + Uri.EscapeDataString(cursor))).Append("\">Next groups</a></p>");
+            html.Append("<form method=\"post\" action=\"").Append(E(route + "/groups"))
+                .Append("\"><input type=\"hidden\" name=\"cursor\" value=\"").Append(E(cursor))
+                .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
+                .Append("\"><button type=\"submit\">Next groups</button></form>");
         html.Append("<p class=\"note\">Queued counts include delayed jobs and entries awaiting expiry cleanup. Active counts include only live leases. Eligibility is for group admission; queue-wide controls and job expiry still apply. Pause leaves in-flight work running.</p>")
-            .Append("<form method=\"get\" action=\"").Append(E(route + "/groups")).Append("\"><label for=\"group-name-")
+            .Append("<form method=\"post\" action=\"").Append(E(route + "/groups"))
+            .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
+            .Append("\"><label for=\"group-name-")
             .Append(N(index)).Append("\">Inspect application group</label> <input id=\"group-name-").Append(N(index))
             .Append("\" name=\"group\" maxlength=\"4096\" required> <button type=\"submit\">View group</button></form>")
             .Append("<p class=\"note\">Lists contain groups with queued work or retained leases. Look up an idle group by name to inspect its policy. Missing state shows zero counts and unlimited admission.</p></section>");
