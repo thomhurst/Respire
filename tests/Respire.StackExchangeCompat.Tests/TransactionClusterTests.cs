@@ -9,6 +9,48 @@ namespace Respire.StackExchangeCompat.Tests;
 public class TransactionClusterTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ImportingConnectionIsReusedOnlyWhenExecClearsTransaction(bool watched, bool queueAbort)
+    {
+        await using var source = new FakeRespServer(16, FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(16, FakeRespServer.OkReply);
+        Configure(source, target);
+        var setup = source.ReplyOverride!;
+        source.ReplyOverride = (id, command) => command switch
+        {
+            "GET key" => Ask(target),
+            "EXEC" => "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray(),
+            _ => setup(id, command),
+        };
+        target.ReplyOverride = (_, command) => command switch
+        {
+            "GET key" => Encoding.ASCII.GetBytes(queueAbort ? "-ERR rejected command\r\n" : "+QUEUED\r\n"),
+            "EXEC" => Encoding.ASCII.GetBytes(queueAbort
+                ? "-EXECABORT Transaction discarded because of previous errors.\r\n"
+                : "-NOPERM EXEC denied\r\n"),
+            _ => null,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await using var transaction = await client.CreateCompatibilityTransactionAsync(watched ? ["key"] : [], default);
+            var pending = transaction.GetString("key");
+            var error = await Assert.ThrowsAsync<RespireServerException>(async () => await transaction.CommitAsync());
+            Assert.Equal(queueAbort ? "ERR" : "NOPERM", error.Code);
+            Assert.Throws<RespireServerException>(() => pending.Result);
+        }
+        var commands = target.ReceivedCommands;
+        var connections = target.ReceivedConnectionIds;
+        var execConnections = commands.Select((command, index) => (command, index))
+            .Where(item => item.command == "EXEC").Select(item => connections[item.index]).ToArray();
+        Assert.Equal(2, execConnections.Length);
+        Assert.Equal(queueAbort ? 1 : 2, execConnections.Distinct().Count());
+    }
+
+    [Test]
     public async Task UnconditionalReadTransactionFollowsOnlyACompleteRejection()
     {
         await using var source = new FakeRespServer(16, FakeRespServer.OkReply);
@@ -85,6 +127,7 @@ public class TransactionClusterTests
             _ => null,
         };
         await using var client = await RespireClient.ConnectAsync(Options(source));
+        var originalOwner = client.Core.Cluster!.RoutingSnapshot[ClusterHash.GetSlot("key")].Primary;
         await using var transaction = await client.CreateCompatibilityTransactionAsync(["key"], default);
         var pending = transaction.Strings.Set("key", "value");
         Assert.Equal(!conflict, await transaction.CommitAsync());
@@ -95,6 +138,7 @@ public class TransactionClusterTests
         Assert.Equal(new[] { "ASKING", "WATCH key", "ASKING", "MULTI", "SET key value", "EXEC" }, commands.Skip(start));
         Assert.Single(target.ReceivedConnectionIds.Skip(start).Distinct());
         Assert.DoesNotContain("MULTI", source.ReceivedCommands);
+        Assert.Same(originalOwner, client.Core.Cluster.RoutingSnapshot[ClusterHash.GetSlot("key")].Primary);
     }
 
     [Test]

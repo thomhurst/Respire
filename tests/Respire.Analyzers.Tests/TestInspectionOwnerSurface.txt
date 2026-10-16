@@ -378,7 +378,7 @@ Respire.Networking.StringPendingResponseSource | property Task [public; get] : V
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient)
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient, RespireHashImportSession)
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
-# Count: Respire.RespireTransactionBase | 45
+# Count: Respire.RespireTransactionBase | 47
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
 Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
@@ -423,16 +423,20 @@ Respire.RespireTransactionBase | property Streams [public; get] : IRespireBatchS
 Respire.RespireTransactionBase | property Strings [public; get] : IRespireBatchStringCommands
 Respire.RespireTransactionBase | property VectorSets [public; get] : IRespireBatchVectorSetCommands
 Respire.RespireTransactionBase | property RetryContext [private protected; get] : WatchedTransactionRetryContext?
+Respire.RespireTransactionBase | property AllowUnwatchedAsk [private protected; get] : bool
+Respire.RespireTransactionBase | property WatchRequiresAsking [private protected; get] : bool
 Respire.RespireTransactionBase | property WatchPool [private protected; get] : DedicatedConnectionPool?
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.RespireTransactionBase | readonly ref struct TestInspection(RespireTransactionBase)
-# Count: Respire.RespireWatchedTransaction | 7
-Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(RespireClient)
-Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(RespireClient, RespireConnection, DedicatedConnectionPool, int?)
+# Count: Respire.RespireWatchedTransaction | 9
+Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(RespireClient, bool)
+Respire.RespireWatchedTransaction | constructor RespireWatchedTransaction(RespireClient, RespireConnection, DedicatedConnectionPool, int?, bool)
 Respire.RespireWatchedTransaction | method CommitAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | method CommitWithWatchValidationAsync(CancellationToken) : ValueTask<bool>
 Respire.RespireWatchedTransaction | property HelperRetryContext [internal; get, set] : WatchedTransactionRetryContext?
 Respire.RespireWatchedTransaction | property RetryContext [private protected; get] : WatchedTransactionRetryContext?
+Respire.RespireWatchedTransaction | property AllowUnwatchedAsk [private protected; get] : bool
+Respire.RespireWatchedTransaction | property WatchRequiresAsking [private protected; get] : bool
 Respire.RespireWatchedTransaction | property WatchPool [private protected; get] : DedicatedConnectionPool?
 # Count: Respire.ClientSideCacheCoordinator.MutationLease | 6
 Respire.ClientSideCacheCoordinator.MutationLease | method IsLiveFor(long, ClientSideCacheCoordinator) : bool

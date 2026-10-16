@@ -352,11 +352,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                         }, observation).ConfigureAwait(false)
                     : await SendAsync().ConfigureAwait(false);
 
-                // SendTransactionAsync drains through EXEC before completing, including when it
-                // returns a queue error or a null watched-abort reply. Redis has therefore cleared
-                // WATCH and the dedicated connection is safe to pool again.
-                returnWatchConnection = ReferenceEquals(connection, _watchConnection);
-                returnAskingConnection = ReferenceEquals(connection, askingConnection);
+                // Draining EXEC does not prove it ran: an ACL rejection can leave MULTI
+                // and its queued commands active. Pool exclusive sockets only when the
+                // reply proves Redis cleared transaction state, including queue aborts.
+                var transactionStateCleared = result.Type == RespireDataType.Array || result.IsNull
+                    || result.TransactionStateCleared;
+                returnWatchConnection = transactionStateCleared && ReferenceEquals(connection, _watchConnection);
+                returnAskingConnection = transactionStateCleared && ReferenceEquals(connection, askingConnection);
             }
             catch (Exception ex)
             {
