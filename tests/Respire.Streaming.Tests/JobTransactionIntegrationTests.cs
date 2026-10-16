@@ -11,14 +11,19 @@ namespace Respire.Streaming.Tests;
 public class JobTransactionIntegrationTests(RedisTestContainer redis)
 {
     [Test]
-    [Arguments(false, 2)]
-    [Arguments(true, 2)]
-    [Arguments(false, 3)]
-    [Arguments(true, 3)]
-    public async Task CommitDefersEnqueueAndDeduplicatesAtExecution(bool scheduled, int protocol)
+    [Arguments(false, 2, false)]
+    [Arguments(true, 2, false)]
+    [Arguments(false, 3, false)]
+    [Arguments(true, 3, false)]
+    [Arguments(false, 2, true)]
+    [Arguments(true, 2, true)]
+    [Arguments(false, 3, true)]
+    [Arguments(true, 3, true)]
+    public async Task CommitDefersEnqueueAndDeduplicatesAtExecution(bool scheduled, int protocol, bool decorated)
     {
         await using var root = await Connect(protocol);
         var client = root.WithKeyPrefix("tenant:");
+        if (decorated) client = JobTransactionTests.Wrap(client);
         var queue = new RespireJobQueue<string>(client, "transaction", Encoding.UTF8.GetBytes);
         using var activity = new Activity("caller").SetIdFormat(ActivityIdFormat.W3C).Start();
         await using var transaction = client.CreateTransaction();
