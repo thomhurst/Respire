@@ -658,12 +658,37 @@ fixed application role for `TelemetryName`, not a per-tenant or per-job name.
 
 Set `MetricsRetentionMinutes` in `RespireJobQueueOptions` to retain one-minute counters:
 
+<!-- doc-test-tail-declaration: split-before=public sealed class OrderHandler -->
 ```csharp
-services.AddRespireJobQueue<OrderHandler, Order>("orders", serialize, deserialize,
+using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Respire;
+using Respire.DependencyInjection;
+using Respire.Streaming;
+
+var builder = Host.CreateApplicationBuilder();
+builder.Services.AddRespire("redis://localhost:6379");
+builder.Services.AddRespireJobQueue<OrderHandler, string>("orders",
+    Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
     new RespireStreamWorkerOptions { DeliveryLimit = 5 },
     new RespireJobQueueOptions { MetricsRetentionMinutes = 60 });
 
+using var host = builder.Build();
+var client = host.Services.GetRequiredService<IRespireClient>();
+var queue = host.Services.GetRequiredKeyedService<RespireJobQueue<string>>("orders");
 var history = await RespireJobMetrics.ReadAsync(client, queue.StreamKey, minutes: 60);
+await host.RunAsync();
+
+public sealed class OrderHandler : IRespireStreamHandler<RespireJob<string>>
+{
+    public ValueTask<RespireStreamWorkerResult> HandleAsync(
+        RespireJob<string> job, CancellationToken cancellationToken)
+    {
+        // Perform an idempotent application operation using job.Id before acknowledging.
+        return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
+    }
+}
 ```
 
 The default, `0`, disables recording. Values from 1 to 1440 retain that many UTC minutes,
