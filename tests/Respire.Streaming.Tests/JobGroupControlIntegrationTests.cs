@@ -118,6 +118,75 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments("concurrency")]
+    [Arguments("rate")]
+    [Arguments("paused")]
+    public async Task ShortenedLeaseRenewalUpdatesParkedDeadlineWithoutBypassingOtherLimits(string limit)
+    {
+        await using var client = await Connect();
+        var queue = Queue(client);
+        RespireJobRateLimit? rate = limit == "rate" ? new() { PermitLimit = 1, Window = TimeSpan.FromHours(2) } : null;
+        await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1, RateLimit = rate, LeaseDuration = TimeSpan.FromHours(1) });
+        await queue.EnqueueScheduledAsync("first", "p", new() { Group = "a" });
+        await queue.EnqueueScheduledAsync("next", "p", new() { Group = "a" });
+        await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
+        var first = (await Read(client, queue, "owner")).Single();
+        await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1, RateLimit = rate, LeaseDuration = TimeSpan.FromMinutes(1) });
+        if (limit == "paused") await queue.PauseGroupAsync("a");
+        await Assert.That((await Read(client, queue, "waiting")).Length).IsEqualTo(0);
+        using var oldDeadline = await client.ExecuteAsync("ZSCORE", [queue.StreamKey + ":group-parked", "61|"]);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("Renew"), JobGroupIntegrationTests.Keys(queue),
+            ["owner", first.Id.Value, 1, ConsumerGroup])).IsEqualTo(60000);
+        using var owner = await client.ExecuteAsync("HGET", [queue.StreamKey + ":group-owners", first.Id.Value]);
+        var expiry = long.Parse(owner.AsString().Split('|')[1], System.Globalization.CultureInfo.InvariantCulture);
+        using var deadline = await client.ExecuteAsync("ZSCORE", [queue.StreamKey + ":group-parked", "61|"]);
+        if (limit == "concurrency")
+        {
+            await Assert.That(deadline.AsDouble()).IsEqualTo((double)expiry);
+            await Assert.That(deadline.AsDouble()).IsLessThan(oldDeadline.AsDouble());
+        }
+        else await Assert.That(deadline.AsDouble()).IsEqualTo(oldDeadline.AsDouble());
+        // The shortened lease still owns capacity until its new deadline.
+        await Assert.That((await Read(client, queue, "waiting")).Length).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ReleasedNackIsRecoveredAndItsReplacementPermitIsReleased()
+    {
+        // Keep the native regression active even when the shared test server is Redis 7.
+        await using var native = await ContainerStartRetry.StartAsync(
+            () => new Testcontainers.Redis.RedisBuilder("redis:8.8-alpine").Build(), [6379]);
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(native.GetConnectionString()));
+        var queue = Queue(client);
+        await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1 });
+        await queue.EnqueueScheduledAsync("failed", "p", new() { Group = "a" });
+        await queue.EnqueueScheduledAsync("next", "p", new() { Group = "a" });
+        await client.Streams.CreateGroupAsync(queue.StreamKey, ConsumerGroup, RespireStreamId.Beginning);
+        var failed = (await Read(client, queue, "owner")).Single();
+        await client.Scripts.ExecuteIntegerAsync(Script("Nack"),
+            [queue.StreamKey, queue.StreamKey + ":group-leases", queue.StreamKey + ":group-owners"],
+            [ConsumerGroup, "owner", failed.Id.Value, 1, 0]);
+        using (var pending = await client.ExecuteAsync("XPENDING", [queue.StreamKey, ConsumerGroup, "-", "+", 1]))
+            await Assert.That(pending[0][2].AsInteger()).IsEqualTo(-1);
+        await Assert.That(await Release(client, queue, "owner", failed.Id, 1)).IsEqualTo(1);
+        var claim = (RespireScript)typeof(RespireJobQueue<string>).Assembly.GetType("Respire.Streaming.JobQueueControls")!
+            .GetField("ClaimGrouped", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        using (var recovered = await client.Scripts.ExecuteAsync(claim,
+            [.. JobGroupIntegrationTests.Keys(queue), queue.ControlKey], [ConsumerGroup, "replacement", 60000, "0-0", 1]))
+        {
+            await Assert.That(recovered[1].Count).IsEqualTo(1);
+            await Assert.That(recovered[1][0][0].AsString()).IsEqualTo(failed.Id.Value);
+            await Assert.That(recovered[1][0][2].AsString()).IsEqualTo("2");
+        }
+        await Assert.That((await Read(client, queue, "waiting")).Length).IsEqualTo(0);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(Script("Complete"),
+            [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":group-leases", queue.StreamKey + ":group-owners"],
+            [ConsumerGroup, "replacement", failed.Id.Value, 2, "completed"])).IsEqualTo(1);
+        await Assert.That(await Release(client, queue, "replacement", failed.Id, 2)).IsEqualTo(1);
+        await Assert.That((await Read(client, queue, "waiting")).Single().GetString("_respire.job.id")).IsEqualTo("next");
+    }
+
+    [Test]
     public async Task RateEligibilityAutomaticallyWakesParkedGroup()
     {
         await using var client = await Connect();
@@ -335,6 +404,8 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             await Assert.That(state.Calls.Values.Sum()).IsEqualTo(expectedCalls);
             await Assert.That(state.MaximumActive).IsEqualTo(1);
             await Assert.That(state.Calls.Count).IsEqualTo(jobCount);
+            foreach (var (id, calls) in state.Calls)
+                await Assert.That((await queue.GetLogsAsync(id)).Length).IsEqualTo(calls);
             using var leases = await first.ExecuteAsync("ZCARD", [queue.StreamKey + ":group-leases"]);
             await Assert.That(leases.AsInteger()).IsEqualTo(0);
             await Assert.That(await first.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(outcome == "dead-letter" ? jobCount : 0);
@@ -371,7 +442,9 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
             try
             {
                 var call = state.Calls.AddOrUpdate(job.Id, 1, (_, previous) => previous + 1);
-                await Task.Delay(state.Outcome == "renew" ? 6500 : 10, cancellationToken);
+                await Assert.That(await job.LogAsync("attempt " + call, cancellationToken)).IsTrue();
+                // NACK must outlive MinimumIdleTime to exercise native XNACK on Redis 8.8+.
+                await Task.Delay(state.Outcome == "renew" ? 6500 : state.Outcome == "nack" ? 250 : 10, cancellationToken);
                 if (call != 1) return RespireStreamWorkerResult.Ack;
                 return state.Outcome switch
                 {

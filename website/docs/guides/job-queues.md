@@ -185,6 +185,12 @@ Configure limits on an application group through the typed producer. These contr
 the `Group` in the job envelope, not the Redis consumer group shared by workers:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
 await queue.SetGroupOptionsAsync("tenant-42", new RespireJobGroupOptions
 {
     MaxConcurrency = 3,

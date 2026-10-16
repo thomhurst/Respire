@@ -141,6 +141,11 @@ internal static class JobGroupControls
             return saved
         end
         if next ~= member then redis.call('ZREM', leases, member) end
+        -- A shorter policy can move expiry ahead of the parked wake-up. Recompute
+        -- admission so concurrency advances without bypassing pause or rate debt.
+        if next < member and redis.call('ZSCORE', parked, prefix) then
+            park(prefix, eligible(prefix, clock))
+        end
         return duration
         """);
 
@@ -180,7 +185,8 @@ internal static class JobGroupControls
         if #pending == 0 then return {'0-0', {}} end
         local item = pending[1]
         local cursor = replay and item[1] or (pending[2] and pending[2][1] or '0-0')
-        if not replay and item[3] < tonumber(ARGV[3]) then return {cursor, {}} end
+        -- XNACK releases ownership and reports idle=-1; it is immediately claimable.
+        if not replay and item[3] >= 0 and item[3] < tonumber(ARGV[3]) then return {cursor, {}} end
         local rows = redis.call('XRANGE', KEYS[1], item[1], item[1])
         if #rows == 0 then
             redis.call('XACK', KEYS[1], ARGV[1], item[1]); removeLease(item[1]); return {cursor, {}}
