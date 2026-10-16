@@ -342,15 +342,15 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             JobQueueScheduling.ValidateKeys(client, [stream, batchKey]);
             var cancelled = await client.Scripts.ExecuteIntegerAsync(JobQueueBatches.CheckCancellation, [stream, batchKey],
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt],
-                _handlers.Token).ConfigureAwait(false);
+                processingToken).ConfigureAwait(false);
             if (cancelled == -1) { observation.Outcome = "stale"; return; }
             if (cancelled == 1)
             {
-                var acknowledged = await client.Scripts.ExecuteIntegerAsync(CompletionScript(options.DeleteAcknowledgedEntries),
-                    CompletionKeys(delivery, batchEvents, false),
+                var acknowledged = await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, options.DeleteAcknowledgedEntries),
+                    LeaseFenceKeys(delivery, CompletionKeys(delivery, batchEvents, false)),
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "cancelled", "", "",
                         0, Array.Empty<byte>(), options.JobQueue?.MetricsRetentionMinutes ?? 0],
-                    _handlers.Token).ConfigureAwait(false);
+                    processingToken).ConfigureAwait(false);
                 observation.Outcome = acknowledged == 2 ? "canceled" : "stale";
                 return;
             }
