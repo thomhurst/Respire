@@ -2,6 +2,10 @@
 
 Hosted Redis stream consumers with scoped handlers, bounded concurrency, recovery, and explicit acknowledgements.
 
+For caller-driven message processing without hosted handlers, use
+[`RespireReliableQueue<T>`](https://thomhurst.github.io/Respire/docs/guides/reliable-queues)
+with visibility timeouts, ACK/NACK, delivery limits, dead letters and optional send deduplication.
+
 ## Install
 
 ```sh

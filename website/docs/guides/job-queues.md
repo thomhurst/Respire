@@ -15,6 +15,8 @@ Handlers can report progress, observers can replay retained completion events, a
 each delivery attempt to its enqueue.
 
 For authorized inspection and dead-letter retry, see the [queue and stream dashboard](stream-dashboard.md).
+For messages received and acknowledged by application code without hosted handlers or scheduling,
+use a [reliable message queue](reliable-queues.md).
 
 ## Register and enqueue
 
