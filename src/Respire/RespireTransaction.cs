@@ -32,13 +32,14 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     private bool _hasClusterSlot;
     // A queued cursor continuation is server-local, so a retired generation cannot replay it elsewhere.
     private bool _hasCursorContinuation;
+    private bool _hasOptOutRead;
     private bool _completed;
     private RetryCategorySet _retryCategories;
 
     // The transport records the accepting socket after any pre-admission maintenance reroute.
     internal RespireConnection? ExecutingConnection { get; set; }
 
-    internal bool HasOptOutBypass => _client.HasOptOutBypass;
+    internal bool HasOptOutBypass => _hasOptOutRead;
 
     private protected virtual WatchedTransactionRetryContext? RetryContext => null;
     private protected virtual bool WatchRequiresAsking => false;
@@ -1023,6 +1024,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))
             : new TxOp<T>(operation, pending, convert));
+        _hasOptOutRead |= _client.ShouldSkipTracking(operation, in command);
         return pending;
     }
 

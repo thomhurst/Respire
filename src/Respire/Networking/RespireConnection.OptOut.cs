@@ -47,6 +47,7 @@ internal sealed partial class RespireConnection
             }
             catch (RespireConnectionRetiredException error) when (TryReroute(pinToConnection, deadline, out var target, out var rerouted, preferredZone: null))
             {
+                // The capacity waiter already reclaimed all three unpublished references.
                 observation.Handled(error, new(Host, Port));
                 return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
                     pinToConnection, rerouted, skipTracking: true).ConfigureAwait(false);

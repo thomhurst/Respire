@@ -342,8 +342,9 @@ Choose `OptOut` when most reads should be tracked. Each caching connection sends
 `CLIENT CACHING YES` command. Redis still stores per-key tracking state, including for reads that
 are not admitted to the local cache. On tracking connections, `WithoutClientCache()` sends
 `CLIENT CACHING NO` with its reads to opt out explicitly.
-For bypass transactions on tracking connections, the prelude is paired with `MULTI` and
-suppresses tracking for the whole transaction. Watched transactions use dedicated connections
+For bypass transactions containing reads on tracking connections, the prelude is paired with
+`MULTI` and suppresses tracking for the whole transaction. Empty and write-only transactions
+need no caching prelude or extra reply slot. Watched transactions use dedicated connections
 without tracking and need no caching prelude.
 
 ```csharp

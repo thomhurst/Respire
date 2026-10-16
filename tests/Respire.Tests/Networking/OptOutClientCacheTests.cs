@@ -77,6 +77,41 @@ public class OptOutClientCacheTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task BypassTransactionWithoutReadsNeedsNoExtraCapacity(bool retry, bool empty)
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            "SET written new" or "SET second new" => "+QUEUED\r\n"u8.ToArray(),
+            "EXEC" => "*2\r\n+OK\r\n+OK\r\n"u8.ToArray(),
+            _ => FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            MaxInflightCommands = 4,
+            RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
+        });
+        await using var transaction = client.WithoutClientCache().CreateTransaction();
+        if (!empty)
+        {
+            _ = transaction.Set("written", "new");
+            _ = transaction.Set("second", "new");
+        }
+        await transaction.CommitAsync();
+        // A following reply proves the transaction drained all of its response slots.
+        await client.PingAsync();
+        string[] expected = empty
+            ? ["HELLO 3", "CLIENT TRACKING ON OPTOUT", "PING"]
+            : ["HELLO 3", "CLIENT TRACKING ON OPTOUT", "MULTI", "SET written new", "SET second new", "EXEC", "PING"];
+        await Assert.That(server.ReceivedCommands.SequenceEqual(expected)).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task BypassTransactionRejectsInsufficientCapacityBeforeWriting(bool retry)
