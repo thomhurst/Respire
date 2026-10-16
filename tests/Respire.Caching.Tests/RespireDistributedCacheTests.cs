@@ -707,17 +707,32 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [NotInParallel(ClientPause), Category(ClientPause)]
     public async Task ClientIdSetup_DisposalTerminatesPendingOperation()
     {
-        await using var client = await RespireClient.ConnectAsync(Server.ConnectionString);
+        var identityReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLIENT ID") return false;
+                identityReceived.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+            CommandTimeout = null,
+        });
         await using var cache = new RespireDistributedCache(client);
 
-        var stallObserved = await StartServerPauseAsync(1000);
+        // Keep CLIENT ID unanswered until disposal, regardless of runner scheduling.
         var pending = cache.GetAsync("dispose-during-identity");
-        await Task.Delay(100);
+        await identityReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(pending.IsCompleted).IsFalse();
 
-        await client.DisposeAsync();
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
         Exception? failure = null;
         try
@@ -735,7 +750,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure is RespireConnectionException or ObjectDisposedException).IsTrue();
-        await stallObserved;
+        await Assert.That(server.ReceivedCommands.SequenceEqual(["CLIENT ID"])).IsTrue();
     }
 
     [Test]

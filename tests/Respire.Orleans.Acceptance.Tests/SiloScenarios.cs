@@ -75,9 +75,18 @@ public partial class SiloScenarios
     [Arguments(RespireContainerTopology.Standalone)]
     [Arguments(RespireContainerTopology.Sentinel)]
     public async Task ActiveSilo_RecoversRedisConnection_AndRetainsState(RespireContainerTopology topology)
+        => Assert.Equal(0, await RunRecoveryProcess(topology, failedElection: false));
+
+    [Test]
+    public async Task Sentinel_FailedElection_ReportsFailureAndCleansUp()
     {
-        await using var redis = await StartRedis(topology);
-        await using var connections = new ProviderConnections(Options(redis), shared: true);
+        Assert.Equal(RecoveryDeadlineExitCode, await RunRecoveryProcess(RespireContainerTopology.Sentinel, failedElection: true));
+    }
+
+    internal static async Task RecoverRedisConnection(RecoveryDeployment redis, bool failedElection)
+    {
+        var topology = redis.Topology;
+        await using var connections = new ProviderConnections(redis.Options, shared: true);
         var serviceId = Guid.NewGuid().ToString("N");
         var clusterId = Guid.NewGuid().ToString("N");
         await using var silo = BuildSilo(connections, serviceId, clusterId);
@@ -103,7 +112,7 @@ public partial class SiloScenarios
                 recovered.TrySetResult();
         };
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(failedElection ? 30 : 90));
         if (topology == RespireContainerTopology.Sentinel)
         {
             // A later marker on a control connection fences the replication stream containing
@@ -111,6 +120,9 @@ public partial class SiloScenarios
             using var control = await ConnectionMultiplexer.ConnectAsync($"{redis.DataEndpoints[0]}");
             await control.GetDatabase().StringSetAsync(serviceId + "/replication-fence", "ready");
             Assert.Equal(1, (long)await control.GetDatabase().ExecuteAsync("WAIT", 1, 10000));
+            // Removing the only candidate makes a failed election deterministic, including
+            // on machines where Sentinel's clock protection does not enter TILT.
+            if (failedElection) await redis.StopDataNodeAsync(1, deadline.Token);
             await redis.StopDataNodeAsync(0, deadline.Token);
         }
         else
@@ -124,12 +136,14 @@ public partial class SiloScenarios
         {
             await recovered.Task.WaitAsync(deadline.Token);
         }
-        catch
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
+            RecoveryDeadlineExpired = true;
+            Console.WriteLine("Recovery deadline expired; collecting server diagnostics.");
             // Capture the election evidence before fixture cleanup removes the server logs.
             using var diagnostics = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { Console.WriteLine(await redis.ReadServerLogsAsync(diagnostics.Token)); }
-            catch (Exception error) { Console.WriteLine($"Server diagnostics unavailable: {error.Message}"); }
+            try { await redis.ReadServerLogsAsync(diagnostics.Token); }
+            catch (Exception diagnosticsError) { Console.WriteLine($"Server diagnostics unavailable: {diagnosticsError.Message}"); }
             throw;
         }
         Assert.Equal(activation, await grain.GetActivation());
@@ -165,7 +179,9 @@ public partial class SiloScenarios
     private static Task<RespireContainerFixture> StartRedis(RespireContainerTopology topology) =>
         RespireContainerFixture.StartAsync(new() { Topology = topology, Image = "redis:7.0.15" });
 
-    private static RespireOptions Options(RespireContainerFixture redis) => redis.CreateOptions() with
+    private static RespireOptions Options(RespireContainerFixture redis) => RecoveryOptions(redis.CreateOptions());
+
+    private static RespireOptions RecoveryOptions(RespireOptions options) => options with
     {
         Connections = 1,
         Protocol = Environment.GetEnvironmentVariable("RESPIRE_TEST_PROTOCOL") switch
@@ -223,7 +239,7 @@ public partial class SiloScenarios
             });
             silo.Services.AddSingleton<ReminderDeliveries>();
         });
-        return new(builder.Build());
+        return new(builder.Build(), "silo");
     }
 
     private static HostedScenario BuildClient(ProviderConnections connections, string serviceId, string clusterId)
@@ -238,7 +254,7 @@ public partial class SiloScenarios
                 options.CreateMultiplexer = _ => connections.Create("gateway");
             });
         });
-        return new(builder.Build());
+        return new(builder.Build(), "client");
     }
 
     private static async Task<(Guid Activation, int Value)> Delivery(HostedScenario silo)
@@ -257,7 +273,7 @@ public partial class SiloScenarios
         return (((IPEndPoint)silo.LocalEndpoint).Port, ((IPEndPoint)gateway.LocalEndpoint).Port);
     }
 
-    private sealed class HostedScenario(IHost host) : IAsyncDisposable
+    private sealed class HostedScenario(IHost host, string role) : IAsyncDisposable
     {
         public IHost Host => host;
         private bool _disposed;
@@ -271,11 +287,23 @@ public partial class SiloScenarios
             if (_disposed) return;
             _disposed = true;
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { await host.StopAsync(deadline.Token); }
+            Console.WriteLine($"{role} StopAsync starting (30s deadline).");
+            try { await host.StopAsync(deadline.Token).WaitAsync(deadline.Token); }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                Console.WriteLine($"{role} StopAsync exceeded its 30s deadline.");
+                throw;
+            }
             finally
             {
-                if (host is IAsyncDisposable disposable) await disposable.DisposeAsync();
-                else host.Dispose();
+                Console.WriteLine($"{role} DisposeAsync starting (30s deadline).");
+                // Disposal has no cancellation contract and may synchronously block.
+                await Task.Run(async () =>
+                {
+                    if (host is IAsyncDisposable disposable) await disposable.DisposeAsync();
+                    else host.Dispose();
+                }).WaitAsync(TimeSpan.FromSeconds(30));
+                Console.WriteLine($"{role} disposal completed.");
             }
         }
     }
@@ -343,10 +371,12 @@ public partial class SiloScenarios
 
         public async ValueTask DisposeAsync()
         {
+            Console.WriteLine("Provider connection disposal starting.");
             // Cleanup also runs after failed assertions; ownership assertions happen before this fallback.
             foreach (var entry in _created) await entry.Mux.DisposeAsync();
             if (_shared is not null) await _shared.DisposeAsync();
             await _sharedNative.DisposeAsync();
+            Console.WriteLine("Provider connection disposal completed.");
         }
     }
 }

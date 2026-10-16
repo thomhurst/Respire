@@ -185,7 +185,7 @@ jobs:
         run: |
           for protocol in 2 3; do
             RESPIRE_TEST_PROTOCOL="$protocol" dotnet run --project tests/Respire.Orleans.Acceptance.Tests -c Release \
-              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 27 --report-trx \
+              -f ${{ matrix.framework }} --no-build -- --minimum-expected-tests 28 --report-trx \
               --results-directory "TestResults/orleans/${{ matrix.framework }}/resp$protocol"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
