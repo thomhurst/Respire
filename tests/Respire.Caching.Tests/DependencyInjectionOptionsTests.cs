@@ -88,6 +88,8 @@ public class DependencyInjectionOptionsTests
             ["ConnectionIdleReadTimeout"] = "00:00:12", ["GatheredWriteStallTimeout"] = "00:00:13",
             ["CommandTimeout"] = "00:00:05", ["ThreadPoolMonitoring"] = "false",
             ["ThreadPoolWarningThreshold"] = "00:00:00.200", ["Connections"] = "3",
+            ["DedicatedPool:MinimumSize"] = "2", ["DedicatedPool:MaximumSize"] = "12",
+            ["DedicatedPool:MaximumIdle"] = "5", ["DedicatedPool:IdleTimeout"] = "00:00:30",
             ["ClientSideCache:MaxEntries"] = "222", ["ClientSideCache:KeyPrefixes:0"] = "tracked:",
             ["RetryPolicy:MaxAttempts"] = "7", ["RetryPolicy:MaxCommandRetryCategory"] = "ReadOnly",
             ["RetryPolicy:RetryableErrors"] = "Loading", ["RetryPolicy:InitialBackoff"] = "00:00:00.020",
@@ -123,6 +125,28 @@ public class DependencyInjectionOptionsTests
             else if (actual is TimeSpan time) await Assert.That(time).IsEqualTo(TimeSpan.Parse(expected!, CultureInfo.InvariantCulture));
             else await Assert.That(Convert.ToString(actual, CultureInfo.InvariantCulture)).IsEqualTo(expected);
         }
+    }
+
+    [Test]
+    public async Task Configuration_DedicatedPool_PreservesUnspecifiedSettingsAndClearsOptionalBounds()
+    {
+        var original = new RespireOptions
+        {
+            DedicatedPool = new()
+            {
+                MinimumSize = 2, MaximumIdle = 5, MaximumSize = 12, IdleTimeout = TimeSpan.FromSeconds(30),
+            },
+        };
+        var unchanged = RespireConfiguration.Apply(Section(new()), original);
+        await Assert.That(unchanged.DedicatedPool).IsSameReferenceAs(original.DedicatedPool);
+        var configured = RespireConfiguration.Apply(Section(new()
+        {
+            ["DedicatedPool:MaximumSize"] = "", ["DedicatedPool:IdleTimeout"] = "",
+        }), original);
+        await Assert.That(configured.DedicatedPool.MinimumSize).IsEqualTo(2);
+        await Assert.That(configured.DedicatedPool.MaximumIdle).IsEqualTo(5);
+        await Assert.That(configured.DedicatedPool.MaximumSize).IsNull();
+        await Assert.That(configured.DedicatedPool.IdleTimeout).IsNull();
     }
 
     [Test]

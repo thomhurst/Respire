@@ -224,6 +224,62 @@ public class DedicatedPoolSizingTests
     }
 
     [Test]
+    public async Task ConnectingReservationDoesNotReplaceMinimumRetainedConnection()
+    {
+        var clock = new PoolClock();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
+        await using var pool = CreatePool(server, new()
+        {
+            MinimumSize = 2, MaximumIdle = 2, IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock,
+        }, database: 1);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var first = await pool.RentAsync(deadline.Token);
+        var second = await pool.RentAsync(deadline.Token);
+        pool.Return(first);
+        pool.Return(second);
+        server.GateCommand("SELECT", release.Task, () => entered.TrySetResult());
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var pending = pool.RentAsync(cancellation.Token, reuseIdle: false).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            await Assert.That(pool.CaptureRetirementState().Connecting).IsEqualTo(1);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Assert.That(first.IsConnected).IsTrue();
+            await Assert.That(second.IsConnected).IsTrue();
+            cancellation.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Assert.That(first.IsConnected).IsTrue();
+            await Assert.That(second.IsConnected).IsTrue();
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test]
+    public async Task IdleTimerPausesWhileBorrowedAndAfterExpiryAndRestartsOnReturn()
+    {
+        var clock = new PoolClock();
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var pool = CreatePool(server, new() { IdleTimeout = TimeSpan.FromSeconds(1), TimeProvider = clock });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var connection = await pool.RentAsync(deadline.Token);
+        pool.Return(connection);
+        await Assert.That(clock.ActiveTimers).IsEqualTo(1);
+        var reused = await pool.RentAsync(deadline.Token);
+        await Assert.That(clock.ActiveTimers).IsEqualTo(0);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(reused.IsConnected).IsTrue();
+        pool.Return(reused);
+        await Assert.That(clock.ActiveTimers).IsEqualTo(1);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(reused.IsConnected).IsFalse();
+        await Assert.That(clock.ActiveTimers).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ReturningReusedConnectionRestartsItsIdleAge()
     {
         var clock = new PoolClock();
@@ -354,6 +410,7 @@ public class DedicatedPoolSizingTests
         private readonly object _gate = new();
         private readonly List<ManualTimer> _timers = [];
         private long _ticks;
+        internal int ActiveTimers { get { lock (_gate) return _timers.Count; } }
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override long GetTimestamp() { lock (_gate) return _ticks; }
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());

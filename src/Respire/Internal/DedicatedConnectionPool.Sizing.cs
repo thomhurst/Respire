@@ -16,13 +16,19 @@ internal sealed partial class DedicatedConnectionPool
         availability?.TrySetResult();
     }
 
+    private void PauseIdleTimerIfEmptyLocked()
+    {
+        if (_idle.Count == 0) _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+
     private void RetireIdle()
     {
         List<Entry>? closing = null;
         lock (_gate)
         {
-            if (_stopping || options.DedicatedPool.IdleTimeout is not { } timeout) return;
-            var live = _creating;
+            if (_stopping || _idle.Count == 0 || options.DedicatedPool.IdleTimeout is not { } timeout) return;
+            // Pending handshakes can fail: only established connections protect the retention floor.
+            var live = 0;
             foreach (var entry in _connections.Values)
                 if (entry.State != State.Closing) live++;
             var now = options.DedicatedPool.TimeProvider.GetTimestamp();
@@ -40,6 +46,7 @@ internal sealed partial class DedicatedConnectionPool
                 (closing ??= []).Add(entry);
                 live--;
             }
+            PauseIdleTimerIfEmptyLocked();
         }
         if (closing is not null)
             foreach (var entry in closing) _ = CloseAsync(entry);

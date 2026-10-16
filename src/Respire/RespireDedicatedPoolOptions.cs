@@ -10,7 +10,9 @@ public sealed record RespireDedicatedPoolOptions
 
     /// <summary>Maximum total connecting, rented, idle and closing connections; null (the default) is unlimited.</summary>
     /// <remarks>Acquisitions wait with caller cancellation when all capacity is occupied. A closing connection
-    /// releases capacity only after cleanup finishes. Replacement routing generations have independent limits.</remarks>
+    /// releases capacity only after cleanup finishes. The pool has no independent acquisition timeout or FIFO
+    /// guarantee; pass a cancellation deadline when leases can block indefinitely. Avoid operations that hold
+    /// all capacity while awaiting another lease from the same pool. Replacement routing generations have independent limits.</remarks>
     public int? MaximumSize { get; init; }
 
     /// <summary>Maximum retained idle connections, shared by both lease kinds. Defaults to four; zero disables reuse.</summary>

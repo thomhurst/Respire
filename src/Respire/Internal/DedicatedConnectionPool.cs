@@ -153,6 +153,7 @@ internal sealed partial class DedicatedConnectionPool(
                     {
                         stale = _idle[0];
                         _idle.RemoveAt(0);
+                        if (_idleTimer is not null) PauseIdleTimerIfEmptyLocked();
                         stale.Connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.IdleEviction);
                         BeginCloseLocked(stale);
                     }
@@ -251,6 +252,7 @@ internal sealed partial class DedicatedConnectionPool(
         {
             entry = _idle[selected];
             _idle.RemoveAt(selected);
+            if (_idleTimer is not null) PauseIdleTimerIfEmptyLocked();
             return true;
         }
         entry = null!;
@@ -292,8 +294,11 @@ internal sealed partial class DedicatedConnectionPool(
                     if (options.DedicatedPool.IdleTimeout is { } timeout)
                     {
                         entry.IdleSince = options.DedicatedPool.TimeProvider.GetTimestamp();
-                        _idleTimer ??= options.DedicatedPool.TimeProvider.CreateTimer(
-                            static state => ((DedicatedConnectionPool)state!).RetireIdle(), this, timeout, timeout);
+                        if (_idleTimer is null)
+                            _idleTimer = options.DedicatedPool.TimeProvider.CreateTimer(
+                                static state => ((DedicatedConnectionPool)state!).RetireIdle(), this, timeout, timeout);
+                        else if (_idle.Count == 0)
+                            _idleTimer.Change(timeout, timeout);
                     }
                     _idle.Add(entry);
                     SignalAvailabilityLocked();

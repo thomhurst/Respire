@@ -94,7 +94,13 @@ var options = new RespireOptions
 - `MaximumSize` limits connecting, rented, idle and closing connections together. A socket
   remains charged until receive/flush cleanup finishes. With no compatible idle connection
   or creation capacity, acquisition waits until capacity changes or the caller cancels.
-  Retirement and client disposal release waiting acquisitions. No FIFO fairness is promised.
+  Retirement and client disposal release waiting acquisitions. The pool has no independent
+  acquisition timeout: `ConnectTimeout` starts when connecting, and a command's server-side
+  blocking timeout does not bound this queue. Pass a cancellation token with a deadline when
+  all slots might be occupied by indefinitely blocking commands. An operation that supplies
+  its own acquisition deadline, such as a streamed upload, retains that deadline.
+  Waiters are broadcast to because ordinary and streaming leases can be incompatible;
+  no FIFO fairness is promised, and a waiter can starve under sustained contention.
 - `MaximumIdle` bounds retained idle connections across ordinary and streaming leases.
   Surplus returns close. It is independent of `MaximumSize`: eight idle slots do not limit
   the number of concurrently rented connections to eight. Zero disables idle reuse.
@@ -116,6 +122,13 @@ Ordinary and maintenance-enabled streaming leases share capacity but retain thei
 compatibility. At the cap, an incompatible idle connection is closed before its replacement
 is created; fresh-connection operations similarly retire idle entries when necessary.
 Minimum retention does not prevent these replacements, disconnection cleanup or disposal.
+
+Avoid application dependencies that need another lease from an exhausted pool before an
+existing operation can finish (for example, a streamed upload source that awaits another
+dedicated operation on the same client with `MaximumSize = 1`). Reserve enough capacity or
+use a separate client, and pass cancellation deadlines. Internal upload redirects and
+retirement retries return their source lease before renting the next one; corrective fences
+use separate pools.
 
 Use `respire.dedicated_pool.size` to observe occupied capacity and
 `db.client.connection.count` with `db.client.connection.state=used` to observe ready leased
