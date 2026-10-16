@@ -1,4 +1,6 @@
 #nullable enable
+Respire.Streaming.Dashboard.RespireDashboardOptions.MetricsHistoryMinutes.get -> int
+Respire.Streaming.Dashboard.RespireDashboardOptions.MetricsHistoryMinutes.set -> void
 Respire.Streaming.Dashboard.RespireDashboardExtensions
 Respire.Streaming.Dashboard.RespireDashboardOptions
 Respire.Streaming.Dashboard.RespireDashboardOptions.EntryLimit.get -> int

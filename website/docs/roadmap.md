@@ -126,7 +126,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   W3C trace propagation.
 - [Queue and stream dashboard](guides/stream-dashboard.md) for configured streams and job queues,
   with group statistics, pending deliveries, dead letters, queue pause state and limiter hits,
-  retained job logs, and authorized retry/delete actions.
+  retained job logs, bounded completion/failure history charts, and authorized retry/delete actions.
 - [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): on Redis 8.6+,
   a retried `XADD` cannot duplicate the entry.
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus
@@ -275,7 +275,7 @@ They track remaining work, not release commitments.
   release naming, package compatibility validation, and the remaining Orleans and
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
-  job groups and queue controls, batch callbacks, transactional enqueue, dashboard history,
+  job groups and queue controls, batch callbacks, transactional enqueue,
   additional tracking modes, adaptive dedicated pools,
   serializer packages, client-side encryption, coordination APIs, and testing support.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),

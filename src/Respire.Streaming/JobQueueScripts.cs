@@ -49,7 +49,7 @@ internal static class JobQueueScripts
 
     // No automatic trimming: a failed completion must not irreversibly evict another event.
     // Preflight all writes and compensate runtime failures before acknowledging the delivery.
-    private const string CompleteSource = Fence + JobQueueFlows.PrepareCompletion + """
+    private const string CompleteSource = JobQueueFlows.PrepareCompletion + """
         if KEYS[1] == KEYS[2] or (KEYS[3] and (KEYS[1] == KEYS[3] or KEYS[2] == KEYS[3])) then
             return redis.error_reply('ERR job streams must differ')
         end
@@ -83,13 +83,14 @@ internal static class JobQueueScripts
             end
         end
 
-        """ + JobQueueFlows.CommitCompletion + "local function acknowledge()\n";
+        """ + JobQueueFlows.CommitCompletion;
 
     private const string CompleteSuffix = """
 
         end
         local acknowledged = acknowledge()
         if type(acknowledged) == 'table' and acknowledged.err then
+            if rollbackMetrics then rollbackMetrics() end
             rollbackFlow()
             redis.call('XDEL', KEYS[2], event)
             if dead then redis.call('XDEL', KEYS[3], dead) end
@@ -98,13 +99,20 @@ internal static class JobQueueScripts
         return acknowledged
         """;
 
-    internal static readonly RespireScript Complete = RespireScript.Create(CompleteSource
-        + "return redis.pcall('XACK', KEYS[1], ARGV[1], ARGV[3])" + CompleteSuffix);
+    private const string Acknowledge = "return redis.pcall('XACK', KEYS[1], ARGV[1], ARGV[3])";
+    private const string AcknowledgeAndDelete = "local function ack()\n" + StreamWorkerScripts.AckAndDeleteSource
+        + "\nend\nlocal ok, result = pcall(ack)\nif not ok then return {err = result} end\nreturn result";
+
+    private static RespireScript CreateCompletion(string acknowledge, bool metrics) => RespireScript.Create(
+        (metrics ? JobMetricsScripts.Key : "") + Fence
+        + (metrics ? JobMetricsScripts.Prepare : "local rollbackMetrics\n") + CompleteSource
+        + (metrics ? JobMetricsScripts.Commit : "") + "local function acknowledge()\n" + acknowledge + CompleteSuffix);
+
+    internal static readonly RespireScript Complete = CreateCompletion(Acknowledge, false);
+    internal static readonly RespireScript CompleteWithMetrics = CreateCompletion(Acknowledge, true);
 
     // Run the existing capability-aware acknowledgement inside pcall so a denied XACKDEL
     // also rolls back the event. Redis executes the function without another client intervening.
-    internal static readonly RespireScript CompleteAndDelete = RespireScript.Create(CompleteSource
-        + "local function ack()\n" + StreamWorkerScripts.AckAndDeleteSource
-        + "\nend\nlocal ok, result = pcall(ack)\nif not ok then return {err = result} end\nreturn result"
-        + CompleteSuffix);
+    internal static readonly RespireScript CompleteAndDelete = CreateCompletion(AcknowledgeAndDelete, false);
+    internal static readonly RespireScript CompleteAndDeleteWithMetrics = CreateCompletion(AcknowledgeAndDelete, true);
 }

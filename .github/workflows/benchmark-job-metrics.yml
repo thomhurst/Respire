@@ -1,0 +1,94 @@
+name: Job metrics benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    if: github.event.label.name == 'run-job-metrics-benchmarks'
+    name: Compare terminal completion with and without metrics
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: mirror.gcr.io/library/redis:8.10@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Validate then measure both modes
+        shell: python
+        run: |
+          import subprocess
+          from pathlib import Path
+          for phase, job in [('validation', 'Dry'), ('measurement', 'Medium')]:
+              with Path(f'{phase}.log').open('w') as log:
+                  subprocess.run(['git', 'rev-parse', 'HEAD'], stdout=log, check=True)
+                  subprocess.run(['dotnet', 'run', '--project', 'benchmarks/Respire.Benchmarks',
+                                  '-c', 'Release', '-f', 'net10.0', '--',
+                                  '--filter', '*JobMetricsBenchmarks*', '--job', job,
+                                  '--exporters', 'json', 'markdown',
+                                  '--artifacts', str(Path('results', phase).resolve())],
+                                 stdout=log, stderr=subprocess.STDOUT, check=True)
+              reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+              assert len(reports) == 1, f'Missing report: {phase}'
+              import json
+              cases = json.loads(reports[0].read_text())['Benchmarks']
+              assert len(cases) == 2 and {c['Method'] for c in cases} == {'Disabled', 'Enabled'}
+              assert all(c.get('Statistics') and c['Statistics']['Mean'] > 0 for c in cases)
+              records = [json.loads(line.split(' ', 1)[1]) for line in Path(f'{phase}.log').read_text().splitlines()
+                         if line.startswith('JOB_METRICS_COMMAND_AUDIT ')]
+              assert {r['enabled'] for r in records} == {False, True}, f'Missing command audits: {phase}'
+              assert all(r['logicalCompletionCommands'] == 1 for r in records)
+      - name: Summarize enabled versus disabled metrics
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          report = next(Path('results/measurement/results').glob('*-report-full-compressed.json'))
+          cases = {c['Method']: c for c in json.loads(report.read_text())['Benchmarks']}
+          lines = ['## Job terminal completion metrics', '',
+                   'Same-build comparison of disabled metrics and a 60-minute retention window.', '',
+                   'Each operation includes one identical preparation script and one real terminal completion script.',
+                   'Preparation resets the source/event streams to one pending delivery. Metrics retain bounded minute buckets.',
+                   'Separate warmed command-hook audits verify one logical completion command in both modes; hooks are absent from timing.', '',
+                   '| Mode | Mean ns | Operations/s | Allocated B |',
+                   '| --- | ---: | ---: | ---: |']
+          for mode in ('Disabled', 'Enabled'):
+              case = cases[mode]
+              mean = case['Statistics']['Mean']
+              lines.append(f"| {mode} | {mean:.3f} | {1e9/mean:.3f} | {case['Memory']['BytesAllocatedPerOperation']} |")
+          ratio = cases['Enabled']['Statistics']['Mean'] / cases['Disabled']['Statistics']['Mean']
+          lines += ['', f'Enabled/disabled ratio: {ratio:.3f}; change {(ratio-1)*100:+.2f}%.', '',
+                    'Informational: Redis/network and identical preparation overhead are included; this is not full hosted-worker throughput.',
+                    'Command counts describe logical commands, not first-use script loading or transport retries.']
+          summary = '\n'.join(lines) + '\n'
+          Path('results/comparison.md').write_text(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(summary)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: job-metrics-comparison
+          path: |
+            results/
+            validation.log
+            measurement.log

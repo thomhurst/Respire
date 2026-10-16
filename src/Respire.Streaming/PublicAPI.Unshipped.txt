@@ -7,6 +7,26 @@ Respire.Streaming.RespireJobQueueOptions.MaximumLogLineBytes.get -> int
 Respire.Streaming.RespireJobQueueOptions.MaximumLogLineBytes.init -> void
 Respire.Streaming.RespireJobQueueOptions.LogRetention.get -> System.TimeSpan
 Respire.Streaming.RespireJobQueueOptions.LogRetention.init -> void
+Respire.Streaming.RespireJobMetrics
+static Respire.Streaming.RespireJobMetrics.ReadAsync(Respire.IRespireClient! client, string! streamKey, int minutes = 60, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobMetricBucket!>!>
+Respire.Streaming.RespireJobQueueOptions.MetricsRetentionMinutes.get -> int
+Respire.Streaming.RespireJobQueueOptions.MetricsRetentionMinutes.init -> void
+Respire.Streaming.RespireJobMetricBucket
+Respire.Streaming.RespireJobMetricBucket.RespireJobMetricBucket(System.DateTimeOffset Minute, long Completed, long Failed) -> void
+Respire.Streaming.RespireJobMetricBucket.Minute.get -> System.DateTimeOffset
+Respire.Streaming.RespireJobMetricBucket.Minute.init -> void
+Respire.Streaming.RespireJobMetricBucket.Completed.get -> long
+Respire.Streaming.RespireJobMetricBucket.Completed.init -> void
+Respire.Streaming.RespireJobMetricBucket.Failed.get -> long
+Respire.Streaming.RespireJobMetricBucket.Failed.init -> void
+Respire.Streaming.RespireJobMetricBucket.Deconstruct(out System.DateTimeOffset Minute, out long Completed, out long Failed) -> void
+Respire.Streaming.RespireJobMetricBucket.<Clone>$() -> Respire.Streaming.RespireJobMetricBucket!
+Respire.Streaming.RespireJobMetricBucket.Equals(Respire.Streaming.RespireJobMetricBucket? other) -> bool
+override Respire.Streaming.RespireJobMetricBucket.Equals(object? obj) -> bool
+override Respire.Streaming.RespireJobMetricBucket.GetHashCode() -> int
+override Respire.Streaming.RespireJobMetricBucket.ToString() -> string!
+static Respire.Streaming.RespireJobMetricBucket.operator ==(Respire.Streaming.RespireJobMetricBucket? left, Respire.Streaming.RespireJobMetricBucket? right) -> bool
+static Respire.Streaming.RespireJobMetricBucket.operator !=(Respire.Streaming.RespireJobMetricBucket? left, Respire.Streaming.RespireJobMetricBucket? right) -> bool
 Respire.Streaming.RespireJob<T>.Group.get -> string?
 Respire.Streaming.RespireJob<T>.Group.init -> void
 Respire.Streaming.RespireJobEnqueueOptions.Group.get -> string?

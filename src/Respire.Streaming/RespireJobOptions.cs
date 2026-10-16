@@ -36,6 +36,10 @@ public sealed record RespireJobEnqueueOptions
 /// <summary>Queue scheduling, retry and log retention policy, shared by all workers for the queue.</summary>
 public sealed record RespireJobQueueOptions
 {
+    /// <summary>Retained one-minute completion/failure buckets, from 1 to 1440. Zero disables metrics (the default).</summary>
+    /// <remarks>All workers must use the same retention. To change it, stop workers and delete the queue's metrics key or let it expire.</remarks>
+    public int MetricsRetentionMinutes { get; init; }
+
     /// <summary>Initial shared rate policy. Null uses the existing Redis policy (unlimited on a new queue).</summary>
     /// <remarks>Non-null policies must match existing configuration. Use SetRateLimitAsync to change it.</remarks>
     public RespireJobRateLimit? RateLimit { get; init; }
@@ -58,6 +62,7 @@ public sealed record RespireJobQueueOptions
 
     internal void Validate()
     {
+        if (MetricsRetentionMinutes is < 0 or > 1440) throw new ArgumentOutOfRangeException(nameof(MetricsRetentionMinutes));
         RateLimit?.Validate();
         if (MaximumLogLines is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(MaximumLogLines));
         if (MaximumLogLineBytes is < 1 or > 16384) throw new ArgumentOutOfRangeException(nameof(MaximumLogLineBytes));

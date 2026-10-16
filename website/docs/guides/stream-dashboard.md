@@ -162,9 +162,31 @@ dead-letter entry, leaving source history, enqueue deduplication, and completion
 unchanged. Both actions reject entries with an invalid envelope or a different group.
 No action trims unrelated entries or acknowledges a pending delivery.
 
+## Completion history
+
+For streams registered with `IsJobQueue = true`, the dashboard displays completed-job throughput
+and terminal failures per minute. Enable `MetricsRetentionMinutes` on the queue's workers as
+described in [job queue metrics](job-queues.md#bounded-completion-metrics). The dashboard does
+not enable recording itself. `RespireDashboardOptions.MetricsHistoryMinutes` bounds each chart
+to 1–1440 minutes (default 60), additionally limited by the worker's retained window.
+
+Both charts use UTC and include the current partial minute. Completed counts acknowledgements;
+failed counts dead letters, not each unsuccessful retry attempt. Expired jobs and flow dependency
+failures without a delivery are excluded. Missing minute buckets show zero, including periods
+before recording began or while metrics were disabled. A missing history key displays an empty
+state; a Redis error displays an unavailable state without hiding other queue information.
+Expand **View minute counts** for the accessible table behind each pair of charts.
+
+History uses the same two-second snapshot cache and explicit authorization policy as the rest
+of the page. It reads only metrics hashes derived from configured job queue source keys, with
+the client's key prefix. Query parameters cannot select another queue or expand the read limit.
+No external chart scripts or network services are used.
+
 The Redis identity needs `XLEN`, `XINFO GROUPS`, `XPENDING`, and `XRANGE` for inspection.
 Job queue control inspection additionally needs script execution and `HMGET` on the configured
 stream key plus `:control` (with the same client key prefix).
+Job queue history additionally needs script execution, `TIME`, and `HGET` on the configured
+stream key plus `:metrics`.
 Actions additionally need script execution (`EVAL`/`EVALSHA` and script loading), `XDEL` on
 the dead-letter stream, and, for retry, `XADD` and `XDEL` on the source stream. Source `XDEL`
 allows rollback if removal fails. A denied write leaves the dead letter available for a

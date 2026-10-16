@@ -7,6 +7,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Respire/Respire.csproj" />
+    <ProjectReference Include="../Respire.Streaming/Respire.Streaming.csproj" />
     <InternalsVisibleTo Include="Respire.Streaming.Dashboard.Tests" />
   </ItemGroup>
 </Project>
