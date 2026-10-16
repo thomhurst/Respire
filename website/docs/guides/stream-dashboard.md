@@ -8,7 +8,8 @@ description: Inspect stream workers and reliable job queues with an authorized A
 `Respire.Streaming.Dashboard` provides an ASP.NET Core operator page for
 [stream workers](stream-workers.md) and [typed job queues](job-queues.md). It shows configured
 streams, consumer groups, pending deliveries, dead letters, and a sampled delivery rate.
-Operators can retry or permanently delete individual dead letters and inspect retained job logs.
+Operators can retry or permanently delete individual dead letters, inspect retained job logs,
+and inspect, pause, or resume application job groups.
 
 Install `Respire.Streaming.Dashboard` and `Respire.DependencyInjection` in an ASP.NET Core app.
 The dashboard supports .NET 8 and .NET 10 and requires Redis 7 or later for retry permission
@@ -81,15 +82,16 @@ It uses the application's `IRespireClient`, including any key prefix on that cli
 For a reliable queue, use its `StreamKey`, `DeadLetterStreamKey`, and
 `RespireJobQueue<T>.ConsumerGroup` values. The example uses the default keys for queue `email`.
 If worker options override the dead-letter destination, configure that same destination here.
-Set `IsJobQueue = true` to enable the job-specific retry semantics below. Leave it false for
-plain streams, including typed stream handlers.
+Set `IsJobQueue = true` to enable job-specific inspection, group controls, and retry semantics.
+Leave it false for plain streams, including typed stream handlers.
 
 The source and dead-letter keys must resolve to distinct keys in the same Cluster slot.
 Reserve each dead-letter stream for exactly one source stream and consumer group. The worker
 envelope records a source entry ID and group, but not the source key; sharing a dead-letter
 destination across sources cannot be safely distinguished. Configuration rejects duplicate
 dead-letter destinations, source/dead-letter overlap, and group names exceeding the worker's
-256-byte dead-letter metadata limit. Omit `DeadLetterStream` for inspection without actions.
+256-byte dead-letter metadata limit. Omit `DeadLetterStream` to disable dead-letter actions;
+application group pause/resume remains available for job queues.
 
 ## Read the snapshot
 
@@ -120,7 +122,65 @@ viewers, with up to four streams read concurrently. Dashboard mutations invalida
 snapshot. Counts are separate reads, not a transactional snapshot. If a source stream is
 unavailable, its retained dead letters can still be inspected and deleted; retry requires the
 source consumer group. Large field values still have to be retrieved from Redis before preview truncation.
-Delayed jobs in scheduling storage and retained completion events are outside this view.
+Application group counts include grouped delayed jobs in scheduling storage. Individual delayed
+jobs and retained completion events are outside this view.
+
+## Inspect and control application job groups
+
+For registrations with `IsJobQueue = true`, **Application job groups** shows group names,
+queued and due counts, active delivery leases, admission state, and concurrency/rate/lease
+policies. These are application identities such as tenants, distinct from the Redis consumer
+groups shown elsewhere on the page. Ungrouped jobs do not create an application group.
+
+- **Queued / due** counts staged entries, including delayed jobs. Due entries have reached
+  their scheduled time; expired entries remain counted until scheduler cleanup.
+- **Active leases** counts unexpired group delivery leases using the Redis clock, rather than
+  every entry in the consumer group's pending list.
+- **Group admission** reports paused, concurrency-limited, and rate-limited states independently.
+  Eligible means due work passes the group policy. Queue-wide controls, job expiry, and worker
+  availability still apply.
+- **Policy** shows the concurrency maximum, GCRA burst/window, and delivery lease duration.
+  Missing policy values mean unlimited admission and a one-minute lease.
+
+Each page contains at most `EntryLimit` groups. **Next groups** reads the next page in encoded
+identity order, jumping over each group's backlog without loading payloads or scanning the
+database. Lists include groups with queued work or retained leases; expired leases can leave
+a visible group with zero active work. Use **Inspect application group** for an idle group
+whose policy remains configured. A missing group displays zero counts and default policy.
+Dashboard lookup and control names are limited to 4096 characters. Pagination reflects live
+state, so groups added before the cursor appear after restarting from the dashboard.
+Lookup and pagination forms send identities in POST bodies so long names do not exceed
+server URL limits. Pause/resume redirects to the queue's first group page.
+
+**Pause group** prevents new attempts while leaving in-flight leases running. **Resume group**
+restores eligibility subject to concurrency and rate policies; repeating either action is safe.
+These POSTs use the same operator authorization policy and antiforgery checks as dead-letter
+actions, call the group-control API, and invalidate cached snapshots. GET inspection never
+changes scheduler state. Dedicated group pages read fresh state.
+
+Applications can use the same API with a logical stream key and their existing prefixed client:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
+var page = await RespireJobGroups.ReadAsync(client, queue.StreamKey, count: 50);
+if (page.NextCursor is { } cursor)
+    page = await RespireJobGroups.ReadAsync(client, queue.StreamKey, count: 50, cursor: cursor);
+var tenant = await RespireJobGroups.GetAsync(client, queue.StreamKey, "tenant-a");
+await queue.PauseGroupAsync("tenant-a");
+await queue.ResumeGroupAsync("tenant-a");
+```
+
+Inspection needs script execution, `TIME`, `ZRANGEBYLEX`, `ZLEXCOUNT`, and `HMGET` on the
+configured stream's `:group-jobs`, `:group-leases`, and `:group-policy` keys. Pause/resume
+requires the existing [group-control permissions](job-queues.md#group-concurrency-rate-limits-and-pause)
+on that queue's fixed scheduling keys. A denied write returns HTTP 403; other Redis failures
+return HTTP 503 with a generic message. An inspection failure leaves other dashboard sections
+available.
 
 ## Inspect job logs
 

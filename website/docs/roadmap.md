@@ -130,7 +130,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   W3C trace propagation.
 - [Queue and stream dashboard](guides/stream-dashboard.md) for configured streams and job queues,
   with group statistics, pending deliveries, dead letters, queue pause state and limiter hits,
-  retained job logs, bounded completion/failure history charts, and authorized retry/delete actions.
+  retained job logs, bounded completion/failure history charts, paginated application job group
+  inspection and pause/resume, and authorized retry/delete actions.
 - [Idempotent stream appends](guides/command-retries.md#idempotent-stream-appends): on Redis 8.6+,
   a retried `XADD` cannot duplicate the entry.
 - [Batches, transactions, and `WATCH`](guides/batches-and-transactions.md), plus

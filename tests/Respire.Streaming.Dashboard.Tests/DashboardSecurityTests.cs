@@ -76,6 +76,17 @@ public class DashboardSecurityTests(RedisTestContainer redis)
     [Arguments("GET", "/workers/", null, 401)]
     [Arguments("GET", "/workers/0/logs?jobId=job", null, 401)]
     [Arguments("GET", "/workers/0/logs?jobId=job", "reader", 403)]
+    [Arguments("GET", "/workers/0/groups", null, 401)]
+    [Arguments("GET", "/workers/0/groups?group=a", "reader", 403)]
+    [Arguments("POST", "/workers/0/groups", null, 401)]
+    [Arguments("POST", "/workers/0/groups", "reader", 403)]
+    [Arguments("POST", "/workers/0/groups", "operator", 400)]
+    [Arguments("POST", "/workers/0/pause-group", null, 401)]
+    [Arguments("POST", "/workers/0/resume-group", null, 401)]
+    [Arguments("POST", "/workers/0/pause-group", "reader", 403)]
+    [Arguments("POST", "/workers/0/resume-group", "reader", 403)]
+    [Arguments("POST", "/workers/0/pause-group", "operator", 400)]
+    [Arguments("POST", "/workers/0/resume-group", "operator", 400)]
     [Arguments("POST", "/workers/0/retry", null, 401)]
     [Arguments("POST", "/workers/0/delete", null, 401)]
     [Arguments("GET", "/workers/", "reader", 403)]
@@ -162,10 +173,11 @@ public class DashboardSecurityTests(RedisTestContainer redis)
     }
 
     internal static async Task<WebApplication> CreateApplication(IRespireClient client, string mappedPolicy = "operators", bool nested = false,
-        bool jobs = false, int entryLimit = 50)
+        bool jobs = false, int entryLimit = 50, bool kestrel = false)
     {
         var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
+        if (kestrel) builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+        else builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(client);
         builder.Services.AddAuthentication("test").AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("test", _ => { });
         builder.Services.AddAuthorization(options => options.AddPolicy("operators", policy => policy.RequireRole("operator")));

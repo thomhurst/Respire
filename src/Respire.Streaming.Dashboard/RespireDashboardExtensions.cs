@@ -82,6 +82,56 @@ public static class RespireDashboardExtensions
                     "Job logs are unavailable. Check Redis permissions and the configured queue.").ConfigureAwait(false);
             }
         });
+        group.MapMethods("/{index:int}/groups", ["GET", "POST"], async (HttpContext context) =>
+        {
+            ProtectResponse(context);
+            var returnPath = DashboardPath(context, true);
+            var antiforgery = context.RequestServices.GetRequiredService<IAntiforgery>();
+            var names = context.Request.Query["group"];
+            var cursors = context.Request.Query["cursor"];
+            if (HttpMethods.IsPost(context.Request.Method))
+            {
+                try { await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false); }
+                catch (AntiforgeryValidationException)
+                {
+                    await WriteErrorAsync(context, returnPath, 400, "The form expired or could not be verified. Refresh the dashboard and try again.").ConfigureAwait(false);
+                    return;
+                }
+                var form = await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
+                names = form["group"];
+                cursors = form["cursor"];
+            }
+            if (names.Count > 1 || cursors.Count > 1 || (names.Count != 0 && cursors.Count != 0)
+                || (names.Count == 1 && !IsGroupName(names[0])) || (cursors.Count == 1 && cursors[0]!.Length > 32769))
+            {
+                await WriteErrorAsync(context, returnPath, 400, "Supply one group name or one pagination cursor.").ConfigureAwait(false);
+                return;
+            }
+            var index = int.Parse(context.Request.RouteValues["index"]!.ToString()!, CultureInfo.InvariantCulture);
+            try
+            {
+                var groups = await state.ReadGroupsAsync(index, cursors.Count == 0 ? null : cursors[0],
+                    names.Count == 0 ? null : names[0], context.RequestAborted).ConfigureAwait(false);
+                if (groups is null)
+                {
+                    await WriteErrorAsync(context, returnPath, 404, "This job queue is not configured.").ConfigureAwait(false);
+                    return;
+                }
+                var tokens = context.RequestServices.GetRequiredService<IAntiforgery>().GetAndStoreTokens(context);
+                context.Response.ContentType = "text/html; charset=utf-8";
+                await context.Response.WriteAsync(DashboardPage.Render(new([]), returnPath, tokens.FormFieldName,
+                    tokens.RequestToken!, jobGroups: groups), context.RequestAborted).ConfigureAwait(false);
+            }
+            catch (ArgumentException)
+            {
+                await WriteErrorAsync(context, returnPath, 400, "The group name or pagination cursor is invalid.").ConfigureAwait(false);
+            }
+            catch (RespireException)
+            {
+                await WriteErrorAsync(context, returnPath, 503,
+                    "Application job groups are unavailable. Check Redis permissions and the configured queue.").ConfigureAwait(false);
+            }
+        });
         group.MapPost("/{index:int}/{action}", async (HttpContext context) =>
         {
             ProtectResponse(context);
@@ -94,22 +144,36 @@ public static class RespireDashboardExtensions
                 return;
             }
             var action = context.Request.RouteValues["action"]?.ToString();
-            if (action is not ("retry" or "delete"))
+            if (action is not ("retry" or "delete" or "pause-group" or "resume-group"))
             {
                 await WriteErrorAsync(context, returnPath, 404, "This dashboard action does not exist.").ConfigureAwait(false);
                 return;
             }
             var form = await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
-            var ids = form["id"];
-            if (ids.Count != 1 || !IsEntryId(ids[0]))
+            var groupAction = action is "pause-group" or "resume-group";
+            var id = groupAction ? ReadGroupName(form) : form["id"].Count == 1 ? form["id"][0] : null;
+            if (groupAction ? !IsGroupName(id) : !IsEntryId(id))
             {
-                await WriteErrorAsync(context, returnPath, 400, "The entry ID is invalid.").ConfigureAwait(false);
+                await WriteErrorAsync(context, returnPath, 400,
+                    groupAction ? "Enter one group name of at most 4096 characters." : "The entry ID is invalid.").ConfigureAwait(false);
                 return;
             }
             var index = int.Parse(context.Request.RouteValues["index"]!.ToString()!, CultureInfo.InvariantCulture);
             try
             {
-                var result = await state.MutateAsync(index, ids[0]!, action == "retry", context.RequestAborted).ConfigureAwait(false);
+                if (groupAction)
+                {
+                    if (!await state.SetGroupPausedAsync(index, id!, action == "pause-group", context.RequestAborted).ConfigureAwait(false))
+                    {
+                        await WriteErrorAsync(context, returnPath, 404, "This job queue is not configured.").ConfigureAwait(false);
+                        return;
+                    }
+                    context.Response.StatusCode = StatusCodes.Status303SeeOther;
+                    context.Response.Headers.Location = returnPath.TrimEnd('/') + "/" + index.ToString(CultureInfo.InvariantCulture)
+                        + "/groups";
+                    return;
+                }
+                var result = await state.MutateAsync(index, id!, action == "retry", context.RequestAborted).ConfigureAwait(false);
                 if (result <= 0)
                 {
                     await WriteErrorAsync(context, returnPath, result == -1 ? 409 : 404, result == -1
@@ -120,7 +184,10 @@ public static class RespireDashboardExtensions
                 context.Response.StatusCode = StatusCodes.Status303SeeOther;
                 context.Response.Headers.Location = returnPath.TrimEnd('/') + "/";
             }
-            catch (RespireServerException exception) when (exception.Code == "NOPERM")
+            // Group-control preflight uses Lua error(), whose outer code is ERR.
+            catch (RespireServerException exception) when (exception.Code == "NOPERM"
+                || (groupAction && exception.Message.Contains(
+                    "NOPERM job scheduling requires Redis 7.0 and queue command permissions", StringComparison.Ordinal)))
             {
                 await WriteErrorAsync(context, returnPath, 403,
                     "Redis permissions do not allow this action. Ask an administrator to update the dashboard Redis user's permissions.").ConfigureAwait(false);
@@ -154,6 +221,20 @@ public static class RespireDashboardExtensions
         }
         var path = context.Request.PathBase.Add(new PathString(requestPath)).ToUriComponent();
         return path.Length == 0 ? "/" : path;
+    }
+
+    private static bool IsGroupName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 4096;
+
+    private static string? ReadGroupName(IFormCollection form)
+    {
+        var names = form["group"];
+        var tokens = form["groupToken"];
+        if (tokens.Count == 0) return names.Count == 1 ? names[0] : null;
+        if (names.Count != 0 || tokens.Count != 1 || tokens[0]!.Length > 16384) return null;
+        // HTML form values normalize control characters. An encoded identity preserves exact UTF-8 bytes.
+        try { return new System.Text.UTF8Encoding(false, true).GetString(Convert.FromBase64String(tokens[0]!)); }
+        catch (FormatException) { return null; }
+        catch (ArgumentException) { return null; }
     }
 
     private static bool IsEntryId(string? value)

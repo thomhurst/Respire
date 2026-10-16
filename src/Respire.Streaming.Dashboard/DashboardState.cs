@@ -5,11 +5,13 @@ namespace Respire.Streaming.Dashboard;
 
 internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> Streams);
 internal sealed record DashboardJobLogs(string QueueName, string JobId, string[] Lines);
+internal sealed record DashboardJobGroups(int Index, string QueueName, IReadOnlyList<RespireJobGroupInfo> Groups, string? NextCursor);
 internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream Configuration,
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
     double? DeliveriesPerSecond, string? Error, bool SourceUnavailable = false, bool DeadLettersUnavailable = false,
-    bool? IsPaused = null, long? RateLimitHits = null, IReadOnlyList<RespireJobMetricBucket>? Metrics = null);
+    bool? IsPaused = null, long? RateLimitHits = null, IReadOnlyList<RespireJobMetricBucket>? Metrics = null,
+    RespireJobGroupPage? JobGroups = null);
 
 internal sealed class DashboardState
 {
@@ -89,8 +91,18 @@ internal sealed class DashboardState
                 bool? paused = null;
                 long? rateLimitHits = null;
                 IReadOnlyList<RespireJobMetricBucket>? metrics = null;
+                RespireJobGroupPage? jobGroups = null;
                 if (stream.IsJobQueue)
                 {
+                    try
+                    {
+                        jobGroups = await RespireJobGroups.ReadAsync(_client, stream.Stream, _limit,
+                            cancellationToken: token).ConfigureAwait(false);
+                    }
+                    catch (RespireException)
+                    {
+                        error = "Application job groups unavailable. Check the group keys and Redis permissions.";
+                    }
                     try
                     {
                         using var controls = await _client.Scripts.ExecuteAsync(QueueControlState,
@@ -100,7 +112,7 @@ internal sealed class DashboardState
                     }
                     catch (RespireException)
                     {
-                        error = "Queue controls unavailable. Check the control key and Redis permissions.";
+                        error = (error is null ? "" : error + " ") + "Queue controls unavailable. Check the control key and Redis permissions.";
                     }
                     try
                     {
@@ -155,7 +167,7 @@ internal sealed class DashboardState
                     _samples[i] = (current, now);
                 }
                 result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
-                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics);
+                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups);
             }).ConfigureAwait(false);
             _snapshot = new(result);
             _snapshotTimestamp = _clock.GetTimestamp();
@@ -177,6 +189,30 @@ internal sealed class DashboardState
         var lines = await _client.Lists.RangeAsync(JobLogKeys.ForJob(stream.Stream, jobId), -_limit, -1,
             cancellationToken).ConfigureAwait(false);
         return new(stream.Name, jobId, lines);
+    }
+
+    internal async ValueTask<DashboardJobGroups?> ReadGroupsAsync(int index, string? cursor, string? name,
+        CancellationToken cancellationToken)
+    {
+        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue) return null;
+        var stream = _streams[index];
+        if (name is not null)
+            return new(index, stream.Name,
+                [await RespireJobGroups.GetAsync(_client, stream.Stream, name, cancellationToken).ConfigureAwait(false)], null);
+        var page = await RespireJobGroups.ReadAsync(_client, stream.Stream, _limit, cursor, cancellationToken).ConfigureAwait(false);
+        return new(index, stream.Name, page.Groups, page.NextCursor);
+    }
+
+    internal async ValueTask<bool> SetGroupPausedAsync(int index, string name, bool paused, CancellationToken cancellationToken)
+    {
+        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue) return false;
+        try
+        {
+            if (paused) await RespireJobGroups.PauseAsync(_client, _streams[index].Stream, name, cancellationToken).ConfigureAwait(false);
+            else await RespireJobGroups.ResumeAsync(_client, _streams[index].Stream, name, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally { Interlocked.Increment(ref _version); }
     }
 
     internal async ValueTask<long> MutateAsync(int index, string id, bool retry, CancellationToken cancellationToken)

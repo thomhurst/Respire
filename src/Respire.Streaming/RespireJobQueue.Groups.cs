@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Respire.Streaming;
 
 public sealed partial class RespireJobQueue<T>
@@ -7,7 +5,7 @@ public sealed partial class RespireJobQueue<T>
     /// <summary>Replaces a group's shared admission policy. Null restores unlimited admission; pause state is preserved.</summary>
     public async ValueTask SetGroupOptionsAsync(string group, RespireJobGroupOptions? options, CancellationToken cancellationToken = default)
     {
-        var prefix = GroupPrefix(group);
+        var prefix = RespireJobGroups.Prefix(group);
         options?.Validate();
         var keys = JobGroupScheduling.Keys(StreamKey);
         JobQueueScheduling.ValidateKeys(_client, keys);
@@ -20,26 +18,12 @@ public sealed partial class RespireJobQueue<T>
 
     /// <summary>Stops new delivery attempts for one application job group. In-flight leases continue.</summary>
     public ValueTask<bool> PauseGroupAsync(string group, CancellationToken cancellationToken = default)
-        => SetGroupPausedAsync(group, true, cancellationToken);
+        => RespireJobGroups.PauseAsync(_client, StreamKey, group, cancellationToken);
 
     /// <summary>Makes one application job group eligible again, subject to its admission policy.</summary>
     public ValueTask<bool> ResumeGroupAsync(string group, CancellationToken cancellationToken = default)
-        => SetGroupPausedAsync(group, false, cancellationToken);
+        => RespireJobGroups.ResumeAsync(_client, StreamKey, group, cancellationToken);
 
-    private async ValueTask<bool> SetGroupPausedAsync(string group, bool paused, CancellationToken cancellationToken)
-    {
-        var prefix = GroupPrefix(group);
-        var keys = JobGroupScheduling.Keys(StreamKey);
-        JobQueueScheduling.ValidateKeys(_client, keys);
-        return await _client.Scripts.ExecuteIntegerAsync(JobGroupControls.Pause, [.. keys],
-            [prefix, paused ? 1 : 0], cancellationToken).ConfigureAwait(false) == 1;
-    }
-
-    private static string GroupPrefix(string group)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(group);
-        return Convert.ToHexString(new UTF8Encoding(false, true).GetBytes(group)).ToLowerInvariant() + "|";
-    }
 }
 
 /// <summary>Distributed admission policy for one application job group, using the Redis server clock.</summary>
