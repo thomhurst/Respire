@@ -9,4 +9,7 @@ internal static partial class IdempotencyLog
 
     [LoggerMessage(2, LogLevel.Warning, "Could not abandon an idempotency claim; it will expire at its TTL.", EventName = "AbandonFailed")]
     internal static partial void AbandonFailed(ILogger logger, Exception error);
+
+    [LoggerMessage(3, LogLevel.Warning, "Could not store an idempotent response; delivering the buffered response and attempting claim cleanup.", EventName = "CompletionFailed")]
+    internal static partial void CompletionFailed(ILogger logger, Exception error);
 }

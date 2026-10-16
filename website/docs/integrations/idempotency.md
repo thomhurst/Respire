@@ -66,8 +66,11 @@ without that header execute normally. A present header must contain exactly one 
 value of at most 256 characters; invalid keys receive **400** before the handler executes.
 
 Keep routing, authentication, and authorization before this middleware, so every replay is
-authorized. Place exception handling and response compression outside (before) it. Do not
-also apply output caching to these endpoints. All application instances must share the client
+authorized. Place exception handling outside (before) it. Place response compression inside
+(after) `UseRespireIdempotency`, so the stored bytes include compression and match the stored
+`Content-Encoding`. Retries must preserve `Accept-Encoding`, as they replay the first
+representation without renegotiating compression. Do not also apply output caching to
+these endpoints. All application instances must share the client
 database, key prefix, endpoint names, and options. The middleware borrows the registered
 `IRespireClient`; register and manage its lifetime with the usual DI integration.
 
@@ -131,7 +134,8 @@ WebSockets, or gRPC. Response trailers are not replayed.
 The stored header allowlist is `Content-Type`, `Content-Language`, `Content-Encoding`,
 `Location`, `ETag`, and `Last-Modified`. Headers nominated by `Connection` are excluded.
 Cookies, authentication challenges, connection-specific headers, and arbitrary application
-headers are not stored. Replay computes Content-Length from the body. Safe-header storage
+headers are not stored. Replay computes Content-Length from the body, except for HEAD,
+which preserves the original representation's declared Content-Length. Safe-header storage
 is capped at 16 KiB; a response exceeding that cap is delivered but its claim is abandoned.
 OnStarting callbacks run before the first response's status and headers are captured.
 
@@ -143,9 +147,14 @@ so request cancellation does not skip it. A failed cleanup is logged and the cla
 at its TTL. Completion and abandonment cannot overwrite or remove a newer owner's claim.
 An expired owner still receives its own response; it cannot publish that response for replay.
 
-Redis acquisition failures propagate without executing the endpoint. Completion failures
-propagate too; response headers may already have started, so the transport can abort the
-response. A completed result is retained even if delivery to the original caller fails.
+Claim acquisition uses a separate five-second deadline, so a client disconnect does not
+cancel the wait for the ownership token. Once acquired, an aborted request abandons its
+claim without executing the endpoint. Redis acquisition failures propagate without executing
+the endpoint; a timeout or lost reply can still leave a claim until its TTL expires.
+Completion failures are logged and the buffered response is still delivered, since its
+headers have already started. Cleanup abandons a pending claim, allowing another execution
+on retry; if Redis completed the result before its reply was lost, cleanup preserves it.
+A completed result is retained even if delivery to the original caller fails.
 
 This does not provide an exactly-once transaction with external effects. Expiry, eviction,
 Redis data loss, cancellation, or an abandoned response can permit another execution. Use

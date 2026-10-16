@@ -29,6 +29,7 @@ See [observability](observability.md#logging) for logger configuration.
 | --- | ---: | --- | --- |
 | `Respire.Idempotency` | 1 | `ResponseLimitExceeded` | Warning |
 | `Respire.Idempotency` | 2 | `AbandonFailed` | Warning |
+| `Respire.Idempotency` | 3 | `CompletionFailed` | Warning |
 | `Respire` | 1 | `StreamReadRetry` | Warning |
 | `Respire` | 2 | `DeadConnectionReplaced` | Information |
 | `Respire` | 3 | `RejectedReplacementDisposalFailed` | Warning |

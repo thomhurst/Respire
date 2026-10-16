@@ -44,7 +44,9 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
             }
         }
         var key = BuildKey(context, endpoint.Name, caller, keys[0]!);
-        var claim = await store.TryBeginAsync(key, _options.TimeToLive, fingerprint, context.RequestAborted).ConfigureAwait(false);
+        // Keep waiting for ownership after a disconnect so we can release an accepted claim.
+        using var acquisition = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var claim = await store.TryBeginAsync(key, _options.TimeToLive, fingerprint, acquisition.Token).ConfigureAwait(false);
         switch (claim.State)
         {
             case RespireIdempotencyState.InProgress:
@@ -77,6 +79,7 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
         context.Features.Set<IHttpResponseBodyFeature>(capture);
         try
         {
+            context.RequestAborted.ThrowIfCancellationRequested();
             await next(context).ConfigureAwait(false);
             await capture.CompleteAsync().ConfigureAwait(false);
             if (buffer.Exceeded) throw new ResponseLimitException();
@@ -88,7 +91,18 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
             {
                 var payload = StoredResponse.Encode(context.Response, buffer);
                 if (payload is not null)
-                    completed = await store.CompleteAsync(key, claim.OwnerToken!, payload, context.RequestAborted).ConfigureAwait(false);
+                {
+                    try
+                    {
+                        completed = await store.CompleteAsync(key, claim.OwnerToken!, payload, context.RequestAborted).ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        // Headers are committed. A store failure must not truncate a successful response.
+                        // Cleanup only removes a still-pending claim, including when the reply was lost.
+                        IdempotencyLog.CompletionFailed(logger, error);
+                    }
+                }
             }
             await original.Stream.WriteAsync(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), context.RequestAborted).ConfigureAwait(false);
         }

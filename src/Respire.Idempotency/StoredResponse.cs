@@ -8,7 +8,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
 {
     private const int HeaderLimit = 16 * 1024;
     private static readonly string[] SafeHeaders =
-        ["Content-Type", "Content-Language", "Content-Encoding", "Location", "ETag", "Last-Modified"];
+        ["Content-Type", "Content-Language", "Content-Encoding", "Location", "ETag", "Last-Modified", "Content-Length"];
 
     internal static byte[]? Encode(HttpResponse response, BoundedResponseStream body)
     {
@@ -19,6 +19,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
         // Connection can nominate even otherwise safe headers as hop-by-hop.
         var connectionHeaders = response.Headers.Connection.ToString().Split(',', StringSplitOptions.TrimEntries);
         var headers = SafeHeaders.Where(h => response.Headers.ContainsKey(h)
+            && (h != "Content-Length" || HttpMethods.IsHead(response.HttpContext.Request.Method))
             && !connectionHeaders.Contains(h, StringComparer.OrdinalIgnoreCase)).ToArray();
         writer.Write(headers.Length);
         foreach (var name in headers)
@@ -70,8 +71,8 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
         context.Response.StatusCode = Status;
         foreach (var (name, values) in Headers) context.Response.Headers[name] = new StringValues(values);
         if (Status is StatusCodes.Status204NoContent or StatusCodes.Status304NotModified) return;
-        context.Response.ContentLength = Body.Length;
         if (HttpMethods.IsHead(context.Request.Method)) return;
+        context.Response.ContentLength = Body.Length;
         await context.Response.Body.WriteAsync(Body, context.RequestAborted).ConfigureAwait(false);
     }
 }

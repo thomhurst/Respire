@@ -1,4 +1,6 @@
 using System.Net;
+using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -20,6 +22,118 @@ namespace Respire.Idempotency.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class IdempotencyMiddlewareTests(RedisTestContainer redis)
 {
+    [Test]
+    public async Task CancellationAfterRedisAcceptsBeginAbandonsClaimBeforeHandlerRuns()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        using var aborted = new CancellationTokenSource();
+        var (wrapped, scripts) = WrapScripts(client);
+        scripts.AfterBegin = aborted.Cancel;
+        var executions = 0;
+        using var server = CreateServer(wrapped, context =>
+        {
+            Interlocked.Increment(ref executions);
+            return context.Response.WriteAsync("recovered");
+        }, before: app => app.Use(async (context, next) =>
+        {
+            if (context.Request.Headers.ContainsKey("X-Abort-Begin")) context.RequestAborted = aborted.Token;
+            await next(context);
+        }));
+        using var http = server.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/orders");
+        request.Headers.Add("Idempotency-Key", "operation");
+        request.Headers.Add("X-Caller", "alice");
+        request.Headers.Add("X-Abort-Begin", "true");
+        await Assert.That(async () => { using var response = await http.SendAsync(request); })
+            .Throws<OperationCanceledException>();
+        await Assert.That(executions).IsEqualTo(0);
+        using var retry = await SendAsync(http);
+        using var replay = await SendAsync(http);
+        await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo("recovered");
+        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo("recovered");
+        await Assert.That(executions).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompletionFailureStillDeliversBufferedResponse(bool accepted)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var (wrapped, scripts) = WrapScripts(client);
+        scripts.FailComplete = true;
+        scripts.AcceptCompleteBeforeFailure = accepted;
+        var executions = 0;
+        using var server = CreateServer(wrapped, context =>
+        {
+            Interlocked.Increment(ref executions);
+            context.Response.ContentLength = 8;
+            return context.Response.WriteAsync("complete");
+        }, kestrel: true);
+        using var http = server.CreateClient();
+        using var first = await SendAsync(http);
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await first.Content.ReadAsStringAsync()).IsEqualTo("complete");
+        scripts.FailComplete = false;
+        using var retry = await SendAsync(http);
+        using var replay = await SendAsync(http);
+        await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo("complete");
+        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo("complete");
+        await Assert.That(executions).IsEqualTo(accepted ? 1 : 2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompressionInsideIdempotencyReplaysValidCompressedBytes(bool kestrel)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var executions = 0;
+        using var server = CreateServer(client, context =>
+        {
+            Interlocked.Increment(ref executions);
+            context.Response.ContentType = "text/plain";
+            return context.Response.WriteAsync(new string('x', 1000));
+        }, kestrel: kestrel, compression: true);
+        using var http = server.CreateClient();
+        http.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip");
+        using var first = await SendAsync(http);
+        using var replay = await SendAsync(http);
+        foreach (var response in new[] { first, replay })
+        {
+            await Assert.That(response.Content.Headers.ContentEncoding.Single()).IsEqualTo("gzip");
+            await using var compressed = await response.Content.ReadAsStreamAsync();
+            await using var gzip = new GZipStream(compressed, CompressionMode.Decompress);
+            using var reader = new StreamReader(gzip);
+            await Assert.That(await reader.ReadToEndAsync()).IsEqualTo(new string('x', 1000));
+        }
+        await Assert.That(executions).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HeadReplayPreservesRepresentationLength(bool kestrel)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var executions = 0;
+        RequestDelegate endpoint = context =>
+        {
+            Interlocked.Increment(ref executions);
+            context.Response.ContentLength = 1234;
+            return Task.CompletedTask;
+        };
+        using var server = CreateServer(client, endpoint, kestrel: kestrel,
+            routes: routes => routes.MapMethods("/orders", ["HEAD"], endpoint).WithRespireIdempotency("orders"));
+        using var http = server.CreateClient();
+        using var first = await SendAsync(http, method: HttpMethod.Head);
+        using var replay = await SendAsync(http, method: HttpMethod.Head);
+        await Assert.That(first.Content.Headers.ContentLength).IsEqualTo(1234);
+        await Assert.That(replay.Content.Headers.ContentLength).IsEqualTo(1234);
+        await Assert.That((await replay.Content.ReadAsByteArrayAsync()).Length).IsEqualTo(0);
+        await Assert.That(executions).IsEqualTo(1);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -580,10 +694,11 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
 
     private static TestApplication CreateServer(IRespireClient client, RequestDelegate endpoint,
         Action<RespireIdempotencyOptions>? configure = null, Action<IEndpointRouteBuilder>? routes = null,
-        Action<IApplicationBuilder>? before = null, bool kestrel = false)
+        Action<IApplicationBuilder>? before = null, bool kestrel = false, bool compression = false)
         => new(new HostBuilder().ConfigureWebHost(web => ConfigureTransport(web, kestrel).ConfigureServices(services =>
         {
             services.AddRouting();
+            if (compression) services.AddResponseCompression();
             services.AddSingleton(client);
             services.AddRespireIdempotency(options =>
             {
@@ -595,12 +710,66 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             before?.Invoke(app);
             app.UseRouting();
             app.UseRespireIdempotency();
+            if (compression) app.UseResponseCompression();
             app.UseEndpoints(endpoints =>
             {
                 if (routes is not null) routes(endpoints);
                 else endpoints.MapPost("/orders", endpoint).WithRespireIdempotency("orders");
             });
         })).Start(), kestrel);
+
+    private static (IRespireClient Client, ScriptFaults Scripts) WrapScripts(IRespireClient client)
+    {
+        var scripts = DispatchProxy.Create<IRespireScriptCommands, ScriptFaults>();
+        var faults = (ScriptFaults)scripts;
+        faults.Inner = client.Scripts;
+        var wrapper = DispatchProxy.Create<IRespireClient, ClientProxy>();
+        ((ClientProxy)wrapper).Inner = client;
+        ((ClientProxy)wrapper).Scripts = scripts;
+        return (wrapper, faults);
+    }
+
+    public class ClientProxy : DispatchProxy
+    {
+        public IRespireClient Inner { get; set; } = null!;
+        public IRespireScriptCommands Scripts { get; set; } = null!;
+        protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+            => method!.Name == "get_Scripts" ? Scripts : method.Invoke(Inner, arguments);
+    }
+
+    public class ScriptFaults : DispatchProxy
+    {
+        public IRespireScriptCommands Inner { get; set; } = null!;
+        public Action? AfterBegin { get; set; }
+        public bool FailComplete { get; set; }
+        public bool AcceptCompleteBeforeFailure { get; set; }
+
+        protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+            => method!.Name == nameof(IRespireScriptCommands.ExecuteLeaseAsync)
+                ? ExecuteAsync(method, arguments!) : method.Invoke(Inner, arguments);
+
+        private async ValueTask<RespireResult> ExecuteAsync(MethodInfo method, object?[] arguments)
+        {
+            var source = ((RespireScript)arguments[0]!).Source;
+            var complete = source.Contains("'HDEL'", StringComparison.Ordinal);
+            if (complete && FailComplete && !AcceptCompleteBeforeFailure)
+                throw new IOException("Completion rejected before Redis executes it.");
+            var result = await (ValueTask<RespireResult>)method.Invoke(Inner, arguments)!;
+            try
+            {
+                if (source.Contains("'EXISTS'", StringComparison.Ordinal) && AfterBegin is { } after)
+                {
+                    AfterBegin = null;
+                    after();
+                    // Model cancellation of the wait after Redis has accepted the command.
+                    ((CancellationToken)arguments[^1]!).ThrowIfCancellationRequested();
+                }
+                if (complete && FailComplete) throw new IOException("Completion reply lost after Redis accepts it.");
+                return result;
+            }
+            catch { result.Dispose(); throw; }
+        }
+    }
 
     private static IWebHostBuilder ConfigureTransport(IWebHostBuilder web, bool kestrel)
         => kestrel ? web.UseKestrel().UseUrls("http://127.0.0.1:0") : web.UseTestServer();
