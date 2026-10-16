@@ -157,6 +157,12 @@ expiry. The job ID, payload, priority, and trace fields are preserved. Retry ent
 stream immediately, bypassing enqueue deduplication and delayed scheduling. Handlers must
 remain idempotent. Every consumer group on the source can receive the new entry.
 
+Retrying a failed flow member creates an independent job with the same job ID and payload.
+The dashboard removes `_respire.job.flow` and `_respire.job.node`, so the retry can complete
+or dead-letter even after the original flow state is removed. It does not change the original
+flow's outcomes, retain a new flow result, or activate dependencies again. To run the dependency
+tree again, enqueue a new flow. Plain-stream retries preserve these field names unchanged.
+
 **Delete entry…** reveals a confirmation before permanent deletion. It removes only the
 dead-letter entry, leaving source history, enqueue deduplication, and completion events
 unchanged. Both actions reject entries with an invalid envelope or a different group.

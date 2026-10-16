@@ -168,7 +168,9 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         using (await root.ExecuteAsync("XADD", ["tenant:{dash}:dead", "1-0", "_respire.source_id", "9-0",
             "_respire.group", "g", "_respire.attempt", "3", "_respire.reason", "explicit", "_respire.exception_type", "",
-            new byte[] { 255, 0 }, new byte[] { 0, 255, 13, 10 }, "_respire.source_id", "original"])) { }
+            new byte[] { 255, 0 }, new byte[] { 0, 255, 13, 10 }, "_respire.source_id", "original",
+            "_respire.job.flow", "application-flow", "_respire.job.node", "application-node",
+            "_respire.job.flow", new byte[] { 0, 255 }])) { }
         var state = new DashboardState(client, DashboardSecurityTests.Options());
         var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => state.MutateAsync(0, "1-0", true, default).AsTask()));
         await Assert.That(results.Sum()).IsEqualTo(1);
@@ -179,6 +181,13 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await Assert.That(rows[0][1][1].AsBytes().SequenceEqual(new byte[] { 0, 255, 13, 10 })).IsTrue();
         await Assert.That(rows[0][1][2].AsString()).IsEqualTo("_respire.source_id");
         await Assert.That(rows[0][1][3].AsString()).IsEqualTo("original");
+        await Assert.That(rows[0][1].Count).IsEqualTo(10);
+        await Assert.That(rows[0][1][4].AsString()).IsEqualTo("_respire.job.flow");
+        await Assert.That(rows[0][1][5].AsString()).IsEqualTo("application-flow");
+        await Assert.That(rows[0][1][6].AsString()).IsEqualTo("_respire.job.node");
+        await Assert.That(rows[0][1][7].AsString()).IsEqualTo("application-node");
+        await Assert.That(rows[0][1][8].AsString()).IsEqualTo("_respire.job.flow");
+        await Assert.That(rows[0][1][9].AsBytes().SequenceEqual(new byte[] { 0, 255 })).IsTrue();
     }
 
     [Test]
