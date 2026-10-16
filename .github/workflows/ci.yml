@@ -584,6 +584,10 @@ jobs:
           suite fusioncache tests Respire.FusionCache.Tests Respire.FusionCache.Tests
           suite streaming TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.Streaming.Tests Respire.Streaming.Tests --minimum-expected-tests 42
+          suite reliable-queue-redis8 TUNIT_DISABLE_HTML_REPORTER=true RESPIRE_TEST_REDIS_IMAGE=redis:8.10-alpine \
+            tests Respire.Streaming.Tests reliable-queue-redis8 --treenode-filter '/*/*/ReliableQueue*/*' --minimum-expected-tests 48
+          suite reliable-queue-valkey TUNIT_DISABLE_HTML_REPORTER=true RESPIRE_TEST_REDIS_IMAGE=valkey/valkey:8.1-alpine \
+            tests Respire.Streaming.Tests reliable-queue-valkey --treenode-filter '/*/*/ReliableQueue*/*' --minimum-expected-tests 48
           suite streaming-dashboard TUNIT_DISABLE_HTML_REPORTER=true \
             tests Respire.Streaming.Dashboard.Tests Respire.Streaming.Dashboard.Tests --minimum-expected-tests 25
           suite signalr TUNIT_DISABLE_HTML_REPORTER=true \
