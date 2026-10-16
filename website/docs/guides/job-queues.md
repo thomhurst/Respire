@@ -514,6 +514,12 @@ Batch members can finish while membership is still open; callbacks become eligib
 after you seal the batch and every member reaches a terminal outcome.
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "reports", Encoding.UTF8.GetBytes);
 // Use a stable ID so an ambiguous create/add/seal can be retried safely.
 var batchId = await queue.CreateBatchAsync(new RespireJobBatchOptions<string>
 {
