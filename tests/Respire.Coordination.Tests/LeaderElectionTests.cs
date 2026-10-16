@@ -322,6 +322,69 @@ public class LeaderElectionTests
         finally { drain.TrySetResult(true); await election.StopAsync(default).WaitAsync(Timeout); }
     }
 
+    [Test]
+    public async Task LinkedCallbackCancellationAfterRevocationAllowsReelection()
+    {
+        var clock = new Clock();
+        await using var server = new RespireFakeServer(clock);
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var elected = Signal<RespireLeadership>();
+        var reelected = Signal<RespireLeadership>();
+        using var election = new RespireLeaderElection(client, "{election}:lease", "{election}:fence", new()
+        {
+            LeaseDuration = Lease,
+            OnElected = async term =>
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(term.CancellationToken);
+                if (!elected.TrySetResult(term)) reelected.TrySetResult(term);
+                await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, linked.Token);
+            },
+        }, clock);
+        var gate = new RespireFakeGate();
+        try
+        {
+            await election.StartAsync(default);
+            var first = await elected.Task.WaitAsync(Timeout);
+            using var fault = server.InjectFault("EVALSHA", RespireFakeFault.Pause(gate));
+            clock.Advance(TimeSpan.FromSeconds(15));
+            await fault.Matched.WaitAsync(Timeout);
+            clock.Advance(TimeSpan.FromSeconds(15));
+            gate.Release();
+            await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+            await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var next = await reelected.Task.WaitAsync(Timeout);
+            await Assert.That(next.FencingToken).IsGreaterThan(first.FencingToken);
+        }
+        finally
+        {
+            gate.Release();
+            await election.StopAsync(default).WaitAsync(Timeout);
+        }
+    }
+
+    [Test]
+    public async Task IndependentCallbackCancellationStillFaultsElection()
+    {
+        var clock = new Clock();
+        await using var server = new RespireFakeServer(clock);
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        using var independent = new CancellationTokenSource();
+        using var election = new RespireLeaderElection(client, "{election}:lease", "{election}:fence", new()
+        {
+            OnElected = async term =>
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(term.CancellationToken, independent.Token);
+                independent.Cancel();
+                await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, linked.Token);
+            },
+        }, clock);
+        await election.StartAsync(default);
+        await Assert.That(async () => await election.ExecuteTask!.WaitAsync(Timeout)).Throws<OperationCanceledException>();
+        await Assert.That(election.CurrentLeadership).IsNull();
+        await Assert.That(await client.GetStringAsync("{election}:lease")).IsNull();
+    }
+
     private static async Task UntilAsync(Func<bool> predicate)
     {
         using var deadline = new CancellationTokenSource(Timeout);

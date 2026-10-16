@@ -100,9 +100,12 @@ public sealed class RespireLeaderElection : BackgroundService
         // Run user code independently so even its synchronous prefix cannot prevent revocation.
         var work = Task.Run(() => _options.OnElected(term), CancellationToken.None);
         var revoked = Task.Delay(Timeout.InfiniteTimeSpan, lifetime.Token);
+        var wasRevoked = false;
         try
         {
             await Task.WhenAny(work, revoked).ConfigureAwait(false);
+            // Capture external revocation before cleanup cancels the term itself.
+            wasRevoked = lifetime.IsCancellationRequested;
         }
         finally
         {
@@ -125,8 +128,7 @@ public sealed class RespireLeaderElection : BackgroundService
                     // Never start another term while this instance's previous work is still running.
                     // Observe callback faults after revocation; unwinding then disposes renewal and the lease.
                     try { await work.ConfigureAwait(false); }
-                    catch (OperationCanceledException error) when (
-                        error.CancellationToken == term.CancellationToken && term.CancellationToken.IsCancellationRequested) { }
+                    catch (OperationCanceledException) when (wasRevoked) { }
                 }
             }
         }
