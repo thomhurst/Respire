@@ -69,7 +69,9 @@ public sealed class RespireLeaderElection : BackgroundService
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception error) when (error is RespireConnectionException or RespireTimeoutException
-                or RespireCircuitOpenException or OperationCanceledException)
+                or RespireCircuitOpenException or OperationCanceledException
+                or RespireServerException { IsTransient: true }
+                or RespireServerException { Code: RespireErrorCodes.ReadOnly })
             {
                 LeaderElectionMetrics.FailedAttempt();
                 await Task.Delay(_options.RetryDelay, _clock, stoppingToken).ConfigureAwait(false);

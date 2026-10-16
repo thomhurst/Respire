@@ -431,6 +431,89 @@ public class LeaderElectionTests
         finally { await election.StopAsync(default).WaitAsync(Timeout); }
     }
 
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task TransientServerRejectionRetriesOrStopsDuringDelay(bool readOnly, bool stopDuringDelay)
+    {
+        var clock = new Clock();
+        await using var server = new RespireFakeServer(clock);
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        using var fault = server.InjectFault("EVAL", readOnly ? RespireFakeFault.ReadOnly() : RespireFakeFault.Loading());
+        var elected = Signal<RespireLeadership>();
+        using var election = Election(client, clock, elected);
+        try
+        {
+            await election.StartAsync(default);
+            await fault.Matched.WaitAsync(Timeout);
+            await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+            await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+            await Assert.That(elected.Task.IsCompleted).IsFalse();
+            if (stopDuringDelay)
+            {
+                await election.StopAsync(default).WaitAsync(Timeout);
+                await Assert.That(elected.Task.IsCompleted).IsFalse();
+                return;
+            }
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var term = await elected.Task.WaitAsync(Timeout);
+            await Assert.That(term.FencingToken).IsEqualTo(1);
+        }
+        finally { await election.StopAsync(default).WaitAsync(Timeout); }
+    }
+
+    [Test]
+    public async Task InvalidCounterStillFaultsAcquisition()
+    {
+        var clock = new Clock();
+        await using var server = new RespireFakeServer(clock);
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        await client.SetAsync("{election}:fence", "invalid");
+        var elected = Signal<RespireLeadership>();
+        using var election = Election(client, clock, elected);
+        await election.StartAsync(default);
+        await Assert.That(async () => await election.ExecuteTask!.WaitAsync(Timeout)).Throws<RespireServerException>();
+        await Assert.That(elected.Task.IsCompleted).IsFalse();
+        await Assert.That(await client.GetStringAsync("{election}:lease")).IsNull();
+    }
+
+    [Test]
+    [Arguments("LOADING", true)]
+    [Arguments("BUSY", true)]
+    [Arguments("CLUSTERDOWN", true)]
+    [Arguments("TRYAGAIN", true)]
+    [Arguments("MASTERDOWN", true)]
+    [Arguments("READONLY", true)]
+    [Arguments("NOPERM", false)]
+    [Arguments("WRONGTYPE", false)]
+    [Arguments("ERR", false)]
+    public async Task ServerErrorClassificationPreservesPermanentFailures(string code, bool transient)
+    {
+        var clock = new Clock();
+        await using var server = new Respire.Tests.Networking.FakeRespServer(
+            System.Text.Encoding.UTF8.GetBytes($"-{code} test rejection\r\n"));
+        await using var client = await Respire.Tests.Networking.FakeRespServer.ConnectClientAsync(server.Port);
+        var elected = Signal<RespireLeadership>();
+        using var election = Election(client, clock, elected);
+        await election.StartAsync(default);
+        await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+        if (transient)
+        {
+            await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+            await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
+            await election.StopAsync(default).WaitAsync(Timeout);
+        }
+        else
+        {
+            await Assert.That(async () => await election.ExecuteTask!.WaitAsync(Timeout)).Throws<RespireServerException>();
+        }
+        await Assert.That(elected.Task.IsCompleted).IsFalse();
+    }
+
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
     private static extern ref TimeProvider CircuitClock(EndpointCircuitBreaker circuit);
 

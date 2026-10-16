@@ -176,8 +176,10 @@ instrument includes Redis keys or owner tokens as tags.
 
 A dead leader's server lease expires within `LeaseDuration` of its last renewal. A healthy
 contender retries within `RetryDelay` after expiry, plus scheduling and network latency.
-Contention and transient acquisition failures are retried; invalid configuration and
-server errors fault the service. An accepted acquisition whose reply is lost can hold the
+Contention and transient acquisition failures are retried with `RetryDelay`, including
+`LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, `MASTERDOWN`, and `READONLY` server replies.
+Invalid configuration and permanent server errors (such as `NOPERM`, `WRONGTYPE`, or an
+invalid fencing counter) fault the service. An accepted acquisition whose reply is lost can hold the
 lease until expiry without electing a local leader.
 
 This has the [same fencing guarantees](#keep-the-counters-history) as the underlying lock:
