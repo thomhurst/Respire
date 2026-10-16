@@ -14,6 +14,107 @@ public class OptOutClientCacheTests
     private static readonly byte[] Value = "$5\r\nvalue\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OrdinaryUncachedReadsKeepDefaultOptOutTracking(bool retry)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut, KeyPrefixes = ["hot:"] },
+            RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
+        });
+        await Assert.That(await client.GetStringAsync("cold:key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Contains("CLIENT CACHING NO")).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task BypassTransactionPrefixesMultiAndDrainsErrors(bool retry, bool prefixError)
+    {
+        await using var server = Server();
+        var inTransaction = false;
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
+            if (command == "EXEC") { inTransaction = false; return "*3\r\n$5\r\nvalue\r\n+OK\r\n$5\r\nvalue\r\n"u8.ToArray(); }
+            if (inTransaction) return "+QUEUED\r\n"u8.ToArray();
+            return command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
+                : command == "CLIENT CACHING NO" && prefixError ? "-ERR denied caching\r\n"u8.ToArray()
+                : command.StartsWith("GET ", StringComparison.Ordinal) ? Value : FakeRespServer.OkReply;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
+        });
+        await using var transaction = client.WithoutClientCache().CreateTransaction();
+        var first = transaction.GetString("first");
+        _ = transaction.Set("written", "new");
+        var second = transaction.GetString("second");
+        await Assert.That(transaction.Count).IsEqualTo(3);
+        if (prefixError)
+        {
+            await Assert.That(async () => await transaction.CommitAsync()).ThrowsExactly<RespireServerException>();
+            await Assert.That(first.Error).IsTypeOf<RespireServerException>();
+            await Assert.That(second.Error).IsTypeOf<RespireServerException>();
+        }
+        else
+        {
+            await transaction.CommitAsync();
+            await Assert.That(first.Result).IsEqualTo("value");
+            await Assert.That(second.Result).IsEqualTo("value");
+        }
+        await Assert.That(await client.GetStringAsync("after")).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands.SequenceEqual(new[]
+        {
+            "HELLO 3", "CLIENT TRACKING ON OPTOUT", "CLIENT CACHING NO", "MULTI",
+            "GET first", "SET written new", "GET second", "EXEC", "GET after",
+        })).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BypassTransactionRejectsInsufficientCapacityBeforeWriting(bool retry)
+    {
+        await using var server = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            MaxInflightCommands = 4,
+            RetryPolicy = retry ? new() { MaxAttempts = 2 } : null,
+        });
+        await using var transaction = client.WithoutClientCache().CreateTransaction();
+        _ = transaction.GetString("key");
+        _ = transaction.GetString("second");
+        await Assert.That(async () => await transaction.CommitAsync()).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands.Contains("MULTI")).IsFalse();
+        await Assert.That(server.ReceivedCommands.Contains("CLIENT CACHING NO")).IsFalse();
+        await Assert.That(await client.GetStringAsync("after")).IsEqualTo("value");
+    }
+
+    [Test]
+    public async Task BypassBatchPreservesReadOnlyScriptingErrorClassification()
+    {
+        await using var server = Server();
+        const string info = "# Scripting Engines\r\nengines_count:0\r\n";
+        var infoReply = Encoding.UTF8.GetBytes($"${info.Length}\r\n{info}\r\n");
+        server.ReplyOverride = (_, command) => command.StartsWith("HELLO ", StringComparison.Ordinal) ? Hello
+            : command.StartsWith("EVAL_RO ", StringComparison.Ordinal) ? "-ERR Could not find scripting engine 'lua'\r\n"u8.ToArray()
+            : command == "INFO scriptingengines" ? infoReply : FakeRespServer.OkReply;
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+        using var batch = client.WithoutClientCache().CreateBatch();
+        var pending = batch.Execute(RespireCommands.Scripting.EVAL_RO, "return 42", 0);
+        var result = await batch.TryExecuteAsync();
+        await Assert.That(result.FailureCount).IsEqualTo(1);
+        await Assert.That(pending.Error).IsTypeOf<RespireScriptingEngineUnavailableException>();
+        await Assert.That(server.ReceivedCommands.Contains("INFO scriptingengines")).IsTrue();
+    }
+
+    [Test]
     [Arguments(RespireClientTrackingMode.OptIn, false)]
     [Arguments(RespireClientTrackingMode.OptIn, true)]
     [Arguments(RespireClientTrackingMode.OptOut, false)]

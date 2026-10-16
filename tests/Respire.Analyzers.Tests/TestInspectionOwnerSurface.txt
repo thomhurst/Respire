@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 414 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 415 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 65
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -381,7 +381,7 @@ Respire.Networking.StringPendingResponseSource | property Task [public; get] : V
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient)
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient, RespireHashImportSession)
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
-# Count: Respire.RespireTransactionBase | 47
+# Count: Respire.RespireTransactionBase | 48
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
 Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
@@ -429,6 +429,7 @@ Respire.RespireTransactionBase | property RetryContext [private protected; get] 
 Respire.RespireTransactionBase | property AllowUnwatchedAsk [private protected; get] : bool
 Respire.RespireTransactionBase | property WatchRequiresAsking [private protected; get] : bool
 Respire.RespireTransactionBase | property WatchPool [private protected; get] : DedicatedConnectionPool?
+Respire.RespireTransactionBase | property HasOptOutBypass [internal; get] : bool
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.
 Respire.RespireTransactionBase | readonly ref struct TestInspection(RespireTransactionBase)
 # Count: Respire.RespireWatchedTransaction | 9

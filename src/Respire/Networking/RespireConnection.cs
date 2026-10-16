@@ -1579,13 +1579,14 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         CommandWriteObservation? writeObservation = null)
     {
         // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
-        try { ValidateTransactionCapacity(commandCount, includeMulti); }
+        var skipTracking = includeMulti && ClientTrackingEnabled && transaction?.HasOptOutBypass == true;
+        try { ValidateTransactionCapacity(commandCount + (skipTracking ? 1 : 0), includeMulti); }
         catch { observation.UseEndpoint(null); throw; }
         observation.UseEndpoint(new(Host, Port), cancellationToken);
-        var prefixReplies = includeMulti ? 1 : 0;
+        var prefixReplies = (includeMulti ? 1 : 0) + (skipTracking ? 1 : 0);
         return SendMultiReplyCoreAsync(
-            new TransactionCommand(serializedCommands, includeMulti, transaction, mutationFence), repliesBeforeFinal: commandCount + prefixReplies,
-            firstQueueReply: prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
+            new TransactionCommand(serializedCommands, includeMulti, transaction, mutationFence, skipTracking: skipTracking), repliesBeforeFinal: commandCount + prefixReplies,
+            firstQueueReply: skipTracking ? 0 : prefixReplies, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken,
             commandDeadline, observation: observation, pinToConnection: pinToConnection, writeObservation: writeObservation);
     }
 
@@ -3720,11 +3721,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// Only an exclusive caller that already confirmed MULTI may omit it.</summary>
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands, bool includeMulti,
         RespireTransactionBase? transaction, ClientSideCacheCoordinator.MutationFence mutationFence,
-        Action? onAccepted = null) : IMutationAdmissionCommand
+        Action? onAccepted = null, bool skipTracking = false) : IMutationAdmissionCommand
     {
         public void OnAccepted() => onAccepted?.Invoke();
         public int GetWriteSizeHint() => checked(serializedCommands.Length + RespCommands.Exec.Length
-            + (includeMulti ? RespCommands.Multi.Length : 0));
+            + (includeMulti ? RespCommands.Multi.Length : 0)
+            + (skipTracking ? new ClientCachingCommand(optOut: true).GetWriteSizeHint() : 0));
         internal void RecordConnection(RespireConnection connection)
         {
             if (transaction is not null) transaction.ExecutingConnection = connection;
@@ -3741,6 +3743,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         public void Write(ref RespWriter writer)
         {
+            // Redis keeps the one-shot caching flag for the entire MULTI/EXEC block.
+            // Prefixing MULTI avoids adding synthetic operations to the EXEC result array.
+            if (skipTracking) new ClientCachingCommand(optOut: true).Write(ref writer);
             if (includeMulti) writer.WriteRaw(RespCommands.Multi);
             writer.WriteRaw(serializedCommands.Span);
             writer.WriteRaw(RespCommands.Exec);

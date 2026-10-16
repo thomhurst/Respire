@@ -54,6 +54,6 @@ internal sealed partial class RespireConnection
         }
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
         ScheduleFlush(startedBatch);
-        return source.Task;
+        return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
     }
 }

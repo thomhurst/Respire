@@ -38,6 +38,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     // The transport records the accepting socket after any pre-admission maintenance reroute.
     internal RespireConnection? ExecutingConnection { get; set; }
 
+    internal bool HasOptOutBypass => _client.HasOptOutBypass;
+
     private protected virtual WatchedTransactionRetryContext? RetryContext => null;
     private protected virtual bool WatchRequiresAsking => false;
     private protected virtual bool AllowUnwatchedAsk => false;

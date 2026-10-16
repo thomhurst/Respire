@@ -61,11 +61,13 @@ internal sealed partial class RespireConnection
         ClientSideCacheCoordinator.MutationFence mutationFence, bool pinToConnection, Action? onAccepted)
     {
         // Capacity preflight submits nothing, so a rejection clears any endpoint retained from routing.
-        try { ValidateTransactionCapacity(commandCount); }
+        var skipTracking = ClientTrackingEnabled && transaction.HasOptOutBypass;
+        try { ValidateTransactionCapacity(commandCount + (skipTracking ? 1 : 0)); }
         catch { observation.UseEndpoint(null); throw; }
         observation.UseEndpoint(new(Host, Port), cancellationToken);
-        return SendAttemptAsync(new TransactionCommand(serializedCommands, includeMulti: true, transaction, mutationFence, onAccepted),
-            cancellationToken, "MULTI/EXEC", commandDeadline, repliesBeforeFinal: commandCount + 1, firstQueueReply: 1,
+        var prefixReplies = skipTracking ? 2 : 1;
+        return SendAttemptAsync(new TransactionCommand(serializedCommands, includeMulti: true, transaction, mutationFence, onAccepted, skipTracking),
+            cancellationToken, "MULTI/EXEC", commandDeadline, repliesBeforeFinal: commandCount + prefixReplies, firstQueueReply: skipTracking ? 0 : prefixReplies,
             pinToConnection: pinToConnection, errorObservation: observation);
     }
 

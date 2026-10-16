@@ -370,7 +370,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// <summary>The cache consulted for reads; null when caching is disabled or bypassed by this view.</summary>
     internal ClientSideCacheCoordinator? ReadCache => _bypassClientCache ? null : _core.ClientCache;
 
-    private bool NeedsCachingPrelude(bool track) => _optOutTracking ? !track : track && !_broadcastTracking;
+    private bool NeedsCachingPrelude(bool track) => _optOutTracking ? _bypassClientCache : track && !_broadcastTracking;
 
     internal bool ShouldSkipTracking<TCommand>(string operation, in TCommand command) where TCommand : struct, IRespCommand
         => _optOutTracking && _bypassClientCache
@@ -2734,7 +2734,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         var preferredZone = GetTransportReadZone(in command);
         // OPTOUT reverses the per-read prelude; BCAST needs none.
-        var sendCaching = connection.ClientTrackingEnabled && NeedsCachingPrelude(track);
+        var sendCaching = (!_optOutTracking || connection.ClientTrackingEnabled) && NeedsCachingPrelude(track);
         if (sendAsking)
         {
             if (sendCaching)

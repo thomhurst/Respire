@@ -74,6 +74,9 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
     [Arguments("raw")]
     [Arguments("stream")]
     [Arguments("batch")]
+    [Arguments("transaction")]
+    [Arguments("transaction-retry")]
+    [Arguments("watched-transaction")]
     [Arguments("fire-and-forget")]
     public async Task BypassDoesNotPopulateOrRegisterFreshKeysButKeepsPriorTracking(string surface)
     {
@@ -87,6 +90,7 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
         await using var reader = await RespireClient.ConnectAsync(options with
         {
             ClientSideCache = new() { TrackingMode = RespireClientTrackingMode.OptOut },
+            RetryPolicy = surface == "transaction-retry" ? new() { MaxAttempts = 2 } : null,
         });
         await Assert.That(await reader.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         var hits = reader.ClientSideCache!.GetStatistics().Hits;
@@ -116,6 +120,25 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
             await Assert.That(fresh.Result).IsEqualTo("fresh");
             await Assert.That(tracked.Result).IsEqualTo("tracked");
         }
+        else if (surface.StartsWith("transaction", StringComparison.Ordinal))
+        {
+            await using var transaction = bypass.CreateTransaction();
+            var fresh = transaction.GetString(freshKey);
+            _ = transaction.Set(prefix + "written", "write");
+            var tracked = transaction.GetString(trackedKey);
+            await transaction.CommitAsync();
+            await Assert.That(fresh.Result).IsEqualTo("fresh");
+            await Assert.That(tracked.Result).IsEqualTo("tracked");
+        }
+        else if (surface == "watched-transaction")
+        {
+            await using var transaction = await bypass.CreateTransactionAsync([freshKey]);
+            var fresh = transaction.GetString(freshKey);
+            var tracked = transaction.GetString(trackedKey);
+            await Assert.That(await transaction.CommitAsync()).IsTrue();
+            await Assert.That(fresh.Result).IsEqualTo("fresh");
+            await Assert.That(tracked.Result).IsEqualTo("tracked");
+        }
         else if (surface == "fire-and-forget")
         {
             await bypass.ExecuteFireAndForgetAsync(RespireCommands.String.GET, freshKey);
@@ -127,10 +150,11 @@ public class OptOutClientCacheIntegrationTests(RedisTestContainer fixture)
             await Assert.That(await bypass.GetStringAsync(freshKey)).IsEqualTo("fresh");
             await Assert.That(await bypass.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         }
-        // Batches conservatively fence the whole local cache, including read-only batches.
-        await Assert.That(reader.ClientSideCache.Count).IsEqualTo(surface == "batch" ? 0 : 1);
+        // Deferred units conservatively fence the whole cache, including read-only units.
+        var fenced = surface == "batch" || surface.Contains("transaction", StringComparison.Ordinal);
+        await Assert.That(reader.ClientSideCache.Count).IsEqualTo(fenced ? 0 : 1);
         await Assert.That(reader.ClientSideCache.GetStatistics().Hits).IsEqualTo(hits);
-        if (surface == "batch")
+        if (fenced)
             await Assert.That(await reader.GetStringAsync(trackedKey)).IsEqualTo("tracked");
         var invalidations = reader.ClientSideCache.GetStatistics().Invalidations;
         await writer.SetAsync(freshKey, "changed fresh");
