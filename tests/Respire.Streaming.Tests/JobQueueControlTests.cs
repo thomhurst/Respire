@@ -307,6 +307,18 @@ public class JobQueueControlTests(RedisTestContainer redis)
     [Test, NotInParallel]
     public async Task RecoveryPassAdmitsOneAtATimeAndGivesNewJobsATurnAfterTheBatch()
     {
+        var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == RespireStreamWorkerTelemetry.MeterName
+                && instrument.Name == "respire.job.queue.paused") meterListener.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            if (value == 1) paused.TrySetResult();
+        });
+        listener.Start();
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
         var queue = Queue(client);
         for (var i = 0; i < 6; i++) await queue.EnqueueAsync("old-" + i, "payload");
@@ -314,11 +326,24 @@ public class JobQueueControlTests(RedisTestContainer redis)
         await client.Streams.ReadGroupOnceAsync(queue.StreamKey, Group, "abandoned", new() { Count = 6 });
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fourthEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFourth = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handled = 0;
         var state = new HandlerState
         {
             Handle = async token =>
             {
-                if (entered.TrySetResult()) await release.Task.WaitAsync(token);
+                switch (++handled)
+                {
+                    case 1:
+                        entered.TrySetResult();
+                        await release.Task.WaitAsync(token);
+                        break;
+                    case 4:
+                        fourthEntered.TrySetResult();
+                        await releaseFourth.Task.WaitAsync(token);
+                        break;
+                }
             },
         };
         var services = new ServiceCollection().AddSingleton<IRespireClient>(client).AddSingleton(state);
@@ -340,17 +365,32 @@ public class JobQueueControlTests(RedisTestContainer redis)
             await queue.PauseAsync();
             release.TrySetResult();
             await Until(async () => (await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count == 5, deadline.Token);
-            await Task.Delay(100, deadline.Token);
+            await Until(() =>
+            {
+                listener.RecordObservableInstruments();
+                return Task.FromResult(paused.Task.IsCompleted);
+            }, deadline.Token);
             await Assert.That(state.Jobs.Count).IsEqualTo(1);
             var pending = await client.Streams.PendingAsync(queue.StreamKey, Group);
             await Assert.That(pending.All(entry => entry.Consumer == "abandoned")).IsTrue();
             await queue.ResumeAsync();
-            using var passDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            await Until(() => Task.FromResult(state.Jobs.Count >= 4), passDeadline.Token);
+            // Observe the fourth admission directly. A short deadline cannot guarantee that
+            // this continuation runs before the next recovery scan on a loaded machine.
+            // Holding its handler keeps the admission order stable until we assert and pause.
+            await fourthEntered.Task.WaitAsync(deadline.Token);
             await Assert.That(state.Jobs.SequenceEqual(new[] { "old-0", "old-1", "old-2", "fresh" })).IsTrue();
-            await Until(async () => (await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count == 3, passDeadline.Token);
+            await queue.PauseAsync();
+            releaseFourth.TrySetResult();
+            await Until(async () => (await client.Streams.PendingSummaryAsync(queue.StreamKey, Group)).Count == 3, deadline.Token);
+            pending = await client.Streams.PendingAsync(queue.StreamKey, Group);
+            await Assert.That(pending.All(entry => entry.Consumer == "abandoned" && entry.DeliveryCount == 1)).IsTrue();
         }
-        finally { release.TrySetResult(); await worker.StopAsync(CancellationToken.None); }
+        finally
+        {
+            release.TrySetResult();
+            releaseFourth.TrySetResult();
+            await worker.StopAsync(CancellationToken.None);
+        }
     }
 
     private static ServiceProvider Worker(IRespireClient client, HandlerState state, string name, RespireJobRateLimit? rate = null)
