@@ -80,7 +80,7 @@ public partial class SiloScenarios
     [Test]
     public async Task Sentinel_FailedElection_ReportsFailureAndCleansUp()
     {
-        Assert.NotEqual(0, await RunRecoveryProcess(RespireContainerTopology.Sentinel, failedElection: true));
+        Assert.Equal(RecoveryDeadlineExitCode, await RunRecoveryProcess(RespireContainerTopology.Sentinel, failedElection: true));
     }
 
     internal static async Task RecoverRedisConnection(RecoveryDeployment redis, bool failedElection)
@@ -136,13 +136,14 @@ public partial class SiloScenarios
         {
             await recovered.Task.WaitAsync(deadline.Token);
         }
-        catch
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
+            RecoveryDeadlineExpired = true;
             Console.WriteLine("Recovery deadline expired; collecting server diagnostics.");
             // Capture the election evidence before fixture cleanup removes the server logs.
             using var diagnostics = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             try { await redis.ReadServerLogsAsync(diagnostics.Token); }
-            catch (Exception error) { Console.WriteLine($"Server diagnostics unavailable: {error.Message}"); }
+            catch (Exception diagnosticsError) { Console.WriteLine($"Server diagnostics unavailable: {diagnosticsError.Message}"); }
             throw;
         }
         Assert.Equal(activation, await grain.GetActivation());

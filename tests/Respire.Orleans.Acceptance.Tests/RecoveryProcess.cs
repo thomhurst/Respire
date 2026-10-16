@@ -7,6 +7,9 @@ namespace Respire.Orleans.Acceptance.Tests;
 public partial class SiloScenarios
 {
     private const string RecoveryCommand = "RESPIRE-RECOVERY:";
+    internal const int RecoveryDeadlineExitCode = 2;
+    // Child-process state survives host disposal exceptions during stack unwinding.
+    internal static bool RecoveryDeadlineExpired { get; private set; }
 
     private static async Task<int> RunRecoveryProcess(RespireContainerTopology topology, bool failedElection)
     {
@@ -26,9 +29,12 @@ public partial class SiloScenarios
                 start.ArgumentList.Add(argument);
             using var child = Process.Start(start)!;
             using var lifetime = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+            // Keep reads alive through termination and the 10s output drain, even when
+            // the four-minute lifetime expires. Total cleanup budget is documented as 310s.
+            using var outputLifetime = new CancellationTokenSource();
             var output = new List<string>();
             var stdout = PumpOutput();
-            var stderr = child.StandardError.ReadToEndAsync(lifetime.Token);
+            var stderr = PumpError();
             try
             {
                 var exited = child.WaitForExitAsync(lifetime.Token);
@@ -36,11 +42,11 @@ public partial class SiloScenarios
                 if (stdout.IsCompleted) await stdout;
                 await exited;
                 await stdout.WaitAsync(lifetime.Token);
-                Console.WriteLine(await stderr.WaitAsync(lifetime.Token));
+                await stderr.WaitAsync(lifetime.Token);
                 if (child.ExitCode != 0) await Diagnostics();
                 if (failedElection)
                 {
-                    Assert.NotEqual(0, child.ExitCode);
+                    Assert.Equal(RecoveryDeadlineExitCode, child.ExitCode);
                     Assert.Contains(output, line => line == "Recovery deadline expired; collecting server diagnostics.");
                 }
                 return child.ExitCode;
@@ -58,17 +64,28 @@ public partial class SiloScenarios
             finally
             {
                 // Only this child hosts the recovery silo/client and owns their connections.
-                if (!child.HasExited) child.Kill(entireProcessTree: true);
-                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-                lifetime.Cancel();
+                try
+                {
+                    if (!child.HasExited) child.Kill(entireProcessTree: true);
+                    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (Exception error) { Console.WriteLine($"Recovery child termination: {error.Message}"); }
                 try { await Task.WhenAll(stdout, stderr).WaitAsync(TimeSpan.FromSeconds(10)); }
                 catch (Exception error) { Console.WriteLine($"Recovery output drain: {error.Message}"); }
-                Console.WriteLine($"Recovery child {child.Id} exited with code {child.ExitCode}.");
+                finally { outputLifetime.Cancel(); }
+                if (child.HasExited) Console.WriteLine($"Recovery child {child.Id} exited with code {child.ExitCode}.");
+                else Console.WriteLine($"Recovery child {child.Id} did not exit after termination.");
+            }
+
+            async Task PumpError()
+            {
+                while (await child.StandardError.ReadLineAsync(outputLifetime.Token) is { } line)
+                    Console.WriteLine(line);
             }
 
             async Task PumpOutput()
             {
-                while (await child.StandardOutput.ReadLineAsync(lifetime.Token) is { } line)
+                while (await child.StandardOutput.ReadLineAsync(outputLifetime.Token) is { } line)
                 {
                     output.Add(line);
                     Console.WriteLine(line);
@@ -76,18 +93,35 @@ public partial class SiloScenarios
                     using var command = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
                     var operation = line[RecoveryCommand.Length..];
                     command.CancelAfter(TimeSpan.FromSeconds(operation == "replica:0" ? 90 : 15));
-                    var task = operation switch
+                    try
                     {
-                        "stop:0" => redis.StopDataNodeAsync(0, command.Token),
-                        "stop:1" => redis.StopDataNodeAsync(1, command.Token),
-                        "start:0" => redis.StartDataNodeAsync(0, command.Token),
-                        "replica:0" => redis.WaitForDataNodeReplicaAsync(0, command.Token),
-                        "logs" => Diagnostics(),
-                        _ => throw new InvalidOperationException($"Unknown recovery command: {operation}")
-                    };
-                    await task.WaitAsync(command.Token);
-                    await child.StandardInput.WriteLineAsync("ok".AsMemory(), command.Token);
-                    await child.StandardInput.FlushAsync(command.Token);
+                        var task = operation switch
+                        {
+                            "stop:0" => redis.StopDataNodeAsync(0, command.Token),
+                            "stop:1" => redis.StopDataNodeAsync(1, command.Token),
+                            "start:0" => redis.StartDataNodeAsync(0, command.Token),
+                            "replica:0" => redis.WaitForDataNodeReplicaAsync(0, command.Token),
+                            "logs" => Diagnostics(),
+                            _ => throw new InvalidOperationException($"Unknown recovery command: {operation}")
+                        };
+                        await task.WaitAsync(command.Token);
+                        await child.StandardInput.WriteLineAsync("ok".AsMemory(), command.Token);
+                        await child.StandardInput.FlushAsync(command.Token);
+                    }
+                    catch (Exception error)
+                    {
+                        Console.WriteLine($"Recovery command {operation} failed: {error.Message}");
+                        // The command token may already be cancelled. Bound the failure
+                        // reply separately, then keep draining the child's diagnostics.
+                        using var reply = CancellationTokenSource.CreateLinkedTokenSource(outputLifetime.Token);
+                        reply.CancelAfter(TimeSpan.FromSeconds(1));
+                        try
+                        {
+                            await child.StandardInput.WriteLineAsync("fail".AsMemory(), reply.Token);
+                            await child.StandardInput.FlushAsync(reply.Token);
+                        }
+                        catch (Exception replyError) { Console.WriteLine($"Recovery failure reply: {replyError.Message}"); }
+                    }
                 }
             }
 

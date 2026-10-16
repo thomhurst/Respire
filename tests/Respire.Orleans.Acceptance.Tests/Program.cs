@@ -19,7 +19,7 @@ internal static class Program
             catch (Exception error)
             {
                 Console.Error.WriteLine(error);
-                return 1;
+                return SiloScenarios.RecoveryDeadlineExpired ? SiloScenarios.RecoveryDeadlineExitCode : 1;
             }
         }
         if (args is ["--child-silo", var endpoint, var serviceId, var clusterId])
