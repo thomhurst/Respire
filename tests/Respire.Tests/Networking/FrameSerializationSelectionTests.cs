@@ -128,19 +128,21 @@ public class FrameSerializationSelectionTests
     }
 
     [Test]
-    [Arguments(true)]
-    [Arguments(false)]
-    public async Task TransactionBoundIncludesCommandBlockAndEveryEnvelopeFrame(bool includeMulti)
+    [Arguments(true, false)]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    public async Task TransactionBoundIncludesCommandBlockAndEveryEnvelopeFrame(bool includeMulti, bool skipTracking)
     {
         var block = Serialize(new Cmd1(RespireCommands.Connection.ECHO.Verb, new byte[65_500]));
         await Assert.That(block.Length).IsLessThanOrEqualTo(65_536);
         var type = typeof(RespireConnection).GetNestedType("TransactionCommand", BindingFlags.NonPublic)!;
         var command = (IRespCommand)Activator.CreateInstance(type,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null,
-            args: [new ReadOnlyMemory<byte>(block), includeMulti, null, default(ClientSideCacheCoordinator.MutationFence), null], culture: null)!;
+            args: [new ReadOnlyMemory<byte>(block), includeMulti, null, default(ClientSideCacheCoordinator.MutationFence), null, skipTracking], culture: null)!;
         byte[] expected = includeMulti
             ? [.. RespCommands.Multi, .. block, .. RespCommands.Exec]
             : [.. block, .. RespCommands.Exec];
+        if (skipTracking) expected = [.. Serialize(new ClientCachingCommand(optOut: true)), .. expected];
         var bound = command.GetWriteSizeHint();
         await Assert.That(bound).IsEqualTo(expected.Length);
         await Assert.That(bound).IsGreaterThan(65_536);

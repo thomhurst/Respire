@@ -79,7 +79,8 @@ internal static class QueuedCircuitDispatch
                 connection.ThrowIfRetired();
                 admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
                 var reply = await connection.EnqueuePinnedAsync(command, cancellationToken, operation,
-                    observation, deadline: deadline).ConfigureAwait(false);
+                    observation, deadline: deadline,
+                    skipTracking: client?.ShouldSkipTracking(operation, in command) == true).ConfigureAwait(false);
                 // ObserveAsync starts eagerly and owns reply completion even before the caller
                 // awaits its returned result. Connection failure/cancellation also completes it.
                 var guarded = ObserveAsync(reply, admission, cancellationToken);

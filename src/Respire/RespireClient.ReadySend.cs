@@ -17,6 +17,7 @@ public sealed partial class RespireClient
         // With no listeners, IsOperationEnabled reduces to the command metric check, which only
         // scripting commands need here; the ready send captures that decision once afterwards.
         => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
+            && !ShouldSkipTracking(operation, in command)
             && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
             && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);

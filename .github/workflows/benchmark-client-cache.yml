@@ -65,7 +65,7 @@ jobs:
         shell: bash
         env:
           # Keep native JIT output separate from managed benchmark stdout to prevent interleaving.
-          DOTNET_JitDisasm: Hit CachedGetAsync
+          DOTNET_JitDisasm: Hit CachedGetStringUnhookedAsync
           DOTNET_JitDisasmDiffable: '1'
         run: |
           set -euo pipefail
@@ -100,7 +100,7 @@ jobs:
               reports = list(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
               assert len(reports) == 1, f"Missing or duplicate report: {phase}"
               cases = json.loads(reports[0].read_text(encoding="utf-8"))["Benchmarks"]
-              expected = 8 if phase in ("candidate", "validation") else 2
+              expected = 12 if phase in ("candidate", "validation") else 2
               assert len(cases) == expected, f"Wrong case count: {phase}"
               for case in cases:
                   assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
@@ -111,11 +111,10 @@ jobs:
               metrics = [json.JSONDecoder().raw_decode(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])[0]
                          for line in Path(f"cache-{phase}.log").read_text(encoding="utf-8").splitlines()
                          if "CACHE_TRACKING_PROCESS_METRICS " in line]
-              expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"} if expected == 8 else {"OptIn"}
+              expected_modes = {"OptIn", "OptOut", "OptOutNoLoop", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"} if expected == 12 else {"OptIn"}
               assert {row["Mode"] for row in metrics} == expected_modes, phase
               assert all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 and row["allocatedBytes"] >= 0 for row in metrics)
-          # GetStringAsync materializes an owned string even on a hit (64 B for this fixture).
-          # Compare against both old-build controls instead of claiming this public API allocates zero.
+          # Compare cached-string hit allocations against both old-build controls.
           baseline_limit = min(hit_allocations["baseline-a"] + hit_allocations["baseline-b"])
           assert all(value <= baseline_limit for value in hit_allocations["candidate"]), hit_allocations
       - name: Summarize matching cases and individual process launches
@@ -178,8 +177,8 @@ jobs:
                       continue
                   if "ClientCacheTrackingBenchmarks:Hit(" in header:
                       method = "Hit"
-                  elif ":CachedGetAsync[" in header:
-                      method = "CachedGetAsync"
+                  elif ":CachedGetStringUnhookedAsync(" in header:
+                      method = "CachedGetStringUnhookedAsync"
                   else:
                       continue
                   end = re.search(r"; Total bytes of code (\d+)", block)
@@ -190,7 +189,7 @@ jobs:
                   rows.append({"phase": phase, "method": method, "bytes": int(end.group(1)),
                                "sha256": hashlib.sha256(normalized.encode()).hexdigest()})
                   found[method] += 1
-              assert found["Hit"] >= 2 and found["CachedGetAsync"] >= 2, (phase, found)
+              assert found["Hit"] >= 2 and found["CachedGetStringUnhookedAsync"] >= 2, (phase, found)
           Path("cache-results/native-listings.json").write_text(json.dumps(rows, indent=2))
           # Sequential child processes append their listings. This file retains every version;
           # it does not assign a particular listing to a benchmark case or process launch.

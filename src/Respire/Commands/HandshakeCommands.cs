@@ -103,9 +103,10 @@ internal readonly record struct ClientTrackingConfiguration
 {
     internal RespireClientTrackingMode Mode { get; }
     internal Internal.ClientCachePrefixSet? Prefixes { get; }
+    internal bool NoLoop { get; }
 
-    internal ClientTrackingConfiguration(RespireClientTrackingMode mode, IReadOnlyList<RespireKey> prefixes)
-        => (Mode, Prefixes) = (mode, Internal.ClientCachePrefixSet.Create(prefixes));
+    internal ClientTrackingConfiguration(RespireClientTrackingMode mode, IReadOnlyList<RespireKey> prefixes, bool noLoop = false)
+        => (Mode, Prefixes, NoLoop) = (mode, Internal.ClientCachePrefixSet.Create(prefixes), noLoop);
 }
 
 /// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
@@ -122,33 +123,36 @@ internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration confi
 
     public void Write(ref RespWriter writer)
     {
-        if (configuration.Mode != RespireClientTrackingMode.Broadcast)
-        {
-            writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
-            return;
-        }
         var prefixes = configuration.Prefixes ?? Internal.ClientCachePrefixSet.Empty;
-        writer.WriteArrayHeader(checked(4 + prefixes.Count * 2));
-        writer.WriteRaw("$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nBCAST\r\n"u8);
-        prefixes.WritePrefixes(ref writer);
+        var broadcast = configuration.Mode == RespireClientTrackingMode.Broadcast;
+        writer.WriteArrayHeader(checked(4 + (broadcast ? prefixes.Count * 2 : 0) + (configuration.NoLoop ? 1 : 0)));
+        writer.WriteRaw("$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n"u8);
+        if (broadcast) writer.WriteRaw("$5\r\nBCAST\r\n"u8);
+        else if (configuration.Mode == RespireClientTrackingMode.OptOut) writer.WriteRaw("$6\r\nOPTOUT\r\n"u8);
+        else writer.WriteRaw("$5\r\nOPTIN\r\n"u8);
+        if (broadcast) prefixes.WritePrefixes(ref writer);
+        if (configuration.NoLoop) writer.WriteRaw("$6\r\nNOLOOP\r\n"u8);
     }
 }
 
-/// <summary>CLIENT CACHING YES.</summary>
+/// <summary>CLIENT CACHING YES (OPTIN) or NO (OPTOUT).</summary>
 /// <remarks>
-/// OPTIN prelude for one cacheable read. The prelude and read are written under one write gate with
+/// One-shot prelude for a cacheable OPTIN read or a bypassed OPTOUT read. The prelude and read are written under one write gate with
 /// every response slot reserved before any frame is written, so no other producer can interleave a
 /// command; a validated multi-reply source drains the prelude replies and returns only the read reply.
 /// A Cluster ASK retry writes <c>ASKING</c>, this prelude, and the read as one such sequence. BCAST
-/// reads and reads outside the configured prefixes omit the prelude, so Redis does not track them.
+/// reads omit the prelude. OPTIN reads outside the configured prefixes also omit it and stay untracked.
 /// </remarks>
-internal readonly struct ClientCachingCommand : IConnectionProtocolCommand
+internal readonly struct ClientCachingCommand(bool optOut = false) : IConnectionProtocolCommand
 {
-    public int GetWriteSizeHint() => "*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8.Length;
+    public int GetWriteSizeHint() => Frame.Length;
     public ReadCommandKind ReadKind => ReadCommandKind.None;
+    private ReadOnlySpan<byte> Frame => optOut
+        ? "*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$2\r\nNO\r\n"u8
+        : "*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8;
 
     public void Write(ref RespWriter writer)
-        => writer.WriteRaw("*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8);
+        => writer.WriteRaw(Frame);
 }
 
 /// <summary>CLIENT ID.</summary>

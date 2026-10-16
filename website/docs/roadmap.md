@@ -162,8 +162,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Semantic chat response caching](guides/semantic-cache.md) for `Microsoft.Extensions.AI`.
 - [VectorData hash and JSON collections](guides/vector-data.md) with AOT-friendly mapping, KNN,
   filters, and hybrid search on Redis 8.4+. The guide lists unsupported features.
-- RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md) with OPTIN or
-  BCAST/prefix tracking.
+- RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md) with OPTIN,
+  OPTOUT, BCAST/prefix tracking, and optional NOLOOP.
 - [Cache-aside factories](fundamentals/client-side-caching.md#populate-missing-values-with-a-factory)
   with relative or absolute server expiry and optional concurrent-miss coalescing.
 - Typed serialization, custom serializers, and [value compression codecs](guides/value-codecs.md).
@@ -283,7 +283,7 @@ They track remaining work, not release commitments.
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
   job groups and queue controls, batch callbacks,
-  additional tracking modes, adaptive dedicated pools,
+  adaptive dedicated pools,
   client-side encryption, coordination APIs, and testing support.
   [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.
   The existing [job queue](guides/job-queues.md), [dashboard](guides/stream-dashboard.md),

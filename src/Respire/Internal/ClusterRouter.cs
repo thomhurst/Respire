@@ -1451,7 +1451,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         string commandName = "(command)", string? preferredZone = null,
         RespireTelemetry.ErrorObservation observation = default,
-        bool pinToConnection = false, CommandDeadline commandDeadline = default)
+        bool pinToConnection = false, CommandDeadline commandDeadline = default, bool optOut = false)
         where TCommand : struct, Respire.Protocol.IRespCommand
     {
         if (command is StreamedSetCommand)
@@ -1459,7 +1459,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return SendAskingAsync(connection, in command, cancellationToken, commandName,
                 commandDeadline, pinToConnection: pinToConnection, observation: observation);
 
-        var caching = new ClientCachingCommand();
+        var caching = new ClientCachingCommand(optOut);
         return connection.SendValidatedPrefixedAsync(
             in Asking, in caching, in command, cancellationToken, commandName, preferredZone, observation,
             pinToConnection, commandDeadline);

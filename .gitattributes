@@ -1,4 +1,5 @@
 # Git patch syntax requires LF even when source files use CRLF on Windows.
-scripts/benchmarks/ReadySendStrategy.patch text eol=lf
+# Empty context lines contain a required space in unified diffs.
+scripts/benchmarks/ReadySendStrategy*.patch text eol=lf whitespace=-blank-at-eol
 samples/**/*.sh text eol=lf
 scripts/benchmarks/*.sh text eol=lf

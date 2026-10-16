@@ -87,7 +87,8 @@ Every option has a bounded default, so `new()` is a complete configuration:
 | `MaxSizeBytes` | 64 MiB | Approximate maximum bytes owned by cached replies. Must be at least 1. |
 | `LocalExpiration` | 5 minutes | Maximum local lifetime of an entry, independent of the key's Redis TTL. `null` keeps entries until invalidated or evicted; otherwise at least 1 ms. |
 | `KeyPrefixes` | empty (all keys) | Physical key prefixes eligible for caching. |
-| `TrackingMode` | `OptIn` | How Redis tracks cached keys: per read (`OptIn`) or by prefix (`Broadcast`). |
+| `TrackingMode` | `OptIn` | How Redis tracks cached keys: selected reads (`OptIn`), reads by default (`OptOut`), or by prefix (`Broadcast`). |
+| `NoLoop` | `false` | Suppress invalidations caused by the tracking connection's own writes. Local mutation eviction remains enabled. |
 | `CoalesceConcurrentMisses` | `false` | Share concurrent identical misses and `GetOrSetAsync` factories (stampede protection). |
 | `ReuseHashFields` | `false` | Serve `HMGET` fields from cached `HGET` entries. |
 
@@ -113,6 +114,9 @@ ClientSideCache = new()
 By default every eligible read is cached. Set `KeyPrefixes` to cache only hot, read-mostly keys such
 as catalogs or configuration. Reads of other keys go straight to Redis and use no cache capacity. In
 `OptIn` mode they are also sent without `CLIENT CACHING YES`, so Redis does not track them.
+In `OptOut` mode `KeyPrefixes` controls local admission only: Redis can track uncovered reads,
+and other reads that Respire does not cache. Use `WithoutClientCache()` when a read must explicitly
+opt out of server tracking as well as local caching.
 
 Prefix rules:
 
@@ -127,7 +131,7 @@ Prefix rules:
   their hash key's coverage. Invalidation subscriptions require a covered key.
 - In `Broadcast` mode the prefixes are also sent to Redis.
 
-`MGET` with a mix of covered and uncovered keys:
+In `OptIn` mode, `MGET` with a mix of covered and uncovered keys behaves as follows:
 
 - A typed `MGET`, or a raw `MGET` with `CoalesceConcurrentMisses = true`, sends its misses as one
   tracked command to stay atomic. Redis then tracks every key it reads, so uncovered keys can
@@ -149,6 +153,11 @@ var stock = await fresh.Strings.GetAsync<int>("product:42:stock");
 
 - The view shares the client's connections and keeps its key prefix and read routing.
 - Writes through the view still invalidate cached entries; its reads never populate the cache.
+- On a tracking connection in `OptOut` mode, a bypass read sends `CLIENT CACHING NO` immediately
+  before the read. This prevents that command from adding tracking entries; it does **not**
+  remove tracking established by an earlier read. Previously cached keys still invalidate normally.
+  Connections with tracking disabled, such as replica and dedicated connections, need no prelude.
+- In `Broadcast` mode, bypassing a read does not change the connection's prefix subscriptions.
 - `GetOrSetAsync` on the view reads Redis directly and never shares factories.
 - When client-side caching is disabled, `WithoutClientCache()` returns the same client.
 
@@ -326,6 +335,40 @@ In `OptIn` mode, Redis tracks only the misses Respire sends with `CLIENT CACHING
 continuity is lost, Respire clears the affected cache state rather than trust entries whose
 invalidations may have been missed.
 
+## Opt-out tracking and local writes
+
+Choose `OptOut` when most reads should be tracked. Each caching connection sends
+`CLIENT TRACKING ON OPTOUT` at setup and reconnect; ordinary cache misses need no per-read
+`CLIENT CACHING YES` command. Redis still stores per-key tracking state, including for reads that
+are not admitted to the local cache. On tracking connections, `WithoutClientCache()` sends
+`CLIENT CACHING NO` with its reads to opt out explicitly.
+For bypass transactions containing reads on tracking connections, the prelude is paired with
+`MULTI` and suppresses tracking for the whole transaction. Empty and write-only transactions
+need no caching prelude or extra reply slot. Watched transactions use dedicated connections
+without tracking and need no caching prelude.
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    ClientSideCache = new()
+    {
+        TrackingMode = RespireClientTrackingMode.OptOut,
+        NoLoop = true,
+    },
+});
+```
+
+`NoLoop` adds `NOLOOP` to the tracking handshake in any mode. Redis then suppresses invalidations
+caused by writes on that same physical connection. It does not suppress writes from another
+connection in the same client pool, or from another client.
+
+Local writes must update or evict cached values themselves when `NoLoop` is enabled. Respire
+already evicts affected entries and prevents overlapping reads from being cached, including
+writes through `WithoutClientCache()`; these protections stay enabled. `NOLOOP` reduces redundant
+server pushes without replacing local eviction. Tracking mode and `NoLoop` survive reconnects
+and apply to discovered Sentinel and Cluster data connections. Create a new client to change them.
+
 ## Broadcast tracking
 
 Choose `Broadcast` to receive invalidations for a known keyspace instead of having Redis register
@@ -358,6 +401,10 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 |---|---|---|
 | `Broadcast` | 1 | 2 (`ASKING` + read) |
 | `OptIn` | 2 (`CLIENT CACHING YES` + read) | 3 |
+| `OptOut` | 1 for ordinary reads; 2 for bypass reads (`CLIENT CACHING NO` + read) | 2 for ordinary reads; 3 for bypass reads |
+
+Because bypass reads remain available in `OptOut` mode, its minimum `MaxInflightCommands` is 2
+outside Cluster and 3 in Cluster, the same as `OptIn`.
 
 See [CLIENT TRACKING](https://redis.io/docs/latest/commands/client-tracking/) and the
 [broadcast reference](https://redis.io/docs/latest/develop/reference/client-side-caching/#broadcasting-mode).
@@ -387,6 +434,7 @@ while (!cancellationToken.IsCancellationRequested)
   not `jobs:ready`.
 - Registration sends no command and registers no server tracking. In `OptIn` mode you get
   notifications only after an eligible cached read, so read again after each wake-up.
+  `OptOut` also requires a read to register a key; a bypass read does not register it.
 - A key outside `KeyPrefixes` throws `ArgumentException`.
 - The subscription survives reconnects but cannot recover events lost during a disconnect.
 - `Reasons` is a `RespireClientCacheInvalidationReason` flags value: `ServerInvalidation`,

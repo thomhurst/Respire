@@ -1,9 +1,9 @@
 diff --git b/src/Respire/RespireClient.ReadySend.cs a/src/Respire/RespireClient.ReadySend.cs
 new file mode 100644
-index 00000000..2e99f84f
+index 00000000..3e44be98
 --- /dev/null
 +++ a/src/Respire/RespireClient.ReadySend.cs
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,268 @@
 +using System.Runtime.CompilerServices;
 +using Respire.Commands;
 +using Respire.Infrastructure;
@@ -23,6 +23,7 @@ index 00000000..2e99f84f
 +        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
 +        // scripting commands need here; the ready send captures that decision once afterwards.
 +        => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
++            && !ShouldSkipTracking(operation, in command)
 +            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
 +            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
 +            && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);
@@ -272,10 +273,10 @@ index 00000000..2e99f84f
 +        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
 +}
 diff --git b/src/Respire/RespireClient.cs a/src/Respire/RespireClient.cs
-index a2d0db1a..8032cb2a 100644
+index 463ad128..422098a3 100644
 --- b/src/Respire/RespireClient.cs
 +++ a/src/Respire/RespireClient.cs
-@@ -5812,42 +5812,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6133,42 +6133,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                  // Redis response, not user converter work (conversion runs at the caller).
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -322,7 +323,7 @@ index a2d0db1a..8032cb2a 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -5942,41 +5910,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6263,41 +6231,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                  // CommandTimeout is enforced by the connection's deadline sweep.
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -367,7 +368,7 @@ index a2d0db1a..8032cb2a 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -6006,41 +5942,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6327,41 +6263,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
              {
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -412,7 +413,7 @@ index a2d0db1a..8032cb2a 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -6232,234 +6136,5 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6553,235 +6457,5 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
  
          return result;
      }
@@ -425,6 +426,7 @@ index a2d0db1a..8032cb2a 100644
 -        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
 -        // scripting commands need here; the ready send captures that decision once afterwards.
 -        => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
+-            && !ShouldSkipTracking(operation, in command)
 -            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
 -            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
 -            && (ReadCache is null || !command.GetClientCacheMetadata(operation).CacheableRead);

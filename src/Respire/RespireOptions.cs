@@ -633,14 +633,14 @@ public sealed record RespireOptions
 
         if (ClientSideCache is { } cache)
         {
-            // OPTIN Cluster ASK redirects send ASKING, CACHING YES, and the read atomically.
-            var isOptIn = cache.TrackingMode != RespireClientTrackingMode.Broadcast;
-            var requiredInflightCommands = isOptIn ? 2 : 1;
-            if (UseCluster) requiredInflightCommands = isOptIn ? 3 : 2;
+            // OPTIN/OPTOUT Cluster ASK redirects can send ASKING, CACHING, and the read atomically.
+            var hasCachingPrelude = cache.TrackingMode != RespireClientTrackingMode.Broadcast;
+            var requiredInflightCommands = hasCachingPrelude ? 2 : 1;
+            if (UseCluster) requiredInflightCommands = hasCachingPrelude ? 3 : 2;
             var requirement = requiredInflightCommands switch
             {
-                3 => "must be at least three for OPTIN caching with Cluster ASK redirects",
-                2 => "must be at least two for OPTIN caching or Cluster ASK redirects",
+                3 => "must be at least three for OPTIN/OPTOUT caching with Cluster ASK redirects",
+                2 => "must be at least two for OPTIN/OPTOUT caching or Cluster ASK redirects",
                 _ => "must be at least one",
             };
             Require(
@@ -727,7 +727,7 @@ public sealed record RespireOptions
             PushHandler = pushHandler,
             EnableClientTracking = enableClientTracking,
             ClientTrackingOptions = enableClientTracking && ClientSideCache is { } cache
-                ? new(cache.TrackingMode, cache.KeyPrefixes) : default,
+                ? new(cache.TrackingMode, cache.KeyPrefixes, cache.NoLoop) : default,
         };
 
     // BUSY permits AUTH but can block all other setup. Construct control options from

@@ -364,7 +364,8 @@ public sealed partial class RespireClient
                     admission = AcquireCircuit(connection, cancellationToken);
                     await connection.SendFireAndForgetAsync(in command, cancellationToken, operation,
                         capacityDeadline: commandDeadline, preferredZone: GetTransportReadZone(in command),
-                        pinToConnection: true, observation: observation).ConfigureAwait(false);
+                        pinToConnection: true, observation: observation,
+                        skipTracking: ShouldSkipTracking(operation, in command)).ConfigureAwait(false);
                     // Queue acceptance cannot establish endpoint health without observing its reply.
                     break;
                 }
