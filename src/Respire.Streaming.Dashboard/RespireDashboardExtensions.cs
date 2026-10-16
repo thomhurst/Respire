@@ -53,6 +53,35 @@ public static class RespireDashboardExtensions
             await context.Response.WriteAsync(DashboardPage.Render(snapshot,
                 DashboardPath(context, false), tokens.FormFieldName, tokens.RequestToken!), context.RequestAborted).ConfigureAwait(false);
         });
+        group.MapGet("/{index:int}/logs", async (HttpContext context) =>
+        {
+            ProtectResponse(context);
+            var returnPath = DashboardPath(context, true);
+            var ids = context.Request.Query["jobId"];
+            if (ids.Count != 1 || string.IsNullOrWhiteSpace(ids[0]) || ids[0]!.Length > 4096)
+            {
+                await WriteErrorAsync(context, returnPath, 400, "Enter one job ID of at most 4096 characters.").ConfigureAwait(false);
+                return;
+            }
+            var index = int.Parse(context.Request.RouteValues["index"]!.ToString()!, CultureInfo.InvariantCulture);
+            try
+            {
+                var logs = await state.ReadLogsAsync(index, ids[0]!, context.RequestAborted).ConfigureAwait(false);
+                if (logs is null)
+                {
+                    await WriteErrorAsync(context, returnPath, 404, "This job queue is not configured.").ConfigureAwait(false);
+                    return;
+                }
+                context.Response.ContentType = "text/html; charset=utf-8";
+                await context.Response.WriteAsync(DashboardPage.Render(new([]), returnPath, "", "", logs),
+                    context.RequestAborted).ConfigureAwait(false);
+            }
+            catch (RespireException)
+            {
+                await WriteErrorAsync(context, returnPath, 503,
+                    "Job logs are unavailable. Check Redis permissions and the configured queue.").ConfigureAwait(false);
+            }
+        });
         group.MapPost("/{index:int}/{action}", async (HttpContext context) =>
         {
             ProtectResponse(context);

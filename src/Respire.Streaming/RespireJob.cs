@@ -54,6 +54,13 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
             .ReportAsync(percent, cancellationToken);
     }
 
+    /// <summary>Appends a bounded log line for a hosted delivery; false means it is stale or expired.</summary>
+    /// <remarks>Await logging before returning from the handler. Lines must be valid Unicode and fit the queue's byte limit.
+    /// Logs share the application job ID across retries. An uncertain reply can leave a duplicate line on retry.</remarks>
+    public ValueTask<bool> LogAsync(string message, CancellationToken cancellationToken = default)
+        => (_progress ?? throw new InvalidOperationException("Logging requires a hosted job delivery."))
+            .LogAsync(message, cancellationToken);
+
     /// <summary>Returns Nack and requests a delay from completion, overriding the queue backoff for this attempt.</summary>
     /// <remarks>Return this result from the handler. The delivery limit still applies. Zero allows immediate retry.</remarks>
     public RespireStreamWorkerResult RetryAfter(TimeSpan delay)

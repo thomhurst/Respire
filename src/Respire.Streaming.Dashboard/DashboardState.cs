@@ -4,6 +4,7 @@ using Respire.Internal;
 namespace Respire.Streaming.Dashboard;
 
 internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> Streams);
+internal sealed record DashboardJobLogs(string QueueName, string JobId, string[] Lines);
 internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream Configuration,
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
@@ -156,6 +157,15 @@ internal sealed class DashboardState
         local values = redis.call('HMGET', KEYS[1], 'paused', 'hits')
         return {values[1] or '0', values[2] or '0'}
         """);
+
+    internal async ValueTask<DashboardJobLogs?> ReadLogsAsync(int index, string jobId, CancellationToken cancellationToken)
+    {
+        if (index < 0 || index >= _streams.Length || !_streams[index].IsJobQueue) return null;
+        var stream = _streams[index];
+        var lines = await _client.Lists.RangeAsync(JobLogKeys.ForJob(stream.Stream, jobId), -_limit, -1,
+            cancellationToken).ConfigureAwait(false);
+        return new(stream.Name, jobId, lines);
+    }
 
     internal async ValueTask<long> MutateAsync(int index, string id, bool retry, CancellationToken cancellationToken)
     {

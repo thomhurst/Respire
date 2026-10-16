@@ -242,10 +242,15 @@ public partial class JobQueueIntegrationTests(RedisTestContainer redis)
         {
             var firstJob = await first.Received.Task.WaitAsync(deadline.Token);
             await Assert.That(await firstJob.ReportProgressAsync(10, deadline.Token)).IsTrue();
+            await Assert.That(await firstJob.LogAsync("first attempt", deadline.Token)).IsTrue();
             // Deliberately reuse the consumer identity: attempt fencing must still protect recovery.
             await secondWorker.StartAsync(deadline.Token);
             var secondJob = await second.Received.Task.WaitAsync(deadline.Token);
             await Assert.That(await firstJob.ReportProgressAsync(90, deadline.Token)).IsFalse();
+            await Assert.That(await firstJob.LogAsync("stale attempt", deadline.Token)).IsFalse();
+            await Assert.That(await secondJob.LogAsync("recovered attempt", deadline.Token)).IsTrue();
+            await Assert.That(string.Join("|", await queue.GetLogsAsync("slow", cancellationToken: deadline.Token)))
+                .IsEqualTo("first attempt|recovered attempt");
             await Assert.That(await secondJob.ReportProgressAsync(50, deadline.Token)).IsTrue();
             releaseFirst.TrySetResult();
             await firstWorker.StopAsync(deadline.Token);

@@ -22,6 +22,31 @@ internal static class JobQueueScripts
         return 1
         """);
 
+    internal static readonly RespireScript Log = RespireScript.Create(Fence + """
+        local clock = redis.call('TIME')
+        local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+        local expiry = now + tonumber(ARGV[7])
+        for i = 1, #entries[1][2], 2 do
+            if entries[1][2][i] == '_respire.job.expires' then
+                local expires = tonumber(entries[1][2][i + 1])
+                if expires and expires > 0 then expiry = math.min(expiry, expires) end
+            end
+        end
+        if expiry <= now then return 0 end
+        local existingExpiry = redis.call('PEXPIRETIME', KEYS[2])
+        if existingExpiry >= 0 then expiry = math.min(expiry, existingExpiry) end
+        -- ACL failures must not leave an untrimmed or immortal list after RPUSH.
+        if not redis.acl_check_cmd('RPUSH', KEYS[2], ARGV[5])
+            or not redis.acl_check_cmd('LTRIM', KEYS[2], -tonumber(ARGV[6]), -1)
+            or not redis.acl_check_cmd('PEXPIREAT', KEYS[2], expiry) then
+            return redis.error_reply('NOPERM job logging is not permitted')
+        end
+        redis.call('RPUSH', KEYS[2], ARGV[5])
+        redis.call('LTRIM', KEYS[2], -tonumber(ARGV[6]), -1)
+        redis.call('PEXPIREAT', KEYS[2], expiry)
+        return 1
+        """);
+
     // No automatic trimming: a failed completion must not irreversibly evict another event.
     // Preflight all writes and compensate runtime failures before acknowledging the delivery.
     private const string CompleteSource = Fence + JobQueueFlows.PrepareCompletion + """

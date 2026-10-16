@@ -1,4 +1,12 @@
 #nullable enable
+Respire.Streaming.RespireJob<T>.LogAsync(string! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.GetLogsAsync(string! jobId, int count = 100, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]!>
+Respire.Streaming.RespireJobQueueOptions.MaximumLogLines.get -> int
+Respire.Streaming.RespireJobQueueOptions.MaximumLogLines.init -> void
+Respire.Streaming.RespireJobQueueOptions.MaximumLogLineBytes.get -> int
+Respire.Streaming.RespireJobQueueOptions.MaximumLogLineBytes.init -> void
+Respire.Streaming.RespireJobQueueOptions.LogRetention.get -> System.TimeSpan
+Respire.Streaming.RespireJobQueueOptions.LogRetention.init -> void
 Respire.Streaming.RespireJob<T>.Group.get -> string?
 Respire.Streaming.RespireJob<T>.Group.init -> void
 Respire.Streaming.RespireJobEnqueueOptions.Group.get -> string?

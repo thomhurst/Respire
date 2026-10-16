@@ -66,6 +66,14 @@ public sealed partial class RespireJobQueue<T>
     /// <summary>The retained progress and completion stream. No automatic expiry or trimming is applied.</summary>
     public string EventsStreamKey => StreamKey + ":events";
 
+    /// <summary>Reads up to count newest retained log lines in append order for an application job ID. Count is 1 through 1000.</summary>
+    /// <remarks>Returns an empty array for missing or expired logs. Reusing a job ID before log expiry shares its log history.</remarks>
+    public ValueTask<string[]> GetLogsAsync(string jobId, int count = 100, CancellationToken cancellationToken = default)
+    {
+        if (count is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(count));
+        return _client.Lists.RangeAsync(JobLogKeys.ForJob(StreamKey, jobId), -count, -1, cancellationToken);
+    }
+
     /// <summary>Creates a durable recurring scheduler for this queue using the supplied UTC clock.</summary>
     /// <remarks>Call RunDueAsync periodically, or register AddRespireJobScheduler to run it in the host.</remarks>
     public RespireJobScheduler<T> CreateScheduler(TimeProvider? timeProvider = null)

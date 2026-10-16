@@ -595,6 +595,44 @@ deleting the stream, or losing Redis persistence can lose events, including duri
 the reader does not detect a gap caused by trimming. Progress can generate substantial storage,
 so report at useful milestones. Do not expire or trim unprocessed ready-stream bodies.
 
+## Per-job logs
+
+Inside a hosted handler, await `job.LogAsync("Started sending email", cancellationToken)`
+to append a line. It returns `false` when this delivery is no longer current or the job's
+explicit TTL has elapsed. Logging uses the same consumer and delivery-attempt fence as
+progress; a recovered handler cannot append through an older delivery. Await all log calls
+before returning from the handler. Logging is explicit: a job that never calls `LogAsync`
+adds no Redis command. Each append runs one script (plus script loading on a cache miss).
+
+Set `MaximumLogLines` (default 100, range 1–1000), `MaximumLogLineBytes` (default 4096,
+range 1–16384), and `LogRetention` (default one day, positive and at most
+`Int32.MaxValue` milliseconds) on `RespireJobQueueOptions`, passed as `queueOptions`
+to `AddRespireJobQueue`. All workers for a queue must use the same policy. The overload
+without queue options uses these defaults. Invalid Unicode and lines exceeding the UTF-8
+byte limit throw before sending a command; lines are never silently truncated.
+
+Logs are a capped Redis list per application job ID. Appends remove the oldest excess lines.
+The first append sets a finite expiry, shortened to the job's expiry when it has a TTL;
+subsequent appends never extend it. Completion does not extend retention. Once a list has
+expired, a still-live delivery can begin a new list. This bounds each list's size and lifetime;
+total storage depends on how many distinct jobs log within the retention window.
+
+Call `await queue.GetLogsAsync(jobId, count: 100, cancellationToken: cancellationToken)`
+to read the newest retained lines in append order. The count must be 1–1000; missing or
+expired logs return an empty array. Logs share the application job ID across delivery
+attempts and durable retries. Reusing an ID before expiry also shares its old history, so
+use unique IDs for distinct logical jobs. A lost append reply can leave a duplicate line
+when retried. Logs are diagnostic history, not an exactly-once audit trail.
+
+The [dashboard](stream-dashboard.md#inspect-job-logs) displays these lines for configured
+job queues. Log only information operators should see; exception messages and payloads
+are not logged automatically.
+
+Log keys append `:logs:<SHA256-of-job-ID>` to the ready stream key, preserving its Cluster
+slot and client key prefix. Writers need `XPENDING`, `XRANGE`, `TIME`, `PEXPIRETIME`,
+`RPUSH`, `LTRIM`, `PEXPIREAT`, and script execution. Write permissions are checked before
+appending. Readers need `LRANGE` on the log keys. Reserve these keys for the queue.
+
 ## Enqueue-to-processing tracing
 
 Subscribe OpenTelemetry tracing to `RespireStreamWorkerTelemetry.ActivitySourceName`
