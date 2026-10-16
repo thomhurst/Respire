@@ -116,7 +116,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Typed LCS matches](commands/strings-and-keys.md#longest-common-subsequence).
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   on dedicated connections.
-- [Typed job queues](guides/job-queues.md) with delayed scheduling, batch priority, TTL, durable
+- [Typed job queues](guides/job-queues.md) with transactional enqueue, delayed scheduling, batch priority, TTL, durable
   retry backoff, bounded enqueue deduplication, distributed round-robin job groups, scoped handlers, visibility recovery, dead letters,
   queue-wide pause/resume and shared fixed-window admission limits, per-group concurrency leases,
   GCRA rate limits and pause/resume,
@@ -281,7 +281,7 @@ They track remaining work, not release commitments.
   release naming, package compatibility validation, and the remaining Orleans and
   Cluster replica recovery checks.
 - [Remaining feature gaps against other Redis clients](https://github.com/thomhurst/Respire/issues/1816):
-  job groups and queue controls, batch callbacks, transactional enqueue,
+  job groups and queue controls, batch callbacks,
   additional tracking modes, adaptive dedicated pools,
   client-side encryption, coordination APIs, and testing support.
   [MessagePack, protobuf-net, and MemoryPack serializers](fundamentals/values-and-serialization.md#binary-serializer-packages) are available as optional packages.

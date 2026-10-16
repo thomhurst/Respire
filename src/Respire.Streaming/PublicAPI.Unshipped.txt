@@ -51,6 +51,8 @@ Respire.Streaming.RespireJobGroupOptions.LeaseDuration.init -> void
 Respire.Streaming.RespireJobQueue<T>.SetGroupOptionsAsync(string! group, Respire.Streaming.RespireJobGroupOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Respire.Streaming.RespireJobQueue<T>.PauseGroupAsync(string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobQueue<T>.ResumeGroupAsync(string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobQueue<T>.Enqueue(Respire.RespireTransactionBase! transaction, string! jobId, T payload, System.TimeSpan? deduplicationWindow = null) -> Respire.RespirePending<Respire.Streaming.RespireJobEnqueueResult>!
+Respire.Streaming.RespireJobQueue<T>.EnqueueScheduled(Respire.RespireTransactionBase! transaction, string! jobId, T payload, Respire.Streaming.RespireJobEnqueueOptions! options) -> Respire.RespirePending<Respire.Streaming.RespireJobEnqueueResult>!
 Respire.Streaming.RespireJob<T>.Group.get -> string?
 Respire.Streaming.RespireJob<T>.Group.init -> void
 Respire.Streaming.RespireJobEnqueueOptions.Group.get -> string?

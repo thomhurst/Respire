@@ -15,7 +15,7 @@ public sealed partial class RespireJobQueue<T>
     public const string ConsumerGroup = "respire-jobs";
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-    private static readonly RespireScript Enqueue = RespireScript.Create("""
+    private static readonly RespireScript EnqueueScript = RespireScript.Create("""
         local existing = redis.call('GET', KEYS[2])
         if existing then return {existing, 0} end
         -- Lua errors do not roll back writes. Check both mutations and rollback before appending.
@@ -113,7 +113,7 @@ public sealed partial class RespireJobQueue<T>
             throw new ArgumentException("Queue keys must resolve to distinct keys in the same Cluster slot.");
         using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
-        using var result = await _client.Scripts.ExecuteAsync(Enqueue, [StreamKey, deduplicationKey],
+        using var result = await _client.Scripts.ExecuteAsync(EnqueueScript, [StreamKey, deduplicationKey],
             [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
