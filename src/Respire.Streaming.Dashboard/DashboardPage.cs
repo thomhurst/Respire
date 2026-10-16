@@ -7,7 +7,7 @@ namespace Respire.Streaming.Dashboard;
 internal static class DashboardPage
 {
     internal static string Render(DashboardSnapshot snapshot, string path, string tokenFieldName, string requestToken,
-        DashboardJobLogs? logs = null)
+        DashboardJobLogs? logs = null, DashboardJobGroups? jobGroups = null)
     {
         var html = new StringBuilder(8192);
         html.Append("""
@@ -37,7 +37,7 @@ internal static class DashboardPage
             @media(max-width:760px){.layout{grid-template-columns:1fr;padding:18px 12px;gap:18px}nav{position:static}nav a{display:inline-block;margin:0 12px 4px 0}.stream-head,.section{padding:18px 16px}.stats{gap:12px 22px}.fields{grid-template-columns:1fr;gap:4px}.fields dd{margin-bottom:8px}header{padding:20px}.dead{padding:12px}}
             </style></head><body><header><div class="brand">Respire</div><div class="heading"><h1>Queues and streams</h1><a class="refresh" href="
             """);
-        html.Append(E(path)).Append("\">").Append(logs is null ? "Refresh snapshot" : "Return to dashboard")
+        html.Append(E(path)).Append("\">").Append(logs is null && jobGroups is null ? "Refresh snapshot" : "Return to dashboard")
             .Append("</a></div><p>Inspect deliveries and return failed work to its stream.</p></header><div class=\"layout\"><nav aria-label=\"Configured streams\"><p>Configured streams</p>");
         foreach (var stream in snapshot.Streams)
             html.Append("<a href=\"#stream-").Append(N(stream.Index)).Append("\">").Append(E(stream.Configuration.Name)).Append("</a>");
@@ -60,11 +60,17 @@ internal static class DashboardPage
             }
             html.Append("<p class=\"note\">Newest retained lines in append order, up to the dashboard entry limit. Logs share the job ID across attempts and expire according to the worker policy.</p></section></article>");
         }
+        else if (jobGroups is not null)
+        {
+            html.Append("<article class=\"stream\"><div class=\"stream-head\"><h2>").Append(E(jobGroups.QueueName)).Append("</h2></div>");
+            RenderJobGroups(html, jobGroups.Index, jobGroups.Groups, jobGroups.NextCursor, path, tokenFieldName, requestToken);
+            html.Append("</article>");
+        }
         else if (snapshot.Streams.Count == 0)
             html.Append("<p class=\"notice\">No streams are configured. Add a stream to the dashboard registration to inspect its workers.</p>");
         foreach (var stream in snapshot.Streams)
             RenderStream(html, stream, path, tokenFieldName, requestToken);
-        if (logs is null)
+        if (logs is null && jobGroups is null)
             html.Append("<footer>Snapshots are shared for two seconds. Refresh to update counts and delivery rate. Retained entries include acknowledged work.</footer>");
         html.Append("</main></div></body></html>");
         return html.ToString();
@@ -93,6 +99,8 @@ internal static class DashboardPage
                 .Append(stream.RateLimitHits is { } hits ? N(hits) : "—")
                 .Append("</dd></div></dl><p class=\"note\">Cumulative denied reader admissions. Jobs remain queued and retain their retry budget.</p></section>");
             RenderMetrics(html, stream.Metrics);
+            RenderJobGroups(html, stream.Index, stream.JobGroups?.Groups, stream.JobGroups?.NextCursor,
+                path, tokenFieldName, requestToken);
         }
         html.Append("<section class=\"section\"><h3>Consumer groups</h3>");
         if (stream.SourceUnavailable) html.Append("<p class=\"notice\">Source inspection unavailable.</p>");
@@ -156,6 +164,49 @@ internal static class DashboardPage
                 .Append("<p class=\"note\">Look up retained log lines from any attempt, including completed and failed jobs.</p></section>");
         }
         html.Append("</article>");
+    }
+
+    private static void RenderJobGroups(StringBuilder html, int index, IReadOnlyList<RespireJobGroupInfo>? groups,
+        string? cursor, string path, string tokenFieldName, string requestToken)
+    {
+        var route = path.TrimEnd('/') + "/" + N(index);
+        html.Append("<section class=\"section\"><h3>Application job groups</h3><p class=\"note\">Application groups partition jobs for scheduling and admission. Redis consumer groups track stream deliveries separately.</p>");
+        if (groups is null) html.Append("<p class=\"notice\">Application job groups unavailable.</p>");
+        else if (groups.Count == 0)
+            html.Append("<p class=\"empty\">No grouped jobs or retained leases. This queue may be empty or contain only ungrouped jobs.</p>");
+        else
+        {
+            html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Application group</th><th scope=\"col\">Queued / due</th><th scope=\"col\">Active leases</th><th scope=\"col\">Group admission</th><th scope=\"col\">Policy</th><th scope=\"col\">Control</th></tr></thead><tbody>");
+            foreach (var group in groups)
+            {
+                html.Append("<tr><td>").Append(E(group.Name)).Append("</td><td>").Append(N(group.QueuedCount)).Append(" / ")
+                    .Append(N(group.ReadyCount)).Append("</td><td>").Append(N(group.ActiveCount)).Append("</td><td>");
+                if (group.IsPaused) html.Append("Paused. ");
+                if (group.IsRateLimited) html.Append("Rate limited. ");
+                if (group.IsConcurrencyLimited) html.Append("Concurrency limited. ");
+                if (group.IsEligible) html.Append("Eligible");
+                else if (!group.IsPaused && !group.IsRateLimited && !group.IsConcurrencyLimited) html.Append("No due work");
+                html.Append("</td><td>Concurrency: ").Append(group.MaxConcurrency is { } max ? N(max) : "unlimited")
+                    .Append("<br>Rate: ");
+                if (group.RateLimit is { } rate)
+                    html.Append(N(rate.PermitLimit)).Append(" / ").Append(rate.Window.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)).Append(" seconds (burst)");
+                else html.Append("unlimited");
+                html.Append("<br>Lease: ").Append(group.LeaseDuration.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)).Append(" seconds</td><td>");
+                html.Append("<form method=\"post\" action=\"").Append(E(route + (group.IsPaused ? "/resume-group" : "/pause-group")))
+                    .Append("\"><input type=\"hidden\" name=\"groupToken\" value=\"")
+                    .Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(group.Name)))
+                    .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
+                    .Append("\"><button type=\"submit\">").Append(group.IsPaused ? "Resume group" : "Pause group").Append("</button></form></td></tr>");
+            }
+            html.Append("</tbody></table></div>");
+        }
+        if (cursor is not null)
+            html.Append("<p><a href=\"").Append(E(route + "/groups?cursor=" + Uri.EscapeDataString(cursor))).Append("\">Next groups</a></p>");
+        html.Append("<p class=\"note\">Queued counts include delayed jobs and entries awaiting expiry cleanup. Active counts include only live leases. Eligibility is for group admission; queue-wide controls and job expiry still apply. Pause leaves in-flight work running.</p>")
+            .Append("<form method=\"get\" action=\"").Append(E(route + "/groups")).Append("\"><label for=\"group-name-")
+            .Append(N(index)).Append("\">Inspect application group</label> <input id=\"group-name-").Append(N(index))
+            .Append("\" name=\"group\" maxlength=\"4096\" required> <button type=\"submit\">View group</button></form>")
+            .Append("<p class=\"note\">Lists contain groups with queued work or retained leases. Look up an idle group by name to inspect its policy. Missing state shows zero counts and unlimited admission.</p></section>");
     }
 
     private static void RenderMetrics(StringBuilder html, IReadOnlyList<RespireJobMetricBucket>? buckets)

@@ -250,8 +250,10 @@ and the normal pending/recovery permissions on the ready stream. Protect these k
 eviction, expiry and independent modification. Upgrade all workers before relying on group
 limits; older workers do not enforce admission or lease fences.
 
-Group dashboard support is tracked separately in
-[group dashboard](https://github.com/thomhurst/Respire/issues/1826).
+The [queue dashboard](stream-dashboard.md#inspect-and-control-application-job-groups) provides
+paginated group counts, policy inspection, and protected pause/resume actions. Applications can
+also call `RespireJobGroups.ReadAsync` with the queue's `StreamKey` for bounded pages or
+`RespireJobGroups.GetAsync` for a named group, including idle groups with configured policies.
 
 ## Processing, retry and dead letters
 

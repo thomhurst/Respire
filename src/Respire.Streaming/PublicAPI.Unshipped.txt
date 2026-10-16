@@ -12,6 +12,26 @@ Respire.Streaming.RespireReliableQueue<T>.ReceiveAsync(System.TimeSpan visibilit
 Respire.Streaming.RespireReliableQueue<T>.RespireReliableQueue(Respire.IRespireClient! client, string! queueName, System.Func<T, byte[]!>! serialize, System.Func<byte[]!, T>! deserialize, int deliveryLimit = 5) -> void
 Respire.Streaming.RespireReliableQueue<T>.SendAsync(T payload, string? deduplicationId = null, System.TimeSpan? deduplicationWindow = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId>
 Respire.Streaming.RespireReliableQueue<T>.StreamKey.get -> string!
+Respire.Streaming.RespireJobGroupInfo
+Respire.Streaming.RespireJobGroupInfo.ActiveCount.get -> long
+Respire.Streaming.RespireJobGroupInfo.IsConcurrencyLimited.get -> bool
+Respire.Streaming.RespireJobGroupInfo.IsEligible.get -> bool
+Respire.Streaming.RespireJobGroupInfo.IsPaused.get -> bool
+Respire.Streaming.RespireJobGroupInfo.IsRateLimited.get -> bool
+Respire.Streaming.RespireJobGroupInfo.LeaseDuration.get -> System.TimeSpan
+Respire.Streaming.RespireJobGroupInfo.MaxConcurrency.get -> int?
+Respire.Streaming.RespireJobGroupInfo.Name.get -> string!
+Respire.Streaming.RespireJobGroupInfo.QueuedCount.get -> long
+Respire.Streaming.RespireJobGroupInfo.RateLimit.get -> Respire.Streaming.RespireJobRateLimit?
+Respire.Streaming.RespireJobGroupInfo.ReadyCount.get -> long
+Respire.Streaming.RespireJobGroupPage
+Respire.Streaming.RespireJobGroupPage.Groups.get -> System.Collections.Generic.IReadOnlyList<Respire.Streaming.RespireJobGroupInfo!>!
+Respire.Streaming.RespireJobGroupPage.NextCursor.get -> string?
+Respire.Streaming.RespireJobGroups
+static Respire.Streaming.RespireJobGroups.GetAsync(Respire.IRespireClient! client, string! streamKey, string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobGroupInfo!>
+static Respire.Streaming.RespireJobGroups.PauseAsync(Respire.IRespireClient! client, string! streamKey, string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+static Respire.Streaming.RespireJobGroups.ReadAsync(Respire.IRespireClient! client, string! streamKey, int count = 50, string? cursor = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobGroupPage!>
+static Respire.Streaming.RespireJobGroups.ResumeAsync(Respire.IRespireClient! client, string! streamKey, string! group, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJob<T>.LogAsync(string! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireJobQueue<T>.GetLogsAsync(string! jobId, int count = 100, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]!>
 Respire.Streaming.RespireJobQueueOptions.MaximumLogLines.get -> int
