@@ -122,22 +122,13 @@ internal sealed class DashboardState
                 long? rateLimitHits = null;
                 IReadOnlyList<RespireJobMetricBucket>? metrics = null;
                 RespireJobGroupPage? jobGroups = null;
-                var batches = new List<DashboardJobBatch>(stream.BatchIds.Count);
+                DashboardJobBatch[] batches = [];
                 if (stream.IsJobQueue)
                 {
                     if (_batchQueues[i] is { } queue)
                     {
-                        foreach (var id in stream.BatchIds)
-                        {
-                            try
-                            {
-                                batches.Add(new(id, await queue.GetBatchStatusAsync(id, token).ConfigureAwait(false)));
-                            }
-                            catch (RespireException)
-                            {
-                                batches.Add(new(id, null, Unavailable: true));
-                            }
-                        }
+                        batches = await ReadBatchesAsync(stream.BatchIds,
+                            (id, ct) => queue.GetBatchStatusAsync(id, ct), token).ConfigureAwait(false);
                     }
                     try
                     {
@@ -220,6 +211,27 @@ internal sealed class DashboardState
             return _snapshot;
         }
         finally { _readGate.Release(); }
+    }
+
+    internal static async Task<DashboardJobBatch[]> ReadBatchesAsync(IList<string> ids,
+        Func<string, CancellationToken, ValueTask<RespireJobBatchStatus?>> read, CancellationToken cancellationToken)
+    {
+        var batches = new DashboardJobBatch[ids.Count];
+        // Four stream readers each issue at most four batch reads at once.
+        await Parallel.ForEachAsync(Enumerable.Range(0, ids.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (index, token) =>
+        {
+            var id = ids[index];
+            try
+            {
+                batches[index] = new(id, await read(id, token).ConfigureAwait(false));
+            }
+            catch (RespireException)
+            {
+                batches[index] = new(id, null, Unavailable: true);
+            }
+        }).ConfigureAwait(false);
+        return batches;
     }
 
     private static readonly RespireScript QueueControlState = RespireScript.Create("""

@@ -55,8 +55,6 @@ public class DashboardBatchTests(RedisTestContainer redis)
         await queue.RemoveBatchAsync("terminal");
         snapshot = await new DashboardState(client, options).ReadAsync(default);
         await Assert.That(snapshot.Streams[0].Batches![2].Status).IsNull();
-        if (Environment.GetEnvironmentVariable("RESPIRE_DASHBOARD_PREVIEW") is { Length: > 0 } preview)
-            await File.WriteAllTextAsync(preview, html);
     }
 
     [Test]
