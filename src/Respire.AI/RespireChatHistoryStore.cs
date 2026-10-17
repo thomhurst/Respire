@@ -7,7 +7,9 @@ namespace Respire.AI;
 
 /// <summary>Stores ordered Microsoft.Extensions.AI messages in bounded, expiring Redis lists.</summary>
 /// <remarks>The caller owns the Redis client. Concurrent append batches remain contiguous in Redis execution order.
-/// Retrying an append after an ambiguous network failure can duplicate messages; appends are not idempotent.</remarks>
+/// Retrying an append after an ambiguous network failure can duplicate messages; appends are not idempotent.
+/// Retention and reads use exact message-count windows, which can split tool exchanges.
+/// Applications must choose valid conversation boundaries before sending history to a provider.</remarks>
 public sealed class RespireChatHistoryStore
 {
     private static readonly RespireScript Append = RespireScript.Create("""

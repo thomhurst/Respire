@@ -31,6 +31,10 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         call.Arguments!["city"]!.ToString().Should().Be("London");
         messages[3].Contents.Single().Should().BeOfType<FunctionResultContent>().Which.CallId.Should().Be("call-1");
         (await store.ReadAsync("chat", 2)).Select(m => m.Role).Should().Equal(ChatRole.Assistant, ChatRole.Tool);
+        // Count windows preserve the requested transcript slice, even across tool boundaries.
+        (await store.ReadAsync("chat", 1)).Select(m => m.Role).Should().Equal(ChatRole.Tool);
+        await store.TrimAsync("chat", 1);
+        (await store.ReadAsync("chat")).Select(m => m.Role).Should().Equal(ChatRole.Tool);
         (await store.ReadAsync("other")).Should().BeEmpty();
         (await Store(redis).ReadAsync("chat")).Should().BeEmpty();
         await store.ClearAsync("chat");
@@ -141,6 +145,71 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await store.ClearAsync("chat");
     }
 
+    [Test, Arguments(2, false), Arguments(3, false), Arguments(2, true), Arguments(3, true)]
+    public async Task MiddlewarePersistsWholeToolLoopExactlyOnce(int protocol, bool streaming)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        var provider = new ToolLoopChatClient();
+        var invocations = 0;
+        using var chat = new ChatClientBuilder(provider)
+            .UseRespireChatHistory(store, "chat")
+            .UseFunctionInvocation()
+            .Build();
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => { invocations++; return "rain"; }, "weather")],
+        };
+        if (streaming)
+        {
+            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")], options)) { }
+        }
+        else
+        {
+            await chat.GetResponseAsync([new(ChatRole.User, "weather?")], options);
+        }
+
+        invocations.Should().Be(1);
+        provider.Requests.Should().HaveCount(2);
+        provider.Requests[0].Select(m => m.Role).Should().Equal(ChatRole.User);
+        provider.Requests[1].Select(m => m.Role).Should().Equal(ChatRole.User, ChatRole.Assistant, ChatRole.Tool);
+        var saved = await store.ReadAsync("chat");
+        saved.Select(m => m.Role).Should().Equal(ChatRole.User, ChatRole.Assistant, ChatRole.Tool, ChatRole.Assistant);
+        saved[0].Text.Should().Be("weather?");
+        var call = saved[1].Contents.Should().ContainSingle().Subject.Should().BeOfType<FunctionCallContent>().Subject;
+        call.CallId.Should().Be("weather-call");
+        call.Name.Should().Be("weather");
+        var result = saved[2].Contents.Should().ContainSingle().Subject.Should().BeOfType<FunctionResultContent>().Subject;
+        result.CallId.Should().Be("weather-call");
+        result.Result!.ToString().Should().Be("rain");
+        saved[3].Text.Should().Be("Bring an umbrella.");
+
+        // A new pipeline must load the complete tool exchange from Redis, in either response mode.
+        using var next = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").UseFunctionInvocation().Build();
+        if (streaming)
+        {
+            await foreach (var _ in next.GetStreamingResponseAsync([new(ChatRole.User, "thanks")], options)) { }
+        }
+        else
+        {
+            await next.GetResponseAsync([new(ChatRole.User, "thanks")], options);
+        }
+
+        invocations.Should().Be(1);
+        provider.Requests.Should().HaveCount(3);
+        provider.Requests[2].Select(m => m.Role).Should().Equal(ChatRole.User, ChatRole.Assistant, ChatRole.Tool, ChatRole.Assistant, ChatRole.User);
+        provider.Requests[2].Take(4).Select(SerializeMessage).Should().Equal(saved.Select(SerializeMessage));
+        provider.Requests[2][4].Text.Should().Be("thanks");
+        var final = await store.ReadAsync("chat");
+        final.Should().HaveCount(6);
+        final.Take(4).Select(SerializeMessage).Should().Equal(saved.Select(SerializeMessage));
+        final.Skip(4).Select(m => m.Text).Should().Equal("thanks", "You're welcome.");
+        await store.ClearAsync("chat");
+    }
+
+    private static string SerializeMessage(ChatMessage message)
+        => JsonSerializer.Serialize(message, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)));
+
     [Test, Arguments(2), Arguments(3)]
     public async Task AgentProviderUsesSessionIdentityAndDoesNotDuplicateLoadedHistory(int protocol)
     {
@@ -214,6 +283,37 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             AgentRunOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null,
             AgentRunOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class ToolLoopChatClient : IChatClient
+    {
+        public List<List<ChatMessage>> Requests { get; } = [];
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new ChatResponse(Respond(messages)));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var response = Respond(messages);
+            yield return new ChatResponseUpdate(response.Role, response.Contents) { MessageId = "message-" + Requests.Count };
+            await Task.CompletedTask;
+        }
+
+        private ChatMessage Respond(IEnumerable<ChatMessage> messages)
+        {
+            Requests.Add(messages.ToList());
+            return Requests.Count switch
+            {
+                1 => new(ChatRole.Assistant, [new FunctionCallContent("weather-call", "weather", new Dictionary<string, object?>())]),
+                2 => new(ChatRole.Assistant, "Bring an umbrella."),
+                _ => new(ChatRole.Assistant, "You're welcome."),
+            };
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
     }
 
     private sealed class RecordingChatClient : IChatClient

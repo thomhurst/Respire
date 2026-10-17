@@ -44,6 +44,7 @@ public static class RespireChatHistoryExtensions
                 updates.Add(update);
                 yield return update;
             }
+            // Deliberately save only complete turns; early disposal or failure must not persist partial tool exchanges.
             var response = updates.ToChatResponse();
             await store.AppendAsync(conversationId, request.Concat(response.Messages), cancellationToken).ConfigureAwait(false);
         }
