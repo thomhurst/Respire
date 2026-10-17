@@ -171,6 +171,7 @@ See [observability](observability.md#logging) for logger configuration.
 | `Respire` | 139 | `SentinelEvent` | Dynamic |
 | `Respire` | 140 | `LogMissingEpoch` | Warning |
 | `Respire` | 141 | `IgnoredConnectionStringOption` | Warning |
+| `Respire` | 142 | `ConnectionRecycled` | Information |
 | `Respire` | 4001 | `CredentialRefreshFailed` | Warning |
 | `Respire` | 4101 | `CoordinationCleanupAbandoned` | Warning |
 | `Respire.FusionCache` | 1 | `LogGap` | Warning |

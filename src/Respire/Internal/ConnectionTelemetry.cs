@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -27,6 +28,7 @@ internal static class ConnectionTelemetry
         internal const string Server = "server_close";
         internal const string Error = "error";
         internal const string IdleEviction = "pool_eviction_idle";
+        internal const string MaxLifetime = "max_lifetime";
     }
 
     internal static State Attach(RespireConnection connection, RespireConnectionOptions options)
@@ -171,6 +173,18 @@ internal static class ConnectionTelemetry
         {
             if (!RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionHandoffs)) return;
             Queue(static pool => RespireTelemetry.ConnectionHandoffs.Add(1, pool.Tags), _pool);
+        }
+
+        internal static void Recycled(State? metrics, ILogger? logger, string host, int port)
+        {
+            var enabled = metrics is not null
+                && RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionRecycles);
+            if (!enabled && logger is null) return;
+            Queue(static state =>
+            {
+                try { if (state.Enabled) RespireTelemetry.ConnectionRecycles.Add(1, state.Pool!.Tags); }
+                finally { state.Logger?.ConnectionRecycled(state.Host, state.Port); }
+            }, (Pool: metrics?._pool, Logger: logger, Enabled: enabled, Host: host, Port: port));
         }
 
         internal bool HasRelaxedTimeout => Volatile.Read(ref _ready) != 0 && Volatile.Read(ref _closed) == 0

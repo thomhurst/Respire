@@ -51,6 +51,8 @@ internal static class RespireConfiguration
         UseTls = section.GetValue("UseTls", options.UseTls),
         TlsOptions = Tls(section.GetSection("TlsOptions"), options.TlsOptions),
         ConnectionIdleReadTimeout = OptionalTimeSpan(section, "ConnectionIdleReadTimeout", options.ConnectionIdleReadTimeout),
+        ConnectionMaxLifetime = OptionalTimeSpan(section, "ConnectionMaxLifetime", options.ConnectionMaxLifetime),
+        ConnectionMaxLifetimeJitter = section.GetValue("ConnectionMaxLifetimeJitter", options.ConnectionMaxLifetimeJitter),
         GatheredWriteStallTimeout = OptionalTimeSpan(section, "GatheredWriteStallTimeout", options.GatheredWriteStallTimeout),
         CommandTimeout = OptionalTimeSpan(section, "CommandTimeout", options.CommandTimeout),
         ThreadPoolMonitoring = section.GetValue("ThreadPoolMonitoring", options.ThreadPoolMonitoring),
