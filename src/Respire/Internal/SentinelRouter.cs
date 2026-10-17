@@ -98,8 +98,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 Generation = null, EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
-            if (options.UseTls)
-                options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
+            options = options.PinToPeer(original.TlsHost);
             // Corrections remain on the original physical peer, even after DNS or Sentinel moves.
             var pool = new DedicatedConnectionPool(original.NetworkPeerAddress ?? original.Host,
                 original.NetworkPeerPort ?? original.Port, options, core.Logger);

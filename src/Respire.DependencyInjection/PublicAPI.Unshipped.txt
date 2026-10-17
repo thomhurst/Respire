@@ -3,6 +3,12 @@ Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.get -> Syste
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.LibraryName.get -> string?
 Respire.DependencyInjection.RespireOptionsBuilder.LibraryName.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressMap.get -> System.Collections.Generic.IReadOnlyDictionary<Respire.RespireEndpoint, Respire.RespireEndpoint>?
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressMap.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressResolver.get -> System.Func<Respire.RespireEndpoint, Respire.RespireEndpoint>?
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressResolver.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.UseMappedHostForTls.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.UseMappedHostForTls.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool

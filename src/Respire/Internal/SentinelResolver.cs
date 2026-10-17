@@ -205,7 +205,10 @@ internal static class SentinelResolver
                     var primary = observation.Endpoint;
                     candidateEndpoint = primary;
                     string[]? primaryAddresses = null;
-                    if (!IPAddress.TryParse(primary.Host, out _))
+                    // A mapped announcement may be private DNS that cannot resolve here.
+                    // Keep textual evidence; ROLE validation records the reachable socket peer.
+                    if (!IPAddress.TryParse(primary.Host, out _)
+                        && options.NodeAddressResolver is null && options.NodeAddressMap?.ContainsKey(primary) != true)
                     {
                         try
                         {

@@ -190,6 +190,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     public string Host { get; }
     public int Port { get; }
+    internal string TlsHost { get; }
     internal string? AvailabilityZone { get; private set; }
     public bool IsConnected => !Volatile.Read(ref _dead);
     internal bool IsFlushLoopWaiting => _flushSignal.IsWaiting;
@@ -307,6 +308,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         Host = host;
+        TlsHost = options.TlsOptions?.TargetHost ?? host;
         Port = port;
         ClientTrackingEnabled = options.EnableClientTracking;
         OperationMetricDatabase = options.Database;
@@ -406,8 +408,21 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         options = await ResolveCredentialsAsync(host, port, options, cancellationToken).ConfigureAwait(false);
 
+        // Preserve the logical endpoint for topology identity, credentials, and diagnostics.
+        // Resolve only at socket creation so reconnects and every discovery path share it.
+        var socketEndpoint = new RespireEndpoint(host, port);
+        if (!isUnixSocket)
+        {
+            if (options.NodeAddressResolver is { } resolver)
+                socketEndpoint = resolver(socketEndpoint);
+            else if (options.NodeAddressMap is { } map && map.TryGetValue(socketEndpoint, out var mapped))
+                socketEndpoint = mapped;
+            if (options.NodeAddressResolver is not null || options.NodeAddressMap is not null)
+                NodeAddressMapping.Validate(socketEndpoint);
+        }
+
         if (options.ConnectionFactory is not null)
-            return await ConnectFactoryStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            return await ConnectFactoryStreamAsync(host, port, socketEndpoint, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
 
         var started = Stopwatch.GetTimestamp();
         var physicalConnected = false;
@@ -436,7 +451,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 if (isUnixSocket)
                     await socket.ConnectAsync(new UnixDomainSocketEndPoint(host), timeoutCts.Token).ConfigureAwait(false);
                 else
-                    await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+                    await socket.ConnectAsync(socketEndpoint.Host, socketEndpoint.Port, timeoutCts.Token).ConfigureAwait(false);
                 physicalConnected = true;
                 timeoutCts.Token.ThrowIfCancellationRequested();
 
@@ -452,7 +467,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         // NetworkStream takes it, especially on .NET 8. Keep our cancellation identity.
                         throw new OperationCanceledException(error.Message, error, timeoutCts.Token);
                     }
-                    var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
+                    var tlsOptions = CreateTlsOptions(options.TlsOptions, options.UseMappedHostForTls ? socketEndpoint.Host : host);
+                    options = options with { TlsOptions = tlsOptions };
                     await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
                 }
             }
@@ -506,7 +522,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     private static async Task<RespireConnection> ConnectFactoryStreamAsync(
-        string host, int port, RespireConnectionOptions options, ILogger? logger,
+        string host, int port, RespireEndpoint socketEndpoint, RespireConnectionOptions options, ILogger? logger,
         CancellationToken cancellationToken, bool armHandshakeDeadline)
     {
         var started = Stopwatch.GetTimestamp();
@@ -519,7 +535,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             try
             {
                 timeout.Token.ThrowIfCancellationRequested();
-                stream = await options.ConnectionFactory!(new(host, port), timeout.Token).ConfigureAwait(false);
+                stream = await options.ConnectionFactory!(socketEndpoint, timeout.Token).ConfigureAwait(false);
                 // A factory can return after cancellation instead of observing its token.
                 timeout.Token.ThrowIfCancellationRequested();
                 if (stream is null || !stream.CanRead || !stream.CanWrite)
@@ -4595,6 +4611,20 @@ internal sealed record RespireConnectionOptions
     /// supplying custom settings.
     /// </summary>
     public SslClientAuthenticationOptions? TlsOptions { get; init; }
+
+    internal IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; init; }
+    internal Func<RespireEndpoint, RespireEndpoint>? NodeAddressResolver { get; init; }
+    internal bool UseMappedHostForTls { get; init; }
+
+    // Correction and retirement connections already name a captured physical peer.
+    // Reapplying a dynamic/non-idempotent map could send a server-local client ID elsewhere.
+    internal RespireConnectionOptions PinToPeer(string tlsHost) => this with
+    {
+        NodeAddressMap = null,
+        NodeAddressResolver = null,
+        UseMappedHostForTls = false,
+        TlsOptions = UseTls ? RespireConnection.CreateTlsOptions(TlsOptions, tlsHost, overrideTargetHost: true) : TlsOptions,
+    };
 
     /// <summary>ACL username for AUTH/HELLO. Defaults to Redis's "default" user when only a password is set.</summary>
     public string? Username { get; init; }

@@ -76,6 +76,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   topology refresh, redirect recovery, and same-slot transactions.
 - [Automatic Sentinel failover](fundamentals/connections.md#redis-sentinel), validated with `ROLE`,
   plus recovery after disconnects or `READONLY` replies.
+- [Node address mapping](guides/node-address-mapping.md) for NAT, Docker published ports, and Kubernetes routes,
+  with static maps, callbacks, and control over the TLS hostname.
 - [Replica selection](fundamentals/connections.md#read-from-replicas) with `ReadFrom` and
   `WithReadFrom`, including nearest reads, [hedged reads](fundamentals/connections.md#hedged-reads),
   and [availability-zone affinity](fundamentals/connections.md#availability-zone-affinity).

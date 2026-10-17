@@ -5,6 +5,8 @@ description: Configure endpoints, timeouts, reconnects, and connection lifecycle
 
 # Connections and options
 
+For deployments that advertise internal node addresses, see [node address mapping](../guides/node-address-mapping.md).
+
 Connect with a URI for the common case, or with `RespireOptions` for explicit control. This page covers connection strings, timeouts, protocol, Cluster, Sentinel, and replica reads.
 
 To stop sending commands to an unhealthy endpoint, configure [circuit breakers](../guides/circuit-breakers.md).

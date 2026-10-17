@@ -40,6 +40,7 @@ const sidebars = {
         'guides/connection-hooks',
         'guides/command-hooks',
         'guides/unix-sockets',
+        'guides/node-address-mapping',
         'fundamentals/values-and-serialization',
         'fundamentals/client-side-caching',
         'guides/near-cache-map',
