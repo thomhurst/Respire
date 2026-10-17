@@ -4,9 +4,11 @@
       "Type": "Respire.RespireTransaction",
       "OwnerType": "Respire.RespireTransaction",
       "Members": [
-        "CommitAsync(CancellationToken):ValueTask"
+        "CommitAsync(CancellationToken):ValueTask",
+        "CommitAsync(RespireCondition,CancellationToken):ValueTask<bool>",
+        "CommitAsync(ReadOnlySpan<RespireCondition>,CancellationToken):ValueTask<bool>"
       ],
-      "Contract": "Keep the caller owner through watch validation, commit, reply conversion, unwatch and dedicated-connection cleanup; deferred pending inspections are separate logical callers."
+      "Contract": "Keep the caller owner through preflight, condition encoding and slot validation, capability probing, commit, reply conversion and connection cleanup. Conditional commits disable retries; a null EXEC aborts pending results. Deferred pending inspections are separate logical callers."
     },
     {
       "Type": "Respire.RespireTransactionBase",

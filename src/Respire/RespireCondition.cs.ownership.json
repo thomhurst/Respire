@@ -1,0 +1,22 @@
+{
+  "Surfaces": [],
+  "Boundaries": [],
+  "NonRoutes": [
+    {
+      "Member": "Respire.RespireCondition.KeyExists(RespireKey):RespireCondition",
+      "Reason": "Local condition construction with an owned key snapshot; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireCondition.KeyNotExists(RespireKey):RespireCondition",
+      "Reason": "Local condition construction with an owned key snapshot; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireCondition.ValueEquals(RespireKey,RespireValue):RespireCondition",
+      "Reason": "Local condition validation and construction with owned key and operand snapshots; no command dispatch."
+    },
+    {
+      "Member": "Respire.RespireCondition.ValueNotEquals(RespireKey,RespireValue):RespireCondition",
+      "Reason": "Local condition validation and construction with owned key and operand snapshots; no command dispatch."
+    }
+  ]
+}

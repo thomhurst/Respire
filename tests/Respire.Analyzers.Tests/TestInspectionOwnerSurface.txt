@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 415 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 424 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 65
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -244,7 +244,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 102
+# Count: Respire.Networking.RespireConnection | 103
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
@@ -265,6 +265,7 @@ Respire.Networking.RespireConnection | method CreateTlsOptions(SslClientAuthenti
 Respire.Networking.RespireConnection | method DisposeAsync() : ValueTask
 Respire.Networking.RespireConnection | method DrainPendingMaintenanceNotificationsAsync(CancellationToken) : Task
 Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, CancellationToken, string, RespireTelemetry.ErrorObservation, bool, CommandDeadline, bool) : ValueTask<ValueTask<RespValue>>
+Respire.Networking.RespireConnection | method EnsureConditionalExecSupportedAsync(CancellationToken, CommandDeadline) : ValueTask
 Respire.Networking.RespireConnection | method EnsureServerClientIdAsync(CancellationToken) : ValueTask<long>
 # Legacy test-only hook retained as baseline, not precedent for new hooks.
 Respire.Networking.RespireConnection | method ExpireOldestCommandForTesting() : bool
@@ -377,12 +378,15 @@ Respire.Networking.StringPendingResponseSource | method SetExceptionCore(Excepti
 Respire.Networking.StringPendingResponseSource | method SetResultCore(in RespValue) : void
 Respire.Networking.StringPendingResponseSource | property CommandName [internal; get] : string?
 Respire.Networking.StringPendingResponseSource | property Task [public; get] : ValueTask<string?>
-# Count: Respire.RespireTransaction | 3
+# Count: Respire.RespireTransaction | 5
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient)
 Respire.RespireTransaction | constructor RespireTransaction(RespireClient, RespireHashImportSession)
 Respire.RespireTransaction | method CommitAsync(CancellationToken) : ValueTask
-# Count: Respire.RespireTransactionBase | 48
+Respire.RespireTransaction | method CommitAsync(ReadOnlySpan<RespireCondition>, CancellationToken) : ValueTask<bool>
+Respire.RespireTransaction | method CommitAsync(RespireCondition, CancellationToken) : ValueTask<bool>
+# Count: Respire.RespireTransactionBase | 50
 Respire.RespireTransactionBase | constructor RespireTransactionBase(RespireClient, RespireConnection?, int?, RespireHashImportSession?)
+Respire.RespireTransactionBase | method CommitConditionalAsync(ReadOnlySpan<RespireCondition>, CancellationToken) : ValueTask<bool>
 Respire.RespireTransactionBase | method CommitCoreAsync(CancellationToken, bool) : ValueTask<bool>
 Respire.RespireTransactionBase | method Decrement(RespireKey, long) : RespirePending<long>
 Respire.RespireTransactionBase | method Delete(params ReadOnlySpan<RespireKey>) : RespirePending<long>
@@ -407,6 +411,7 @@ Respire.RespireTransactionBase | method TryGet`1(RespireKey) : RespirePending<Re
 Respire.RespireTransactionBase | method ValidateClusterSlot(int, ref int?) : void
 Respire.RespireTransactionBase | property Arrays [public; get] : IRespireBatchArrayCommands
 Respire.RespireTransactionBase | property Bitmaps [public; get] : IRespireBatchBitmapCommands
+Respire.RespireTransactionBase | property ConditionalExec [internal; get, private set] : byte[]?
 Respire.RespireTransactionBase | property Count [public; get] : int
 Respire.RespireTransactionBase | property ExecutingConnection [internal; get, set] : RespireConnection?
 Respire.RespireTransactionBase | property Functions [public; get] : IRespireBatchFunctionCommands
