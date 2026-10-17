@@ -59,7 +59,7 @@ internal sealed partial class ClusterRouter
             catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
             {
                 ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                return await GetReplicaConnectionAsync(slot, cancellationToken, error, discovery, observation, excluded: excluded).ConfigureAwait(false);
+                return await GetReplicaConnectionAsync(slot, cancellationToken, error, discovery, observation, readFrom, excluded).ConfigureAwait(false);
             }
         }
 
@@ -159,7 +159,7 @@ internal sealed partial class ClusterRouter
             try
             {
                 var selected = await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
-                    excluded: excluded, readFrom: readFrom == RespireReadFrom.PrimaryPreferred ? RespireReadFrom.Replica : readFrom,
+                    excluded: excluded, readFrom: readFrom,
                     excludedPeer: excludedPeer).ConfigureAwait(false);
                 return (selected, null, routes.Nodes.Length);
             }

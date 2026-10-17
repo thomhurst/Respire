@@ -10,6 +10,57 @@ namespace Respire.Tests.Networking;
 public partial class NearestReadRoutingTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PrimaryPreferredBandFallbackPreservesPolicy(bool cluster)
+    {
+        await using var seed = Server("primary");
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        var original = seed.ReplyOverride!;
+        seed.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+        var attempts = 0;
+        await using var client = RespireClient.Create(Options(cluster ? seed : primary, replica) with
+        {
+            UseCluster = cluster, ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
+            ClusterTopologyRefreshInterval = null, ReadFrom = RespireReadFrom.PrimaryPreferred,
+            ReplicaLatencyTolerance = TimeSpan.Zero,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == primary.Port)
+                {
+                    Interlocked.Increment(ref attempts);
+                    throw new RespireConnectionException("The primary is unavailable.");
+                }
+                var tcp = new System.Net.Sockets.TcpClient();
+                await tcp.ConnectAsync(host, port, token);
+                return tcp.GetStream();
+            },
+        });
+        if (cluster)
+            client.Core.Cluster!.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
+        else
+            client.Core.ReadRouter.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("replica");
+        await Assert.That(attempts).IsGreaterThan(0);
+        var snapshot = client.GetReadRoutingSnapshot()!;
+        await Assert.That(snapshot.ReadFrom).IsEqualTo(RespireReadFrom.PrimaryPreferred);
+        await Assert.That(snapshot.EligibleEndpoints.Single().Port).IsEqualTo(replica.Port);
+        await Assert.That(snapshot.ClusterSlot).IsEqualTo(cluster ? (int?)new RespireKey("key").ClusterSlot : null);
+
+        if (!cluster)
+        {
+            // A ready-only fallback cannot acquire the lazy primary, but can reuse the ready replica.
+            var selected = await client.Core.ReadRouter.SelectAsync(RespireReadFrom.PrimaryPreferred,
+                deadline.Token, default, readyOnly: true);
+            await Assert.That(selected.Connection.Port).IsEqualTo(replica.Port);
+            await Assert.That(client.GetReadRoutingSnapshot()!.ReadFrom).IsEqualTo(RespireReadFrom.PrimaryPreferred);
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(true, true)]
