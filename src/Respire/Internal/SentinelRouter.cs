@@ -100,8 +100,8 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             };
             options = options.PinToPeer(original.TlsHost);
             // Corrections remain on the original physical peer, even after DNS or Sentinel moves.
-            var pool = new DedicatedConnectionPool(original.NetworkPeerAddress ?? original.Host,
-                original.NetworkPeerPort ?? original.Port, options, core.Logger);
+            var pool = new DedicatedConnectionPool(original.PeerKey.Host,
+                original.PeerKey.Port, options, core.Logger);
             _correctionPools.Add(pool);
             return new(this, pool);
         }

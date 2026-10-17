@@ -80,6 +80,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly int _receiveBufferSize;
     private readonly string? _networkPeerAddress;
     private readonly int? _networkPeerPort;
+    private readonly RespireEndpoint? _factoryEndpoint;
     private readonly ILogger? _logger;
     private readonly RespirePushHandler? _pushHandler;
     private readonly RespirePushFilter? _subscriptionPushFilter;
@@ -263,8 +264,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         return true;
     }
 
-    /// <summary>The physical peer, which MOVING sequence IDs belong to.</summary>
-    internal (string Host, int Port) PeerKey => (NetworkPeerAddress ?? Host, NetworkPeerPort ?? Port);
+    /// <summary>The physical peer, or the captured destination when a factory hides its socket.</summary>
+    internal (string Host, int Port) PeerKey => (NetworkPeerAddress ?? _factoryEndpoint?.Host ?? Host,
+        NetworkPeerPort ?? _factoryEndpoint?.Port ?? Port);
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
     internal int OperationMetricDatabase { get; }
@@ -293,7 +295,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal bool ClientTrackingEnabled { get; }
 
     private RespireConnection(
-        Socket? socket, Stream? stream, string host, int port, RespireConnectionOptions options, ILogger? logger)
+        Socket? socket, Stream? stream, string host, int port, RespireConnectionOptions options, ILogger? logger,
+        RespireEndpoint? factoryEndpoint = null)
     {
         _receiveDeadlineGate = _receiveProgress.DeadlineGate;
         _flushSignal = _flushProgress.Signal;
@@ -301,6 +304,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _completions = _receiveProgress.Completions;
         _socket = socket;
         _stream = stream;
+        _factoryEndpoint = factoryEndpoint;
         if (socket?.RemoteEndPoint is IPEndPoint remoteEndpoint)
         {
             var address = remoteEndpoint.Address;
@@ -563,7 +567,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
             logger?.ConnectionConnected(host, port);
-            connection = new RespireConnection(null, stream, host, port, options, logger);
+            connection = new RespireConnection(null, stream, host, port, options, logger, socketEndpoint);
         }
         catch (Exception error)
         {
