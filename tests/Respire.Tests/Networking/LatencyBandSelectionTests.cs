@@ -8,6 +8,64 @@ namespace Respire.Tests.Networking;
 public class LatencyBandSelectionTests
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(12)]
+    public async Task SnapshotReuseRetainsImmutableObservationUntilBandChanges(int candidateCount)
+    {
+        RespireReadRoutingSnapshot? snapshot = null;
+        for (uint start = 0; start < candidateCount; start++)
+        {
+            var selection = new NearestReadSelection<int>(start, candidateCount, TimeSpan.Zero);
+            while (selection.TryNext(out var index))
+                selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index % 2)));
+            await Assert.That(selection.TryGet(out _)).IsTrue();
+            var captured = selection.CaptureSnapshot(RespireReadFrom.Replica, null, value => new("host", value), snapshot);
+            if (snapshot is not null) await Assert.That(captured).IsSameReferenceAs(snapshot);
+            snapshot = captured;
+        }
+        var changed = new NearestReadSelection<int>(0, 1, TimeSpan.Zero);
+        changed.QueueSample(99, ValueTask.FromResult(ReadLatencyResult.Measured(0)));
+        await Assert.That(changed.TryGet(out _)).IsTrue();
+        var replacement = changed.CaptureSnapshot(RespireReadFrom.Replica, null, value => new("host", value), snapshot);
+        await Assert.That(replacement).IsNotSameReferenceAs(snapshot);
+        await Assert.That(replacement.EligibleEndpoints.Single().Port).IsEqualTo(99);
+        await Assert.That(snapshot!.EligibleEndpoints.Count).IsEqualTo(candidateCount / 2);
+    }
+
+    [Test, NotInParallel]
+    public async Task WarmSmallBandSelectionAndUnchangedSnapshotAllocateNothing()
+    {
+        _ = MeasureBand(false);
+        _ = MeasureBand(true);
+        var result = AllocationMeasurement.WithoutConcurrentGc(() => (MeasureBand(false), MeasureBand(true)));
+        await Assert.That(result.Item1).IsEqualTo(0L);
+        await Assert.That(result.Item2).IsGreaterThanOrEqualTo(37_000L);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static long MeasureBand(bool allocate)
+    {
+        var initial = new NearestReadSelection<int>(0, 3, TimeSpan.Zero);
+        initial.QueueSample(0, ValueTask.FromResult(ReadLatencyResult.Measured(10)));
+        initial.QueueSample(2, ValueTask.FromResult(ReadLatencyResult.Measured(10)));
+        _ = initial.TryGet(out _);
+        var snapshot = initial.CaptureSnapshot(RespireReadFrom.Replica, null, static value => new("host", value));
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (uint start = 0; start < 1_000; start++)
+        {
+            var selection = new NearestReadSelection<int>(start, 3, TimeSpan.Zero);
+            while (selection.TryNext(out var index))
+                selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index == 1 ? 100 : 10)));
+            if (!selection.TryGet(out var selected) || selected == 1
+                || !ReferenceEquals(snapshot, selection.CaptureSnapshot(RespireReadFrom.Replica, null,
+                    static value => new("host", value), snapshot)))
+                throw new InvalidOperationException("The warm band changed unexpectedly.");
+            if (allocate) GC.KeepAlive(new byte[37]);
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Test]
     public async Task ClusterRangeTicketsRetainFullRotationAndRemainIndependent()
     {
         var firstRange = new ClusterReplicaSet([], TimeSpan.Zero);

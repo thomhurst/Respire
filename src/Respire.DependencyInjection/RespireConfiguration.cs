@@ -21,6 +21,7 @@ internal static class RespireConfiguration
         HedgedReads = HedgedReads(section.GetSection("HedgedReads"), options.HedgedReads),
         ClientAvailabilityZone = section.GetValue("ClientAvailabilityZone", options.ClientAvailabilityZone),
         ReplicaRefreshInterval = section.GetValue("ReplicaRefreshInterval", options.ReplicaRefreshInterval),
+        ReplicaLatencyTolerance = section.GetValue("ReplicaLatencyTolerance", options.ReplicaLatencyTolerance),
         UseCluster = section.GetValue("UseCluster", options.UseCluster),
         IncludeCrossSlotKeyContext = section.GetValue("IncludeCrossSlotKeyContext", options.IncludeCrossSlotKeyContext),
         SplitCrossSlotCommands = section.GetValue("SplitCrossSlotCommands", options.SplitCrossSlotCommands),
