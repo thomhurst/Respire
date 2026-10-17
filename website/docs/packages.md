@@ -51,7 +51,7 @@ for the released-package baseline, intentional-break process, and experimental A
 | [`Respire.Json`](guides/json.md) | Redis JSON documents |
 | [`Respire.Search`](guides/search.md) | Redis Search, indexing, aggregation, and vector queries |
 | [`Respire.VectorData`](guides/vector-data.md) | Explicit AOT-friendly VectorData hash/JSON collections, KNN and hybrid search |
-| [`Respire.AI`](guides/semantic-cache.md) | Semantic response caching for Microsoft.Extensions.AI chat clients |
+| [`Respire.AI`](guides/semantic-cache.md) | Semantic chat response caching and [exact-text embedding caching](guides/embedding-cache.md) for Microsoft.Extensions.AI |
 | [`Respire.TimeSeries`](guides/timeseries.md) | Redis time series |
 | [`Respire.Probabilistic`](guides/probabilistic.md) | Bloom, Cuckoo, Count-Min Sketch, Top-K, and t-digest |
 | [`Respire.Aws`](guides/aws-iam-credentials.md) | AWS IAM credentials for ElastiCache and MemoryDB |
