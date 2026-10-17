@@ -333,6 +333,46 @@ public class ConnectionLifetimeTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RepeatedReplacementFailuresBackOffWithJitterAndResetAfterPublication(bool closeReplacement)
+    {
+        var clock = new LifetimeClock();
+        var generation = new RepeatedFailureGeneration(closeReplacement);
+        await using var server = EchoServer(10);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
+            options: ConnectionOptions(clock) with { Generation = generation });
+        var original = multiplexer.GetConnection();
+        await UntilAsync(() => clock.ActiveTimers != 0);
+        clock.Advance(Lifetime);
+        int[] caps = [1, 2, 4, 8, 16, 30, 30];
+        for (var index = 0; index < caps.Length; index++)
+        {
+            var attempts = index + 2;
+            await UntilAsync(() => Volatile.Read(ref generation.Attempts) == attempts && clock.ActiveTimers != 0);
+            var delay = clock.NextTimerDelay;
+            await Assert.That(delay).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(caps[index] / 2.0));
+            await Assert.That(delay).IsLessThanOrEqualTo(TimeSpan.FromSeconds(caps[index]));
+            await Assert.That(multiplexer.GetConnection()).IsSameReferenceAs(original);
+            clock.Advance(delay - TimeSpan.FromTicks(1));
+            using var response = await original.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+            await Assert.That(response.AsString()).IsEqualTo("PONG");
+            await Assert.That(Volatile.Read(ref generation.Attempts)).IsEqualTo(attempts);
+            clock.Advance(TimeSpan.FromTicks(1));
+        }
+        await UntilAsync(() => !ReferenceEquals(multiplexer.GetConnection(), original));
+        await UntilAsync(() => clock.ActiveTimers != 0);
+        var replacement = multiplexer.GetConnection();
+        clock.Advance(Lifetime);
+        await UntilAsync(() => Volatile.Read(ref generation.Attempts) == 10 && clock.ActiveTimers != 0);
+        await Assert.That(clock.NextTimerDelay).IsGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(500));
+        await Assert.That(clock.NextTimerDelay).IsLessThanOrEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(multiplexer.GetConnection()).IsSameReferenceAs(replacement);
+        await multiplexer.DisposeAsync();
+        await Assert.That(clock.ActiveTimers).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task FailedReplacementHandshakeKeepsHealthyOriginalAndRetries()
     {
         var clock = new LifetimeClock();
@@ -583,6 +623,21 @@ public class ConnectionLifetimeTests
         while (!condition()) await Task.Delay(1, timeout.Token);
     }
 
+    private sealed class RepeatedFailureGeneration(bool closeReplacement) : IConnectionGeneration
+    {
+        internal int Attempts;
+        public bool IsRetired => false;
+        public async ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
+        {
+            var attempt = Interlocked.Increment(ref Attempts);
+            if (attempt is 1 or 9) return;
+            if (!closeReplacement) throw new InvalidOperationException("Replacement setup rejected.");
+            await connection.DisposeAsync();
+        }
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
+        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
+    }
+
     private sealed class CloseReplacementGeneration : IConnectionGeneration
     {
         internal readonly TaskCompletionSource Rejected = NewSignal();
@@ -621,6 +676,10 @@ public class ConnectionLifetimeTests
         private long _ticks = TimeSpan.FromDays(1).Ticks;
         private TimeSpan _utcShift;
         internal int ActiveTimers { get { lock (_gate) return _timers.Count; } }
+        internal TimeSpan NextTimerDelay
+        {
+            get { lock (_gate) return TimeSpan.FromTicks(_timers.Min(timer => timer.Due) - _ticks); }
+        }
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override long GetTimestamp() { lock (_gate) return _ticks; }
         public override DateTimeOffset GetUtcNow() { lock (_gate) return DateTimeOffset.UnixEpoch.AddTicks(_ticks) + _utcShift; }

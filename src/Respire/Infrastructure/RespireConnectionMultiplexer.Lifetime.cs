@@ -37,24 +37,18 @@ internal sealed partial class RespireConnectionMultiplexer
         RespireConnection? replacement = null;
         var published = false;
         Task? drain = null;
+        // A newly published connection gets a new worker and starts at this cap again.
+        var retryCap = TimeSpan.FromSeconds(1);
         try
         {
-            while (IsOperational && ReferenceEquals(original, Volatile.Read(ref _connections[slot])))
+            while (IsOperational && original.IsAcceptingCommands
+                && ReferenceEquals(original, Volatile.Read(ref _connections[slot])))
             {
                 var remaining = original.RemainingConnectionLifetime!.Value;
                 if (remaining > TimeSpan.Zero)
                 {
-                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopConnecting.Token);
-                    try
-                    {
-                        var delay = Task.Delay(remaining > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : remaining,
-                            _options.ConnectionLifetimeTimeProvider, delayCancellation.Token);
-                        // Failed or superseded sockets must not retain a timer/worker until their
-                        // old deadline, especially during repeated reconnects or maintenance moves.
-                        if (await Task.WhenAny(delay, original.Closed).ConfigureAwait(false) == original.Closed) return;
-                        await delay.ConfigureAwait(false);
-                    }
-                    finally { await delayCancellation.CancelAsync().ConfigureAwait(false); }
+                    if (!await WaitForLifetimeDelayAsync(original,
+                        remaining > TimeSpan.FromDays(1) ? TimeSpan.FromDays(1) : remaining).ConfigureAwait(false)) return;
                     continue;
                 }
                 var endpoint = Volatile.Read(ref _activeEndpoint);
@@ -68,8 +62,7 @@ internal sealed partial class RespireConnectionMultiplexer
                 catch (Exception) when (!_stopConnecting.IsCancellationRequested)
                 {
                     // Planned recycling never removes a healthy socket on setup failure.
-                    await Task.Delay(TimeSpan.FromSeconds(1), _options.ConnectionLifetimeTimeProvider,
-                        _stopConnecting.Token).ConfigureAwait(false);
+                    retryCap = await DelayLifetimeRetryAsync(original, retryCap).ConfigureAwait(false);
                     continue;
                 }
                 int? cacheEvictions = null;
@@ -98,8 +91,7 @@ internal sealed partial class RespireConnectionMultiplexer
                     // original's worker and retry rather than leaving it pinned indefinitely.
                     await replacement.DisposeAsync().ConfigureAwait(false);
                     replacement = null;
-                    await Task.Delay(TimeSpan.FromSeconds(1), _options.ConnectionLifetimeTimeProvider,
-                        _stopConnecting.Token).ConfigureAwait(false);
+                    retryCap = await DelayLifetimeRetryAsync(original, retryCap).ConfigureAwait(false);
                     continue;
                 }
                 // Retire uses the write gate: a caller holding the old selection either has
@@ -145,6 +137,27 @@ internal sealed partial class RespireConnectionMultiplexer
                 }
             }
         }
+    }
+
+    private async Task<TimeSpan> DelayLifetimeRetryAsync(RespireConnection original, TimeSpan cap)
+    {
+        // Equal jitter keeps retries spread out without permitting an immediate retry loop.
+        await WaitForLifetimeDelayAsync(original, cap * (0.5 + Random.Shared.NextDouble() * 0.5)).ConfigureAwait(false);
+        return TimeSpan.FromSeconds(Math.Min(30, cap.TotalSeconds * 2));
+    }
+
+    private async Task<bool> WaitForLifetimeDelayAsync(RespireConnection connection, TimeSpan duration)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopConnecting.Token);
+        try
+        {
+            var delay = Task.Delay(duration, _options.ConnectionLifetimeTimeProvider, cancellation.Token);
+            // A closed or superseded socket must not retain a deadline or backoff timer.
+            if (await Task.WhenAny(delay, connection.Closed).ConfigureAwait(false) == connection.Closed) return false;
+            await delay.ConfigureAwait(false);
+            return true;
+        }
+        finally { await cancellation.CancelAsync().ConfigureAwait(false); }
     }
 
     private async Task DrainRecycledConnectionAsync(RespireConnection connection, Task drain)

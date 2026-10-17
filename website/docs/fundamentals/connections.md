@@ -146,8 +146,11 @@ millisecond. Jitter must be non-negative and requires a configured lifetime.
 Multiplexed connections open and validate a replacement before publishing it for new commands.
 Each replacement uses a fresh socket connect, including the platform's DNS resolution, TLS,
 authentication, and tracking setup. Platform DNS caches and load-balancer policies still determine
-which backend receives that connection. If setup fails, the old socket remains available and
-replacement is retried after one second. Accepted commands and streamed replies drain on the old
+which backend receives that connection. If setup fails, the old socket remains available.
+Replacement retries use exponential backoff with independent jitter: the retry cap starts at one
+second, doubles up to 30 seconds, and each delay is uniformly selected between half the cap and
+the cap. A successful publication resets the next connection's retry cap. A replacement that closes
+before publication follows the same retry policy. Accepted commands and streamed replies drain on the old
 socket without replay or a forced lifetime drain deadline. Existing failure and command-timeout
 behavior still applies, and explicit client disposal aborts pending work. Very slow replies can
 therefore keep old sockets open beyond their configured age. Tracked client-side caches are flushed
