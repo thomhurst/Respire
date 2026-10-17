@@ -293,6 +293,8 @@ public sealed partial class RespireClient
         bool sendAsking, CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence,
         RespireTelemetry.ErrorObservation observation)
     {
+        // The correction owner captures this connection's identity before submission.
+        // Only ExecuteRoutedLockAsync may move it and publish a replacement identity.
         var capabilities = LockConnectionCapabilities.GetValue(connection, static _ => new LockCapabilities());
         if (milliseconds is { } duration)
         {
@@ -303,7 +305,8 @@ public sealed partial class RespireClient
                     var reply = await SendMutationOnConnectionAsync("SET", connection,
                             new ConditionalSetCommand(key, token, RespireValueCondition.EqualTo(token),
                                 RespireExpiry.In(TimeSpan.FromMilliseconds(duration)), false),
-                            mutationFence, cancellationToken, sendAsking: sendAsking, observation: observation)
+                            mutationFence, cancellationToken, sendAsking: sendAsking, observation: observation,
+                            allowReplicaRedirects: false)
                         .ConfigureAwait(false);
                     try { return !reply.IsNull; }
                     finally { reply.Dispose(); }
@@ -374,7 +377,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         var reply = await SendMutationOnConnectionAsync(operation, connection, command, mutationFence, cancellationToken,
-                storedProcedureName, sendAsking, observation: observation)
+                storedProcedureName, sendAsking, observation: observation, allowReplicaRedirects: false)
             .ConfigureAwait(false);
         try { return reply.AsInteger() >= 1; }
         finally { reply.Dispose(); }
