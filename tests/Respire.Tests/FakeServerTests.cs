@@ -208,10 +208,26 @@ public class FakeServerTests
             options with { Database = 1 },
         })
             await Assert.That(async () => await RespireClient.ConnectAsync(unsupported)).Throws<RespireException>();
-        await Assert.That(async () => await RespireClient.ConnectAsync(options with { UseTls = true })).Throws<NotSupportedException>();
         await Assert.That(async () => await RespireClient.ConnectAsync(options with { Endpoints = [new("localhost", 1)] })).Throws<NotSupportedException>();
         await using var working = await RespireClient.ConnectAsync(options with { ClientName = "test-client", Protocol = RespireProtocol.Resp3 });
         await Assert.That(await working.SetAsync("after-failed-handshake", "ok")).IsTrue();
+    }
+
+    [Test]
+    public async Task PlaintextFakeServerRejectsTlsThroughPublicFactory()
+    {
+        var server = new RespireFakeServer();
+        try
+        {
+            // TLS now reaches the public transport hook. This fake accepts only RESP bytes.
+            await Assert.That(async () => await RespireClient.ConnectAsync(server.CreateOptions() with { UseTls = true }))
+                .Throws<IOException>();
+        }
+        finally
+        {
+            var error = await Assert.That(async () => await server.DisposeAsync()).Throws<IOException>();
+            await Assert.That(error!.Message).Contains("Invalid RESP request");
+        }
     }
 
     [Test]

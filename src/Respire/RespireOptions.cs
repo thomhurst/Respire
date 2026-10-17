@@ -158,12 +158,28 @@ public sealed record RespireOptions
     /// <summary>Returns a diagnostic representation without credentials or nested configuration material.</summary>
     public override string ToString() => "RespireOptions { <redacted> }";
 
-    // Internal seam for Respire.Testing. Ordinary TCP/TLS connections retain their direct path.
     private const string ConnectionStringParameterName = "connectionString";
 
     private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(10);
 
-    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
+    /// <summary>Optionally opens a connected duplex stream for each physical connection, before TLS and Redis setup.</summary>
+    /// <remarks>
+    /// Receives the destination endpoint and the combined caller/connect-timeout token. Calls may run concurrently
+    /// and repeat for reconnects, discovered nodes, Sentinel, pub/sub, and dedicated connections.
+    /// Return a fresh readable and writable stream; Respire owns and disposes it, including on setup failure.
+    /// Dispose resources yourself if the factory throws. Observe cancellation promptly. Respire applies
+    /// <see cref="UseTls"/> and <see cref="TlsOptions"/> to the returned stream, using the destination host.
+    /// The factory owns DNS, socket options, and tunnel negotiation; built-in TCP options do not configure its stream.
+    /// Null uses Respire's ordinary socket transport.
+    /// </remarks>
+    public Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory { get; init; }
+
+    // Compatibility adapter for friend tests. All connections use the public factory path.
+    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory
+    {
+        get => ConnectionFactory is { } factory ? (host, port, token) => factory(new(host, port), token) : null;
+        init => ConnectionFactory = value is { } factory ? (endpoint, token) => factory(endpoint.Host, endpoint.Port, token) : null;
+    }
     private bool _useCluster;
     private string? _sentinelPrimaryName;
     private TimeSpan? _connectionIdleReadTimeout;
@@ -746,7 +762,7 @@ public sealed record RespireOptions
         {
             MaintenanceRelaxedTimeout = MaintenanceRelaxedTimeout,
             MaintenanceWindowTimeout = MaintenanceWindowTimeout,
-            TestingStreamFactory = TestingStreamFactory,
+            ConnectionFactory = ConnectionFactory,
             ConnectionHook = ConnectionHook,
             ConnectTimeout = ConnectTimeout,
             ReconnectPolicy = ReconnectPolicy,

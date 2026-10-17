@@ -56,6 +56,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   snapshots, scheduling diagnostics, and StackExchange.Redis v3 message equivalents.
 - [Physical connection hooks](guides/connection-hooks.md) for auditing, timing, and rejection,
   including reconnects, dedicated connections, Cluster, replicas, and Sentinel.
+- [Custom connection streams](fundamentals/connections.md#custom-connection-streams) through a public factory,
+  with owned disposal, TLS, reconnects, discovery, pub/sub, and dedicated connections.
 - [Dedicated pool sizing](fundamentals/connections.md#dedicated-connection-pools) with opt-in
   total limits, cancellation-aware acquisition, timed idle retirement and pool metrics.
 - [Connections](fundamentals/connections.md) from Redis URIs, pasted Azure portal strings, StackExchange.Redis connection

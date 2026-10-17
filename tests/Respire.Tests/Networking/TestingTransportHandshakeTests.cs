@@ -20,7 +20,7 @@ public class TestingTransportHandshakeTests
         var options = new RespireConnectionOptions
         {
             ConnectTimeout = TimeSpan.FromMinutes(1),
-            TestingStreamFactory = async (_, _, _) =>
+            ConnectionFactory = async (_, _) =>
             {
                 entered.TrySetResult();
                 await releaseFactory.Task;
@@ -78,7 +78,7 @@ public class TestingTransportHandshakeTests
         var options = new RespireConnectionOptions
         {
             ConnectTimeout = callerCancellation ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(200),
-            TestingStreamFactory = async (_, _, token) =>
+            ConnectionFactory = async (_, token) =>
             {
                 entered.TrySetResult();
                 try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
@@ -142,7 +142,7 @@ public class TestingTransportHandshakeTests
         {
             Database = 1,
             CommandTimeout = callerCancellation ? null : TimeSpan.FromMilliseconds(200),
-            TestingStreamFactory = testingStream ? (host, port, token) => OpenStream(host, port, token, disposalFails) : null,
+            ConnectionFactory = testingStream ? (endpoint, token) => OpenStream(endpoint.Host, endpoint.Port, token, disposalFails) : null,
         };
         var pending = RespireConnection.ConnectAsync("127.0.0.1", server.Port, options, cancellationToken: caller.Token);
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
