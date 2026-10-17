@@ -169,7 +169,8 @@ public sealed record RespireOptions
     /// Return a fresh readable and writable stream; Respire owns and disposes it, including on setup failure.
     /// Writes must reach the peer without flushing; Respire does not call Flush or FlushAsync on the stream.
     /// Dispose resources yourself if the factory throws. Observe cancellation promptly. Respire applies
-    /// <see cref="UseTls"/> and <see cref="TlsOptions"/> to the returned stream, using the destination host.
+    /// <see cref="UseTls"/> and <see cref="TlsOptions"/> to the returned stream. Address mapping applies before
+    /// the factory runs; TLS keeps the logical host unless <see cref="UseMappedHostForTls"/> selects the mapped host.
     /// The factory owns DNS, socket options, and tunnel negotiation; built-in TCP options do not configure its stream.
     /// Null uses Respire's ordinary socket transport.
     /// </remarks>
@@ -193,6 +194,22 @@ public sealed record RespireOptions
 
     /// <summary>Explicit read replicas for standalone primary/replica deployments. Sentinel ignores this list.</summary>
     public IList<RespireEndpoint> ReplicaEndpoints { get; init; } = [];
+
+    /// <summary>Maps logical TCP endpoints to reachable socket addresses. Unlisted endpoints are unchanged.</summary>
+    /// <remarks>Applies to seeds, discovered nodes, redirects, replicas, Sentinel peers, and maintenance handoffs.
+    /// Routing, diagnostics, and TLS retain the original endpoint. Host matching ignores case; ports match exactly.
+    /// The map is copied when connecting.
+    /// Cannot be combined with <see cref="NodeAddressResolver"/>.</remarks>
+    public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; init; }
+
+    /// <summary>Resolves each logical TCP endpoint immediately before connecting its socket.</summary>
+    /// <remarks>Return the input for unchanged endpoints. The callback must be thread-safe and return a valid TCP endpoint.
+    /// Cannot be combined with <see cref="NodeAddressMap"/>. Unix sockets bypass address mapping.</remarks>
+    public Func<RespireEndpoint, RespireEndpoint>? NodeAddressResolver { get; init; }
+
+    /// <summary>Use the mapped socket hostname for TLS SNI and certificate validation. Default: false.</summary>
+    /// <remarks>An explicit <see cref="SslClientAuthenticationOptions.TargetHost"/> still takes precedence.</remarks>
+    public bool UseMappedHostForTls { get; init; }
 
     /// <summary>Optional key namespace for the root client. Empty (the default) disables prefixing.</summary>
     /// <remarks>Text and binary prefixes follow the same contracts as <see cref="IRespireClient.WithKeyPrefix(RespireKey)"/>.
@@ -566,6 +583,9 @@ public sealed record RespireOptions
 
     internal RespireOptions ValidateAndSnapshot()
     {
+        if (NodeAddressMap is not null && NodeAddressResolver is not null)
+            throw new RespireConfigurationException("Specify either NodeAddressMap or NodeAddressResolver, not both.");
+        var addressMap = NodeAddressMapping.Snapshot(NodeAddressMap);
         if (Endpoints is null || Endpoints.Count == 0)
         {
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
@@ -718,6 +738,7 @@ public sealed record RespireOptions
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
             ReplicaEndpoints = new List<RespireEndpoint>(ReplicaEndpoints),
+            NodeAddressMap = addressMap,
             Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.ValidateAndSnapshot(),
             KeyPrefix = KeyPrefix.IsEmpty ? default : KeyPrefix.Snapshot(),
@@ -771,6 +792,9 @@ public sealed record RespireOptions
     private RespireConnectionOptions ToTransportConnectionOptions()
         => new()
         {
+            NodeAddressMap = NodeAddressMap,
+            NodeAddressResolver = NodeAddressResolver,
+            UseMappedHostForTls = UseMappedHostForTls,
             MaintenanceRelaxedTimeout = MaintenanceRelaxedTimeout,
             MaintenanceWindowTimeout = MaintenanceWindowTimeout,
             ConnectionFactory = ConnectionFactory,
@@ -811,6 +835,7 @@ public sealed record RespireOptions
     /// <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false),
+    /// <c>nodeAddressMap</c> (semicolon-separated source=target TCP endpoints), <c>useMappedHostForTls</c>,
     /// <c>allowAdmin</c> (true or false), <c>keyPrefix</c>, and <c>pubSubPrefix</c>.
     /// In both forms, keyPrefix and pubSubPrefix are percent-decoded once and used as independent UTF-8 text namespaces.
     /// The comma-delimited channelPrefix alias is literal text.
@@ -976,6 +1001,8 @@ public sealed record RespireOptions
             SentinelUsername = mode.SentinelUsername,
             SentinelPassword = mode.SentinelPassword,
             SentinelUseTls = mode.SentinelUseTls,
+            NodeAddressMap = mode.NodeAddressMap,
+            UseMappedHostForTls = mode.UseMappedHostForTls,
             ClientName = clientName,
             KeyPrefix = keyPrefix,
             PubSubPrefix = pubSubPrefix,
@@ -1000,6 +1027,8 @@ public sealed record RespireOptions
         public string? SentinelUsername { get; private set; }
         public string? SentinelPassword { get; private set; }
         public bool? SentinelUseTls { get; private set; }
+        public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; private set; }
+        public bool UseMappedHostForTls { get; private set; }
 
         public void Validate()
         {
@@ -1015,6 +1044,12 @@ public sealed record RespireOptions
         {
             switch (name.ToLowerInvariant())
             {
+                case "nodeaddressmap":
+                    NodeAddressMap = NodeAddressMapping.Parse(value);
+                    break;
+                case "usemappedhostfortls":
+                    UseMappedHostForTls = ParseBooleanOption(name, value);
+                    break;
                 case "cluster":
                 case "usecluster":
                     UseCluster = ParseBooleanOption(name, value);
@@ -1309,6 +1344,8 @@ public sealed record RespireOptions
             UseCluster = mode.UseCluster,
             SentinelPrimaryName = mode.ServiceName,
             SentinelUsername = mode.SentinelUsername,
+            NodeAddressMap = mode.NodeAddressMap,
+            UseMappedHostForTls = mode.UseMappedHostForTls,
             SentinelPassword = mode.SentinelPassword,
             SentinelUseTls = mode.SentinelUseTls ?? (sentinelSslHost is null ? null : true),
             SentinelTlsOptions = sentinelSslHost is null ? null

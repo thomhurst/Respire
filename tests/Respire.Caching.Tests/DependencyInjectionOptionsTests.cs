@@ -62,6 +62,10 @@ public class DependencyInjectionOptionsTests
         if (type == typeof(RespireCommandHook)) return new CommandHook();
         if (type == typeof(Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>))
             return (Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>)((_, _) => throw new InvalidOperationException("Builder must not connect."));
+        if (type == typeof(IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>))
+            return new Dictionary<RespireEndpoint, RespireEndpoint> { ["private:6379"] = "localhost:7001" };
+        if (type == typeof(Func<RespireEndpoint, RespireEndpoint>))
+            return (Func<RespireEndpoint, RespireEndpoint>)(endpoint => endpoint);
         return Activator.CreateInstance(type)!;
     }
 
@@ -72,6 +76,7 @@ public class DependencyInjectionOptionsTests
         var values = new Dictionary<string, string?>
         {
             ["Endpoints:0"] = "localhost:6380", ["ReplicaEndpoints:0"] = "replica:6381",
+            ["NodeAddressMap"] = "private:6379=localhost:7001", ["UseMappedHostForTls"] = "true",
             ["KeyPrefix"] = "keys:", ["PubSubPrefix"] = "channels:", ["ReadFrom"] = "Primary",
             ["HedgedReads:Delay"] = "00:00:00.025", ["ClientAvailabilityZone"] = "zone-1",
             ["ReplicaRefreshInterval"] = "00:00:02", ["UseCluster"] = "false",
@@ -108,7 +113,7 @@ public class DependencyInjectionOptionsTests
         // Mapping is tested separately from validation: this exercises all fields, including
         // settings that cannot be enabled together on one client (replicas and circuit breaker).
         var options = RespireConfiguration.Apply(section, new RespireOptions());
-        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionFactory", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook"];
+        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionFactory", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook", "NodeAddressResolver"];
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
             if (runtimeServices.Contains(property.Name)) continue;
@@ -123,7 +128,9 @@ public class DependencyInjectionOptionsTests
                     ? ((System.Collections.IEnumerable)actual).Cast<object>().ElementAt(index)
                     : actual.GetType().GetProperty(segment)!.GetValue(actual)!;
             }
-            if (actual is bool boolean) await Assert.That(boolean).IsEqualTo(bool.Parse(expected!));
+            if (actual is IReadOnlyDictionary<RespireEndpoint, RespireEndpoint> map)
+                await Assert.That(map[new("private", 6379)]).IsEqualTo(new RespireEndpoint("localhost", 7001));
+            else if (actual is bool boolean) await Assert.That(boolean).IsEqualTo(bool.Parse(expected!));
             else if (actual is TimeSpan time) await Assert.That(time).IsEqualTo(TimeSpan.Parse(expected!, CultureInfo.InvariantCulture));
             else await Assert.That(Convert.ToString(actual, CultureInfo.InvariantCulture)).IsEqualTo(expected);
         }
@@ -320,6 +327,15 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.ClusterTopologyRefreshInterval).IsNull();
     }
 
+    [Test]
+    public async Task InvalidAddressMappingIncludesConfigurationPath()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => RespireConfiguration.Apply(
+            Section(new() { ["NodeAddressMap"] = "invalid" }), new RespireOptions()));
+        await Assert.That(error!.Message).Contains("Redis:NodeAddressMap");
+        await Assert.That(error.InnerException).IsTypeOf<RespireConfigurationException>();
+    }
+
     private static IConfigurationSection Section(Dictionary<string, string?> values) => new ConfigurationBuilder()
         .AddInMemoryCollection(values.ToDictionary(pair => "Redis:" + pair.Key, pair => pair.Value))
         .Build().GetSection("Redis");
@@ -333,7 +349,9 @@ public class DependencyInjectionOptionsTests
               "RetryPolicy": { "MaxAttempts": 8 },
               "CircuitBreaker": { "OpenDuration": "00:00:20" },
               "StreamProducerId": "worker-1",
-              "LibraryName": null
+              "LibraryName": null,
+              "NodeAddressMap": "redis.internal:6379=localhost:7001",
+              "UseMappedHostForTls": true
             } }
             """;
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -347,6 +365,8 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.CircuitBreaker!.OpenDuration).IsEqualTo(TimeSpan.FromSeconds(20));
         await Assert.That(options.StreamProducerId).IsEqualTo("worker-1");
         await Assert.That(options.LibraryName).IsNull();
+        await Assert.That(options.NodeAddressMap![new("REDIS.INTERNAL", 6379)]).IsEqualTo(new RespireEndpoint("localhost", 7001));
+        await Assert.That(options.UseMappedHostForTls).IsTrue();
     }
 
     private sealed class CommandHook : RespireCommandHook

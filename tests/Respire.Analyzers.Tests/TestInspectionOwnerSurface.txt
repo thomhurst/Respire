@@ -244,7 +244,7 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 104
+# Count: Respire.Networking.RespireConnection | 105
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
@@ -349,6 +349,7 @@ Respire.Networking.RespireConnection | property ClientTrackingEnabled [internal;
 Respire.Networking.RespireConnection | property PendingResponseCount [internal; get] : int
 Respire.Networking.RespireConnection | property Port [public; get] : int
 Respire.Networking.RespireConnection | property ServerClientId [internal; get] : long
+Respire.Networking.RespireConnection | property TlsHost [internal; get] : string
 Respire.Networking.RespireConnection | property UndeliveredReplyCount [internal; get] : int
 Respire.Networking.RespireConnection | property WriteBufferCapacity [internal; get] : int
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.

@@ -324,7 +324,7 @@ public class RespireConnectionTests
         // the production flush loop or relying on platform-specific socket buffering.
         await using var connection = (RespireConnection)Activator.CreateInstance(
             typeof(RespireConnection), BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
-            args: [socket, transport, "127.0.0.1", server.Port, RespireConnectionOptions.Default, null],
+            args: [socket, transport, "127.0.0.1", server.Port, RespireConnectionOptions.Default, null, null],
             culture: null)!;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
