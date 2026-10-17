@@ -66,10 +66,22 @@ is created. An empty batch can mean recovery cleaned trimmed entries or moved de
 letters. Keep polling. `ConsumeAsync` supplies an asynchronous polling loop:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var topic = new RespireReliableTopic<string>(client, "orders",
+    Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, deliveryLimit: 5,
+    maximumLength: 100_000);
+var billing = await topic.SubscribeAsync("billing");
+using var stopping = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+var stoppingToken = stopping.Token;
+
 await foreach (var message in billing.ConsumeAsync(TimeSpan.FromSeconds(30),
     batchSize: 10, cancellationToken: stoppingToken))
 {
-    await ProcessOrderAsync(message.Payload, stoppingToken);
+    Console.WriteLine(message.Payload); // Replace with an idempotent application operation.
     await billing.AckAsync(message, stoppingToken);
 }
 ```
