@@ -292,6 +292,73 @@ Cancellation and errors:
 - Factory, serialization, and Redis errors propagate without retrying the factory or replaying the
   write.
 
+## Protect factories across app instances
+
+The overload with `RespireCacheAsideOptions` coordinates through Redis. It does not require
+`ClientSideCache`, and its behavior is the same on prefix and `WithoutClientCache()` views:
+
+```csharp
+var protection = new RespireCacheAsideOptions
+{
+    DistributedSingleFlight = true,
+    EarlyRefreshBeta = 1,
+    LockTimeout = TimeSpan.FromSeconds(30),
+    WaitTimeout = TimeSpan.FromSeconds(5),
+    StaleWhileRevalidate = TimeSpan.FromSeconds(20),
+};
+
+var product = await client.GetOrSetAsync<Product>(
+    "product-cache-v2:42",
+    token => LoadProductAsync(42, token),
+    expiry: TimeSpan.FromMinutes(5),
+    options: protection,
+    cancellationToken: cancellationToken);
+```
+
+Use dedicated keys. This overload stores a **Redis hash**, containing the serialized payload,
+recompute duration, generation token, and stale retention. Do not use ordinary GET/SET or the
+overload without options on those keys. Start with a new namespace when migrating existing string
+entries. Delete the hash to invalidate it. All callers must agree on type, factory meaning, expiry,
+and options. Custom `IRespireClient` implementations can override the new default member; its
+default throws `NotSupportedException`.
+
+- **Single-flight** (enabled by default) elects a factory with `SET NX PX` and a unique token.
+  Other callers retry every `RetryDelay` (default 25 ms), returning the published value. A missing
+  value never causes an unprotected factory after contention: `WaitTimeout` ends with
+  `TimeoutException`. A zero wait budget allows one acquisition attempt. Redis command timeouts
+  bound individual network operations, so the wall-clock wait can exceed the contention budget
+  by an in-progress command. No local factory coalescing option is needed.
+- **Early refresh** (`EarlyRefreshBeta`, default zero) uses the
+  [XFetch exponential election](https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf).
+  A read elects refresh when `-duration * beta * log(U)` reaches the remaining freshness, with a
+  uniform sample `U`. Duration is the preceding factory's elapsed time, rounded up to at least
+  1 ms and stored with the payload. Start with beta 1; larger factors refresh earlier. Set
+  `DistributedSingleFlight = false` to use early refresh alone. That reduces simultaneous misses
+  probabilistically and does not guarantee one factory. Concurrent publications compare generation
+  tokens so an older factory cannot overwrite a newer result.
+- **Stale while revalidating** retains the hash for `StaleWhileRevalidate` beyond its logical
+  expiry. One caller awaits refresh; contenders can return the retained value while its lease is
+  held. This needs single-flight. There are no detached tasks, and an idle key is not refreshed.
+  Before expiry, contenders can always return the still-fresh value during an early refresh.
+
+Relative expiry begins at publication; absolute expiry uses the Redis clock. Hits do not extend
+expiry. Each refresh replaces the payload and its duration atomically. Reads always go to the primary
+through Lua scripts, including hits, so this trades local-cache hit speed for shared coordination.
+Redis ACLs must allow scripting, hash reads/writes, SET, DEL, PTTL, PEXPIRE and TIME. The deterministic
+binary lease key shares the data key's Redis Cluster slot, including binary and prefixed keys.
+
+Choose `LockTimeout` above normal recompute latency. A crashed process's lease expires without
+cleanup. A factory receives its caller's cancellation plus a cooperative lease timeout; a factory
+that ignores cancellation can continue running. Token checks prevent that expired owner from
+publishing or deleting a successor's lease. Failover and lease expiry can still allow overlapping
+factories: this is cache population, not exactly-once execution of side effects. Canceling a waiting
+caller does not cancel another caller's factory. Null results and failures are not cached; a later
+caller may try again. Stale values are not a fallback for factory or Redis failures.
+
+`IDistributedCache` has no factory API, and HybridCache owns its factory lifecycle. Their integrations
+keep their existing storage formats and do not automatically use these options. Call this overload
+where the application owns the factory; do not point those integrations at its hash keys.
+
 ## Why this is different
 
 StackExchange.Redis 3.x supports RESP3 and keyspace notifications but has no built-in

@@ -30,6 +30,7 @@
         "GetAsync`1(RespireKey,CancellationToken):ValueTask<T?>",
         "GetBytesAsync(RespireKey,CancellationToken):ValueTask<byte[]?>",
         "GetOrSetAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,RespireExpiry,CancellationToken):ValueTask<T?>",
+        "GetOrSetAsync`1(RespireKey,Func<CancellationToken,ValueTask<T?>>,RespireExpiry,RespireCacheAsideOptions,CancellationToken):ValueTask<T?>",
         "GetStringAsync(RespireKey,CancellationToken):ValueTask<string?>",
         "IncrementAsync(RespireKey,long,CancellationToken):ValueTask<long>",
         "PingAsync(CancellationToken):ValueTask<TimeSpan>",
