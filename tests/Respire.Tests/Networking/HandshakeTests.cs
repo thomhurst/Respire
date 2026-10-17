@@ -113,6 +113,49 @@ public class HandshakeTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task LibraryInfo_AdmissionFailureDoesNotRestartTimeoutForRemainingSetup(bool deferSessionSteps)
+    {
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer { HandleLibraryInfo = false };
+        server.SuppressReply = _ =>
+        {
+            if (server.CommandsSeen == 2) full.TrySetResult();
+            return true;
+        };
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+                new RespireConnectionOptions
+                {
+                    Protocol = RespireProtocol.Resp3,
+                    ClientName = "stalled",
+                    LibraryName = "Respire",
+                    Database = 1,
+                    ReadOnly = true,
+                    EnableClientTracking = true,
+                    DiscoverAvailabilityZone = true,
+                    RequireClusterDatabaseSupport = deferSessionSteps,
+                    MaxInflightCommands = 2,
+                    CommandTimeout = TimeSpan.FromSeconds(1),
+                }, cancellationToken: caller.Token);
+            await full.Task.WaitAsync(caller.Token);
+
+            // One failed admission must end setup. Retrying each remaining step would
+            // take at least three command timeouts even when session steps are deferred.
+            await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(2.5)))
+                .Throws<RespireTimeoutException>();
+            await Assert.That(string.Join("|", server.ReceivedCommands)).IsEqualTo("HELLO 3|CLIENT SETNAME stalled");
+        }
+        finally
+        {
+            caller.Cancel();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task LibraryInfo_AutomaticRepliesIgnoreApplicationThreshold(bool authenticate)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.PongReply)

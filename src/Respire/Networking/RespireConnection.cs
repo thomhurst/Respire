@@ -738,10 +738,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             : requestedProtocol;
 
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
+        var admissionFailed = false;
 
         async ValueTask QueueStepAsync<TCommand>(string step, TCommand command)
             where TCommand : struct, IRespCommand
         {
+            if (admissionFailed) return;
+
             ValueTask<RespValue> reply;
             try
             {
@@ -755,6 +758,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // Drain earlier replies and retain their first error, including AUTH/HELLO
                 // failures that can precede a later admission or transport failure.
                 reply = ValueTask.FromException<RespValue>(error);
+                admissionFailed = true;
             }
             (pending ??= new(8)).Add((step, reply));
         }
