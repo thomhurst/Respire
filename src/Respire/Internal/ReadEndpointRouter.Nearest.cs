@@ -129,9 +129,11 @@ internal sealed partial class ReadEndpointRouter
             }
             if (best.TryGet(out var selected))
             {
-                if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
-                        ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
-                        : ReferenceEquals(selected.Primary, Core.Multiplexer)))
+                // An earlier sample can become stale while a later probe awaits. Retry the
+                // current topology if any published band member is no longer eligible.
+                if (IsCurrentNearestSelection(selected) && (core.Options.ReplicaLatencyTolerance is null
+                    || best.AllBandCandidatesMatch(this, static (candidate, router) => router.IsCurrentNearestSelection(candidate)
+                        && (candidate.Replica is not { } replica || ContainsEndpoint(Volatile.Read(ref router._replicas), replica.Endpoint)))))
                 {
                     if (core.Options.ReplicaLatencyTolerance is not null)
                     {
@@ -178,6 +180,11 @@ internal sealed partial class ReadEndpointRouter
             throw;
         }
     }
+
+    private bool IsCurrentNearestSelection(Selection selection)
+        => selection.Connection.IsAcceptingCommands && (selection.Replica is { } replica
+            ? IsCurrent(replica) && replica.IsRoleEligible(selection.Connection)
+            : ReferenceEquals(selection.Primary, Core.Multiplexer));
 
     private async ValueTask<(Selection? Primary, Exception? Failure)> GetNearestPrimaryAsync(
         ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken,

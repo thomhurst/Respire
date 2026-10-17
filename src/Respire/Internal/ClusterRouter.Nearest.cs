@@ -141,11 +141,11 @@ internal sealed partial class ClusterRouter
         }
         if (best.TryGet(out var selected))
         {
-            var node = selected.Multiplexer;
             // Sampling may await: revalidate both roles together against the latest publication.
             var currentRoute = RoutingSnapshot[slot];
-            if (selected.IsAcceptingCommands && node is { IsRetired: false }
-                && (includePrimary && ReferenceEquals(currentRoute.Primary, node) || currentRoute.Replicas?.Nodes.Contains(node) == true))
+            if (IsCurrentNearestCandidate(selected, currentRoute, includePrimary)
+                && (_options.ReplicaLatencyTolerance is null || best.AllBandCandidatesMatch((currentRoute, includePrimary),
+                    static (candidate, state) => IsCurrentNearestCandidate(candidate, state.currentRoute, state.includePrimary))))
             {
                 if (routes is { IsDueForRevalidation: true })
                     _ = JoinReplicaRefresh(routes, slot);
@@ -175,6 +175,10 @@ internal sealed partial class ClusterRouter
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for {readFrom} reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
     }
+
+    private static bool IsCurrentNearestCandidate(RespireConnection connection, ClusterRoutingSnapshot.SlotRoute route, bool includePrimary)
+        => connection.IsAcceptingCommands && connection.Multiplexer is { IsRetired: false } node
+            && (includePrimary && ReferenceEquals(route.Primary, node) || route.Replicas?.Nodes.Contains(node) == true);
 
     private async ValueTask<(RespireConnection? Primary, Exception? Failure)> GetNearestPrimaryAsync(
         int slot, ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken,
