@@ -1448,6 +1448,10 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         List<Exception>? errors = null;
         try
         {
+            // Publication is closed. Fence selections captured before retirement before any
+            // old lifetime drain or worker join can suspend shutdown.
+            var connections = _connections.OfType<RespireConnection>().ToArray();
+            foreach (var connection in connections) connection.StopAcceptingCommands();
             try { await DrainLifetimeConnectionsBeforeRetirementAsync().ConfigureAwait(false); }
             catch (Exception error)
             {
@@ -1455,8 +1459,6 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 (errors ??= []).Add(error);
             }
             await WaitForPublicationAsync().ConfigureAwait(false);
-            var connections = _connections.OfType<RespireConnection>().ToArray();
-            foreach (var connection in connections) connection.StopAcceptingCommands();
             // The PING replies fence already-sent RESP3 maintenance pushes behind the receive
             // loop before the connection retirement drain closes sockets with empty command rings.
             await CleanupTasks.WhenAllAsync(connections.Select(DrainMaintenanceNotificationsBeforeRetirementAsync))

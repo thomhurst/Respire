@@ -302,8 +302,15 @@ public class ConnectionLifetimeTests
             await Assert.That(original.IsConnected).IsTrue();
             await Assert.That(command.IsCompleted).IsFalse();
 
+            // Keep a selection captured before retirement, as routing and dispatch are separate.
+            var current = multiplexer.GetConnection();
             var retirement = multiplexer.RetireAsync();
             await UntilAsync(() => maintenanceClock.ActiveTimers != 0);
+            await Assert.That(current.IsAcceptingCommands).IsFalse();
+            await Assert.That(async () =>
+            {
+                using var response = await current.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+            }).Throws<RespireConnectionRetiredException>();
             maintenanceClock.Advance(timeout - TimeSpan.FromTicks(1));
             await Assert.That(retirement.IsCompleted).IsFalse();
             await Assert.That(original.IsConnected).IsTrue();
