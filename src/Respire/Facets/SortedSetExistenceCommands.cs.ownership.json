@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireSortedSetCommands",
+      "OwnerType": "Respire.SortedSetCommands",
+      "Members": [
+        "RangeIfExistsAsync(RespireKey,long,long,bool,CancellationToken):ValueTask<string[]?>",
+        "RangeIfExistsAsync`1(RespireKey,long,long,bool,CancellationToken):ValueTask<T[]?>",
+        "RangeIfExistsWithScoresAsync(RespireKey,long,long,bool,CancellationToken):ValueTask<RespireSortedSetEntry[]?>",
+        "RangeIfExistsWithScoresAsync`1(RespireKey,long,long,bool,CancellationToken):ValueTask<RespireSortedSetEntry<T>[]?>"
+      ],
+      "Contract": "Own range dispatch through nullable reply inspection, typed deserialization and cleanup."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

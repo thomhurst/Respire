@@ -3,8 +3,9 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class FakeSortedSetParityTests(RedisTestContainer fixture)
+// Redis 7 accepts hexadecimal scores that Valkey rejects; fake-server parity needs the Redis reference.
+[ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
+public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
 {
     // The shared fixture puts each TUnit test instance in its own Redis database.
     // Root clients are required here because prefixed views reject raw ExecuteAsync.
