@@ -5,6 +5,19 @@ namespace Respire.Infrastructure;
 
 internal sealed partial class RespireConnectionMultiplexer
 {
+    // Lifecycle-gated; allocated only after the first lifetime publication.
+    private HashSet<RespireConnection>? _lifetimeDrains;
+
+    private void ReleaseLifetimeCompletionRunners()
+    {
+        RespireConnection[]? draining;
+        lock (_lifecycleGate) draining = _lifetimeDrains?.ToArray();
+        if (draining is null) return;
+        // Re-enter retirement on the caller's stack to release an inline reply runner
+        // before owner retirement/disposal joins the worker that drains that reply.
+        foreach (var connection in draining) _ = connection.RetireAsync();
+    }
+
     private void ScheduleConnectionLifetime(int slot, RespireConnection connection)
     {
         if (connection.LifetimeExpiresAt is null) return;
@@ -59,21 +72,35 @@ internal sealed partial class RespireConnectionMultiplexer
                         _stopConnecting.Token).ConfigureAwait(false);
                     continue;
                 }
-                int? cacheEvictions;
+                int? cacheEvictions = null;
                 lock (_lifecycleGate)
                 {
-                    if (!IsOperational || !original.IsAcceptingCommands || !replacement.IsAcceptingCommands
+                    if (!IsOperational || !original.IsAcceptingCommands
                         || !ReferenceEquals(original, _connections[slot])
                         || !ReferenceEquals(endpoint, _activeEndpoint)) return;
-                    lock (_moving.Gate)
+                    if (replacement.IsAcceptingCommands)
                     {
-                        cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
-                        replacement.MultiplexerSlot = slot;
-                        replacement.MovingPublicationGeneration = Interlocked.Increment(ref _movingPublicationGenerations[slot]);
-                        replacement.Multiplexer = this;
-                        Volatile.Write(ref _connections[slot], replacement);
-                        published = true;
+                        lock (_moving.Gate)
+                        {
+                            cacheEvictions = _options.CredentialCacheInvalidation?.Invoke();
+                            replacement.MultiplexerSlot = slot;
+                            replacement.MovingPublicationGeneration = Interlocked.Increment(ref _movingPublicationGenerations[slot]);
+                            replacement.Multiplexer = this;
+                            (_lifetimeDrains ??= []).Add(original);
+                            Volatile.Write(ref _connections[slot], replacement);
+                            published = true;
+                        }
                     }
+                }
+                if (!published)
+                {
+                    // Setup can succeed just before the peer closes. Preserve the healthy
+                    // original's worker and retry rather than leaving it pinned indefinitely.
+                    await replacement.DisposeAsync().ConfigureAwait(false);
+                    replacement = null;
+                    await Task.Delay(TimeSpan.FromSeconds(1), _options.ConnectionLifetimeTimeProvider,
+                        _stopConnecting.Token).ConfigureAwait(false);
+                    continue;
                 }
                 // Retire uses the write gate: a caller holding the old selection either has
                 // already accepted its frame or is rerouted by the existing retired-socket path.
@@ -113,6 +140,7 @@ internal sealed partial class RespireConnectionMultiplexer
             {
                 lock (_lifecycleGate)
                 {
+                    _lifetimeDrains?.Remove(original);
                     if (--_activeReconnects == 0) _reconnectsDrained?.TrySetResult();
                 }
             }

@@ -162,7 +162,7 @@ The option applies to multiplexed data connections and dedicated pools, includin
 Sentinel data endpoints. Pub/sub and transient control connections retain their existing lifecycle.
 With lifetime disabled, no lifetime timer or worker is created. Multiplexed command submission
 performs no lifetime checks; dedicated rentals and returns do not sample time. A successful recycle emits `redis.client.connection.recycle` in `ConnectionBasic`
-and the `ConnectionRecycled` information log event (140). Closed sockets use the `max_lifetime`
+and the `ConnectionRecycled` information log event (142). Closed sockets use the `max_lifetime`
 close reason. Diagnostics use the bounded asynchronous connection measurement delivery queue.
 
 ## Dedicated connection pools

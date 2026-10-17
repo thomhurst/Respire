@@ -1369,6 +1369,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </remarks>
     internal Task RetireAsync()
     {
+        ReleaseLifetimeCompletionRunners();
         TaskCompletionSource completion;
         bool publish;
         lock (_lifecycleGate)
@@ -1541,6 +1542,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </remarks>
     public ValueTask DisposeAsync()
     {
+        ReleaseLifetimeCompletionRunners();
         TaskCompletionSource completion;
         bool publish;
         lock (_lifecycleGate)

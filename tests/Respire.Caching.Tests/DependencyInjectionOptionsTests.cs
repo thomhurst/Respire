@@ -88,6 +88,7 @@ public class DependencyInjectionOptionsTests
             ["BacklogPolicy"] = "FailFast", ["BacklogCapacity"] = "123",
             ["UseTls"] = "true", ["TlsOptions:TargetHost"] = "redis",
             ["ConnectionIdleReadTimeout"] = "00:00:12", ["GatheredWriteStallTimeout"] = "00:00:13",
+            ["ConnectionMaxLifetime"] = "00:05:00", ["ConnectionMaxLifetimeJitter"] = "00:00:30",
             ["CommandTimeout"] = "00:00:05", ["ThreadPoolMonitoring"] = "false",
             ["ThreadPoolWarningThreshold"] = "00:00:00.200", ["Connections"] = "3",
             ["DedicatedPool:MinimumSize"] = "2", ["DedicatedPool:MaximumSize"] = "12",

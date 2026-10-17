@@ -1,7 +1,7 @@
 {
   "LegacyCommit": "5c9bd76576722f228397efb610e77d72308bc81f",
   "Messages": [
-    {"Method": "ConnectionRecycledMessage", "Level": "Information", "EventId": 140, "EventName": "ConnectionRecycled", "Template": "Recycled Redis connection to {Host}:{Port} after its maximum lifetime", "LegacySource": "src/Respire/Internal/RespireLog.Lifetime.cs"},
+    {"Method": "ConnectionRecycledMessage", "Level": "Information", "EventId": 142, "EventName": "ConnectionRecycled", "Template": "Recycled Redis connection to {Host}:{Port} after its maximum lifetime", "LegacySource": "src/Respire/Internal/RespireLog.Lifetime.cs"},
     {"Method": "StreamReadRetryMessage", "Level": "Warning", "EventId": 1, "EventName": "StreamReadRetry", "Template": "Stream read failed; retrying after {DelayMilliseconds} ms.", "LegacySource": "src/Respire/Facets/StreamReadCommands.cs:211"},
     {"Method": "DeadConnectionReplacedMessage", "Level": "Information", "EventId": 2, "EventName": "DeadConnectionReplaced", "Template": "Replaced dead connection {Slot} to {Host}:{Port}", "LegacySource": "src/Respire/Infrastructure/RespireConnectionMultiplexer.cs:1042"},
     {"Method": "RejectedReplacementDisposalFailedMessage", "Level": "Warning", "EventId": 3, "EventName": "RejectedReplacementDisposalFailed", "Template": "Failed to dispose rejected replacement connection to {Host}:{Port}", "LegacySource": "src/Respire/Infrastructure/RespireConnectionMultiplexer.cs:1057"},
