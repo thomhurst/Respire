@@ -51,6 +51,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// </summary>
     public int MinimumCommandsBeforeReply { get; set; } = 1;
 
+    /// <summary>
+    /// Answers initial CLIENT SETINFO without consuming or recording scripted application commands.
+    /// Disable for wire tests that explicitly script the library metadata handshake.
+    /// </summary>
+    public bool HandleLibraryInfo { get; set; } = true;
+
     /// <summary>Closes the connection after receiving this many commands, without sending a reply.</summary>
     public int? CloseConnectionAfterCommand { get; set; }
 
@@ -272,6 +278,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
             var pendingReplies = new List<byte[]>();
             var end = 0;
             var replyIndex = 0;
+            var inHandshake = true;
 
             while (!_cts.IsCancellationRequested)
             {
@@ -309,6 +316,15 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 {
                     var commandText = FormatCommand(in command, out var arguments);
                     command.Dispose();
+                    if (HandleLibraryInfo && inHandshake && commandText.StartsWith("CLIENT SETINFO LIB-", StringComparison.Ordinal))
+                    {
+                        pendingReplies.Add(OkReply);
+                        continue;
+                    }
+                    if (!(commandText.StartsWith("AUTH ", StringComparison.Ordinal)
+                        || commandText.StartsWith("HELLO ", StringComparison.Ordinal)
+                        || commandText.StartsWith("CLIENT SETNAME ", StringComparison.Ordinal)))
+                        inHandshake = false;
                     if (SuppressReply is not null && pendingReplies.Count > 0 && MinimumCommandsBeforeReply <= 1)
                     {
                         // Tests park a suppressed command and inject its reply once it is recorded.

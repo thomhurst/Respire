@@ -15,6 +15,96 @@ public class HandshakeTests
     private static readonly byte[] HelloReply = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task LibraryInfo_PipelinesWithAuthenticationAndSessionSetup(RespireProtocol protocol)
+    {
+        await using var server = new FakeRespServer(
+            protocol == RespireProtocol.Resp2 ? FakeRespServer.OkReply : HelloReply,
+            FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, FakeRespServer.PongReply)
+        {
+            HandleLibraryInfo = false,
+            MinimumCommandsBeforeReply = 5,
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var options = new RespireOptions
+        {
+            Protocol = protocol, Password = "secret", ClientName = "wire-test", Database = 1,
+            LibraryName = "Respire(se-compat)",
+        };
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, options.ToConnectionOptions(), cancellationToken: timeout.Token);
+        server.MinimumCommandsBeforeReply = 1;
+        using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo(protocol == RespireProtocol.Resp2 ? "AUTH secret" : "HELLO 3 AUTH default secret");
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("CLIENT SETNAME wire-test");
+        await Assert.That(server.ReceivedCommands[2]).IsEqualTo("CLIENT SETINFO LIB-NAME Respire(se-compat)");
+        await Assert.That(server.ReceivedCommands[3]).IsEqualTo($"CLIENT SETINFO LIB-VER {RespireConnection.LibraryVersion}");
+        await Assert.That(server.ReceivedCommands[4]).IsEqualTo("SELECT 1");
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
+    [Arguments("-ERR unknown subcommand 'SETINFO'\r\n")]
+    [Arguments("-NOPERM this user has no permissions to run the 'client|setinfo' command\r\n")]
+    [Arguments("-ERR unsupported CLIENT command\r\n")]
+    public async Task LibraryInfo_ServerErrorsAreIgnoredAndRepliesDrained(string error)
+    {
+        var errorReply = System.Text.Encoding.UTF8.GetBytes(error);
+        await using var server = new FakeRespServer(errorReply, errorReply, FakeRespServer.PongReply)
+        {
+            HandleLibraryInfo = false,
+        };
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireOptions().ToConnectionOptions() with { Protocol = RespireProtocol.Resp2 });
+        using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("CLIENT SETINFO LIB-NAME Respire");
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
+    public async Task LibraryInfo_DoesNotHideAuthenticationFailure()
+    {
+        await using var server = new FakeRespServer(
+            "-WRONGPASS invalid password\r\n"u8.ToArray(), FakeRespServer.OkReply, FakeRespServer.OkReply)
+        {
+            HandleLibraryInfo = false,
+            MinimumCommandsBeforeReply = 3,
+        };
+        var error = await Assert.That(async () => await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireOptions { Password = "wrong" }.ToConnectionOptions() with { Protocol = RespireProtocol.Resp2 }))
+            .Throws<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("AUTH failed");
+    }
+
+    [Test]
+    public async Task LibraryInfo_TransportFailureStillFailsHandshake()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            HandleLibraryInfo = false,
+            CloseConnectionAfterCommand = 2,
+        };
+        await Assert.That(async () => await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireOptions().ToConnectionOptions() with { Protocol = RespireProtocol.Resp2 }))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task LibraryInfo_NullDisablesBothCommands()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply) { HandleLibraryInfo = false };
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireOptions { LibraryName = null }.ToConnectionOptions() with { Protocol = RespireProtocol.Resp2 });
+        using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
     public async Task PasswordOnly_SendsAuthBeforeAnythingElse()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.PongReply);

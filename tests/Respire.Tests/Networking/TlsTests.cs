@@ -15,6 +15,8 @@ namespace Respire.Tests.Networking;
 
 public class TlsTests
 {
+    // Raw TLS peers below script only the traffic needed to verify certificate identity.
+    // Library metadata has separate handshake wire coverage.
     [Test]
     public async Task DiscoveredSentinelPeerKeepsDedicatedTlsIdentity()
     {
@@ -34,6 +36,7 @@ public class TlsTests
         {
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
+                LibraryName = null,
                 Protocol = RespireProtocol.Resp2,
                 Endpoints = [new("127.0.0.1", seedPort)], SentinelPrimaryName = "mymaster",
                 UseTls = false, SentinelUseTls = true,
@@ -161,6 +164,7 @@ public class TlsTests
             };
             var options = new RespireOptions
             {
+                LibraryName = null,
                 Protocol = RespireProtocol.Resp2,
                 UseCluster = true,
                 UseTls = true,
@@ -216,6 +220,7 @@ public class TlsTests
             };
             var options = new RespireOptions
             {
+                LibraryName = null,
                 Protocol = RespireProtocol.Resp2,
                 UseCluster = true, UseTls = true, TlsOptions = tlsOptions, Connections = 1,
                 Endpoints = { new RespireEndpoint("localhost", port) },

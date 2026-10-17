@@ -5,6 +5,7 @@ using System.IO.Pipelines;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -50,6 +51,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private const int MaxResponseSize = 512 * 1024 * 1024;
     private static readonly TimeSpan MinWatchdogDelay = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
+    private static readonly Verb ClientSetInfo = new(-1, "CLIENT", "SETINFO");
+    // InformationalVersion carries the NuGet version plus optional source metadata.
+    // Keep prerelease identifiers, but omit the build metadata (commit SHA).
+    internal static readonly string LibraryVersion = (typeof(RespireConnection).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0").Split('+')[0];
 
     private readonly Socket? _socket;
     private readonly Stream? _stream;
@@ -717,7 +723,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Runs HELLO/AUTH/CLIENT SETNAME through the normal send path before the connection is
+    /// Runs protocol, authentication, and session setup through the normal send path before the connection is
     /// handed out, so every later command runs on an authenticated, protocol-negotiated stream.
     /// </summary>
     private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken,
@@ -748,6 +754,16 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             (pending ??= new(3)).Add(("CLIENT SETNAME", SendAsync(
                 new Commands.ClientSetNameCommand(options.ClientName), cancellationToken, armCommandDeadline: armCommandDeadline)));
+        }
+
+        if (options.LibraryName is not null)
+        {
+            (pending ??= new(5)).Add(("CLIENT SETINFO LIB-NAME", SendAsync(
+                new ProtocolCommand<Cmd2>(new Cmd2(ClientSetInfo, "LIB-NAME", options.LibraryName)),
+                cancellationToken, armCommandDeadline: armCommandDeadline)));
+            pending.Add(("CLIENT SETINFO LIB-VER", SendAsync(
+                new ProtocolCommand<Cmd2>(new Cmd2(ClientSetInfo, "LIB-VER", LibraryVersion)),
+                cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (options.RequireClusterDatabaseSupport || options.DiscoverAvailabilityZone && negotiatedProtocol == RespireProtocol.Resp2)
@@ -797,6 +813,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                         // Zone discovery is optional. Redis and ACL-restricted servers can
                         // omit it without making an otherwise usable connection fail.
                         if (step == "INFO SERVER" && !options.RequireClusterDatabaseSupport) continue;
+                        // Metadata is best effort: older servers, proxies, and ACLs may reject it.
+                        // Still consume both replies so the next command retains its FIFO position.
+                        if (step is "CLIENT SETINFO LIB-NAME" or "CLIENT SETINFO LIB-VER") continue;
                         // Provider credentials may be echoed by arbitrary proxy/server error codes.
                         failure = options.CredentialProvider is not null && step is ("AUTH" or "HELLO")
                             ? new RespireAuthenticationException($"Credential authentication failed for {Host}:{Port}.")
@@ -4578,6 +4597,9 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
     public string? ClientName { get; init; }
+
+    // Only ordinary client connections advertise metadata. Control connections stay AUTH-only.
+    internal string? LibraryName { get; init; }
 
     /// <summary>Logical database SELECTed during the handshake; 0 skips the SELECT.</summary>
     public int Database { get; init; }
