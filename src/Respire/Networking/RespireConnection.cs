@@ -738,45 +738,59 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             : requestedProtocol;
 
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
+
+        async ValueTask QueueStepAsync<TCommand>(string step, TCommand command)
+            where TCommand : struct, IRespCommand
+        {
+            ValueTask<RespValue> reply;
+            try
+            {
+                // Await admission, not the reply. Only one capacity waiter may submit setup
+                // commands, so SELECT remains ahead of tracking even with a small ring.
+                reply = await EnqueuePinnedAsync(command, cancellationToken, step,
+                    armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                // Drain earlier replies and retain their first error, including AUTH/HELLO
+                // failures that can precede a later admission or transport failure.
+                reply = ValueTask.FromException<RespValue>(error);
+            }
+            (pending ??= new(8)).Add((step, reply));
+        }
+
         // Auto already sent HELLO above; only explicitly requested RESP3 enters this branch.
         if (requestedProtocol == RespireProtocol.Resp3)
         {
-            (pending ??= new(3)).Add(("HELLO", SendAsync(
-                new Commands.HelloCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("HELLO", new Commands.HelloCommand(options.Username, options.Password)).ConfigureAwait(false);
         }
         else if (negotiatedProtocol == RespireProtocol.Resp2 && options.Password is not null)
         {
-            (pending ??= new(3)).Add(("AUTH", SendAsync(
-                new Commands.AuthCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("AUTH", new Commands.AuthCommand(options.Username, options.Password)).ConfigureAwait(false);
         }
 
         if (options.ClientName is not null)
         {
-            (pending ??= new(3)).Add(("CLIENT SETNAME", SendAsync(
-                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("CLIENT SETNAME", new Commands.ClientSetNameCommand(options.ClientName)).ConfigureAwait(false);
         }
 
         if (options.LibraryName is not null)
         {
-            (pending ??= new(5)).Add(("CLIENT SETINFO LIB-NAME", SendAsync(
-                new ProtocolCommand<Cmd2>(new Cmd2(ClientSetInfo, "LIB-NAME", options.LibraryName)),
-                cancellationToken, armCommandDeadline: armCommandDeadline)));
-            pending.Add(("CLIENT SETINFO LIB-VER", SendAsync(
-                new ProtocolCommand<Cmd2>(new Cmd2(ClientSetInfo, "LIB-VER", LibraryVersion)),
-                cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("CLIENT SETINFO LIB-NAME",
+                new ProtocolCommand<Cmd2>(new Cmd2(ClientSetInfo, "LIB-NAME", options.LibraryName))).ConfigureAwait(false);
+            await QueueStepAsync("CLIENT SETINFO LIB-VER",
+                new ProtocolCommand<Cmd2>(new Cmd2(ClientSetInfo, "LIB-VER", LibraryVersion))).ConfigureAwait(false);
         }
 
         if (options.RequireClusterDatabaseSupport || options.DiscoverAvailabilityZone && negotiatedProtocol == RespireProtocol.Resp2)
         {
             // HELLO reports a Redis compatibility version on Valkey. INFO identifies the
             // actual implementation/version, independently for every new physical socket.
-            (pending ??= new(3)).Add(("INFO SERVER", SendAsync(
-                new Commands.Cmd1(Commands.Verbs.Info, "SERVER"), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("INFO SERVER", new Commands.Cmd1(Commands.Verbs.Info, "SERVER")).ConfigureAwait(false);
         }
         if (!options.RequireClusterDatabaseSupport && options.Database != 0)
         {
-            (pending ??= new(3)).Add(("SELECT", SendAsync(
-                new Commands.SelectCommand(options.Database), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("SELECT", new Commands.SelectCommand(options.Database)).ConfigureAwait(false);
         }
 
         // Session steps (SELECT, READONLY, CLIENT TRACKING) pipeline here, unless Cluster
@@ -784,14 +798,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var deferSessionSteps = options.RequireClusterDatabaseSupport;
         if (options.ReadOnly && !deferSessionSteps)
         {
-            (pending ??= new(4)).Add(("READONLY", SendAsync(
-                new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly))).ConfigureAwait(false);
         }
 
         if (options.EnableClientTracking && !deferSessionSteps)
         {
-            (pending ??= new(4)).Add(("CLIENT TRACKING", SendAsync(
-                new Commands.ClientTrackingCommand(options.ClientTrackingOptions), cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("CLIENT TRACKING", new Commands.ClientTrackingCommand(options.ClientTrackingOptions)).ConfigureAwait(false);
         }
 
         if (pending is null)
@@ -1114,18 +1126,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal async ValueTask<ValueTask<RespValue>> EnqueuePinnedAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, string commandName,
         RespireTelemetry.ErrorObservation observation = default, bool pinToConnection = true,
-        CommandDeadline deadline = default, bool skipTracking = false)
+        CommandDeadline deadline = default, bool skipTracking = false, bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
         if (skipTracking && ClientTrackingEnabled)
             return await EnqueueOptOutAsync(command, cancellationToken, commandName, observation,
-                pinToConnection, deadline).ConfigureAwait(false);
+                pinToConnection, deadline, armCommandDeadline).ConfigureAwait(false);
         observation.UseEndpoint(new(Host, Port), cancellationToken);
         if (cancellationToken.IsCancellationRequested)
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
         if (command is IStreamingRespCommand)
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
-        if (!deadline.IsSet) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        if (!deadline.IsSet && armCommandDeadline) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var source = _sourcePool.Rent(throwOnError: false, commandName);
         source.ErrorAttempts = observation.Attempts;
         bool enqueued;
@@ -1136,7 +1148,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ReclaimUnpublished(source);
             observation.Handled(error, new(Host, Port));
             return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
-                pinToConnection, rerouted, skipTracking).ConfigureAwait(false);
+                pinToConnection, rerouted, skipTracking, armCommandDeadline).ConfigureAwait(false);
         }
         catch { ReclaimUnpublished(source); throw; }
         if (!enqueued)
@@ -1151,7 +1163,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 // The capacity wait already reclaimed its unpublished source.
                 observation.Handled(error, new(Host, Port));
                 return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
-                    pinToConnection, rerouted, skipTracking).ConfigureAwait(false);
+                    pinToConnection, rerouted, skipTracking, armCommandDeadline).ConfigureAwait(false);
             }
         }
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));

@@ -15,6 +15,102 @@ public class HandshakeTests
     private static readonly byte[] HelloReply = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(2)]
+    [Arguments(4)]
+    public async Task LibraryInfo_CapacityWaitsPreserveSessionOrder(int capacity)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var initialCommands = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var server = new FakeRespServer(FakeRespServer.OkReply)
+            {
+                HandleLibraryInfo = false,
+                ReplyOverride = (_, command) => command == "PING" ? FakeRespServer.PongReply : null,
+            };
+            server.SuppressReply = _ =>
+            {
+                if (server.CommandsSeen == capacity) initialCommands.TrySetResult();
+                return true;
+            };
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+                new RespireOptions { Database = 1, ClientName = "ordered", MaxInflightCommands = capacity }.ToConnectionOptions() with
+                {
+                    Protocol = RespireProtocol.Resp3,
+                    ReadOnly = true,
+                    EnableClientTracking = true,
+                    ClientTrackingOptions = new ClientTrackingConfiguration(RespireClientTrackingMode.Broadcast, ["cache:"]),
+                }, cancellationToken: timeout.Token);
+            await initialCommands.Task.WaitAsync(timeout.Token);
+            server.SuppressReply = null;
+            await server.SendRawAsync([.. HelloReply, .. Enumerable.Repeat(FakeRespServer.OkReply, capacity - 1).SelectMany(static reply => reply)]);
+            await using var connection = await connecting;
+            using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+            await Assert.That(pong.AsString()).IsEqualTo("PONG");
+            var commands = server.ReceivedCommands;
+            await Assert.That(string.Join("|", commands)).IsEqualTo(
+                $"HELLO 3|CLIENT SETNAME ordered|CLIENT SETINFO LIB-NAME Respire|CLIENT SETINFO LIB-VER {RespireConnection.LibraryVersion}|SELECT 1|READONLY|CLIENT TRACKING ON BCAST PREFIX cache:|PING");
+        }
+    }
+
+    [Test]
+    public async Task LibraryInfo_CapacityFailureDoesNotReplaceAuthenticationError()
+    {
+        await using var server = new FakeRespServer(
+            "-WRONGPASS invalid password\r\n"u8.ToArray(), FakeRespServer.OkReply)
+        {
+            HandleLibraryInfo = false,
+            MinimumCommandsBeforeReply = 2,
+            CloseConnectionAfterCommand = 3,
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var error = await Assert.That(async () => await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port,
+            new RespireOptions { Password = "wrong", ClientName = "ordered", MaxInflightCommands = 2 }.ToConnectionOptions()
+                with { Protocol = RespireProtocol.Resp2 }, cancellationToken: timeout.Token))
+            .Throws<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("AUTH failed");
+        await Assert.That(error.Message).Contains("invalid password");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LibraryInfo_CapacityWaitRemainsBounded(bool callerCancellation)
+    {
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer { HandleLibraryInfo = false };
+        server.SuppressReply = _ =>
+        {
+            if (server.CommandsSeen == 2) full.TrySetResult();
+            return true;
+        };
+        using var caller = new CancellationTokenSource();
+        var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions
+            {
+                Protocol = RespireProtocol.Resp3,
+                LibraryName = "Respire",
+                Database = 1,
+                MaxInflightCommands = 2,
+                CommandTimeout = callerCancellation ? null : TimeSpan.FromMilliseconds(200),
+            }, cancellationToken: caller.Token);
+        await full.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (callerCancellation)
+        {
+            caller.Cancel();
+            var error = await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+        }
+        else
+        {
+            await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<RespireTimeoutException>();
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task LibraryInfo_AutomaticRepliesIgnoreApplicationThreshold(bool authenticate)

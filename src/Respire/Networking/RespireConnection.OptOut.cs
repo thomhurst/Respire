@@ -10,7 +10,7 @@ internal sealed partial class RespireConnection
     // while leaving reply completion independent. Retain and validate the caching reply.
     private async ValueTask<ValueTask<RespValue>> EnqueueOptOutAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken, string commandName,
-        RespireTelemetry.ErrorObservation observation, bool pinToConnection, CommandDeadline deadline)
+        RespireTelemetry.ErrorObservation observation, bool pinToConnection, CommandDeadline deadline, bool armCommandDeadline)
         where TCommand : struct, IRespCommand
     {
         if (_inflight.Capacity < 2)
@@ -23,7 +23,7 @@ internal sealed partial class RespireConnection
             throw new RespireCommandNotSubmittedException(new OperationCanceledException(cancellationToken));
         if (command is IStreamingRespCommand)
             throw new NotSupportedException("Ordered admission does not support streaming command payloads.");
-        if (!deadline.IsSet) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        if (!deadline.IsSet && armCommandDeadline) deadline = CommandDeadline.After(_commandTimeoutMilliseconds);
         var prefixed = new PrefixedCommand<ClientCachingCommand, TCommand>(new(optOut: true), command, _cacheMutationAdmission);
         var source = MultiReplyPendingResponseSource.Rent(2, 0, commandName);
         source.ErrorAttempts = observation.Attempts;
@@ -35,7 +35,7 @@ internal sealed partial class RespireConnection
             ReclaimUnpublished(source, 3);
             observation.Handled(error, new(Host, Port));
             return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
-                pinToConnection, rerouted, skipTracking: true).ConfigureAwait(false);
+                pinToConnection, rerouted, skipTracking: true, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
         }
         catch { ReclaimUnpublished(source, 3); throw; }
         if (!enqueued)
@@ -50,7 +50,7 @@ internal sealed partial class RespireConnection
                 // The capacity waiter already reclaimed all three unpublished references.
                 observation.Handled(error, new(Host, Port));
                 return await target.EnqueuePinnedAsync(command, cancellationToken, commandName, observation,
-                    pinToConnection, rerouted, skipTracking: true).ConfigureAwait(false);
+                    pinToConnection, rerouted, skipTracking: true, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
             }
         }
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
