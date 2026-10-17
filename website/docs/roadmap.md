@@ -60,6 +60,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   with owned disposal, TLS, reconnects, discovery, pub/sub, and dedicated connections.
 - [Dedicated pool sizing](fundamentals/connections.md#dedicated-connection-pools) with opt-in
   total limits, cancellation-aware acquisition, timed idle retirement and pool metrics.
+- Opt-in [blocking cancellation with CLIENT UNBLOCK](guides/blocking-queues.md#cancellation)
+  reuses dedicated connections after draining the reply, with bounded discard fallback.
 - [Connections](fundamentals/connections.md) from Redis URIs, pasted Azure portal strings, StackExchange.Redis connection
   strings, or `RespireOptions`, with lazy or eager connect, TLS, and automatic pipelining.
 - [Independent liveness bounds](fundamentals/connections.md#independent-liveness-bounds) for

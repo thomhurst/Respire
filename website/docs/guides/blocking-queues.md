@@ -53,7 +53,21 @@ For consumer groups with acknowledgements and retry, use a [hosted stream consum
 
 ## Cancellation
 
-Cancellation stops your wait. If the command already reached the server, Respire retires or cleans up the dedicated connection so the shared pool stays consistent. Use bounded waits when workers also need periodic housekeeping or health updates.
+Cancellation stops your wait. By default, Respire discards the dedicated connection. To reuse blocked connections when workers cancel frequently, opt in when creating the client:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    DedicatedPool = new() { UnblockOnCancel = true },
+};
+```
+
+With this option, Respire records the dedicated connection's Redis client ID from `HELLO` or `CLIENT ID`. On cancellation, it sends [`CLIENT UNBLOCK <id> TIMEOUT`](https://redis.io/docs/latest/commands/client-unblock/) through a healthy multiplexed connection to the same physical server, then drains the blocking reply before returning the connection. Unblock and reply drain share a one-second budget, after which Respire discards the connection. This works with standalone, Cluster (including redirected commands), and Sentinel primary connections. If no matching control connection is available, Redis or ACLs reject the operation, or either reply fails to arrive, Respire falls back to discarding the dedicated connection. Standalone replica pools without a matching control connection also use this fallback.
+
+Cancellation can race with completion. A reply delivered before cancellation can succeed normally. When cancellation wins, Respire reports `OperationCanceledException` even if Redis already consumed a value; cleanup drains that reply and does not restore the value. This race also exists when closing a connection. For delivery that survives cancellation, use pending-to-processing movement or consumer groups with acknowledgements.
+
+The option defaults to `false` while performance evidence is collected. Use bounded waits when workers also need periodic housekeeping or health updates.
 
 ## Migrating blocking waits
 

@@ -95,18 +95,18 @@ public sealed partial class RespireClient
     }
 
     private ValueTask<RespValue> SendBlockingOnConnectionAsync<TCommand>(
-        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts = 0,
+        DedicatedConnectionPool pool, RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts = 0,
         RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
         => _core.Circuits is not null
-            ? SendCircuitBlockingAsync(connection, command, cancellationToken, errorAttempts, observation)
-            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts, observation: observation);
+            ? SendCircuitBlockingAsync(pool, connection, command, cancellationToken, errorAttempts, observation)
+            : SendBlockingWithCancellationAsync(pool, connection, command, cancellationToken, errorAttempts, observation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> SendCircuitBlockingAsync<TCommand>(
-        RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts,
+        DedicatedConnectionPool pool, RespireConnection connection, TCommand command, CancellationToken cancellationToken, int errorAttempts,
         RespireTelemetry.ErrorObservation observation)
         where TCommand : struct, IRespCommand
     {
@@ -114,8 +114,8 @@ public sealed partial class RespireClient
         var admission = AcquireCircuit(connection, cancellationToken);
         try
         {
-            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken, errorAttempts,
-                observation: observation).ConfigureAwait(false);
+            var response = await SendBlockingWithCancellationAsync(pool, connection, command, cancellationToken, errorAttempts,
+                observation).ConfigureAwait(false);
             admission.Success();
             return response;
         }

@@ -711,7 +711,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return RespireProtocol.Resp2;
         }
         ValidateHelloProtocol(in hello);
-        CaptureHelloAvailabilityZone(in hello);
+        CaptureHelloMetadata(in hello);
         _logger?.HelloResp3Negotiated(Host, Port);
         return RespireProtocol.Resp3;
     }
@@ -805,7 +805,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     else if (failure is null && step == "HELLO")
                     {
                         ValidateHelloProtocol(in reply);
-                        CaptureHelloAvailabilityZone(in reply);
+                        CaptureHelloMetadata(in reply);
                     }
                     else if (failure is null && step == "INFO SERVER")
                     {
@@ -938,19 +938,23 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         throw new RespireConnectionException(message, new RespireProtocolException(message) { Endpoint = new(Host, Port) }) { Endpoint = new(Host, Port) };
     }
 
-    private void CaptureHelloAvailabilityZone(in RespValue reply)
+    private void CaptureHelloMetadata(in RespValue reply)
     {
         if (reply.Type != RespireDataType.Map) return;
         var fields = reply.AsArray();
         for (var index = 0; index + 1 < fields.Length; index += 2)
-            if (fields[index].Type is (RespireDataType.BulkString or RespireDataType.SimpleString)
-                && fields[index].AsSpan().SequenceEqual("availability_zone"u8)
+        {
+            if (fields[index].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) continue;
+            if (fields[index].AsSpan().SequenceEqual("id"u8)
+                && fields[index + 1].Type == RespireDataType.Integer && fields[index + 1].AsInteger() > 0)
+                Interlocked.CompareExchange(ref _serverClientId, fields[index + 1].AsInteger(), 0);
+            else if (fields[index].AsSpan().SequenceEqual("availability_zone"u8)
                 && fields[index + 1].Type is RespireDataType.BulkString or RespireDataType.SimpleString)
             {
                 var zone = fields[index + 1].AsString();
                 AvailabilityZone = string.IsNullOrWhiteSpace(zone) ? null : zone;
-                return;
             }
+        }
     }
 
     private void CaptureInfoAvailabilityZone(in RespValue reply)

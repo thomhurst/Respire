@@ -165,6 +165,19 @@ internal readonly struct ClientIdCommand : IConnectionProtocolCommand
         => writer.WriteRaw("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"u8);
 }
 
+/// <summary>CLIENT UNBLOCK id TIMEOUT.</summary>
+internal readonly struct ClientUnblockCommand(long id) : IConnectionProtocolCommand
+{
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$7\r\nUNBLOCK\r\n"u8);
+        writer.WriteBulkInteger(id);
+        writer.WriteRaw("$7\r\nTIMEOUT\r\n"u8);
+    }
+}
+
 /// <summary>CLIENT KILL ID id [SKIPME yes].</summary>
 internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IConnectionProtocolCommand
 {

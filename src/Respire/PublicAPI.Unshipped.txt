@@ -11,6 +11,8 @@ Respire.RespireDedicatedPoolOptions.MaximumSize.init -> void
 Respire.RespireDedicatedPoolOptions.MinimumSize.get -> int
 Respire.RespireDedicatedPoolOptions.MinimumSize.init -> void
 Respire.RespireDedicatedPoolOptions.RespireDedicatedPoolOptions() -> void
+Respire.RespireDedicatedPoolOptions.UnblockOnCancel.get -> bool
+Respire.RespireDedicatedPoolOptions.UnblockOnCancel.init -> void
 Respire.RespireOptions.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.RespireOptions.DedicatedPool.init -> void
 override Respire.RespireDedicatedPoolOptions.Equals(object? obj) -> bool

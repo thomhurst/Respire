@@ -171,7 +171,7 @@ if (job is { } popped)
 }
 ```
 
-Returned keys keep their binary bytes. A prefixed view strips its prefix, so you can pass the key back through that view. Values decode as UTF-8. Empty Redis keys are valid. Blocking calls use dedicated connections; cancellation discards the blocked connection without stalling other traffic.
+Returned keys keep their binary bytes. A prefixed view strips its prefix, so you can pass the key back through that view. Values decode as UTF-8. Empty Redis keys are valid. Blocking calls use dedicated connections; cancellation discards the blocked connection by default. Opt in to [connection reuse with CLIENT UNBLOCK](../guides/blocking-queues.md#cancellation) without stalling other traffic.
 
 Queued `Lists.PopMany(keys, count, side)` sends nonblocking LMPOP. Blocking pops have no queued form.
 
