@@ -582,6 +582,7 @@ jobs:
           suite caching tests Respire.Caching.Tests Respire.Caching.Tests
           suite coordination tests Respire.Coordination.Tests Respire.Coordination.Tests
           suite idempotency tests Respire.Idempotency.Tests Respire.Idempotency.Tests
+          suite rate-limiting tests Respire.RateLimiting.Tests Respire.RateLimiting.Tests
           suite caching-redis-7.4 RESPIRE_TEST_REDIS_IMAGE=redis:7.4.11-alpine \
             tests Respire.Caching.Tests Respire.Caching.Tests-redis7.4 \
             --report-html-filename "$results/Respire.Caching.Tests-redis7.4-linux-net10.0-report.html"

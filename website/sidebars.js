@@ -171,6 +171,7 @@ const sidebars = {
         'integrations/caching',
         'integrations/output-caching',
         'integrations/idempotency',
+        'integrations/rate-limiting',
         'integrations/data-protection',
         'integrations/fusioncache',
         'integrations/signalr',

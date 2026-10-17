@@ -25,6 +25,7 @@
     <PackageReference Include="Respire.Caching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Coordination" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Idempotency" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.RateLimiting" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Aws" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.FusionCache" Version="$(RespirePackageVersion)" />
