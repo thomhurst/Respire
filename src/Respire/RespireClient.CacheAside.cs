@@ -11,7 +11,7 @@ public sealed partial class RespireClient
 {
     private static long _nextCacheAsideTypeIdentity;
 
-    /// <inheritdoc cref="IRespireClient.GetOrSetAsync{T}"/>
+    /// <inheritdoc cref="IRespireClient.GetOrSetAsync{T}(RespireKey, Func{CancellationToken, ValueTask{T}}, RespireExpiry, CancellationToken)"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
