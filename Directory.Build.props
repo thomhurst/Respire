@@ -31,6 +31,7 @@
       Respire.Compression.Zstd;
       Respire.Aws;
       Respire.Azure;
+      Respire.Gcp;
       Respire.Caching;
       Respire.Caching.Hybrid;
       Respire.FusionCache;

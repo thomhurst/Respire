@@ -50,8 +50,9 @@ public sealed class ConfigurationCredentials(
 | `CredentialRefreshBeforeExpiry` | 5 minutes | Renewal starts at `ExpiresAt` minus this. At least 1 ms. |
 | `CredentialRefreshRetryDelay` | 5 seconds | Delay before retrying a failed or unchanged renewal. At least 1 ms. |
 
-For ready-made providers, see [Azure Managed Redis](azure-managed-redis.md) (Microsoft Entra) and
-[AWS IAM credentials](aws-iam-credentials.md) (ElastiCache and MemoryDB).
+For ready-made providers, see [Azure Managed Redis](azure-managed-redis.md) (Microsoft Entra),
+[AWS IAM credentials](aws-iam-credentials.md) (ElastiCache and MemoryDB), and
+[Google Cloud Memorystore](google-cloud-memorystore.md) (Redis Cluster and Valkey).
 
 ## Ownership and identity
 
