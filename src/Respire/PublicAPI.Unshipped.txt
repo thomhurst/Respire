@@ -59,6 +59,8 @@ Respire.RespireReadRoutingSnapshot.CapturedAt.get -> System.DateTimeOffset
 Respire.RespireReadRoutingSnapshot.ClusterSlot.get -> int?
 Respire.RespireReadRoutingSnapshot.EligibleEndpoints.get -> System.Collections.Generic.IReadOnlyList<Respire.RespireEndpoint>!
 Respire.RespireReadRoutingSnapshot.ReadFrom.get -> Respire.RespireReadFrom
+Respire.RespireOptions.EnableReplicaRedirects.get -> bool
+Respire.RespireOptions.EnableReplicaRedirects.init -> void
 Respire.RespireDedicatedPoolOptions
 Respire.RespireDedicatedPoolOptions.<Clone>$() -> Respire.RespireDedicatedPoolOptions!
 Respire.RespireDedicatedPoolOptions.Equals(Respire.RespireDedicatedPoolOptions? other) -> bool
