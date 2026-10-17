@@ -1,6 +1,7 @@
 # Respire.AI
 
-Semantic response caching for Microsoft.Extensions.AI chat clients, backed by Redis vector search.
+Semantic response caching for Microsoft.Extensions.AI chat clients, backed by Redis vector search,
+and exact-text embedding caching with batched misses on ordinary Redis.
 
 ## Install
 
@@ -40,3 +41,9 @@ public static class ChatSetup
 Supply your chat provider and embedding generator, and match Dimensions to its output. Requires standalone Redis Query Engine. Set UserId in request AdditionalProperties to isolate users; see the guide for scope, bypass, and cache lifetime behavior.
 
 [Read the guide](https://thomhurst.github.io/Respire/docs/guides/semantic-cache) for configuration, requirements, and further examples.
+
+For embedding generation, use `EmbeddingGeneratorBuilder<string, Embedding<float>>.UseRespireEmbeddingCache`
+with a Redis client and `RespireEmbeddingCacheOptions`. It preserves batch order, deduplicates misses,
+stores compact FLOAT32 vectors with optional TTL, and exposes hit/miss metrics.
+See the [embedding cache guide](https://thomhurst.github.io/Respire/docs/guides/embedding-cache)
+and [runnable sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.AI).
