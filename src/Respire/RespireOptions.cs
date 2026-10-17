@@ -337,6 +337,15 @@ public sealed record RespireOptions
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Maximum age before a multiplexed connection is replaced or an idle dedicated connection is closed. Null disables recycling.</summary>
+    /// <remarks>Replacement connects first and drains accepted work without replay. Busy dedicated leases finish before recycling.</remarks>
+    public TimeSpan? ConnectionMaxLifetime { get; init; }
+
+    /// <summary>Random additional lifetime, uniformly selected between zero and this value for each new connection. Defaults to zero.</summary>
+    public TimeSpan ConnectionMaxLifetimeJitter { get; init; }
+
+    internal TimeProvider ConnectionLifetimeTimeProvider { get; init; } = TimeProvider.System;
+
     /// <summary>Optional command, dedicated, and pub/sub recovery backoff and Cluster/Sentinel discovery policy. Null preserves existing scheduling.</summary>
     /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Sentinel fallback shares one budget per resolution.
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
@@ -626,6 +635,13 @@ public sealed record RespireOptions
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
+        Require(ConnectionMaxLifetime is null || ConnectionMaxLifetime >= TimeSpan.FromMilliseconds(1),
+            nameof(ConnectionMaxLifetime), "must be at least one millisecond or null");
+        Require(ConnectionMaxLifetimeJitter >= TimeSpan.Zero
+                && (ConnectionMaxLifetime is { } lifetime
+                    ? ConnectionMaxLifetimeJitter <= TimeSpan.MaxValue - lifetime
+                    : ConnectionMaxLifetimeJitter == TimeSpan.Zero),
+            nameof(ConnectionMaxLifetimeJitter), "must be non-negative, fit within the total lifetime, and be zero when ConnectionMaxLifetime is null");
         if (DedicatedPool is null) throw new RespireConfigurationException("RespireOptions.DedicatedPool cannot be null.");
         DedicatedPool.Validate();
         Require(Enum.IsDefined(BacklogPolicy), nameof(BacklogPolicy), "must be a defined backlog policy");
@@ -748,6 +764,9 @@ public sealed record RespireOptions
         bool enableMaintenanceNotifications = false)
         => ToTransportConnectionOptions() with
         {
+            ConnectionMaxLifetime = ConnectionMaxLifetime,
+            ConnectionMaxLifetimeJitter = ConnectionMaxLifetimeJitter,
+            ConnectionLifetimeTimeProvider = ConnectionLifetimeTimeProvider,
             MaintenanceNotifications = enableMaintenanceNotifications ? MaintenanceNotifications : RespireMaintenanceNotificationMode.Disabled,
             FailoverMaintenance = enableMaintenanceNotifications ? FailoverMaintenance : null,
             ClientName = ClientName,

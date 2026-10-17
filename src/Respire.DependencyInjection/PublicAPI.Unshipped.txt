@@ -3,6 +3,10 @@ Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.get -> Syste
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.LibraryName.get -> string?
 Respire.DependencyInjection.RespireOptionsBuilder.LibraryName.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetime.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetime.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetimeJitter.get -> System.TimeSpan
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetimeJitter.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool

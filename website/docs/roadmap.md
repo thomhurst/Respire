@@ -21,6 +21,9 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ## Available now
 
+- Opt-in [maximum connection lifetime](fundamentals/connections.md#maximum-connection-lifetime)
+  with independent jitter, replacement-before-drain multiplexing, and idle-only dedicated recycling.
+
 The previous release-gate, API, onboarding, and feature epics are complete
 ([#1567](https://github.com/thomhurst/Respire/issues/1567),
 [#1576](https://github.com/thomhurst/Respire/issues/1576),

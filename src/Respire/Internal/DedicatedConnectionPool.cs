@@ -56,6 +56,7 @@ internal sealed partial class DedicatedConnectionPool(
     private int _creating;
     private TaskCompletionSource? _availability;
     private ITimer? _idleTimer;
+    private ITimer? _connectionLifetimeTimer;
     private int _metricsRegistered;
     private bool _stopping;
     private bool _movingHandoffsCaptured;
@@ -100,6 +101,7 @@ internal sealed partial class DedicatedConnectionPool(
         internal bool CountedForIdleRetention;
         internal TaskCompletionSource? Closed;
         internal long IdleSince;
+        internal bool LifetimeExpired;
     }
 
     public async ValueTask<RespireConnection> RentAsync(
@@ -125,7 +127,7 @@ internal sealed partial class DedicatedConnectionPool(
                 cancellationToken.ThrowIfCancellationRequested();
                 if (reuseIdle && TryTakeIdle(compatibleKind, preferredZone, out var entry))
                 {
-                    if (entry.Connection.IsConnected)
+                    if (entry.Connection.IsConnected && !MarkLifetimeExpired(entry))
                     {
                         entry.State = State.Rented;
                         entry.Connection.SetLeaseRented(true);
@@ -268,7 +270,7 @@ internal sealed partial class DedicatedConnectionPool(
         lock (_gate)
         {
             if (!_connections.TryGetValue(connection, out var entry) || entry.State != State.Rented) return;
-            if (!_stopping && connection.IsConnected)
+            if (!_stopping && connection.IsConnected && !MarkLifetimeExpired(entry))
             {
                 if (_idle.Count == MaxIdle)
                 {
@@ -302,6 +304,7 @@ internal sealed partial class DedicatedConnectionPool(
                             _idleTimer.Change(timeout, timeout);
                     }
                     _idle.Add(entry);
+                    ScheduleIdleLifetimeLocked();
                     SignalAvailabilityLocked();
                 }
                 else
@@ -380,6 +383,8 @@ internal sealed partial class DedicatedConnectionPool(
             _stopping = true;
             _idleTimer?.Dispose();
             _idleTimer = null;
+            _connectionLifetimeTimer?.Dispose();
+            _connectionLifetimeTimer = null;
             SignalAvailabilityLocked();
             _completion ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             completion = _completion.Task;
@@ -442,6 +447,7 @@ internal sealed partial class DedicatedConnectionPool(
         Exception? failure = null;
         try
         {
+            if (entry.LifetimeExpired) entry.Connection.RecordConnectionRecycle();
             await entry.Connection.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception error)

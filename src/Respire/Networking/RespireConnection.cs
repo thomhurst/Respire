@@ -487,6 +487,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             connection.StartCredentialRefresh(options);
+            connection.InitializeConnectionLifetime(options);
             connection._connectionMetrics?.Ready(started);
         }
         catch (Exception error)
@@ -564,6 +565,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             connection.StartCredentialRefresh(options);
             connection._connectionMetrics?.Ready(started);
+            connection.InitializeConnectionLifetime(options);
             return connection;
         }
         catch (Exception error)
@@ -4495,6 +4497,9 @@ internal delegate bool RespirePushFilter(in RespValue value, bool hasPendingResp
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
+    internal TimeSpan? ConnectionMaxLifetime { get; init; }
+    internal TimeSpan ConnectionMaxLifetimeJitter { get; init; }
+    internal TimeProvider ConnectionLifetimeTimeProvider { get; init; } = TimeProvider.System;
     internal RespireDedicatedPoolOptions DedicatedPool { get; init; } = new();
     public override string ToString() => "RespireConnectionOptions { <redacted> }";
 

@@ -1149,6 +1149,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     private void ObservePublishedConnection(int slot, RespireConnection connection)
     {
+        ScheduleConnectionLifetime(slot, connection);
         SignalBacklogConnectionChanged();
         connection.ReplayUnpublishedMigrations();
         connection.MovingNotification += announcement => QueueMovingHandoff(slot, connection, announcement);

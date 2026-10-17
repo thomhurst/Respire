@@ -8,6 +8,10 @@ Respire.RespireTransaction.CommitAsync(Respire.RespireCondition! condition, Syst
 Respire.RespireTransaction.CommitAsync(System.ReadOnlySpan<Respire.RespireCondition!> conditions, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.RespireOptions.LibraryName.get -> string?
 Respire.RespireOptions.LibraryName.init -> void
+Respire.RespireOptions.ConnectionMaxLifetime.get -> System.TimeSpan?
+Respire.RespireOptions.ConnectionMaxLifetime.init -> void
+Respire.RespireOptions.ConnectionMaxLifetimeJitter.get -> System.TimeSpan
+Respire.RespireOptions.ConnectionMaxLifetimeJitter.init -> void
 Respire.RespireDedicatedPoolOptions
 Respire.RespireDedicatedPoolOptions.<Clone>$() -> Respire.RespireDedicatedPoolOptions!
 Respire.RespireDedicatedPoolOptions.Equals(Respire.RespireDedicatedPoolOptions? other) -> bool

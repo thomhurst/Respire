@@ -169,6 +169,7 @@ See [observability](observability.md#logging) for logger configuration.
 | `Respire` | 137 | `SentinelNotificationFirstDiscoveryFailure` | Warning |
 | `Respire` | 138 | `SentinelNotificationRepeatedDiscoveryFailure` | Debug |
 | `Respire` | 139 | `SentinelEvent` | Dynamic |
+| `Respire` | 140 | `ConnectionRecycled` | Information |
 | `Respire` | 140 | `LogMissingEpoch` | Warning |
 | `Respire` | 141 | `IgnoredConnectionStringOption` | Warning |
 | `Respire` | 4001 | `CredentialRefreshFailed` | Warning |

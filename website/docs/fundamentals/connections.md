@@ -97,6 +97,8 @@ await using var redis = await RespireClient.ConnectAsync(options);
 | `CommandTimeout` | 10 s | Reply budget; `null` disables it. Blocking commands use their own wait. |
 | `Connections` | 1 | Multiplexed connections (at least 1). Raise only when profiling shows one socket is saturated. |
 | `DedicatedPool` | Unlimited total, four idle | Limits and idle retention for dedicated leases; see below. |
+| `ConnectionMaxLifetime` | `null` (off) | Replaces aged multiplexed connections and closes aged idle dedicated connections; see [Maximum connection lifetime](#maximum-connection-lifetime). |
+| `ConnectionMaxLifetimeJitter` | Zero | Random additional lifetime per connection, between zero and this duration. |
 | `Database` | 0 | Logical database. |
 | `LibraryName` | `"Respire"` | Library identity in `CLIENT LIST` / `CLIENT INFO`. Set `null` to disable library metadata. |
 | `Protocol` | `Auto` | See [Protocol negotiation](#protocol-negotiation). |
@@ -121,6 +123,47 @@ For expiring passwords or tokens, use a caller-owned [`IRespireCredentialProvide
 - Caller cancellation throws `OperationCanceledException` with the caller's token, and wins if both fire.
 - The Redis handshake after TCP/TLS setup uses `CommandTimeout`.
 - `ConnectTimeout` bounds each attempt, not a whole dedicated-connection rental. A pool replacement can trigger reselection, which never replays an admitted command. Cluster limits these retries; standalone and Sentinel rentals retry until success, cancellation, disposal, or a terminal failure.
+
+## Maximum connection lifetime
+
+Long-lived connections can stay pinned to an old backend behind DNS, a proxy, or a load balancer.
+Enable periodic recycling to give new connections a chance to reach another backend:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("cache.internal", 6379) },
+    ConnectionMaxLifetime = TimeSpan.FromMinutes(30),
+    ConnectionMaxLifetimeJitter = TimeSpan.FromMinutes(5),
+};
+```
+
+Each connection receives its own deadline after its handshake succeeds. The example uses an age
+between 30 and 35 minutes. Jitter is additive and uniformly distributed; it spreads replacement
+attempts rather than synchronizing all sockets. `ConnectionMaxLifetime` must be at least one
+millisecond. Jitter must be non-negative and requires a configured lifetime.
+
+Multiplexed connections open and validate a replacement before publishing it for new commands.
+Each replacement uses a fresh socket connect, including the platform's DNS resolution, TLS,
+authentication, and tracking setup. Platform DNS caches and load-balancer policies still determine
+which backend receives that connection. If setup fails, the old socket remains available and
+replacement is retried after one second. Accepted commands and streamed replies drain on the old
+socket without replay or a forced lifetime drain deadline. Existing failure and command-timeout
+behavior still applies, and explicit client disposal aborts pending work. Very slow replies can
+therefore keep old sockets open beyond their configured age. Tracked client-side caches are flushed
+at publication so cached entries do not depend on a retired tracking connection.
+
+Dedicated blocking, transaction, and upload leases recycle only when idle or returned. An expired
+borrowed lease finishes normally; expiration never interrupts a blocking command or upload.
+Idle lifetime expiration applies even without `DedicatedPool.IdleTimeout` and takes precedence
+over its minimum retention count. The next rental creates a replacement when needed.
+
+The option applies to multiplexed data connections and dedicated pools, including Cluster and
+Sentinel data endpoints. Pub/sub and transient control connections retain their existing lifecycle.
+With lifetime disabled, no lifetime timer or worker is created. Multiplexed command submission
+performs no lifetime checks; dedicated rentals and returns do not sample time. A successful recycle emits `redis.client.connection.recycle` in `ConnectionBasic`
+and the `ConnectionRecycled` information log event (140). Closed sockets use the `max_lifetime`
+close reason. Diagnostics use the bounded asynchronous connection measurement delivery queue.
 
 ## Dedicated connection pools
 

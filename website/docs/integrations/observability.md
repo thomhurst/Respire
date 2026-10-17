@@ -190,6 +190,7 @@ on the `Respire` meter. They carry `redis.client.library=Respire:<version>` and
 | `db.client.connection.create_time` | `ConnectionBasic` | `s` | Socket connect, TLS, and Redis handshake |
 | `redis.client.connection.relaxed_timeout` | `ConnectionBasic` | `{relaxation}` | Connections with a timeout currently raised by a maintenance window |
 | `redis.client.connection.handoff` | `ConnectionBasic` | `1` | Old connections replaced by a published `MOVING` handoff |
+| `redis.client.connection.recycle` | `ConnectionBasic` | `{connection}` | Physical connections recycled after their configured maximum lifetime |
 | `db.client.connection.pending_requests` | `ConnectionAdvanced` | `{request}` | Replies still owed, including cancelled ones still draining |
 | `db.client.connection.wait_time` | `ConnectionAdvanced` | `s` | Successful dedicated acquisition, including capacity waiting and connection setup; immediate idle reuse emits nothing |
 | `redis.client.connection.closed` | `ConnectionAdvanced` | `{connection}` | Connected sockets that close, including failed handshakes |
@@ -400,6 +401,7 @@ observation; event instruments emit only events whose group was selected when th
 | --- | --- |
 | `application_close` | Disposal, retirement, or caller cancellation during a handshake |
 | `pool_eviction_idle` | Dedicated idle-capacity overflow |
+| `max_lifetime` | Planned multiplexed replacement or expired idle dedicated lease |
 | `server_close` | Server closed or reset the connection, including a reset wrapped by TLS |
 | `error` | Transport or handshake failure, including handshake timeout; adds `error.type` and `redis.client.errors.category` (`network`, `tls`, `auth`, `server`, or `other`) |
 

@@ -18,7 +18,9 @@ internal sealed partial class DedicatedConnectionPool
 
     private void PauseIdleTimerIfEmptyLocked()
     {
-        if (_idle.Count == 0) _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        if (_idle.Count != 0) return;
+        _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _connectionLifetimeTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     private void RetireIdle()
