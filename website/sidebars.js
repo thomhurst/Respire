@@ -88,6 +88,7 @@ const sidebars = {
         'guides/stream-workers',
         'guides/job-queues',
           'guides/reliable-queues',
+          'guides/reliable-topics',
         'guides/stream-dashboard',
         'guides/pub-sub',
         'guides/keyspace-notifications',

@@ -6,6 +6,11 @@ For caller-driven message processing without hosted handlers, use
 [`RespireReliableQueue<T>`](https://thomhurst.github.io/Respire/docs/guides/reliable-queues)
 with visibility timeouts, ACK/NACK, delivery limits, dead letters and optional send deduplication.
 
+For durable fanout, use
+[`RespireReliableTopic<T>`](https://thomhurst.github.io/Respire/docs/guides/reliable-topics).
+Each named subscription receives every retained publication, with competing consumers,
+ACK/NACK, independent dead letters, retention bounds and replay by ID or timestamp.
+
 ## Install
 
 ```sh

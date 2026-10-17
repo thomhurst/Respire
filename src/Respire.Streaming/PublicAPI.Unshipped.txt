@@ -1,4 +1,24 @@
 #nullable enable
+Respire.Streaming.RespireReliableTopic<T>
+Respire.Streaming.RespireReliableTopic<T>.PublishAsync(T payload, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId>
+Respire.Streaming.RespireReliableTopic<T>.RespireReliableTopic(Respire.IRespireClient! client, string! topicName, System.Func<T, byte[]!>! serialize, System.Func<byte[]!, T>! deserialize, int deliveryLimit = 5, int? maximumLength = null, System.TimeSpan? maximumAge = null) -> void
+Respire.Streaming.RespireReliableTopic<T>.StreamKey.get -> string!
+Respire.Streaming.RespireReliableTopic<T>.SubscribeAsync(string! subscriptionName, Respire.RespireStreamId? start = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireTopicSubscription<T>!>
+Respire.Streaming.RespireTopicMessage<T>
+Respire.Streaming.RespireTopicMessage<T>.DeliveryCount.get -> int
+Respire.Streaming.RespireTopicMessage<T>.Id.get -> Respire.RespireStreamId
+Respire.Streaming.RespireTopicMessage<T>.Payload.get -> T
+Respire.Streaming.RespireTopicMessage<T>.Receipt.get -> string!
+Respire.Streaming.RespireTopicSubscription<T>
+Respire.Streaming.RespireTopicSubscription<T>.AckAsync(Respire.Streaming.RespireTopicMessage<T>! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireTopicSubscription<T>.ConsumeAsync(System.TimeSpan visibilityTimeout, int batchSize = 1, System.TimeSpan? pollInterval = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Respire.Streaming.RespireTopicMessage<T>!>!
+Respire.Streaming.RespireTopicSubscription<T>.DeadLetterStreamKey.get -> string!
+Respire.Streaming.RespireTopicSubscription<T>.Name.get -> string!
+Respire.Streaming.RespireTopicSubscription<T>.NackAsync(Respire.Streaming.RespireTopicMessage<T>! message, System.TimeSpan delay = default(System.TimeSpan), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireTopicSubscription<T>.ReceiveAsync(System.TimeSpan visibilityTimeout, int max = 1, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireTopicMessage<T>![]!>
+Respire.Streaming.RespireTopicSubscription<T>.SeekAsync(Respire.RespireStreamId position, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireTopicSubscription<T>.SeekAsync(System.DateTimeOffset timestamp, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.Streaming.RespireTopicSubscription<T>.StreamKey.get -> string!
 Respire.Streaming.RespireQueueMessage<T>
 Respire.Streaming.RespireQueueMessage<T>.DeliveryCount.get -> int
 Respire.Streaming.RespireQueueMessage<T>.Id.get -> Respire.RespireStreamId

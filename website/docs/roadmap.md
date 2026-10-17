@@ -132,6 +132,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   parent/child flows with retained results and failure policies, flat batches with atomic
   success/failure/completion callback publication, progress counts, cooperative cancellation and dashboard monitoring, and durable
   UTC cron/fixed-interval schedules with cross-instance tick deduplication and missed-tick policies.
+- [Reliable topics](guides/reliable-topics.md) with durable named subscriptions, competing consumers,
+  acknowledgement leases, delayed rejection, per-subscription dead letters, retention and replay.
 - [Reliable message queues](guides/reliable-queues.md) with per-delivery visibility timeouts,
   receipt-fenced ACK, delayed NACK, delivery limits, dead letters and optional send deduplication.
 - [Hosted stream consumers](guides/stream-workers.md) with bounded concurrency, scoped typed
