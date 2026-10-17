@@ -144,8 +144,11 @@ internal sealed partial class ClusterRouter
             // Sampling may await: revalidate both roles together against the latest publication.
             var currentRoute = RoutingSnapshot[slot];
             if (IsCurrentNearestCandidate(selected, currentRoute, includePrimary)
-                && (_options.ReplicaLatencyTolerance is null || best.AllBandCandidatesMatch((currentRoute, includePrimary),
-                    static (candidate, state) => IsCurrentNearestCandidate(candidate, state.currentRoute, state.includePrimary))))
+                && (_options.ReplicaLatencyTolerance is null || best.AllBandCandidatesMatch((currentRoute, includePrimary, sampledPrimary: owner),
+                    // A role change invalidates the priority assigned before sampling, even if both roles are eligible.
+                    static (candidate, state) => IsCurrentNearestCandidate(candidate, state.currentRoute, state.includePrimary)
+                        && ReferenceEquals(candidate.Multiplexer, state.sampledPrimary)
+                            == ReferenceEquals(candidate.Multiplexer, state.currentRoute.Primary))))
             {
                 if (routes is { IsDueForRevalidation: true })
                     _ = JoinReplicaRefresh(routes, slot);

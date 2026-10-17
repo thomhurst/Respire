@@ -413,4 +413,44 @@ public partial class NearestReadRoutingTests
         var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.Replica, deadline.Token, default);
         await Assert.That(selected.Port).IsEqualTo(remaining.Port);
     }
+
+    [Test]
+    public async Task AzBandRejectsReplicaPromotedByMovedDuringSampling()
+    {
+        await using var primary = BandServer("primary", "local");
+        await using var promoted = BandServer("promoted", "local");
+        await using var remaining = BandServer("remaining", "local");
+        var changed = false;
+        foreach (var server in new[] { primary, promoted, remaining })
+        {
+            var original = server.ReplyOverride!;
+            server.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+                ? changed ? SlotReply(promoted.Port, 0, 16383, remaining.Port)
+                    : SlotReply(primary.Port, 0, 16383, promoted.Port, remaining.Port)
+                : original(id, command);
+        }
+        await using var client = await RespireClient.ConnectAsync(Options(primary) with
+        {
+            UseCluster = true, ClusterTopologyRefreshInterval = null, ClientAvailabilityZone = "local",
+            ReplicaLatencyTolerance = TimeSpan.Zero,
+        });
+        var router = client.Core.Cluster!;
+        var promotedNode = KnownReplicaRoutes(router, 1)!.Nodes.Single(node => node.ActiveConnectionEndpoint.Port == promoted.Port);
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>(async (connection, _) =>
+        {
+            if (connection.Port == promoted.Port && !changed)
+            {
+                await Task.Yield();
+                changed = true;
+                // MOVED changes one slot while other slots retain this replica's transport.
+                router.SetSlotOwner(1, promotedNode);
+            }
+            return connection.Port == promoted.Port ? 10L : 100L;
+        }, () => 0);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var selected = await router.GetReadConnectionAsync(1, RespireReadFrom.AzAffinityReplicasAndPrimary, deadline.Token, default);
+        await Assert.That(changed).IsTrue();
+        await Assert.That(selected.Port).IsEqualTo(remaining.Port);
+        await Assert.That(client.GetReadRoutingSnapshot()!.EligibleEndpoints.Single().Port).IsEqualTo(remaining.Port);
+    }
 }
