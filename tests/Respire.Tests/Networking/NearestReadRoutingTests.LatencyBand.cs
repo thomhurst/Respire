@@ -10,6 +10,94 @@ namespace Respire.Tests.Networking;
 public partial class NearestReadRoutingTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LocalBandReplicaDoesNotAcquireUnavailablePrimary(bool cluster)
+    {
+        await using var seed = BandServer("primary", "remote");
+        await using var primary = BandServer("primary", "local");
+        await using var replica = BandServer("replica", "local");
+        var original = seed.ReplyOverride!;
+        seed.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+        var attempts = 0;
+        await using var client = RespireClient.Create(Options(cluster ? seed : primary, replica) with
+        {
+            UseCluster = cluster, ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
+            ClusterTopologyRefreshInterval = null, ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary,
+            ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == primary.Port)
+                {
+                    Interlocked.Increment(ref attempts);
+                    throw new RespireConnectionException("The primary is unavailable.");
+                }
+                var tcp = new System.Net.Sockets.TcpClient();
+                await tcp.ConnectAsync(host, port, token);
+                return tcp.GetStream();
+            },
+        });
+        if (cluster)
+            client.Core.Cluster!.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
+        else
+            client.Core.ReadRouter.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("replica");
+        await Assert.That(attempts).IsEqualTo(0);
+        await Assert.That(client.GetReadRoutingSnapshot()!.EligibleEndpoints.Single().Port).IsEqualTo(replica.Port);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LocalBandWaitsForUnknownReplicasBeforePrimary(bool cluster)
+    {
+        await using var primary = BandServer("primary", "local");
+        await using var replica = BandServer("replica", "local");
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+        await using var sentinel = new FakeRespServer(16)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? Encoding.ASCII.GetBytes($"*2\r\n+127.0.0.1\r\n+{primary.Port}\r\n")
+                : command.StartsWith("SENTINEL REPLICAS ") ? SentinelReplicaReply(replica.Port) : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(cluster ? primary : sentinel) with
+        {
+            UseCluster = cluster, SentinelPrimaryName = cluster ? null : "mymaster",
+            ClusterTopologyRefreshInterval = null, ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary,
+            ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
+        });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (cluster)
+        {
+            var router = client.Core.Cluster!;
+            var slot = new RespireKey("key").ClusterSlot;
+            router.SetSlotOwner(slot, router.GetKnownSlotOwner(slot)!);
+            router.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
+            primary.GateCommand("CLUSTER SLOTS", release.Task, () => entered.TrySetResult());
+        }
+        else
+        {
+            client.Core.ReadRouter.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
+            sentinel.GateCommand("SENTINEL REPLICAS ", release.Task, () => entered.TrySetResult());
+        }
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var read = client.GetStringAsync("key", deadline.Token).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            await Assert.That(read.IsCompleted).IsFalse();
+        }
+        finally { release.TrySetResult(); }
+        await Assert.That(await read).IsEqualTo("replica");
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET "))).IsFalse();
+    }
+
+    [Test]
     [Arguments(0, RespireReadFrom.Replica)]
     [Arguments(1, RespireReadFrom.Replica)]
     [Arguments(2, RespireReadFrom.Replica)]

@@ -4,7 +4,7 @@ namespace Respire;
 /// <remarks>
 /// This snapshot performs no I/O and holds no transports. Eligibility reflects the observed
 /// role, link, zone and RTT at selection time; topology and health can change afterward.
-/// Client views share the router's last observation. Concurrent selections may publish in any order.
+/// Unchanged bands reuse their observation. Client views share it; concurrent selections may publish in any order.
 /// </remarks>
 public sealed class RespireReadRoutingSnapshot
 {
@@ -15,7 +15,7 @@ public sealed class RespireReadRoutingSnapshot
         EligibleEndpoints = eligible;
     }
 
-    /// <summary>UTC time at which the selection snapshot was captured.</summary>
+    /// <summary>UTC time at which this band observation was captured. Unchanged bands retain this time.</summary>
     public DateTimeOffset CapturedAt { get; } = DateTimeOffset.UtcNow;
     /// <summary>Policy used for this selection.</summary>
     public RespireReadFrom ReadFrom { get; }

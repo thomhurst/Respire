@@ -30,22 +30,12 @@ internal sealed partial class ClusterRouter
         RespireConnection? primary = null;
         Exception? lastError = previousFailure;
         var owner = GetKnownSlotOwner(slot);
-        if (includePrimary && (owner is null || excluded?.Contains(owner) != true && sampler.CanConnect(owner)))
+        if (readFrom == RespireReadFrom.Nearest)
         {
-            try
-            {
-                primary = await GetConnectionAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
-                if (preferredZone is not null && primary.Multiplexer is { } primaryNode)
-                    primary = primaryNode.GetConnectionForZone(preferredZone, slot);
-                if (primary.Multiplexer is { } connected) sampler.ConnectionSucceeded(connected);
-                if (excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary)) primary = null;
-            }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
-            {
-                ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
-                lastError = ConnectionFailures.Combine(lastError, error);
-                if (owner is not null) sampler.ConnectionFailed(owner);
-            }
+            var candidate = await GetNearestPrimaryAsync(slot, sampler, cancellationToken, discovery, observation,
+                preferredZone, excluded, excludedPeer).ConfigureAwait(false);
+            primary = candidate.Primary;
+            lastError = ConnectionFailures.Combine(lastError, candidate.Failure);
         }
         var route = RoutingSnapshot[slot];
         owner = route.Primary;
@@ -131,6 +121,23 @@ internal sealed partial class ClusterRouter
             if (pending.Candidate.IsAcceptingCommands)
                 best.Consider(pending.Candidate, latency, pending.Linked, pending.Order, pending.Priority);
         }
+        if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary && !best.HasPreferredCandidate)
+        {
+            var candidate = await GetNearestPrimaryAsync(slot, sampler, cancellationToken, discovery, observation,
+                preferredZone, excluded, excludedPeer).ConfigureAwait(false);
+            lastError = ConnectionFailures.Combine(lastError, candidate.Failure);
+            if (candidate.Primary is { } fallback)
+            {
+                var connection = fallback.Multiplexer is { } multiplexer
+                    ? NearestReadSelection.AvoidPendingProbe(multiplexer, fallback, sampler, preferredZone) ?? fallback : fallback;
+                using var wait = NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken);
+                var latency = await NearestReadSelection.GetLatencyAsync(
+                    sampler.GetLatencyAsync(connection, default, probeDeadline: deadline), wait, cancellationToken).ConfigureAwait(false);
+                if (connection.IsAcceptingCommands)
+                    best.Consider(connection, latency, order: 0, priority: ReadFallbackPolicy.LatencyPriority(readFrom, true,
+                        ReadFallbackPolicy.IsSameZone(connection, preferredZone), true));
+            }
+        }
         if (best.TryGet(out var selected))
         {
             var node = selected.Multiplexer;
@@ -142,8 +149,12 @@ internal sealed partial class ClusterRouter
                 if (routes is { IsDueForRevalidation: true })
                     _ = JoinReplicaRefresh(routes, slot);
                 if (_options.ReplicaLatencyTolerance is not null)
-                    Volatile.Write(ref LastReadSelection, best.CaptureSnapshot(readFrom, slot,
-                        static connection => new(connection.Host, connection.Port)));
+                {
+                    var previous = Volatile.Read(ref LastReadSelection);
+                    var snapshot = best.CaptureSnapshot(readFrom, slot,
+                        static connection => new(connection.Host, connection.Port), previous);
+                    if (!ReferenceEquals(previous, snapshot)) Volatile.Write(ref LastReadSelection, snapshot);
+                }
                 return selected;
             }
         }
@@ -162,6 +173,30 @@ internal sealed partial class ClusterRouter
         }
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for {readFrom} reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
+    }
+
+    private async ValueTask<(RespireConnection? Primary, Exception? Failure)> GetNearestPrimaryAsync(
+        int slot, ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken,
+        DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, string? preferredZone,
+        HashSet<RespireConnectionMultiplexer>? excluded, RespireConnection? excludedPeer)
+    {
+        var owner = GetKnownSlotOwner(slot);
+        if (owner is not null && (excluded?.Contains(owner) == true || !sampler.CanConnect(owner))) return default;
+        try
+        {
+            var primary = await GetConnectionAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
+            if (preferredZone is not null && primary.Multiplexer is { } node)
+                primary = node.GetConnectionForZone(preferredZone, slot);
+            if (primary.Multiplexer is { } connected) sampler.ConnectionSucceeded(connected);
+            return excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary)
+                ? default : (primary, null);
+        }
+        catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+        {
+            ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint);
+            if (owner is not null) sampler.ConnectionFailed(owner);
+            return (null, error);
+        }
     }
 
     private void StartNearestReplicaDiscovery(int slot)

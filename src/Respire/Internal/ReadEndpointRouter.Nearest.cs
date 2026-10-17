@@ -16,7 +16,6 @@ internal sealed partial class ReadEndpointRouter
         RespireConnection? excludedPeer = null)
     {
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
-        var includePrimary = readFrom is RespireReadFrom.Nearest or RespireReadFrom.AzAffinityReplicasAndPrimary;
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
         if (Volatile.Read(ref _disposed) != 0)
@@ -26,25 +25,12 @@ internal sealed partial class ReadEndpointRouter
         }
         Selection? primary = null;
         Exception? lastError = previousFailure;
-        var primaryCandidate = Core.Multiplexer;
-        if (includePrimary && attempt?.ContainsFailure(primaryCandidate.ActiveConnectionEndpoint) != true && sampler.CanConnect(primaryCandidate))
+        if (readFrom == RespireReadFrom.Nearest)
         {
-            try
-            {
-                primary = await GetPrimaryAsync(cancellationToken, observation, preferredZone, attempt, readyOnly).ConfigureAwait(false);
-                if (excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary.Value.Connection))
-                    primary = null;
-                sampler.ConnectionSucceeded(primaryCandidate);
-            }
-            catch (BacklogSelectionRequiredException) when (readyOnly) { }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
-            {
-                RecordCandidateFailure(observation, error,
-                    Core.Sentinel is null ? primaryCandidate.ActiveConnectionEndpoint : observation.Endpoint);
-                lastError = ConnectionFailures.Combine(lastError, Core.Sentinel is null
-                    ? ConnectionFailures.AtEndpoint(error, primaryCandidate.ActiveConnectionEndpoint) : error);
-                sampler.ConnectionFailed(primaryCandidate);
-            }
+            var candidate = await GetNearestPrimaryAsync(sampler, cancellationToken, observation, preferredZone,
+                attempt, readyOnly, excludedPeer).ConfigureAwait(false);
+            primary = candidate.Primary;
+            lastError = ConnectionFailures.Combine(lastError, candidate.Failure);
         }
 
         var endpoints = replicaEndpoints ?? Volatile.Read(ref _replicas);
@@ -120,6 +106,26 @@ internal sealed partial class ReadEndpointRouter
                         candidate.Replica is null, ReadFallbackPolicy.IsSameZone(candidate.Connection, preferredZone),
                         candidate.Replica?.IsReplicationLinkDown != true));
             }
+            // The AZ policy must discover and sample preferred replicas before attempting a
+            // potentially unavailable primary. Lower tiers still compete with a local primary.
+            if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary && !best.HasPreferredCandidate)
+            {
+                var candidate = await GetNearestPrimaryAsync(sampler, cancellationToken, observation, preferredZone,
+                    attempt, readyOnly, excludedPeer).ConfigureAwait(false);
+                lastError = ConnectionFailures.Combine(lastError, candidate.Failure);
+                if (candidate.Primary is { } fallback)
+                {
+                    var connection = NearestReadSelection.AvoidPendingProbe(fallback.Primary!, fallback.Connection, sampler, preferredZone)
+                        ?? fallback.Connection;
+                    using var wait = !readyOnly ? NearestReadSelection.CreateWaitCancellation(deadline, cancellationToken) : null;
+                    var latency = await NearestReadSelection.GetLatencyAsync(
+                        sampler.GetLatencyAsync(connection, default, probeDeadline: deadline), wait, cancellationToken).ConfigureAwait(false);
+                    if (connection.IsAcceptingCommands)
+                        best.Consider(fallback with { Connection = connection }, latency, order: 0,
+                            priority: ReadFallbackPolicy.LatencyPriority(readFrom, true,
+                                ReadFallbackPolicy.IsSameZone(connection, preferredZone), true));
+                }
+            }
             if (best.TryGet(out var selected))
             {
                 if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
@@ -127,8 +133,12 @@ internal sealed partial class ReadEndpointRouter
                         : ReferenceEquals(selected.Primary, Core.Multiplexer)))
                 {
                     if (core.Options.ReplicaLatencyTolerance is not null)
-                        Volatile.Write(ref LastReadSelection, best.CaptureSnapshot(readFrom, null,
-                            static value => new(value.Connection.Host, value.Connection.Port)));
+                    {
+                        var previous = Volatile.Read(ref LastReadSelection);
+                        var snapshot = best.CaptureSnapshot(readFrom, null,
+                            static value => new(value.Connection.Host, value.Connection.Port), previous);
+                        if (!ReferenceEquals(previous, snapshot)) Volatile.Write(ref LastReadSelection, snapshot);
+                    }
                     return selected;
                 }
                 lastError ??= new RespireConnectionException("The read topology changed during selection.");
@@ -165,6 +175,29 @@ internal sealed partial class ReadEndpointRouter
             // Handoff retries selection; keep its unused ticket unless a peer advanced it.
             Interlocked.CompareExchange(ref _nextReplica, unchecked((int)start - 1), unchecked((int)start));
             throw;
+        }
+    }
+
+    private async ValueTask<(Selection? Primary, Exception? Failure)> GetNearestPrimaryAsync(
+        ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken,
+        RespireTelemetry.ErrorObservation observation, string? preferredZone, ReadAttempt? attempt,
+        bool readyOnly, RespireConnection? excludedPeer)
+    {
+        var candidate = Core.Multiplexer;
+        if (attempt?.ContainsFailure(candidate.ActiveConnectionEndpoint) == true || !sampler.CanConnect(candidate)) return default;
+        try
+        {
+            var primary = await GetPrimaryAsync(cancellationToken, observation, preferredZone, attempt, readyOnly).ConfigureAwait(false);
+            sampler.ConnectionSucceeded(candidate);
+            return excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary.Connection)
+                ? default : (primary, null);
+        }
+        catch (BacklogSelectionRequiredException) when (readyOnly) { return default; }
+        catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+        {
+            RecordCandidateFailure(observation, error, Core.Sentinel is null ? candidate.ActiveConnectionEndpoint : observation.Endpoint);
+            sampler.ConnectionFailed(candidate);
+            return (null, Core.Sentinel is null ? ConnectionFailures.AtEndpoint(error, candidate.ActiveConnectionEndpoint) : error);
         }
     }
 

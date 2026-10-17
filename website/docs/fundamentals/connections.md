@@ -736,7 +736,8 @@ probes remain excluded. This option does not measure replication lag or provide 
 
 `RespireClient.GetReadRoutingSnapshot()` returns the last completed band selection's
 `EligibleEndpoints`, policy, capture time and Cluster slot (null outside Cluster).
-The snapshot is immutable and performs no I/O. Views share this observation; concurrent selections
+The snapshot is immutable and performs no I/O. An unchanged eligible band, policy and slot reuse the
+same observation and capture time, avoiding per-read snapshot allocation. Views share this observation; concurrent selections
 can publish in any order. It returns null before a band selection completes. Eligibility can change
 after capture as topology, health and RTT estimates change.
 
