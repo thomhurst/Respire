@@ -2,6 +2,8 @@
 
 ReadySendStrategy.patch restores direct primary dispatch from before
 445869b2f3284ee82c7fcf40537eb4f498b104e2, rebased onto current production code.
+ReadySendStrategy.BeforeReplicaRedirects.patch retains the prior control for
+baselines before the replica redirect opt-in excluded direct reply sources.
 ReadySendStrategy.BeforeOptOut.patch retains the primary-backlog control for
 the merge's first parent before OPTOUT's direct-send exclusion was introduced.
 ReadySendStrategy.Standalone.patch retains the prior standalone-only backlog
@@ -29,7 +31,8 @@ def git_environment() -> dict[str, str]:
 def prepare(checkout: Path, evidence: Path) -> None:
     checkout = checkout.resolve()
     patches = [Path(__file__).with_name(name).resolve() for name in
-               ('ReadySendStrategy.patch', 'ReadySendStrategy.BeforeOptOut.patch', 'ReadySendStrategy.Standalone.patch')]
+               ('ReadySendStrategy.patch', 'ReadySendStrategy.BeforeReplicaRedirects.patch',
+                'ReadySendStrategy.BeforeOptOut.patch', 'ReadySendStrategy.Standalone.patch')]
     environment = git_environment()
 
     def git(*arguments: str) -> str:

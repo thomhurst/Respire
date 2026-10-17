@@ -20,6 +20,7 @@ internal static class RespireConfiguration
         ReplicaRefreshInterval = section.GetValue("ReplicaRefreshInterval", options.ReplicaRefreshInterval),
         UseCluster = section.GetValue("UseCluster", options.UseCluster),
         IncludeCrossSlotKeyContext = section.GetValue("IncludeCrossSlotKeyContext", options.IncludeCrossSlotKeyContext),
+        EnableReplicaRedirects = section.GetValue("EnableReplicaRedirects", options.EnableReplicaRedirects),
         SplitCrossSlotCommands = section.GetValue("SplitCrossSlotCommands", options.SplitCrossSlotCommands),
         SentinelPrimaryName = section.GetValue("SentinelPrimaryName", options.SentinelPrimaryName),
         Username = section.GetValue("Username", options.Username),

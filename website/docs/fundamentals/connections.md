@@ -641,7 +641,11 @@ command before executing it. Cluster continues to use its existing `MOVED`/`ASK`
 Read-policy connections send `READONLY` after successful capability negotiation. Read-only
 commands, including `SCAN` and `RANDOMKEY`, can therefore keep using replicas and accept
 replica staleness; writes always use the primary route. A primary-policy connection pointed
-at a replica follows redirects for reads too. Server-node operations, blocking commands,
+at a replica follows redirects for reads too, except server-cursor commands (`SCAN`, `HSCAN`,
+`SSCAN`, and `ZSCAN`). These commands keep their selected server from the first page onward
+and surface `REDIRECT` instead of moving a cursor. Use an explicit replica read policy to scan
+the replica, or configure the primary endpoint to scan the primary.
+Server-node operations, blocking commands,
 streamed payloads, and connection-affine transactions are not automatically replayed. Batches
 retain their existing per-command error behavior. Prefer a primary endpoint for these APIs.
 

@@ -34,9 +34,11 @@ public class ReplicaRedirectIntegrationTests
         // and FLUSHDB must follow REDIRECT to the real primary.
         using (var key = await replica.ExecuteAsync(RespireCommands.Key.RANDOMKEY, deadline.Token))
             await Assert.That(key.AsString()).IsEqualTo("redirect:key");
-        var keys = new List<string>();
-        await foreach (var key in replica.Keys.ScanAsync(cancellationToken: deadline.Token)) keys.Add(key);
-        await Assert.That(keys).IsEquivalentTo(["redirect:key"]);
+        await using (var scan = replica.Keys.ScanAsync(cancellationToken: deadline.Token).GetAsyncEnumerator())
+        {
+            var error = await Assert.That(async () => _ = await scan.MoveNextAsync()).Throws<RespireServerException>();
+            await Assert.That(error!.Code).IsEqualTo("REDIRECT");
+        }
         await replica.Server.FlushDatabaseAsync(deadline.Token);
         await Assert.That(await primary.Server.DatabaseSizeAsync(deadline.Token)).IsEqualTo(0);
 
@@ -47,5 +49,9 @@ public class ReplicaRedirectIntegrationTests
             Protocol = protocol, Connections = 1, EnableReplicaRedirects = true, ReadFrom = RespireReadFrom.Replica,
         }, deadline.Token);
         await Assert.That(await reader.GetStringAsync("missing", deadline.Token)).IsNull();
+        var keys = new List<string>();
+        await foreach (var key in reader.Keys.ScanAsync(cancellationToken: deadline.Token)) keys.Add(key);
+        // The replica may still expose the seeded key until it applies FLUSHDB.
+        await Assert.That(keys.All(key => key == "redirect:key")).IsTrue();
     }
 }

@@ -211,7 +211,7 @@ public sealed record RespireOptions
 
     /// <summary>Advertise Valkey's CLIENT CAPA REDIRECT and follow standalone replica redirects for individual commands.</summary>
     /// <remarks>Disabled by default. Replica read connections also request READONLY when the capability succeeds.
-    /// Endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>
+    /// Server-cursor commands, endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>
     public bool EnableReplicaRedirects { get; init; }
 
     /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
