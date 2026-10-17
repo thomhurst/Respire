@@ -277,8 +277,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     internal event Action? PendingCommandsFailing;
 
     /// <summary>
-    /// Redis's connection ID, populated only when reliable cross-connection correction ordering
-    /// is enabled. Zero means it has not been requested.
+    /// Redis's connection ID, populated for reliable cross-connection correction ordering or
+    /// opted-in dedicated blocking cancellation. Zero means it has not been requested.
     /// </summary>
     internal long ServerClientId => Volatile.Read(ref _serverClientId);
 
@@ -711,7 +711,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return RespireProtocol.Resp2;
         }
         ValidateHelloProtocol(in hello);
-        CaptureHelloMetadata(in hello);
+        CaptureHelloMetadata(in hello, options);
         _logger?.HelloResp3Negotiated(Host, Port);
         return RespireProtocol.Resp3;
     }
@@ -805,7 +805,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     else if (failure is null && step == "HELLO")
                     {
                         ValidateHelloProtocol(in reply);
-                        CaptureHelloMetadata(in reply);
+                        CaptureHelloMetadata(in reply, options);
                     }
                     else if (failure is null && step == "INFO SERVER")
                     {
@@ -938,14 +938,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         throw new RespireConnectionException(message, new RespireProtocolException(message) { Endpoint = new(Host, Port) }) { Endpoint = new(Host, Port) };
     }
 
-    private void CaptureHelloMetadata(in RespValue reply)
+    private void CaptureHelloMetadata(in RespValue reply, RespireConnectionOptions options)
     {
         if (reply.Type != RespireDataType.Map) return;
         var fields = reply.AsArray();
         for (var index = 0; index + 1 < fields.Length; index += 2)
         {
             if (fields[index].Type is not (RespireDataType.BulkString or RespireDataType.SimpleString)) continue;
-            if (fields[index].AsSpan().SequenceEqual("id"u8)
+            // Multiplexers treat a captured ID as a correction-fencing obligation. Learning
+            // HELLO metadata must not opt ordinary sockets into CLIENT KILL permissions.
+            if (options.IsDedicatedConnection && options.DedicatedPool.UnblockOnCancel
+                && fields[index].AsSpan().SequenceEqual("id"u8)
                 && fields[index + 1].Type == RespireDataType.Integer && fields[index + 1].AsInteger() > 0)
                 Interlocked.CompareExchange(ref _serverClientId, fields[index + 1].AsInteger(), 0);
             else if (fields[index].AsSpan().SequenceEqual("availability_zone"u8)

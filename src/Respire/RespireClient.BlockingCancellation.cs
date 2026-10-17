@@ -25,12 +25,14 @@ public sealed partial class RespireClient
                 var control = owner.GetConnection();
                 // IDs are local to a server. Never follow Sentinel failover, MOVING, DNS changes,
                 // or a reconnect to another peer when sending this connection-specific command.
-                if (control.NetworkPeerAddress is { } peer && peer == connection.NetworkPeerAddress
-                    && control.NetworkPeerPort == connection.NetworkPeerPort)
+                if ((control.NetworkPeerAddress is { } peer && peer == connection.NetworkPeerAddress
+                        && control.NetworkPeerPort == connection.NetworkPeerPort)
+                    || (control.Port == 0 && connection.Port == 0 && control.PeerKey == connection.PeerKey))
                     return SendUnblockableAsync(connection, control, command, cancellationToken,
                         errorAttempts, observation, sendAsking);
             }
-            catch (RespireConnectionException) { /* No healthy control socket: retain abandon-on-cancel. */ }
+            catch (Exception error) when (error is RespireConnectionException or RespireConnectionRetiredException)
+            { /* No healthy control socket: retain abandon-on-cancel. */ }
         }
         return SendBlockingFrameAsync(connection, command, cancellationToken, errorAttempts, observation, sendAsking);
     }

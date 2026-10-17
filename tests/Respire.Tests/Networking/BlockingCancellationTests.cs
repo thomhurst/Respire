@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -9,6 +11,60 @@ namespace Respire.Tests.Networking;
 
 public class BlockingCancellationTests
 {
+    [Test]
+    [Arguments(false, RespireProtocol.Resp3)]
+    [Arguments(true, RespireProtocol.Resp3)]
+    [Arguments(false, RespireProtocol.Auto)]
+    [Arguments(true, RespireProtocol.Auto)]
+    public async Task MultiplexedHelloDoesNotEnableCorrectionIdentity(bool enabled, RespireProtocol protocol)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HELLO", StringComparison.Ordinal)
+                ? "%2\r\n+proto\r\n:3\r\n+id\r\n:123\r\n"u8.ToArray()
+                : command == "CLIENT ID" ? "-NOPERM denied\r\n"u8.ToArray() : null,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = protocol, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            DedicatedPool = new() { UnblockOnCancel = enabled },
+        });
+        var connection = client.Core.Multiplexer.GetConnection();
+        await Assert.That(connection.ServerClientId).IsEqualTo(0);
+        await Assert.That(async () => await connection.EnsureServerClientIdAsync()).Throws<RespireServerException>();
+        await Assert.That(server.ReceivedCommands.Contains("CLIENT ID")).IsTrue();
+    }
+
+    [Test]
+    public async Task RetiredControlOwnerPreservesBorrowedCommandCancellation()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        var received = NewSignal();
+        await using var client = await ConnectAsync(server.Port, enabled: true);
+        var pool = await client.Core.GetDedicatedPoolAsync(default, observation: default);
+        var borrowed = await pool.RentAsync(default);
+        try
+        {
+            await pool.MovingOwner!.RetireAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            server.SuppressReply = command => command == "PING";
+            server.GateCommand("PING", Task.CompletedTask, () => received.TrySetResult());
+            using var cancellation = new CancellationTokenSource();
+            // Enter after rental to pin the topology race before control selection.
+            var send = typeof(RespireClient).GetMethod("SendBlockingWithCancellationAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.MakeGenericMethod(typeof(RawCommand));
+            var pending = ((ValueTask<RespValue>)send.Invoke(client,
+                [pool, borrowed, new RawCommand(FakeRespServer.PingFrame), cancellation.Token,
+                    0, default(RespireTelemetry.ErrorObservation), false])!).AsTask();
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            cancellation.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("CLIENT UNBLOCK", StringComparison.Ordinal))).IsFalse();
+        }
+        finally { await pool.DiscardAsync(borrowed); }
+    }
+
     [Test]
     [Arguments("standalone", RespireProtocol.Resp2)]
     [Arguments("standalone", RespireProtocol.Resp3)]
