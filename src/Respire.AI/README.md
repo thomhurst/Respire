@@ -2,6 +2,13 @@
 
 Semantic response caching for Microsoft.Extensions.AI chat clients, backed by Redis vector search.
 
+Also includes bounded Redis conversation history, `UseRespireChatHistory` middleware for
+streaming and non-streaming calls, and `RespireChatHistoryProvider` for Microsoft Agent
+Framework. History supports tool calls and results, atomic concurrent appends, trimming,
+expiry, and clearing; it does not require Redis Search.
+
+[Chat history guide](https://thomhurst.github.io/Respire/docs/guides/chat-history).
+
 ## Install
 
 ```sh
