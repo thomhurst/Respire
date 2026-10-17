@@ -327,6 +327,15 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.ClusterTopologyRefreshInterval).IsNull();
     }
 
+    [Test]
+    public async Task InvalidAddressMappingIncludesConfigurationPath()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => RespireConfiguration.Apply(
+            Section(new() { ["NodeAddressMap"] = "invalid" }), new RespireOptions()));
+        await Assert.That(error!.Message).Contains("Redis:NodeAddressMap");
+        await Assert.That(error.InnerException).IsTypeOf<RespireConfigurationException>();
+    }
+
     private static IConfigurationSection Section(Dictionary<string, string?> values) => new ConfigurationBuilder()
         .AddInMemoryCollection(values.ToDictionary(pair => "Redis:" + pair.Key, pair => pair.Value))
         .Build().GetSection("Redis");

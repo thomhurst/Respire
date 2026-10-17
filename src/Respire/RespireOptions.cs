@@ -169,7 +169,8 @@ public sealed record RespireOptions
     /// Return a fresh readable and writable stream; Respire owns and disposes it, including on setup failure.
     /// Writes must reach the peer without flushing; Respire does not call Flush or FlushAsync on the stream.
     /// Dispose resources yourself if the factory throws. Observe cancellation promptly. Respire applies
-    /// <see cref="UseTls"/> and <see cref="TlsOptions"/> to the returned stream, using the destination host.
+    /// <see cref="UseTls"/> and <see cref="TlsOptions"/> to the returned stream. Address mapping applies before
+    /// the factory runs; TLS keeps the logical host unless <see cref="UseMappedHostForTls"/> selects the mapped host.
     /// The factory owns DNS, socket options, and tunnel negotiation; built-in TCP options do not configure its stream.
     /// Null uses Respire's ordinary socket transport.
     /// </remarks>
