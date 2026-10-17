@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text;
 using Respire.Networking;
 using TUnit.Assertions;
@@ -130,6 +131,114 @@ public class ReplicaRedirectTests
     }
 
     [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task CorrectionBoundLocksKeepTheirCapturedConnection(bool extend, bool lua, bool cache)
+    {
+        await using var primary = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var replica = CorrectionReplica(primary.Port, lua);
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+        await client.EnsureReliableCorrectionOrderingAsync();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var execution = await client.StartLockExecutionAsync("key", "owner", extend ? 1000 : null,
+            requireIdentity: true, allowUnfencedFallback: false, cancellation.Token);
+        var error = await Assert.That(async () => await execution.ConsumeResponseAsync()).Throws<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo("REDIRECT");
+        await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(replica.Port);
+        await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(41);
+        await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+        var verb = lua ? "EVALSHA " : extend ? "SET " : "DELEX ";
+        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith(verb, StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task TrackedScriptsKeepTheirCapturedConnection(bool captureTimestampOnly, bool cache)
+    {
+        await using var primary = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var replica = CorrectionReplica(primary.Port, lua: false);
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+        await client.EnsureReliableCorrectionOrderingAsync();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"),
+            ["key"], [], cancellation.Token, requireReliableCorrectionOrdering: true,
+            captureSendTimestampOnly: captureTimestampOnly);
+        var error = await Assert.That(async () => { using var reply = await execution.ConsumeResponseAsync(); })
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo("REDIRECT");
+        await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(replica.Port);
+        await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(41);
+        await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task OrdinaryScriptTelemetryNamesRedirectTarget(bool cache, bool fail)
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        var activities = new List<Activity>();
+        var measurements = new List<Dictionary<string, object?>>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var meter = new MeterListener();
+        meter.InstrumentPublished = (instrument, capture) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                capture.EnableMeasurementEvents(instrument);
+        };
+        meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            lock (measurements) measurements.Add(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+        });
+        meter.Start();
+        await using var primary = new FakeRespServer(4)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command.StartsWith("EVALSHA ", StringComparison.Ordinal) ? Bytes("-NOSCRIPT missing\r\n")
+                : command.StartsWith("EVAL ", StringComparison.Ordinal) ? Bytes(fail ? "-ERR script failed\r\n" : ":7\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var replica = CorrectionReplica(primary.Port, lua: false);
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+        var script = RespireScript.Create("return 7");
+        if (fail)
+            await Assert.That(async () => await client.Scripts.ExecuteIntegerAsync(script, "key")).Throws<RespireServerException>();
+        else
+            await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, "key")).IsEqualTo(7);
+        Activity[] traces;
+        Dictionary<string, object?>[] durations;
+        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.stored_procedure.name"), script.Sha1)).ToArray();
+        lock (measurements) durations = measurements.Where(tags => Equals(tags.GetValueOrDefault("db.operation.name"), script.EvalShaOperation)).ToArray();
+        await Assert.That(traces.Length).IsEqualTo(1);
+        await Assert.That(traces[0].GetTagItem("server.port")).IsEqualTo(primary.Port);
+        await Assert.That(traces[0].Status == ActivityStatusCode.Error).IsEqualTo(fail);
+        await Assert.That(durations.Length).IsEqualTo(1);
+        await Assert.That(durations[0]["server.port"]).IsEqualTo(primary.Port);
+        await Assert.That(durations[0].ContainsKey("error.type")).IsEqualTo(fail);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
@@ -155,6 +264,7 @@ public class ReplicaRedirectTests
         lock (activities) matches = activities.Where(activity => activity.GetTagItem("db.stored_procedure.name") as string == "my_function").ToArray();
         await Assert.That(matches.Length).IsEqualTo(1);
         await Assert.That(matches[0].DisplayName.Contains("my_function", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(matches[0].GetTagItem("server.port")).IsEqualTo(redirect ? primary.Port : replica.Port);
     }
 
     [Test]
@@ -307,6 +417,22 @@ public class ReplicaRedirectTests
     {
         Protocol = RespireProtocol.Resp2, Connections = 1, EnableReplicaRedirects = true,
         Endpoints = [new("127.0.0.1", port)],
+    };
+
+    private static FakeRespServer CorrectionReplica(int targetPort, bool lua) => new(8)
+    {
+        ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Bytes("%1\r\n$5\r\nproto\r\n:3\r\n"),
+            "CLIENT ID" => Bytes(":41\r\n"),
+            _ when command.StartsWith("CLIENT KILL ", StringComparison.Ordinal) => Bytes(":0\r\n"),
+            _ when lua && command.StartsWith("SET ", StringComparison.Ordinal) => Bytes("-ERR syntax error\r\n"),
+            _ when lua && command.StartsWith("DELEX ", StringComparison.Ordinal) => Bytes("-ERR unknown command 'DELEX', unsupported\r\n"),
+            _ when lua && command.StartsWith("DELIFEQ ", StringComparison.Ordinal) => Bytes("-ERR unknown command 'DELIFEQ', unsupported\r\n"),
+            _ when command.StartsWith("SET ", StringComparison.Ordinal) || command.StartsWith("DELEX ", StringComparison.Ordinal)
+                || command.StartsWith("EVAL", StringComparison.Ordinal) => Bytes($"-REDIRECT 127.0.0.1:{targetPort}\r\n"),
+            _ => FakeRespServer.OkReply,
+        },
     };
 
     private static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);

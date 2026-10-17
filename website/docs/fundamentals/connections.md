@@ -751,8 +751,11 @@ at a replica follows redirects for reads too, except server-cursor commands (`SC
 `SSCAN`, and `ZSCAN`). These commands keep their selected server from the first page onward
 and surface `REDIRECT` instead of moving a cursor. Use an explicit replica read policy to scan
 the replica, or configure the primary endpoint to scan the primary.
-Server-node operations, blocking commands,
-streamed payloads, and connection-affine transactions are not automatically replayed. Batches
+Server-node operations, blocking commands, streamed payloads, connection-affine transactions,
+and correction-bound operations are not automatically replayed. Correction-bound operations
+include lock release and extension, distributed-cache scripts, and coordination scripts: their
+ordering barriers must retain the connection that submitted the mutation. Ordinary
+`Scripts.ExecuteAsync` calls can follow redirects. Batches
 retain their existing per-command error behavior. Prefer a primary endpoint for these APIs.
 
 The [Valkey capability documentation](https://valkey.io/commands/client-capa/) describes the
