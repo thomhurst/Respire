@@ -1,0 +1,22 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireSetCommands",
+      "OwnerType": "Respire.SetCommands",
+      "Members": [
+        "ContainsIfExistsAsync(RespireKey,RespireValue,CancellationToken):ValueTask<bool?>"
+      ],
+      "Contract": "Own membership dispatch and nullable reply conversion through the caller's final inspection."
+    },
+    {
+      "Type": "Respire.IRespireKeyCommands",
+      "OwnerType": "Respire.KeyCommands",
+      "Members": [
+        "MoveAsync(RespireKey,int,bool,CancellationToken):ValueTask<bool>"
+      ],
+      "Contract": "Own move validation, dispatch and final reply conversion; the delegated legacy form borrows ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

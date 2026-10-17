@@ -1,0 +1,17 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireBatchSortedSetCommands",
+      "OwnerType": "Respire.BatchSortedSetCommands",
+      "Members": [
+        "RangeIfExists(RespireKey,long,long,bool):RespirePending<string[]?>",
+        "RangeIfExists`1(RespireKey,long,long,bool):RespirePending<T[]?>",
+        "RangeIfExistsWithScores(RespireKey,long,long,bool):RespirePending<RespireSortedSetEntry[]?>",
+        "RangeIfExistsWithScores`1(RespireKey,long,long,bool):RespirePending<RespireSortedSetEntry<T>[]?>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

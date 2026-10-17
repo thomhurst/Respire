@@ -1795,6 +1795,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortStoreAsync(key, destination, options, cancellationToken);
         public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default) => inner.RandomAsync(cancellationToken);
         public ValueTask<bool> MoveAsync(RespireKey key, int database, CancellationToken cancellationToken = default) => inner.MoveAsync(key, database, cancellationToken);
+        public ValueTask<bool> MoveAsync(RespireKey key, int database, bool replace, CancellationToken cancellationToken = default) => inner.MoveAsync(key, database, replace, cancellationToken);
 
         private readonly TaskCompletionSource<long> _unlink =
             new(TaskCreationOptions.RunContinuationsAsynchronously);

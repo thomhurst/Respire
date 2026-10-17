@@ -8,8 +8,8 @@ namespace Respire.IntegrationTests;
 [Category(TestCategories.ProtocolIndependent)]
 public class ServerClientIntegrationTests
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    public required RedisTestContainer Redis7 { get; init; }
+    [ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
+    public required Redis7ReferenceContainer Redis7 { get; init; }
 
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.PerTestSession)]
     public required ModernRedisTestContainer Redis8 { get; init; }

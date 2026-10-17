@@ -935,3 +935,80 @@ static Respire.RespireStreamAddOptions.operator ==(Respire.RespireStreamAddOptio
 ~override Respire.RespireStreamAddOptions.Equals(object obj) -> bool
 *REMOVED*~override Respire.StreamAddOptions.ToString() -> string
 ~override Respire.RespireStreamAddOptions.ToString() -> string
+override Respire.RespireAclRole.Equals(object? obj) -> bool
+override Respire.RespireAclRole.GetHashCode() -> int
+override Respire.RespireAclRole.ToString() -> string!
+override Respire.RespireConfigurationInfo.Equals(object? obj) -> bool
+override Respire.RespireConfigurationInfo.GetHashCode() -> int
+override Respire.RespireConfigurationInfo.ToString() -> string!
+Respire.IRespireBatchKeyCommands.Move(Respire.RespireKey key, int database, bool replace) -> Respire.RespirePending<bool>!
+Respire.IRespireBatchSetCommands.ContainsIfExists(Respire.RespireKey key, Respire.RespireValue member) -> Respire.RespirePending<bool?>!
+Respire.IRespireBatchSortedSetCommands.RangeIfExists(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<string![]?>!
+Respire.IRespireBatchSortedSetCommands.RangeIfExists<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<T[]?>!
+Respire.IRespireBatchSortedSetCommands.RangeIfExistsWithScores(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry[]?>!
+Respire.IRespireBatchSortedSetCommands.RangeIfExistsWithScores<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false) -> Respire.RespirePending<Respire.RespireSortedSetEntry<T>[]?>!
+Respire.IRespireKeyCommands.MoveAsync(Respire.RespireKey key, int database, bool replace, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.IRespireServerCommands.AclDeleteRolesAsync(System.ReadOnlySpan<Respire.RespireValue> roles, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespireServerCommands.AclDigestAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]!>
+Respire.IRespireServerCommands.AclGetRoleAsync(Respire.RespireValue role, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireAclRole?>
+Respire.IRespireServerCommands.AclRolesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<byte[]![]!>
+Respire.IRespireServerCommands.AclSetRoleAsync(Respire.RespireValue role, System.ReadOnlySpan<Respire.RespireValue> rules, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Respire.IRespireServerCommands.ConfigInfoAsync(System.ReadOnlySpan<Respire.RespireValue> patterns, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireConfigurationInfo![]!>
+Respire.IRespireSetCommands.ContainsIfExistsAsync(Respire.RespireKey key, Respire.RespireValue member, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool?>
+Respire.IRespireSortedSetCommands.RangeIfExistsAsync(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string![]?>
+Respire.IRespireSortedSetCommands.RangeIfExistsAsync<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T[]?>
+Respire.IRespireSortedSetCommands.RangeIfExistsWithScoresAsync(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry[]?>
+Respire.IRespireSortedSetCommands.RangeIfExistsWithScoresAsync<T>(Respire.RespireKey key, long start = 0, long stop = -1, bool descending = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireSortedSetEntry<T>[]?>
+Respire.RespireAclRole
+Respire.RespireAclRole.<Clone>$() -> Respire.RespireAclRole!
+Respire.RespireAclRole.Deconstruct(out Respire.RespireAclSelector! Root, out System.Collections.Generic.IReadOnlyList<Respire.RespireAclSelector!>! Selectors, out System.Collections.Generic.IReadOnlyList<byte[]!>! Users) -> void
+Respire.RespireAclRole.Equals(Respire.RespireAclRole? other) -> bool
+Respire.RespireAclRole.RespireAclRole(Respire.RespireAclSelector! Root, System.Collections.Generic.IReadOnlyList<Respire.RespireAclSelector!>! Selectors, System.Collections.Generic.IReadOnlyList<byte[]!>! Users) -> void
+Respire.RespireAclRole.Root.get -> Respire.RespireAclSelector!
+Respire.RespireAclRole.Root.init -> void
+Respire.RespireAclRole.Selectors.get -> System.Collections.Generic.IReadOnlyList<Respire.RespireAclSelector!>!
+Respire.RespireAclRole.Selectors.init -> void
+Respire.RespireAclRole.Users.get -> System.Collections.Generic.IReadOnlyList<byte[]!>!
+Respire.RespireAclRole.Users.init -> void
+Respire.RespireCommands.PathHash
+Respire.RespireConfigurationInfo
+Respire.RespireConfigurationInfo.<Clone>$() -> Respire.RespireConfigurationInfo!
+Respire.RespireConfigurationInfo.AdditionalFields.get -> System.Collections.Generic.IReadOnlyDictionary<string!, Respire.RespireResult>!
+Respire.RespireConfigurationInfo.AdditionalFields.init -> void
+Respire.RespireConfigurationInfo.Alias.get -> string?
+Respire.RespireConfigurationInfo.Alias.init -> void
+Respire.RespireConfigurationInfo.Deconstruct(out string! Name, out string! Type, out System.Collections.Generic.IReadOnlyList<string!>! Flags, out string? Alias, out System.Collections.Generic.IReadOnlyList<string!>! Values, out System.Collections.Generic.IReadOnlyList<string!>! Range, out System.Collections.Generic.IReadOnlyDictionary<string!, Respire.RespireResult>! AdditionalFields) -> void
+Respire.RespireConfigurationInfo.Equals(Respire.RespireConfigurationInfo? other) -> bool
+Respire.RespireConfigurationInfo.Flags.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.RespireConfigurationInfo.Flags.init -> void
+Respire.RespireConfigurationInfo.Name.get -> string!
+Respire.RespireConfigurationInfo.Name.init -> void
+Respire.RespireConfigurationInfo.Range.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.RespireConfigurationInfo.Range.init -> void
+Respire.RespireConfigurationInfo.RespireConfigurationInfo(string! Name, string! Type, System.Collections.Generic.IReadOnlyList<string!>! Flags, string? Alias, System.Collections.Generic.IReadOnlyList<string!>! Values, System.Collections.Generic.IReadOnlyList<string!>! Range, System.Collections.Generic.IReadOnlyDictionary<string!, Respire.RespireResult>! AdditionalFields) -> void
+Respire.RespireConfigurationInfo.Type.get -> string!
+Respire.RespireConfigurationInfo.Type.init -> void
+Respire.RespireConfigurationInfo.Values.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Respire.RespireConfigurationInfo.Values.init -> void
+static readonly Respire.RespireCommands.PathHash.PHCARD -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHDEL -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHDELPREFIX -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHEXISTS -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHGET -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHGETALL -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHLONGEST -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHMGET -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHMSET -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHPREFIXES -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHSCAN -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHSET -> Respire.RespireCommand
+static readonly Respire.RespireCommands.Server.ACL_DELROLE -> Respire.RespireCommand
+static readonly Respire.RespireCommands.Server.ACL_DIGEST -> Respire.RespireCommand
+static readonly Respire.RespireCommands.Server.ACL_GETROLE -> Respire.RespireCommand
+static readonly Respire.RespireCommands.Server.ACL_ROLES -> Respire.RespireCommand
+static readonly Respire.RespireCommands.Server.ACL_SETROLE -> Respire.RespireCommand
+static readonly Respire.RespireCommands.Server.CONFIG_INFO -> Respire.RespireCommand
+static Respire.RespireAclRole.operator !=(Respire.RespireAclRole? left, Respire.RespireAclRole? right) -> bool
+static Respire.RespireAclRole.operator ==(Respire.RespireAclRole? left, Respire.RespireAclRole? right) -> bool
+static Respire.RespireConfigurationInfo.operator !=(Respire.RespireConfigurationInfo? left, Respire.RespireConfigurationInfo? right) -> bool
+static Respire.RespireConfigurationInfo.operator ==(Respire.RespireConfigurationInfo? left, Respire.RespireConfigurationInfo? right) -> bool

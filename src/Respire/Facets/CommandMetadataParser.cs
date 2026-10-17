@@ -2,7 +2,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-internal static class CommandMetadataParser
+internal static partial class CommandMetadataParser
 {
     internal static string Text(in RespValue value)
     {

@@ -5,8 +5,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class FakeTransactionParityTests(RedisTestContainer fixture)
+[ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
+public class FakeTransactionParityTests(Redis7ReferenceContainer fixture)
 {
     [Test]
     [Arguments(false, 2)]

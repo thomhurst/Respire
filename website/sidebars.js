@@ -154,6 +154,7 @@ const sidebars = {
       label: 'Testing',
       items: [
         'guides/server-compatibility',
+        'guides/valkey-92',
         'guides/testing-containers',
         'guides/testing-sample',
         'guides/in-memory-testing',

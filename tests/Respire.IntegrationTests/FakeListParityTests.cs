@@ -3,8 +3,8 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class FakeListParityTests(RedisTestContainer fixture)
+[ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
+public class FakeListParityTests(Redis7ReferenceContainer fixture)
 {
     // ConnectionString selects TestContext.Current.Isolation.UniqueId as the Redis
     // database for each invocation, including each protocol row. Raw ExecuteAsync

@@ -109,6 +109,10 @@ internal static class RawCommandKeyLayouts
             ["ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE"]);
         // Immediate-only additions do not expand the conservative deferred allowlist.
         AddImmediate(LayoutKind.All, "KEYDB.MEXISTS");
+        // Valkey path hashes keep every path and field inside one database key.
+        AddPrefixable(LayoutKind.First,
+            "PHCARD", "PHDEL", "PHDELPREFIX", "PHEXISTS", "PHGET", "PHGETALL", "PHLONGEST",
+            "PHMGET", "PHMSET", "PHPREFIXES", "PHSCAN", "PHSET");
         AddPrefixable(LayoutKind.First,
             "JSON.GET", "JSON.SET", "JSON.DEL", "JSON.FORGET", "JSON.CLEAR", "JSON.ARRAPPEND", "JSON.ARRINDEX",
             "JSON.ARRLEN", "JSON.MERGE", "JSON.NUMPOWBY", "JSON.DEBUG MEMORY", "JSON.DEBUG FIELDS",

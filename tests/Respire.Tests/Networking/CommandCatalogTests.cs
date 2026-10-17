@@ -154,13 +154,13 @@ public class CommandCatalogTests
     {
         var commands = RespireCommands.All.ToArray();
 
-        await Assert.That(commands.Length).IsEqualTo(645);
+        await Assert.That(commands.Length).IsEqualTo(663);
         await Assert.That(commands.Select(static command => command.Name).Distinct(StringComparer.Ordinal).Count())
             .IsEqualTo(commands.Length);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Redis)))
             .IsEqualTo(598);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Valkey)))
-            .IsEqualTo(464);
+            .IsEqualTo(489);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.KeyDb)))
             .IsEqualTo(9);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
@@ -170,6 +170,67 @@ public class CommandCatalogTests
         await Assert.That(commands.Where(static command =>
                 command.IsCallerSupplied || command.Sources == RespireCommandSource.None))
             .IsEmpty();
+    }
+
+    [Test]
+    [Arguments("ACL DIGEST", RespireCacheMutation.ReadOnly, RespireCommandRetryCategory.Connection)]
+    [Arguments("ACL GETROLE", RespireCacheMutation.ReadOnly, RespireCommandRetryCategory.Connection)]
+    [Arguments("ACL ROLES", RespireCacheMutation.ReadOnly, RespireCommandRetryCategory.Connection)]
+    [Arguments("CONFIG INFO", RespireCacheMutation.ReadOnly, RespireCommandRetryCategory.Connection)]
+    [Arguments("ACL SETROLE", RespireCacheMutation.Mutation, RespireCommandRetryCategory.ServerAdmin)]
+    [Arguments("ACL DELROLE", RespireCacheMutation.Mutation, RespireCommandRetryCategory.ServerAdmin)]
+    public async Task Valkey92AdministrationRetainsPrimaryRoutingAndAuditedMetadata(
+        string name, RespireCacheMutation cacheMutation, RespireCommandRetryCategory retryCategory)
+    {
+        var command = RespireCommands.All.ToArray().Single(command => command.Name == name);
+        await Assert.That(command.Sources).IsEqualTo(RespireCommandSource.Valkey);
+        await Assert.That(command.IsReadOnly).IsFalse();
+        await Assert.That(command.ReadKind).IsEqualTo(ReadCommandKind.None);
+        await Assert.That(command.CacheMutation).IsEqualTo(cacheMutation);
+        await Assert.That(command.RetryCategory).IsEqualTo(retryCategory);
+    }
+
+    [Test]
+    public async Task PathHashReadsPreserveCursorAffinityAndWritesRemainMutations()
+    {
+        await Assert.That(RespireCommands.PathHash.PHGET.IsReadOnly).IsTrue();
+        await Assert.That(RespireCommands.PathHash.PHGET.ReadKind).IsEqualTo(ReadCommandKind.Read);
+        await Assert.That(RespireCommands.PathHash.PHSCAN.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
+        await Assert.That(RespireCommands.PathHash.PHSCAN.CursorArgumentIndex).IsEqualTo(1);
+        var start = new CmdN(RespireCommands.PathHash.PHSCAN.Verb, ["key", "0"]);
+        var continuation = new CmdN(RespireCommands.PathHash.PHSCAN.Verb, ["key", "opaque-cursor"]);
+        await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in start)).IsFalse();
+        await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in continuation)).IsTrue();
+        await Assert.That(RespireCommands.PathHash.PHSET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
+        await Assert.That(RespireCommands.PathHash.PHMSET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
+        await Assert.That(RespireCommands.PathHash.PHDEL.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
+        await Assert.That(RespireCommands.PathHash.PHDELPREFIX.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
+    }
+
+    [Test]
+    [Arguments("PHCARD")]
+    [Arguments("PHDEL")]
+    [Arguments("PHDELPREFIX")]
+    [Arguments("PHEXISTS")]
+    [Arguments("PHGET")]
+    [Arguments("PHGETALL")]
+    [Arguments("PHLONGEST")]
+    [Arguments("PHMGET")]
+    [Arguments("PHMSET")]
+    [Arguments("PHPREFIXES")]
+    [Arguments("PHSCAN")]
+    [Arguments("PHSET")]
+    public async Task PathHashLayoutsRouteAndPrefixOnlyTheDatabaseKey(string name)
+    {
+        RespireValue[] arguments = ["{key}:hash", "{other}:path", "{field}:name"];
+        await Assert.That(RawCommandKeyLayouts.TryGetPrefixableLayout(name, arguments, out var layout)).IsTrue();
+        await Assert.That(layout.Start).IsEqualTo(0);
+        await Assert.That(layout.Count).IsEqualTo(1);
+        await Assert.That(RawCommandKeyLayouts.ValidateClusterKeys(name, arguments).Index).IsEqualTo(0);
+        var command = RespireCommands.All.ToArray().Single(command => command.Name == name);
+        var expectedMutation = command.CacheMutation == RespireCacheMutation.ReadOnly
+            ? RawCommandKeyLayouts.MutationKind.ReadOnly : RawCommandKeyLayouts.MutationKind.LayoutKeys;
+        await Assert.That(RawCommandKeyLayouts.GetMutationKind(name)).IsEqualTo(expectedMutation);
     }
 
     [Test]

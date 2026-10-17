@@ -57,8 +57,8 @@ public class StreamIdempotencyIntegrationTests(ModernRedisTestContainer fixture)
     }
 }
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class LegacyStreamIdempotencyIntegrationTests(RedisTestContainer fixture)
+[ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
+public class LegacyStreamIdempotencyIntegrationTests(Redis7ReferenceContainer fixture)
 {
     [Test]
     [Arguments(2)]

@@ -1,0 +1,22 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireBatchSetCommands",
+      "OwnerType": "Respire.BatchSetCommands",
+      "Members": [
+        "ContainsIfExists(RespireKey,RespireValue):RespirePending<bool?>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    },
+    {
+      "Type": "Respire.IRespireBatchKeyCommands",
+      "OwnerType": "Respire.BatchKeyCommands",
+      "Members": [
+        "Move(RespireKey,int,bool):RespirePending<bool>"
+      ],
+      "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

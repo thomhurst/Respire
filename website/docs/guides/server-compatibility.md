@@ -1,13 +1,13 @@
 ---
 title: Redis-compatible servers
-description: Focused Garnet, Dragonfly and KeyDB compatibility checks, known differences, and how to reproduce them.
+description: Focused Garnet, Dragonfly, KeyDB and Valkey compatibility checks, known differences, and how to reproduce them.
 ---
 
 # Redis-compatible servers
 
 Respire uses RESP to connect to Redis-compatible servers. Compatibility depends on the server
 version and the features your application uses. The focused compatibility suite exercises Garnet,
-Dragonfly and KeyDB independently; it does not certify every Redis command or production topology.
+Dragonfly, KeyDB and Valkey 9.2 RC independently; it does not certify every Redis command or production topology.
 
 ## Tested scope
 
@@ -20,8 +20,13 @@ have explicit skip reasons in the test report. A feature skipped by a test is no
 | Garnet 2.1.8 | `ghcr.io/microsoft/garnet:2.1.8` | Lua enabled with `--lua`. |
 | Dragonfly 2.0.0 | `docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0` | One proactor thread; Cluster uses emulated mode. |
 | KeyDB 6.3.4 | `eqalpha/keydb:x86_64_v6.3.4` | One server thread, persistence disabled; Linux x64. |
+| Valkey 9.2 RC1 | `valkey/valkey:9.2.0-rc1-alpine` | Persistence disabled; includes [missing-key replies and ACL roles](valkey-92.md). |
 
 Other versions need their own compatibility run. ARM hosts need x64 emulation for the KeyDB image.
+
+The Valkey 9.2 RC job also runs the full integration project with the shared Redis fixture
+pointing at Valkey. Tests that intentionally pin a different server or module version keep
+those pins. The [Valkey 9.2 command scenarios](valkey-92.md) run in ordinary CI as well.
 
 ## Compatibility matrix
 
@@ -41,6 +46,9 @@ Cluster result to the topology described below.
 | `MULTI`/`EXEC` transactions | Pass | Pass | Pass |
 | RESP3 cache hit and tracking invalidation | Unsupported | Pass | Pass |
 | Cluster discovery and routing | Partial: one primary | Partial: emulated Cluster | Partial: one primary |
+
+Valkey 9.2 RC1 passed all 14 focused scenarios and four command-specific scenarios on
+17 October 2026 under .NET 10. Its Cluster result is also limited to one primary.
 
 The core data-type checks cover strings, hashes, lists, sets and sorted sets under RESP2 and RESP3,
 plus automatic protocol negotiation. Other feature checks run under both explicit protocols,
@@ -88,7 +96,7 @@ To reproduce one server locally, run a Linux Docker engine and the .NET 10 SDK f
 root. The suite owns and removes its containers; it does not use a running application server.
 
 ```powershell
-$env:RESPIRE_COMPATIBILITY_SERVER = 'garnet' # or dragonfly / keydb
+$env:RESPIRE_COMPATIBILITY_SERVER = 'garnet' # or dragonfly / keydb / valkey92
 & scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @(
     'run', '--project', 'tests/Respire.IntegrationTests', '-c', 'Release', '-f', 'net10.0',
     '--', '--treenode-filter', '/*/*/ServerCompatibilityTests/*', '--report-trx'

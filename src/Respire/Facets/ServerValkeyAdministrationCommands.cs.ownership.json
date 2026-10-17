@@ -1,0 +1,19 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.IRespireServerCommands",
+      "OwnerType": "Respire.ServerCommands",
+      "Members": [
+        "AclDeleteRolesAsync(ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<long>",
+        "AclDigestAsync(CancellationToken):ValueTask<byte[]>",
+        "AclGetRoleAsync(RespireValue,CancellationToken):ValueTask<RespireAclRole?>",
+        "AclRolesAsync(CancellationToken):ValueTask<byte[][]>",
+        "AclSetRoleAsync(RespireValue,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask",
+        "ConfigInfoAsync(ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireConfigurationInfo[]>"
+      ],
+      "Contract": "Own argument snapshots and admin preflight through node dispatch, owned result conversion and cleanup. ACL and metadata helpers borrow ownership."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}
