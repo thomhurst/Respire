@@ -766,6 +766,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         // Session steps (SELECT, READONLY, CLIENT TRACKING) pipeline here, unless Cluster
         // database support must be validated first; then they run in the same order below.
         var deferSessionSteps = options.RequireClusterDatabaseSupport;
+        if (options.AdvertiseReplicaRedirects)
+        {
+            (pending ??= new(4)).Add(("CLIENT CAPA REDIRECT", SendAsync(
+                new Commands.ClientCapaRedirectCommand(),
+                cancellationToken, armCommandDeadline: armCommandDeadline)));
+        }
         if (options.ReadOnly && !deferSessionSteps)
         {
             (pending ??= new(4)).Add(("READONLY", SendAsync(
@@ -785,6 +791,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         Exception? failure = null;
+        var replicaRedirects = false;
         foreach (var (step, pendingReply) in pending)
         {
             try
@@ -794,6 +801,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 {
                     if (failure is null && reply.IsError)
                     {
+                        // Capability negotiation is optional on Redis, older Valkey, and restricted ACLs.
+                        if (step == "CLIENT CAPA REDIRECT") continue;
                         // Zone discovery is optional. Redis and ACL-restricted servers can
                         // omit it without making an otherwise usable connection fail.
                         if (step == "INFO SERVER" && !options.RequireClusterDatabaseSupport) continue;
@@ -811,6 +820,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     {
                         if (options.RequireClusterDatabaseSupport) ValidateClusterDatabaseSupport(in reply);
                         CaptureInfoAvailabilityZone(in reply);
+                    }
+                    else if (failure is null && step == "CLIENT CAPA REDIRECT")
+                    {
+                        replicaRedirects = reply.Type == RespireDataType.SimpleString
+                            && reply.AsSpan().SequenceEqual("OK"u8);
                     }
                 }
                 finally
@@ -830,6 +844,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
         }
+
+        ReplicaRedirectsEnabled = replicaRedirects;
+        if (replicaRedirects && options.ReplicaRedirectReadOnly)
+            await CompleteHandshakeStepAsync("READONLY", new ProtocolCommand<Cmd>(new Cmd(Verbs.ReadOnly)),
+                cancellationToken, armCommandDeadline).ConfigureAwait(false);
 
         if (deferSessionSteps)
         {
@@ -851,6 +870,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
         await NegotiateMaintenanceAsync(options, negotiatedProtocol, cancellationToken, armCommandDeadline).ConfigureAwait(false);
     }
+
+    internal bool ReplicaRedirectsEnabled { get; private set; }
 
     private async ValueTask CompleteHandshakeStepAsync<TCommand>(string step, TCommand command,
         CancellationToken cancellationToken, bool armCommandDeadline) where TCommand : struct, IRespCommand
@@ -4460,6 +4481,8 @@ internal delegate bool RespirePushFilter(in RespValue value, bool hasPendingResp
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
+    internal bool AdvertiseReplicaRedirects { get; init; }
+    internal bool ReplicaRedirectReadOnly { get; init; }
     internal RespireDedicatedPoolOptions DedicatedPool { get; init; } = new();
     public override string ToString() => "RespireConnectionOptions { <redacted> }";
 

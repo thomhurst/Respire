@@ -30,7 +30,7 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         // Circuit admission, cache coordination, server-local cursors, hedging and telemetry own their normal route.
-        if (_core.Cluster is not null || _core.Circuits is not null || _core.ClientCache is not null || _core.HedgedReads is not null
+        if (_core.Options.EnableReplicaRedirects || _core.Cluster is not null || _core.Circuits is not null || _core.ClientCache is not null || _core.HedgedReads is not null
             || command.ReadKind != ReadCommandKind.Read || command is IStreamingRespCommand
             || _core.ReadRouter.IsBacklogDraining
             || _readFrom is not (RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred)

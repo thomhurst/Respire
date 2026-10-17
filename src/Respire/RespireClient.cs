@@ -2708,11 +2708,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool sendAsking,
         bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsOperationEnabled(operation)
+    {
+        if (connection.ReplicaRedirectsEnabled)
+            return SendWithReplicaRedirectsAsync(operation, connection, command, cancellationToken, commandDeadline, observation,
+                sendAsking: sendAsking, tracking: true, track: track);
+        return RespireTelemetry.IsOperationEnabled(operation)
             ? SendTrackedOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline)
             : SendTrackedOnConnectionCoreAsync(
                 operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline);
+    }
 
     private ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
         string operation,
@@ -4485,12 +4490,19 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool allowStreamingConnectionReroute = true,
         bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsOperationEnabled(operation)
+    {
+        if (connection.ReplicaRedirectsEnabled && !pinToConnection
+            && command is not IStreamingRespCommand && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command))
+            return SendWithReplicaRedirectsAsync(operation, connection, command, cancellationToken, commandDeadline, observation,
+                sendAsking: sendAsking, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
+                storedProcedureName: storedProcedureName);
+        return RespireTelemetry.IsOperationEnabled(operation)
             ? SendOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute, pinToConnection, observation: observation)
             : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute, pinToConnection, observation: observation);
+    }
 
     internal ValueTask<RespValue> SendMutationOnConnectionAsync<TCommand>(
         string operation, RespireConnection connection, in TCommand command,

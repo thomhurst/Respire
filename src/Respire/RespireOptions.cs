@@ -209,6 +209,11 @@ public sealed record RespireOptions
     /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
+    /// <summary>Advertise Valkey's CLIENT CAPA REDIRECT and follow standalone replica redirects for individual commands.</summary>
+    /// <remarks>Disabled by default. Replica read connections also request READONLY when the capability succeeds.
+    /// Endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>
+    public bool EnableReplicaRedirects { get; init; }
+
     /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
     [Experimental("RSP0003", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
     public RespireHedgedReadOptions? HedgedReads { get; init; }

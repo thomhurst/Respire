@@ -559,7 +559,7 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
             var clientCache = core.ClientCache;
             RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
             var commandOptions = core.CreateConnectionOptions(pushHandler,
-                enableClientTracking: core.ClientCache is not null, enableMaintenanceNotifications: true) with
+                enableClientTracking: core.ClientCache is not null, enableMaintenanceNotifications: true, enableReplicaRedirects: true) with
             {
                 Generation = this,
                 CredentialCacheInvalidation = clientCache is null ? null : clientCache.FlushForContinuityLossWithoutMetrics,

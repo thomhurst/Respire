@@ -911,7 +911,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 {
                     var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
                         endpoint.Host, endpoint.Port, owner.Options.Connections,
-                        owner.CreateConnectionOptions(),
+                        owner.CreateConnectionOptions(enableReplicaRedirects: true) with { ReplicaRedirectReadOnly = true },
                         owner.Logger, linked.Token).ConfigureAwait(false);
                     try
                     {
