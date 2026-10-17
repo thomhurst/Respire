@@ -116,6 +116,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Typed Redis 8.10 / Valkey 9.1 commands](guides/raw-commands.md#finding-typed-apis), including
   [sparse arrays](commands/arrays.md) and [hash import sessions](guides/hash-import.md).
   Availability depends on the server version.
+- [Conditional transactions](guides/batches-and-transactions.md#conditional-transactions-valkey-92)
+  with Valkey 9.2+ EXEC IFEQ, IFNE, NX, and XX preconditions.
 - [Explicit-node lifecycle and Cluster administration](guides/server-node-lifecycle.md),
   [Sentinel administration](guides/sentinel-administration.md), and
   [client filters](guides/client-administration.md#filtering-and-closing-clients).

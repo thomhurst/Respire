@@ -42,8 +42,9 @@ public class DeferredApiNamingTests
 
         await Assert.That(batchMethods.Any(method => method.Name == "ExecuteAsync")).IsTrue();
         await Assert.That(batchMethods.Any(method => method.Name == "SendAsync")).IsFalse();
-        await Assert.That(typeof(RespireTransaction).GetMethod("CommitAsync")).IsNotNull();
-        await Assert.That(typeof(RespireTransaction).GetMethod("CommitAsync")!.ReturnType)
+        var commit = typeof(RespireTransaction).GetMethod("CommitAsync", [typeof(CancellationToken)]);
+        await Assert.That(commit).IsNotNull();
+        await Assert.That(commit!.ReturnType)
             .IsEqualTo(typeof(ValueTask));
         var watchedCommit = typeof(RespireWatchedTransaction)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)

@@ -17,7 +17,7 @@ namespace Respire;
 /// <see cref="RespireBatch"/> for what the deferred surface leaves out.
 /// Single-shot and not thread-safe: build, commit once, discard. Always commit or dispose a
 /// transaction so its buffer is released. Concrete transactions expose different commit results:
-/// <see cref="RespireTransaction"/> cannot abort, while <see cref="RespireWatchedTransaction"/>
+/// <see cref="RespireTransaction"/> supports optional EXEC conditions, while <see cref="RespireWatchedTransaction"/>
 /// reports a WATCH abort.
 /// </remarks>
 public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespireCommandQueue, IPendingSink
@@ -38,6 +38,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
     // The transport records the accepting socket after any pre-admission maintenance reroute.
     internal RespireConnection? ExecutingConnection { get; set; }
+
+    internal byte[]? ConditionalExec { get; private set; }
 
     internal bool HasOptOutBypass => _hasOptOutRead;
 
@@ -275,6 +277,40 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             ? CommitHookedAsync(_client.Core.Options.PipelineHook, cancellationToken, validateEmptyWatch)
             : CommitWithoutHookAsync(cancellationToken, validateEmptyWatch);
 
+    private protected ValueTask<bool> CommitConditionalAsync(ReadOnlySpan<RespireCondition> conditions, CancellationToken cancellationToken)
+    {
+        ThrowIfCompleted();
+        if (ConnectionPolicy.IsImportSession)
+            throw new NotSupportedException("Hash import sessions do not support conditional EXEC.");
+        ArgumentOutOfRangeException.ThrowIfZero(conditions.Length);
+        int? slot = _hasClusterSlot ? _clusterSlot : null;
+        var tokens = 1;
+        foreach (var condition in conditions)
+        {
+            ArgumentNullException.ThrowIfNull(condition);
+            if (_client.Core.Cluster is not null) ValidateClusterKey(condition.Key, ref slot);
+            tokens = checked(tokens + (condition.HasOperand ? 3 : 2));
+        }
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            var writer = new RespWriter(buffer);
+            writer.WriteArrayHeader(tokens);
+            writer.WriteBulkString("EXEC"u8);
+            foreach (var condition in conditions)
+            {
+                writer.WriteBulkString(condition.Token);
+                _client.Key(condition.Key).WriteTo(ref writer);
+                if (condition.HasOperand) condition.Operand.WriteTo(ref writer);
+            }
+            writer.Complete();
+            ConditionalExec = buffer.WrittenMemory.ToArray();
+            ApplyClusterSlot(slot);
+        }
+        finally { buffer.Release(); }
+        return CommitCoreAsync(cancellationToken);
+    }
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> CommitWithoutHookAsync(CancellationToken cancellationToken, bool validateEmptyWatch,
         PipelineHookScope? hook = null, bool admitted = false)
@@ -308,7 +344,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var mutationFence = default(ClientSideCacheCoordinator.MutationFence);
         try
         {
-            if (_ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
+            if (_ops.Count == 0 && ConditionalExec is null && (!validateEmptyWatch || _watchConnection is null))
             {
                 // Nonempty commits use SendAsync's before-submission classification.
                 // Empty imports must preserve their fieldsets on cancellation too.
@@ -392,7 +428,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (result.IsNull)
             {
                 result.Dispose();
-                if (ConnectionPolicy.IsImportSession || this is RespireTransaction)
+                if (ConnectionPolicy.IsImportSession || this is RespireTransaction && ConditionalExec is null)
                 {
                     var error = new RespireProtocolException(ConnectionPolicy.IsImportSession
                         ? "An unwatched hash import EXEC unexpectedly returned a null reply."
@@ -540,7 +576,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
-                if (core.Sentinel is not null && _ops.Count == 0 && (!validateEmptyWatch || _watchConnection is null))
+                if (core.Sentinel is not null && _ops.Count == 0 && ConditionalExec is null && (!validateEmptyWatch || _watchConnection is null))
                 {
                     telemetry.Complete(telemetryOperation, host: null, port: 6379,
                         database: core.Options.Database, error: operationError, batchSize: 0);
@@ -632,6 +668,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             connection.ThrowIfRetired();
                             admission = circuits.Acquire(new(connection.Host, connection.Port), cancellationToken);
                         }
+                        if (ConditionalExec is not null)
+                            await connection.EnsureConditionalExecSupportedAsync(cancellationToken, deadline).ConfigureAwait(false);
                         if (ConnectionPolicy.IsImportSession || WatchRequiresAsking || askingPool is not null)
                         {
                             if (!connection.TryAcquireCredentialSequence(cancellationToken, out credentialSequence))
@@ -679,7 +717,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
                             reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count,
                                     cancellationToken, includeMulti: !ConnectionPolicy.IsImportSession && !WatchRequiresAsking && askingPool is null, commandDeadline: deadline,
                                     transaction: this, observation: observation, mutationFence: mutationFence,
-                                    pinToConnection: core.Circuits is not null || askingPool is not null, writeObservation: RetryContext?.WriteObservation)
+                                    pinToConnection: core.Circuits is not null || askingPool is not null || ConditionalExec is not null, writeObservation: RetryContext?.WriteObservation)
                                 .ConfigureAwait(false);
                         }
                         admission.Success();
@@ -940,8 +978,10 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 
     // Only a complete unit that can be rebuilt from its retained frame is resent. WATCH state,
     // import fieldsets and server-local cursor pages cannot follow a new connection.
+    // Repeating a conditional commit could report an abort after its first attempt succeeded.
     private bool CanRetryUnit(ClientCore core)
         => core.CommandRetries is not null && this is RespireTransaction
+            && ConditionalExec is null
             && _watchConnection is null && !ConnectionPolicy.IsImportSession && !_hasCursorContinuation
             && _ops.Count != 0;
 
@@ -1156,8 +1196,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
 }
 
 /// <summary>
-/// An unwatched MULTI/EXEC transaction. Redis always executes a successfully queued EXEC, so
-/// commit has no result to inspect.
+/// An unwatched MULTI/EXEC transaction, optionally guarded by Valkey 9.2+ EXEC conditions.
 /// </summary>
 public sealed class RespireTransaction : RespireTransactionBase
 {
@@ -1180,6 +1219,17 @@ public sealed class RespireTransaction : RespireTransactionBase
     {
         _ = await CommitCoreAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Executes only when the condition matches; false aborts all pendings as with WATCH.</summary>
+    /// <remarks>Requires Valkey 9.2+ and INFO SERVER permission. All keys must share a Cluster slot.
+    /// Does not use WATCH or automatic command retries. Hash import sessions are not supported.</remarks>
+    public ValueTask<bool> CommitAsync(RespireCondition condition, CancellationToken cancellationToken = default)
+        => CommitConditionalAsync([condition], cancellationToken);
+
+    /// <summary>Executes only when every condition matches. At least one condition is required.</summary>
+    /// <inheritdoc cref="CommitAsync(RespireCondition, CancellationToken)" path="/remarks"/>
+    public ValueTask<bool> CommitAsync(ReadOnlySpan<RespireCondition> conditions, CancellationToken cancellationToken = default)
+        => CommitConditionalAsync(conditions, cancellationToken);
 }
 
 /// <summary>
