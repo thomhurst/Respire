@@ -28,6 +28,7 @@
     <!-- The key repository retains an owned binary list key. -->
     <InternalsVisibleTo Include="Respire.DataProtection" />
     <InternalsVisibleTo Include="Respire.Tests" />
+    <InternalsVisibleTo Include="Respire.Gcp.Tests" />
     <!-- RedisJSON keeps pooled serialization storage alive until command completion. -->
     <InternalsVisibleTo Include="Respire.Json" />
     <!-- Typed probabilistic results own hooks through conversion and result cleanup. -->

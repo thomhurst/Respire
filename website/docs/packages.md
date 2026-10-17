@@ -56,6 +56,7 @@ for the released-package baseline, intentional-break process, and experimental A
 | [`Respire.Probabilistic`](guides/probabilistic.md) | Bloom, Cuckoo, Count-Min Sketch, Top-K, and t-digest |
 | [`Respire.Aws`](guides/aws-iam-credentials.md) | AWS IAM credentials for ElastiCache and MemoryDB |
 | [`Respire.Azure`](guides/azure-managed-redis.md) | Microsoft Entra credentials for Azure Managed Redis |
+| [`Respire.Gcp`](guides/google-cloud-memorystore.md) | Google Cloud IAM credentials for Memorystore for Redis Cluster and Valkey |
 | [`Respire.Caching`](integrations/caching.md) | `IDistributedCache` and `IBufferDistributedCache` integration |
 | [`Respire.Caching.Hybrid`](integrations/caching.md) | Redis-backed L2 storage for `HybridCache` |
 | [`Respire.OutputCaching`](integrations/output-caching.md) | ASP.NET Core output caching store |

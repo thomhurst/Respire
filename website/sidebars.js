@@ -132,6 +132,7 @@ const sidebars = {
         'guides/renewable-credentials',
         'guides/aws-iam-credentials',
         'guides/azure-managed-redis',
+          'guides/google-cloud-memorystore',
       ],
     },
     {
