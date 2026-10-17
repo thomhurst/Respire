@@ -185,6 +185,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   or batched write-behind persistence, preload, shared invalidation, and hash field expiry.
 - [Semantic chat response caching](guides/semantic-cache.md) for `Microsoft.Extensions.AI`.
 - [Redis conversation history](guides/chat-history.md), chat middleware, and Microsoft Agent Framework history providers.
+- [Exact-text embedding caching](guides/embedding-cache.md) with batched misses, optional TTL, and hit/miss metrics.
 - [VectorData hash and JSON collections](guides/vector-data.md) with AOT-friendly mapping, KNN,
   filters, and hybrid search on Redis 8.4+. The guide lists unsupported features.
 - RESP3 [server-assisted client-side caching](fundamentals/client-side-caching.md) with OPTIN,

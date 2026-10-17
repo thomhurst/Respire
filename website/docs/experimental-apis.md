@@ -11,7 +11,7 @@ The compiler reports an error when you use one of these APIs, even without warni
 | Diagnostic | Experimental surface |
 | --- | --- |
 | [RSP0001](diagnostics/RSP0001.md) | VectorData integration |
-| [RSP0002](diagnostics/RSP0002.md) | AI caching, chat history, and Agent Framework history providers |
+| [RSP0002](diagnostics/RSP0002.md) | Semantic chat caching, embedding caching, chat history, and Agent Framework history providers |
 | [RSP0003](diagnostics/RSP0003.md) | Hedged reads |
 | [RSP0004](diagnostics/RSP0004.md) | Hash import sessions |
 | [RSP0005](diagnostics/RSP0005.md) | Deferred raw commands |

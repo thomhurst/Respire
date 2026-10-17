@@ -108,6 +108,7 @@ const sidebars = {
         'guides/vector-data',
         'guides/semantic-cache',
         'guides/chat-history',
+        'guides/embedding-cache',
         'guides/timeseries',
         'guides/probabilistic',
       ],
