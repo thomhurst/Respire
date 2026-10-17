@@ -223,7 +223,7 @@ public class NodeAddressMappingTests
                 },
             }, source).ValidateAndSnapshot();
             await using var connection = await RespireConnection.ConnectAsync(source.Host, source.Port,
-                options.ToConnectionOptions(), cancellationToken: deadline.Token);
+                options.ToConnectionOptions() with { LibraryName = null }, cancellationToken: deadline.Token);
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
             await server.WaitAsync(deadline.Token);
@@ -285,6 +285,7 @@ public class NodeAddressMappingTests
             var options = new RespireOptions
             {
                 Endpoints = [new("redis.internal", 6380)],
+                LibraryName = null,
                 Protocol = RespireProtocol.Resp2, UseTls = true, TlsOptions = tlsOptions,
                 ConnectionFactory = factory ? OpenStreamAsync : null,
                 UseMappedHostForTls = useMappedHost,
