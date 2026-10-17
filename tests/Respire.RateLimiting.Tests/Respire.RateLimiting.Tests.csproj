@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../../src/Respire.RateLimiting/Respire.RateLimiting.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+    <Compile Include="../ContainerStartRetry.cs" Link="ContainerStartRetry.cs" />
+    <Compile Include="../../src/Respire.Testing.Containers/ContainerPortCollision.cs" Link="ContainerPortCollision.cs" />
+  </ItemGroup>
+</Project>

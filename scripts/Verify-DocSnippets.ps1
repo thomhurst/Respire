@@ -51,6 +51,7 @@ $requiredPackages = @(
     'Respire.Caching'
     'Respire.Coordination'
     'Respire.Idempotency'
+    'Respire.RateLimiting'
     'Respire.Aws'
     'Respire.Caching.Hybrid'
     'Respire.FusionCache'

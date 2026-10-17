@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Redis-backed named and partitioned ASP.NET Core rate limiting policies.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Respire.Coordination/Respire.Coordination.csproj" />
+  </ItemGroup>
+</Project>

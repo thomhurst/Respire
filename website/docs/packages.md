@@ -60,6 +60,7 @@ for the released-package baseline, intentional-break process, and experimental A
 | [`Respire.Caching.Hybrid`](integrations/caching.md) | Redis-backed L2 storage for `HybridCache` |
 | [`Respire.OutputCaching`](integrations/output-caching.md) | ASP.NET Core output caching store |
 | [`Respire.Idempotency`](integrations/idempotency.md) | ASP.NET Core idempotency-key response replay |
+| [`Respire.RateLimiting`](integrations/rate-limiting.md) | Redis-backed ASP.NET Core rate limiting policies |
 | [`Respire.DataProtection`](integrations/data-protection.md) | DataProtection key storage and [payload encryption](guides/payload-encryption.md) |
 | [`Respire.FusionCache`](integrations/fusioncache.md) | FusionCache backplane and distributed locker sharing an existing Respire client |
 | [`Respire.SignalR`](integrations/signalr.md) | SignalR scale-out sharing an existing Respire client |

@@ -168,6 +168,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 
 ### Caching, integration, and testing
 
+- [ASP.NET Core rate limiting](integrations/rate-limiting.md) with named policies, user/IP/API-key partitions,
+  shared Redis budgets, and `Retry-After` rejection headers.
 - [Typed near-cache maps](guides/near-cache-map.md) with read-through loaders, write-through
   or batched write-behind persistence, preload, shared invalidation, and hash field expiry.
 - [Semantic chat response caching](guides/semantic-cache.md) for `Microsoft.Extensions.AI`.
