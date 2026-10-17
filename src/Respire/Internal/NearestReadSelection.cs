@@ -120,16 +120,24 @@ internal struct NearestReadSelection<T>
     private int _nextSample;
     private int _sampleOrder;
     private int _selectedOrder;
+    private int _priority;
+    private readonly long? _tolerance;
+    private readonly uint _start;
+    private int _currentIndex;
+    private bool _enumerating;
+    private List<BandSample>? _band;
 
-    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order);
+    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order, int Priority);
+    private readonly record struct BandSample(T Candidate, long Latency, bool Linked, int Order, int Priority);
     internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
 
-    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true)
+    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true, int priority = 0)
     {
-        var order = _sampleOrder++;
-        if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order);
-        // Only cold/expired samples allocate. Warm selections retain the allocation-free path.
-        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order));
+        var order = _tolerance is not null && _enumerating ? _currentIndex : _sampleOrder;
+        _sampleOrder++;
+        if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order, priority);
+        // Without a band, only cold/expired samples allocate; warm minimum selection stays allocation-free.
+        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order, priority));
     }
 
     internal bool TryNextSample(out PendingSample sample)
@@ -140,10 +148,12 @@ internal struct NearestReadSelection<T>
         return true;
     }
 
-    internal NearestReadSelection(uint start, int candidateCount)
+    internal NearestReadSelection(uint start, int candidateCount, TimeSpan? tolerance = null)
     {
         this = default;
         _next = start;
+        _start = start;
+        _tolerance = tolerance?.Ticks;
         _candidateCount = _remaining = candidateCount;
     }
 
@@ -153,25 +163,64 @@ internal struct NearestReadSelection<T>
         if (_remaining == 0) return false;
         _remaining--;
         index = (int)(_next++ % (uint)_candidateCount);
+        _currentIndex = index;
+        _enumerating = true;
         return true;
     }
 
-    internal void Consider(T candidate, ReadLatencyResult sample, bool linked = true, int order = int.MaxValue)
+    internal void Consider(T candidate, ReadLatencyResult sample, bool linked = true, int order = int.MaxValue, int priority = 0)
     {
         if (sample.Kind == ReadLatencyKind.Pending) return;
         var latency = sample.Kind == ReadLatencyKind.Measured ? sample.Ticks : long.MaxValue;
-        if (_hasValue && (_linked && !linked || _linked == linked
-            && (latency > _latency || latency == _latency && order >= _selectedOrder))) return;
+        if (_tolerance is not null) (_band ??= []).Add(new(candidate, latency, linked, order, priority));
+        if (_hasValue && (priority > _priority || priority == _priority
+            && (_linked && !linked || _linked == linked
+                && (latency > _latency || latency == _latency && order >= _selectedOrder)))) return;
         _selected = candidate;
         _latency = latency;
         _linked = linked;
         _hasValue = true;
         _selectedOrder = order;
+        _priority = priority;
     }
 
     internal bool TryGet(out T selected)
     {
         selected = _selected;
+        if (_band is not null)
+        {
+            // Candidate indices are stable even though probes start in rotated order.
+            // Rotate within the eligible set, so gaps left by slow nodes do not bias traffic.
+            _band.Sort(static (left, right) => left.Order.CompareTo(right.Order));
+            var count = 0;
+            foreach (var sample in _band)
+                if (IsInBand(sample)) count++;
+            var offset = count == 0 ? 0 : (int)(_start % (uint)count);
+            foreach (var sample in _band)
+            {
+                if (!IsInBand(sample) || offset-- != 0) continue;
+                selected = sample.Candidate;
+                break;
+            }
+        }
         return _hasValue;
+    }
+
+    // Subtraction cannot overflow: usable measured ticks are nonnegative, and the minimum
+    // belongs to this same tier. Unknown samples join only an entirely unmeasured tier.
+    private readonly bool IsInBand(BandSample sample)
+        => sample.Priority == _priority && sample.Linked == _linked
+            && (sample.Latency == long.MaxValue ? _latency == long.MaxValue
+                : sample.Latency - _latency <= _tolerance!.Value);
+
+    /// <summary>Captures the band in topology order after <see cref="TryGet"/> has sorted it.</summary>
+    internal readonly RespireReadRoutingSnapshot CaptureSnapshot(RespireReadFrom policy, int? slot,
+        Func<T, RespireEndpoint> endpoint)
+    {
+        var eligible = new List<RespireEndpoint>();
+        if (_band is not null)
+            foreach (var sample in _band)
+                if (IsInBand(sample)) eligible.Add(endpoint(sample.Candidate));
+        return new(policy, slot, eligible.AsReadOnly());
     }
 }
