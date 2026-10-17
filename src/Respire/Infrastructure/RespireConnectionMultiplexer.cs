@@ -816,8 +816,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port, string TlsHost)
     {
         internal static RetiredClientIdentity From(RespireConnection connection)
-            => new(connection.ServerClientId, connection.NetworkPeerAddress ?? connection.Host,
-                connection.NetworkPeerPort ?? connection.Port, connection.TlsHost);
+            => new(connection.ServerClientId, connection.PeerKey.Host,
+                connection.PeerKey.Port, connection.TlsHost);
     }
 
     internal bool HasCurrentPeer(string host, int port)
@@ -825,8 +825,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         if (IsRetired) return false;
         foreach (var connection in _connections)
             if (connection is { IsAcceptingCommands: true }
-                && (connection.NetworkPeerAddress ?? connection.Host) == host
-                && (connection.NetworkPeerPort ?? connection.Port) == port)
+                && connection.PeerKey.Host == host
+                && connection.PeerKey.Port == port)
                 return true;
         return false;
     }
@@ -856,8 +856,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         {
             var connection = Volatile.Read(ref _connections[slot]);
             if (connection is not { IsAcceptingCommands: true }) { allReady = false; continue; }
-            var peer = new RespireEndpoint(connection.NetworkPeerAddress ?? connection.Host,
-                connection.NetworkPeerPort ?? connection.Port);
+            var peer = new RespireEndpoint(connection.PeerKey.Host,
+                connection.PeerKey.Port);
             peers?.Add(peer);
             if (confirmed is { } previous && (previous.Host != peer.Host || previous.Port != peer.Port)) allReady = false;
             confirmed = peer;

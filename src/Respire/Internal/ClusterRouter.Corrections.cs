@@ -30,7 +30,7 @@ internal sealed partial class ClusterRouter
     internal CorrectionLease GetCorrectionLease(RespireConnection original)
     {
         var identity = new CorrectionPoolIdentity(original.Multiplexer,
-            original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.TlsHost);
+            original.PeerKey.Host, original.PeerKey.Port, original.TlsHost);
         List<DedicatedConnectionPool> unused;
         CorrectionPoolEntry entry;
         lock (_nodesGate)

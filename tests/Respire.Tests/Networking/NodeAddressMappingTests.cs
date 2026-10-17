@@ -126,10 +126,13 @@ public class NodeAddressMappingTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task SentinelRefreshReconnectsMappedAnnouncement(bool callback, bool identityResolver)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task SentinelRefreshReconnectsMappedAnnouncement(bool callback, bool identityResolver, bool factory)
     {
         static FakeRespServer Primary() => new(16, FakeRespServer.OkReply)
         {
@@ -152,6 +155,7 @@ public class NodeAddressMappingTests
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             Protocol = RespireProtocol.Resp2,
+            ConnectionFactory = factory ? OpenStreamAsync : null,
             NodeAddressResolver = callback ? endpoint => endpoint.Host == "private.internal"
                 ? new("127.0.0.1", Volatile.Read(ref port)) : endpoint : null,
             NodeAddressMap = callback ? null : new Dictionary<RespireEndpoint, RespireEndpoint>
@@ -249,11 +253,15 @@ public class NodeAddressMappingTests
     }
 
     [Test]
-    [Arguments(false, null)]
-    [Arguments(true, null)]
-    [Arguments(false, "explicit.example")]
-    [Arguments(true, "explicit.example")]
-    public async Task TlsKeepsAnnouncedHostnameUnlessMappedHostnameIsSelected(bool useMappedHost, string? explicitHost)
+    [Arguments(false, null, false)]
+    [Arguments(true, null, false)]
+    [Arguments(false, "explicit.example", false)]
+    [Arguments(true, "explicit.example", false)]
+    [Arguments(false, null, true)]
+    [Arguments(true, null, true)]
+    [Arguments(false, "explicit.example", true)]
+    [Arguments(true, "explicit.example", true)]
+    public async Task TlsKeepsAnnouncedHostnameUnlessMappedHostnameIsSelected(bool useMappedHost, string? explicitHost, bool factory)
     {
         var expectedHost = explicitHost ?? (useMappedHost ? "localhost" : "redis.internal");
         using var certificate = TestTlsCertificate.Create(expectedHost);
@@ -278,6 +286,7 @@ public class NodeAddressMappingTests
             {
                 Endpoints = [new("redis.internal", 6380)],
                 Protocol = RespireProtocol.Resp2, UseTls = true, TlsOptions = tlsOptions,
+                ConnectionFactory = factory ? OpenStreamAsync : null,
                 UseMappedHostForTls = useMappedHost,
                 NodeAddressMap = new Dictionary<RespireEndpoint, RespireEndpoint> { ["redis.internal:6380"] = new("localhost", port) },
             }.ValidateAndSnapshot();
@@ -331,16 +340,20 @@ public class NodeAddressMappingTests
     }
 
     [Test]
-    [Arguments("standalone")]
-    [Arguments("sentinel")]
-    [Arguments("cluster")]
-    public async Task CorrectionConnectionsKeepCapturedPeerWithoutResolvingAgain(string mode)
+    [Arguments("standalone", false)]
+    [Arguments("sentinel", false)]
+    [Arguments("cluster", false)]
+    [Arguments("standalone", true)]
+    [Arguments("sentinel", true)]
+    [Arguments("cluster", true)]
+    public async Task CorrectionConnectionsKeepCapturedPeerWithoutResolvingAgain(string mode, bool factory)
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         var calls = 0;
         var options = new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Endpoints = [new("internal")],
+            ConnectionFactory = factory ? OpenStreamAsync : null,
             NodeAddressResolver = endpoint =>
             {
                 Interlocked.Increment(ref calls);
@@ -380,6 +393,52 @@ public class NodeAddressMappingTests
             }
             finally { pool.Return(connection); }
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FactoryRetirementFenceKeepsCapturedDestination(bool callback)
+    {
+        await using var originalServer = new FakeRespServer(2, ":42\r\n"u8.ToArray());
+        await using var otherServer = new FakeRespServer(2, ":42\r\n"u8.ToArray());
+        var source = new RespireEndpoint("private.internal", 6379);
+        var target = new RespireEndpoint("127.0.0.1", originalServer.Port);
+        var destinations = new List<RespireEndpoint>();
+        var calls = 0;
+        var options = new RespireConnectionOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            ConnectionFactory = async (endpoint, token) =>
+            {
+                destinations.Add(endpoint);
+                return await OpenStreamAsync(endpoint, token);
+            },
+            NodeAddressMap = callback ? null : new Dictionary<RespireEndpoint, RespireEndpoint> { [source] = target },
+            NodeAddressResolver = callback ? _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return target;
+            } : null,
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var node = await RespireConnectionMultiplexer.CreateAsync(source.Host, source.Port,
+            options: options, cancellationToken: deadline.Token);
+        var connection = node.GetConnection();
+        await connection.EnsureServerClientIdAsync(deadline.Token);
+        await Assert.That(connection.Host).IsEqualTo(source.Host);
+        await Assert.That(connection.Port).IsEqualTo(source.Port);
+        await Assert.That(connection.NetworkPeerAddress).IsNull();
+        await Assert.That(connection.NetworkPeerPort).IsNull();
+        target = new("127.0.0.1", otherServer.Port);
+        await connection.DisposeAsync();
+        await node.RetireAsync().WaitAsync(deadline.Token);
+        await Assert.That(destinations).IsEquivalentTo(new RespireEndpoint[]
+            { new("127.0.0.1", originalServer.Port), new("127.0.0.1", originalServer.Port) });
+        await Assert.That(originalServer.ReceivedCommands).Contains("CLIENT KILL ID 42");
+        await Assert.That(otherServer.ReceivedCommands).DoesNotContain("CLIENT KILL ID 42");
+        await Assert.That(node.HasPendingCorrectionFences).IsFalse();
+        await Assert.That(calls).IsEqualTo(callback ? 1 : 0);
     }
 
     [Test]

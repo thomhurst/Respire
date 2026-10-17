@@ -275,8 +275,8 @@ internal sealed class ClientCore : IAsyncDisposable
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
-            var pool = new DedicatedConnectionPool(original?.NetworkPeerAddress ?? endpoint.Host,
-                original?.NetworkPeerPort ?? endpoint.Port, options, Logger);
+            var pool = new DedicatedConnectionPool(original?.PeerKey.Host ?? endpoint.Host,
+                original?.PeerKey.Port ?? endpoint.Port, options, Logger);
             _ownedPools.Add(pool);
             return new(this, pool);
         }
