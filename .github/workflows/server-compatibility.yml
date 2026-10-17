@@ -32,6 +32,8 @@ jobs:
             minimum-tests: 14
           - server: keydb
             minimum-tests: 12
+          - server: valkey92
+            minimum-tests: 14
     env:
       RESPIRE_COMPATIBILITY_SERVER: ${{ matrix.server }}
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -59,6 +61,16 @@ jobs:
             --report-trx --report-trx-filename "${RESPIRE_COMPATIBILITY_SERVER}.trx" \
             --hangdump --hangdump-timeout 5m \
             2>&1 | tee "TestResults/compatibility/${RESPIRE_COMPATIBILITY_SERVER}.log"
+      - name: Run full integration suite with Valkey 9.2
+        if: matrix.server == 'valkey92'
+        env:
+          RESPIRE_TEST_REDIS_IMAGE: valkey/valkey:9.2.0-rc1-alpine
+        run: >-
+          dotnet run --project tests/Respire.IntegrationTests -c Release -f net10.0 --no-build --
+          --minimum-expected-tests 100
+          --results-directory "$GITHUB_WORKSPACE/TestResults/compatibility"
+          --report-trx --report-trx-filename valkey92-full.trx
+          --hangdump --hangdump-timeout 5m
       - name: Upload compatibility evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -5,7 +5,7 @@ description: Execute every documented command with pre-encoded, discoverable des
 
 # Complete command catalog
 
-`RespireCommands` has a descriptor for every command in the audited Redis 8.10 and Valkey 9.1 references, Redis's integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly extensions. Use it when a typed facet lacks the command or option you need.
+`RespireCommands` has a descriptor for every command in the audited Redis 8.10 and Valkey 9.2 RC references, Redis's integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly extensions. Use it when a typed facet lacks the command or option you need. See [Valkey 9.2 commands](valkey-92.md) for missing-key replies and ACL roles.
 
 ## Using descriptors
 

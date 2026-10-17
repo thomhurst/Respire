@@ -3,7 +3,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-internal static class AclParser
+internal static partial class AclParser
 {
     internal static byte[] Bytes(in RespValue value)
     {

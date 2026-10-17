@@ -405,6 +405,7 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<bool> MoveAsync(RespireKey key, int database, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<bool> MoveAsync(RespireKey key, int database, bool replace, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Overload LastOverload { get; private set; }
 

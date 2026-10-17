@@ -111,7 +111,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   [functions](commands/functions.md), and
   server commands; a [command catalog with raw and interpolated execution](guides/raw-commands.md);
   and [source-generated custom commands](guides/generated-commands.md).
-- [Typed Redis 8.10 / Valkey 9.1 commands](guides/raw-commands.md#finding-typed-apis), including
+- [Typed Redis 8.10 / Valkey 9.2 RC commands](guides/raw-commands.md#finding-typed-apis), including
   [sparse arrays](commands/arrays.md) and [hash import sessions](guides/hash-import.md).
   Availability depends on the server version.
 - [Explicit-node lifecycle and Cluster administration](guides/server-node-lifecycle.md),

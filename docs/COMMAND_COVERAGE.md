@@ -13,20 +13,20 @@ Respire exposes commands in two layers:
 
 ## Catalog sources
 
-The catalog has 645 unique descriptors. Counts overlap because many commands appear in several
+The catalog has 663 unique descriptors. Counts overlap because many commands appear in several
 references.
 
 | Reference | Version audited | Descriptors |
 | --- | --- | ---: |
 | Redis command metadata | 8.10.0 | 598 |
-| Valkey command metadata | 9.1.1 | 464 |
+| Valkey command metadata | 9.2.0-rc1 | 489 |
 | Redis integrated modules | Redis 8.10 documentation | Included above |
 | Valkey optional Bloom, JSON, and Search modules | Valkey 9.1 documentation | Included above |
 | KeyDB extensions | 6.3.4 command table and command reference, audited 2026-09-30 | 9 |
 | Dragonfly extensions | Documentation snapshot and 2.0.0 Cluster guide, audited 2026-09-30 | 18 |
 
 Pinned inputs: [Redis 8.10.0](https://github.com/redis/redis/tree/8.10.0/src/commands),
-[Valkey 9.1.1](https://github.com/valkey-io/valkey/tree/9.1.1/src/commands),
+[Valkey 9.2.0-rc1](https://github.com/valkey-io/valkey/tree/f01ed55e8c3d8a7d0c1d12661e9818edec758d42/src/commands),
 [KeyDB 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 [KeyDB command reference](https://docs.keydb.dev/docs/commands/),
 [Dragonfly documentation at 31881bce](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference)
@@ -63,6 +63,9 @@ positions.
 
 - `TOUCH` is excluded (it updates primary access metadata).
 - `ARSCAN` is a cursor read without a supported affinity layout.
+- Valkey `PHSCAN` uses its opaque cursor at argument index 1 and preserves cursor affinity.
+- Valkey `ACL DIGEST`, `ACL GETROLE`, `ACL ROLES`, and `CONFIG INFO` stay primary-only because
+  upstream marks them administrative rather than `READONLY`. Their cache effects are read-only.
 - `MEMORY USAGE` is eligible and reports node-local memory.
 - `EVAL_RO` and `EVALSHA_RO` keep read eligibility and script key positions.
 - Unknown and unaudited module names are primary-only. Caller descriptors cannot claim eligibility;
@@ -131,7 +134,7 @@ Clone the tagged Redis and Valkey repositories, then run:
   -RedisCommandPath C:\src\redis\src\commands `
   -ValkeyCommandPath C:\src\valkey\src\commands `
   -RedisVersion 8.10.0 `
-  -ValkeyVersion 9.1.1
+  -ValkeyVersion 9.2.0-rc1
 ```
 
 The generator reads official core JSON metadata and owns the module and compatible-server

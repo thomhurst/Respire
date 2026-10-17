@@ -177,8 +177,8 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     }
 }
 
-[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-public class LegacyStreamReferenceIntegrationTests(RedisTestContainer fixture)
+[ClassDataSource<Redis7ReferenceContainer>(Shared = SharedType.PerTestSession)]
+public class LegacyStreamReferenceIntegrationTests(Redis7ReferenceContainer fixture)
 {
     [Test]
     [Arguments(2)]

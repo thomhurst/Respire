@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory)] [string] $RedisCommandPath,
     [Parameter(Mandatory)] [string] $ValkeyCommandPath,
     [string] $RedisVersion = '8.10.0',
-    [string] $ValkeyVersion = '9.1.1',
+    [string] $ValkeyVersion = '9.2.0-rc1',
     [string] $OutputPath = [System.IO.Path]::GetFullPath(
         [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'Respire', 'RespireCommands.g.cs'))
 )
@@ -12,14 +12,14 @@ $ErrorActionPreference = 'Stop'
 # Redis command flags describe execution properties, not always keyspace effects. Preserve these audited
 # no-keyspace-change commands whose provider metadata is absent or says only WRITE/ADMIN.
 $cacheReadOnlyOverrides = @(
-    'ACL CAT', 'ACL DRYRUN', 'ACL GETUSER', 'ACL LIST', 'ACL LOG', 'ACL WHOAMI',
+    'ACL CAT', 'ACL DIGEST', 'ACL DRYRUN', 'ACL GETROLE', 'ACL GETUSER', 'ACL LIST', 'ACL LOG', 'ACL ROLES', 'ACL WHOAMI',
     'BF.CARD', 'BF.DEBUG', 'BF.EXISTS', 'BF.INFO', 'BF.MEXISTS', 'BF.SCANDUMP',
     'CACHING', 'CF.COUNT', 'CF.DEBUG', 'CF.EXISTS', 'CF.INFO', 'CF.MEXISTS', 'CF.SCANDUMP',
     'CLIENT CACHING', 'CLIENT LIST', 'CLIENT TRACKING',
     'CLUSTER COUNTKEYSINSLOT', 'CLUSTER INFO', 'CLUSTER KEYSLOT', 'CLUSTER LINKS', 'CLUSTER SLOT-STATS',
     'CLUSTER MYID', 'CLUSTER MYSHARDID', 'CLUSTER NODES', 'CLUSTER SHARDS',
     'CMS.INFO', 'CMS.QUERY', 'COMMAND COUNT', 'COMMAND DOCS', 'COMMAND GETKEYS', 'COMMAND INFO', 'COMMAND LIST',
-    'COMMANDLOG GET', 'COMMANDLOG LEN', 'CONFIG GET', 'ECHO',
+    'COMMANDLOG GET', 'COMMANDLOG LEN', 'CONFIG GET', 'CONFIG INFO', 'ECHO',
     'FT.AGGREGATE', 'FT.ALIASLIST', 'FT.CONFIG GET', 'FT.CURSOR', 'FT.CURSOR DEL', 'FT.CURSOR GC', 'FT.CURSOR READ',
     'FT.DICTDUMP', 'FT.EXPLAIN', 'FT.EXPLAINCLI', 'FT.INFO', 'FT.PROFILE', 'FT.SEARCH', 'FT.SPELLCHECK',
     'FT.SUGGET', 'FT.SUGLEN', 'FT.SYNDUMP', 'FT.TAGVALS',
@@ -45,7 +45,7 @@ $cacheUnknownOverrides = @('PFCOUNT')
 # ranges rather than SCAN cursors. Preserve its conservative CursorRead classification
 # with index -1; the standard cursor-continuation layout does not apply to it.
 $primaryOnlyReadOverrides = @('TOUCH')
-$cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
+$cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 1; ARSCAN = -1 }
 
 # Retry risk is a separate audit. Cache ReadOnly means no tracked keyspace mutation,
 # which does not make scripts, consuming cursors, or connection state replayable.
@@ -53,7 +53,11 @@ $cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = 
 $retryOverrides = @{}
 foreach ($entry in @(
     @{ Category = 'Always'; Commands = 'PING,ECHO' },
-    @{ Category = 'Connection'; Commands = 'CONFIG GET,CLIENT GETNAME,CLIENT GETREDIR,CLIENT ID,CLIENT INFO,CLIENT LIST,CLIENT SETNAME,CLIENT SETINFO,INFO,TIME,ROLE,LASTSAVE,COMMAND,COMMAND COUNT,COMMAND DOCS,COMMAND GETKEYS,COMMAND GETKEYSANDFLAGS,COMMAND INFO,COMMAND LIST' },
+    @{ Category = 'Connection'; Commands = 'CONFIG GET,CONFIG INFO,ACL DIGEST,ACL GETROLE,ACL ROLES,CLIENT GETNAME,CLIENT GETREDIR,CLIENT ID,CLIENT INFO,CLIENT LIST,CLIENT SETNAME,CLIENT SETINFO,INFO,TIME,ROLE,LASTSAVE,COMMAND,COMMAND COUNT,COMMAND DOCS,COMMAND GETKEYS,COMMAND GETKEYSANDFLAGS,COMMAND INFO,COMMAND LIST' },
+    @{ Category = 'ServerAdmin'; Commands = 'ACL SETROLE,ACL DELROLE' },
+    @{ Category = 'WriteLastWins'; Commands = 'PHMSET' },
+    # PHSET has conditional field updates; deletes can lose their original counts.
+    @{ Category = 'WriteAccumulating'; Commands = 'PHSET,PHDEL,PHDELPREFIX' },
     @{ Category = 'WriteChecked'; Commands = 'SETNX,MSETNX,HSETNX' },
     @{ Category = 'WriteLastWins'; Commands = 'MSET,HSET,HMSET,LSET,SETRANGE,SETBIT,VSETATTR' },
     # SET GET and ZADD INCR can lose a result or accumulate effects. A future
@@ -135,6 +139,7 @@ function Get-ClassName([string] $Group) {
         'generic' { 'Key' }
         'geo' { 'Geo' }
         'hash' { 'Hash' }
+        'pathhash' { 'PathHash' }
         'hyperloglog' { 'HyperLogLog' }
         'list' { 'List' }
         'pubsub' { 'PubSub' }

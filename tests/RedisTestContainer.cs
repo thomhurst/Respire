@@ -34,6 +34,16 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
     /// <summary>Adds redis-server arguments, such as an eviction policy, for a dedicated keyed container.</summary>
     protected RedisTestContainer(params string[] serverArguments) => _serverArguments = serverArguments;
 
+    /// <summary>Selects the server image. Version-specific tests can pin their reference server.</summary>
+    protected virtual string ServerImage
+    {
+        get
+        {
+            var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE");
+            return string.IsNullOrWhiteSpace(image) ? "redis:7.0.15" : image;
+        }
+    }
+
     private RedisContainer Container =>
         _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
 
@@ -71,11 +81,7 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
 
     public async Task InitializeAsync()
     {
-        var image = Environment.GetEnvironmentVariable("RESPIRE_TEST_REDIS_IMAGE");
-        if (string.IsNullOrWhiteSpace(image))
-        {
-            image = "redis:7.0.15";
-        }
+        var image = ServerImage;
         // A failed start is removed by the retry helper, which also replaces it after a host-port bind collision.
         _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(image)
             .WithCommand(["redis-server", "--databases", DatabaseCount.ToString(), .. _serverArguments])

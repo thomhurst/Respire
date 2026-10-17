@@ -6,8 +6,8 @@ $valkeyPath = Join-Path $fixtureRoot 'valkey'
 $outputPath = Join-Path $fixtureRoot 'RespireCommands.g.cs'
 
 function Write-CommandFixture([string] $Path, [string] $File, [string] $Name, [object] $Flags,
-    [string] $Container = '') {
-    $definition = @{ group = 'string'; command_flags = $Flags }
+    [string] $Container = '', [string] $Group = 'string') {
+    $definition = @{ group = $Group; command_flags = $Flags }
     if ($Container) { $definition.container = $Container }
     @{ $Name = $definition } | ConvertTo-Json -Depth 5 |
         Set-Content -LiteralPath (Join-Path $Path "$File.json") -Encoding utf8
@@ -40,6 +40,10 @@ try {
     Write-CommandFixture $redisPath 'setnx' 'SETNX' @('WRITE')
     Write-CommandFixture $redisPath 'hset' 'HSET' @('WRITE')
     Write-CommandFixture $redisPath 'zadd' 'ZADD' @('WRITE')
+    Write-CommandFixture $valkeyPath 'phscan' 'PHSCAN' @('READONLY') '' 'pathhash'
+    Write-CommandFixture $valkeyPath 'acl-digest' 'DIGEST' @('ADMIN') 'ACL' 'server'
+    Write-CommandFixture $valkeyPath 'acl-setrole' 'SETROLE' @('ADMIN') 'ACL' 'server'
+    Write-CommandFixture $valkeyPath 'config-info' 'INFO' @('ADMIN') 'CONFIG' 'server'
     foreach ($name in @('SCAN', 'HSCAN', 'SSCAN', 'ZSCAN', 'ARSCAN')) {
         Write-CommandFixture $redisPath $name $name @('READONLY')
     }
@@ -76,6 +80,8 @@ try {
         CONFLICT = 'Never'; MISSING = 'Never'; EMPTY = 'Never'; CONTRADICTION = 'Never'
         DUPLICATE = 'Never'; INVENTED_RO = 'Never'; 'CUSTOM GET' = 'ReadOnly'
         'EVAL_RO' = 'Never'; 'FT.CURSOR READ' = 'Never'; 'JSON.GET' = 'ReadOnly'
+        'PHSCAN' = 'ReadOnly'; 'ACL DIGEST' = 'Connection'; 'ACL SETROLE' = 'ServerAdmin'
+        'CONFIG INFO' = 'Connection'
     }
     foreach ($entry in $retryExpectations.GetEnumerator()) {
         $pattern = '(?m)^\s*public static readonly RespireCommand \w+ = new\("' +
@@ -110,7 +116,7 @@ try {
             throw "Cache mutation table depends on descriptor initialization: $forbidden."
         }
     }
-    $cursorIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; ARSCAN = -1 }
+    $cursorIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 1; ARSCAN = -1 }
     foreach ($entry in $cursorIndices.GetEnumerator()) {
         $declaration = '["' + $entry.Key + '"] = (ReadCommandKind.CursorRead, ' + $entry.Value + '),'
         if (-not $first.Contains($declaration)) { throw "Incorrect cursor classification for $($entry.Key)." }
@@ -119,6 +125,7 @@ try {
         GET = 'ReadOnly'; SET = 'Mutation'; 'JSON.GET' = 'ReadOnly'; 'BF.EXISTS' = 'ReadOnly'
         'KEYDB.NHGET' = 'Mutation'; 'CLUSTER SLOT-STATS' = 'ReadOnly'
         'FT.CONFIG GET' = 'ReadOnly'; 'FT.CONFIG SET' = 'Mutation'
+        'ACL DIGEST' = 'ReadOnly'; 'ACL SETROLE' = 'Mutation'; 'CONFIG INFO' = 'ReadOnly'
     }
     foreach ($entry in $mutationExpectations.GetEnumerator()) {
         $pattern = '(?m)^\s*public static readonly RespireCommand \w+ = new\("' +

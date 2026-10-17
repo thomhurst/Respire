@@ -12,7 +12,7 @@ namespace Respire.IntegrationTests;
 // Opt in before fixture initialization, so ordinary CI never pulls these images.
 [AttributeUsage(AttributeTargets.Class)]
 public sealed class ServerCompatibilityOnlyAttribute() : SkipAttribute(
-    "Set RESPIRE_COMPATIBILITY_SERVER to garnet, dragonfly, or keydb to run the compatibility suite.")
+    "Set RESPIRE_COMPATIBILITY_SERVER to garnet, dragonfly, keydb, or valkey92 to run the compatibility suite.")
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context)
         => Task.FromResult(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RESPIRE_COMPATIBILITY_SERVER")));
@@ -50,11 +50,17 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
             }
             var portText = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var containerPort = Name == "garnet" ? port : 6379;
-            var builder = Name == "garnet"
-                ? new ContainerBuilder(GarnetImage)
+            ContainerBuilder builder;
+            if (Name == "garnet")
+                builder = new ContainerBuilder(GarnetImage)
                 .WithCommand("--cluster", "--port", portText,
-                    "--cluster-announce-ip", "127.0.0.1", "--memory", "128m", "--page", "4m", "--segment", "16m", "--index", "8m")
-                : new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
+                    "--cluster-announce-ip", "127.0.0.1", "--memory", "128m", "--page", "4m", "--segment", "16m", "--index", "8m");
+            else if (Name == "valkey92")
+                builder = new ContainerBuilder(Valkey92IntegrationTests.Image)
+                .WithCommand("valkey-server", "--save", "", "--appendonly", "no",
+                    "--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1", "--cluster-announce-port", portText);
+            else
+                builder = new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
                 .WithCommand("keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no",
                     "--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1", "--cluster-announce-port", portText);
             var container = builder
@@ -92,6 +98,7 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
             "keydb" => ("eqalpha/keydb:x86_64_v6.3.4", new[]
                 { "keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no" }
                 .Concat(cluster ? ["--cluster-enabled", "yes", "--cluster-announce-ip", "127.0.0.1"] : Array.Empty<string>()).ToArray()),
+            "valkey92" => (Valkey92IntegrationTests.Image, new[] { "valkey-server", "--save", "", "--appendonly", "no" }),
             _ => throw new InvalidOperationException($"Unknown RESPIRE_COMPATIBILITY_SERVER '{Name}'."),
         };
         return ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
