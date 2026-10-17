@@ -15,6 +15,133 @@ namespace Respire.Tests.Networking;
 public class NodeAddressMappingTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectionHookSeesMappedDestinationOnce(bool reject)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var source = new RespireEndpoint("private.internal", 6379);
+        var target = new RespireEndpoint("127.0.0.1", server.Port);
+        var calls = 0;
+        var hook = new MappingHook(target, reject);
+        var options = new RespireConnectionOptions
+        {
+            Protocol = RespireProtocol.Resp2, ConnectionHook = hook,
+            NodeAddressResolver = endpoint =>
+            {
+                Interlocked.Increment(ref calls);
+                if (endpoint != source) throw new InvalidOperationException("Destination resolved twice.");
+                return target;
+            },
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        if (reject)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                await using var connection = await RespireConnection.ConnectAsync(source.Host, source.Port, options,
+                    cancellationToken: deadline.Token);
+            });
+            await Assert.That(server.ConnectionAccepted.IsCompleted).IsFalse();
+        }
+        else
+        {
+            await using var connection = await RespireConnection.ConnectAsync(source.Host, source.Port,
+                options, cancellationToken: deadline.Token);
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+            await Assert.That(connection.Host).IsEqualTo(source.Host);
+        }
+        await Assert.That(hook.Started!.Endpoint).IsEqualTo(target);
+        await Assert.That(hook.Completed).IsSameReferenceAs(hook.Started);
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
+    private sealed class MappingHook(RespireEndpoint expected, bool reject) : RespireConnectionHook
+    {
+        internal RespireConnectionContext? Started;
+        internal RespireConnectionContext? Completed;
+        public override ValueTask OnConnectingAsync(RespireConnectionContext context, CancellationToken cancellationToken)
+        {
+            Started = context;
+            if (context.Endpoint != expected || reject) throw new InvalidOperationException("Endpoint rejected.");
+            return default;
+        }
+        public override ValueTask OnCompletedAsync(RespireConnectionContext context, RespireConnectionOutcome outcome,
+            TimeSpan elapsed, CancellationToken cancellationToken)
+        {
+            Completed = context;
+            return default;
+        }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task SentinelRefreshReconnectsMappedAnnouncement(bool callback, bool identityResolver)
+    {
+        static FakeRespServer Primary() => new(16, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "ROLE" ? "*3\r\n+master\r\n:0\r\n*0\r\n"u8.ToArray() : null,
+        };
+        await using var first = Primary();
+        await using var second = Primary();
+        var port = first.Port;
+        var announced = identityResolver ? new RespireEndpoint("localhost", first.Port) : new("private.internal", 6379);
+        await using var sentinel = new FakeRespServer(32, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster" => Encoding.ASCII.GetBytes($"*2\r\n+{announced.Host}\r\n+{announced.Port}\r\n"),
+                "SUBSCRIBE +switch-master +sdown +odown" => "*3\r\n$9\r\nsubscribe\r\n$14\r\n+switch-master\r\n:1\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+sdown\r\n:2\r\n*3\r\n$9\r\nsubscribe\r\n$6\r\n+odown\r\n:3\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        var options = new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            NodeAddressResolver = callback ? endpoint => endpoint.Host == "private.internal"
+                ? new("127.0.0.1", Volatile.Read(ref port)) : endpoint : null,
+            NodeAddressMap = callback ? null : new Dictionary<RespireEndpoint, RespireEndpoint>
+                { ["private.internal:6379"] = new("127.0.0.1", first.Port) },
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var client = await RespireClient.ConnectAsync(options, deadline.Token);
+        await SentinelTestSetup.WaitForStartupAsync(client);
+        var router = client.Core.Sentinel!;
+        var original = router.Current!;
+        var connectionsBefore = first.ReceivedConnectionIds.Distinct().Count();
+        if (callback && !identityResolver) Volatile.Write(ref port, second.Port);
+        // A static map may target a hostname whose DNS changes. Even a healthy old peer
+        // cannot prove that a new connection would still reach that same destination.
+        var replacement = await router.GetGenerationAsync(deadline.Token, forceDiscovery: true);
+        if (callback && !identityResolver)
+        {
+            await Assert.That(replacement).IsNotSameReferenceAs(original);
+            await Assert.That(original.IsRetired).IsTrue();
+        }
+        else
+        {
+            await Assert.That(first.ReceivedConnectionIds.Distinct().Count() > connectionsBefore).IsTrue();
+            await Assert.That(replacement).IsSameReferenceAs(original);
+        }
+        await Assert.That(replacement.ValidatedPeer!.Value.Port).IsEqualTo(callback && !identityResolver ? second.Port : first.Port);
+    }
+
+    [Test]
+    public async Task MapHostMatchingIgnoresCaseAndKeepsPortsDistinct()
+    {
+        var map = NodeAddressMapping.Parse("Redis.Internal:6379=localhost:7001;redis.internal:6380=localhost:7002");
+        var snapshot = NodeAddressMapping.Snapshot(map)!;
+        await Assert.That(snapshot[new("REDIS.INTERNAL", 6379)]).IsEqualTo(new RespireEndpoint("localhost", 7001));
+        await Assert.That(snapshot[new("REDIS.INTERNAL", 6380)]).IsEqualTo(new RespireEndpoint("localhost", 7002));
+        await Assert.That(() => NodeAddressMapping.Parse("Redis:6379=localhost:7001;redis:6379=localhost:7002"))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
     [Arguments(false, null)]
     [Arguments(true, null)]
     [Arguments(false, "explicit.example")]
@@ -26,15 +153,15 @@ public class NodeAddressMappingTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var listener = FakeRespServer.StartListener();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        string? sni = null;
-        SslPolicyErrors? certificateErrors = null;
+        var serverNames = new List<string?>();
+        var certificateErrors = new List<SslPolicyErrors>();
         var server = ServeBothAsync();
         var tlsOptions = new SslClientAuthenticationOptions
         {
             TargetHost = explicitHost!,
             RemoteCertificateValidationCallback = (_, _, _, errors) =>
             {
-                certificateErrors = errors;
+                certificateErrors.Add(errors);
                 return true; // The test certificate is self-signed; hostname errors are asserted below.
             },
         };
@@ -62,8 +189,10 @@ public class NodeAddressMappingTests
             }
             finally { correction.Pool.Return(control); }
             await server.WaitAsync(deadline.Token);
-            await Assert.That(sni).IsEqualTo(expectedHost);
-            await Assert.That(certificateErrors!.Value.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch)).IsFalse();
+            await Assert.That(serverNames).IsEquivalentTo(new string?[] { expectedHost, expectedHost });
+            await Assert.That(certificateErrors.Count).IsEqualTo(2);
+            foreach (var errors in certificateErrors)
+                await Assert.That(errors.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch)).IsFalse();
             await Assert.That(tlsOptions.TargetHost).IsEqualTo(explicitHost);
         }
         finally
@@ -86,7 +215,7 @@ public class NodeAddressMappingTests
             await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: false));
             await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
-                ServerCertificateSelectionCallback = (_, name) => { sni = name; return certificate; },
+                ServerCertificateSelectionCallback = (_, name) => { serverNames.Add(name); return certificate; },
             }, deadline.Token);
             var request = new byte[FakeRespServer.PingFrame.Length];
             await stream.ReadExactlyAsync(request, deadline.Token);
@@ -264,9 +393,9 @@ public class NodeAddressMappingTests
         var options = new RespireOptions
         {
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            NodeAddressMap = callback ? null : new Dictionary<RespireEndpoint, RespireEndpoint> { ["private.internal:6379"] = "localhost:7001" },
+            NodeAddressMap = callback ? null : new Dictionary<RespireEndpoint, RespireEndpoint> { ["PRIVATE.INTERNAL:6379"] = "localhost:7001" },
             NodeAddressResolver = callback ? endpoint => endpoint : null,
-        };
+        }.ValidateAndSnapshot();
         var host = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
             (resolved, _, _) => ValueTask.FromResult(resolved.PrimaryEndpoint.Host), deadline.Token,
             hostResolver: (_, _) => throw new InvalidOperationException("Private DNS lookup must not delay mapped connections."));

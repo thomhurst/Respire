@@ -11,7 +11,7 @@
     {
       "Name": "physical-factory-connect-helper",
       "Role": "borrower",
-      "Member": "Respire.Networking.RespireConnection.ConnectFactoryStreamAsync(string,int,RespireConnectionOptions,ILogger?,CancellationToken,bool):Task<RespireConnection>",
+      "Member": "Respire.Networking.RespireConnection.ConnectFactoryStreamAsync(string,int,RespireEndpoint,RespireConnectionOptions,ILogger?,CancellationToken,bool):Task<RespireConnection>",
       "Owner": "Respire.RespireClient.ConnectAsync(RespireOptions,CancellationToken):ValueTask<RespireClient>",
       "Contract": "Custom transport setup follows the same caller boundary as socket setup. Factory, handshake and validation cleanup preserve original errors and cancellation tokens; an observed physical close does not create another setup caller."
     },

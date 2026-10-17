@@ -14,6 +14,9 @@ internal static class RespireConfiguration
     {
         Endpoints = Endpoints(section.GetSection("Endpoints"), options.Endpoints),
         ReplicaEndpoints = Endpoints(section.GetSection("ReplicaEndpoints"), options.ReplicaEndpoints),
+        NodeAddressMap = section["NodeAddressMap"] is { } map
+            ? Parse(section.GetSection("NodeAddressMap"), NodeAddressMapping.Parse) : options.NodeAddressMap,
+        UseMappedHostForTls = section.GetValue("UseMappedHostForTls", options.UseMappedHostForTls),
         ReadFrom = section.GetValue("ReadFrom", options.ReadFrom),
         HedgedReads = HedgedReads(section.GetSection("HedgedReads"), options.HedgedReads),
         ClientAvailabilityZone = section.GetValue("ClientAvailabilityZone", options.ClientAvailabilityZone),

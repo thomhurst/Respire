@@ -349,6 +349,7 @@ Respire.Networking.RespireConnection | property ClientTrackingEnabled [internal;
 Respire.Networking.RespireConnection | property PendingResponseCount [internal; get] : int
 Respire.Networking.RespireConnection | property Port [public; get] : int
 Respire.Networking.RespireConnection | property ServerClientId [internal; get] : long
+Respire.Networking.RespireConnection | property TlsHost [internal; get] : string
 Respire.Networking.RespireConnection | property UndeliveredReplyCount [internal; get] : int
 Respire.Networking.RespireConnection | property WriteBufferCapacity [internal; get] : int
 # Designated borrowed view; source keys retain readonly/ref and compiled metadata checks stack-only visibility.

@@ -27,9 +27,11 @@ internal sealed partial class RespireConnection
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var socketEndpoint = ResolveSocketEndpoint(host, port, options);
+            context = new RespireConnectionContext(socketEndpoint, options.UseTls);
             await hook.OnConnectingAsync(context, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            connection = await ConnectCoreAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline)
+            connection = await ConnectCoreAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline, socketEndpoint)
                 .ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             completing = true;
