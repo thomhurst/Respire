@@ -708,6 +708,39 @@ Replica sources: `ReplicaEndpoints` (standalone; `Endpoints` still holds one pri
 - A `PING` failure or ACL denial drops the estimate, not the candidate. Failed connections cool down for `ReplicaRefreshInterval` (replicas) or one second (primary, Cluster).
 - Latency reflects queues and network, not replication lag. Linked replicas are still preferred.
 
+### Latency tolerance bands
+
+Set `ReplicaLatencyTolerance` to spread reads across similarly fast endpoints:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = [new("primary", 6379)],
+    ReplicaEndpoints = [new("replica-a", 6379), new("replica-b", 6379)],
+    ReadFrom = RespireReadFrom.ReplicaPreferred,
+    ReplicaLatencyTolerance = TimeSpan.FromMilliseconds(1)
+};
+```
+
+The option applies to Cluster, configured replicas and Sentinel discovery. Within the best
+eligible role, replication-link and AZ tier, reads rotate among endpoints whose measured RTT
+is at most `fastest RTT + tolerance`. The boundary is inclusive. AZ policies choose their
+preferred tier first, so a faster remote replica cannot displace a healthy local replica.
+`Nearest` includes the primary in its band. `PrimaryPreferred` still tries the primary first;
+its replica fallback uses the band. Primary reads and writes keep their existing routes.
+
+`null` (the default) preserves existing routing. Zero selects only fastest ties. Negative values
+are rejected. Sampling uses the same bounded, advisory PING measurements as `Nearest`.
+Unknown RTTs rotate only when no measured candidate exists in the preferred tier; unanswered
+probes remain excluded. This option does not measure replication lag or provide read-your-writes consistency.
+
+`RespireClient.GetReadRoutingSnapshot()` returns the last completed band selection's
+`EligibleEndpoints`, policy, capture time and Cluster slot (null outside Cluster).
+The snapshot is immutable and performs no I/O. An unchanged eligible band, policy and slot reuse the
+same observation and capture time, avoiding per-read snapshot allocation. Views share this observation; concurrent selections
+can publish in any order. It returns null before a band selection completes. Eligibility can change
+after capture as topology, health and RTT estimates change.
+
 ### Hedged reads
 
 :::warning Experimental API: RSP0003

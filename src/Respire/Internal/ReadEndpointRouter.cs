@@ -226,6 +226,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         // Multi-endpoint/socket rotation, zone ranking and Nearest keep their existing selectors.
         // Sentinel discovery must still run on schedule, even when this connection is healthy.
         if (readFrom is not (RespireReadFrom.Replica or RespireReadFrom.ReplicaPreferred)
+            || core.Options.ReplicaLatencyTolerance is not null
             || core.Options.Connections != 1 || core.Sentinel is not null && IsSentinelRefreshDue()) return null;
         var publication = Volatile.Read(ref _readyReplica);
         if (publication is null || !IsReadyReplicaCurrent(publication))
@@ -432,12 +433,12 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 try { return await GetPrimaryAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false); }
                 catch (BacklogSelectionRequiredException)
                 {
-                    return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                    return await GetReplicaAsync(cancellationToken, observation, readFrom, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     RecordCandidateFailure(observation, error, observation.Endpoint);
-                    return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                    return await GetReplicaAsync(cancellationToken, observation, readFrom, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
                 }
             case RespireReadFrom.Replica:
                 return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
@@ -508,6 +509,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     private async ValueTask<Selection> GetReplicaAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
         RespireReadFrom readFrom = RespireReadFrom.Replica, ReadAttempt? attempt = null, bool readyOnly = false)
     {
+        if (core.Options.ReplicaLatencyTolerance is not null)
+            return await GetNearestAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly,
+                readFrom: readFrom).ConfigureAwait(false);
         var endpoints = await GetReplicaEndpointsAsync(cancellationToken, readyOnly: readyOnly).ConfigureAwait(false);
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
@@ -536,6 +540,10 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         RespireEndpoint[] endpoints, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, RespireReadFrom readFrom = RespireReadFrom.Replica,
         RespireConnection? excluded = null, ReadAttempt? attempt = null, bool readyOnly = false)
     {
+        if (core.Options.ReplicaLatencyTolerance is not null)
+            return await GetNearestAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly,
+                readFrom: readFrom,
+                replicaEndpoints: endpoints, excludedPeer: excluded).ConfigureAwait(false);
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
 
@@ -837,8 +845,9 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
         }
 
         internal ValueTask<RespireConnection?> GetNearestConnectionAsync(
-            ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken, bool readyOnly = false)
-            => GetConnectionCoreAsync(cancellationToken, preferredZone: null, sampler, readyOnly);
+            ReadLatencySampler<RespireConnection> sampler, CancellationToken cancellationToken, bool readyOnly = false,
+            string? preferredZone = null)
+            => GetConnectionCoreAsync(cancellationToken, preferredZone, sampler, readyOnly);
 
         /// <summary>Acquires a current connection after validating its replication role.</summary>
         internal async ValueTask<RespireConnection> GetConnectionAsync(CancellationToken cancellationToken, string? preferredZone = null,

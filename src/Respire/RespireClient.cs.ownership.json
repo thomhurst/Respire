@@ -28,6 +28,7 @@
         "ExecuteFireAndForgetAsync(RespireCommand,params RespireValue[]):ValueTask",
         "ExecuteFireAndForgetAsync(RespireCommandInterpolatedStringHandler,CancellationToken):ValueTask",
         "GetClusterRetirementSnapshot():RespireClusterRetirementSnapshot?",
+        "GetReadRoutingSnapshot():RespireReadRoutingSnapshot?",
         "PingAsync(CancellationToken):ValueTask<TimeSpan>",
         "PublishAsync(RespireChannel,RespireValue,CancellationToken):ValueTask<long>",
         "PublishShardedAsync(RespireChannel,RespireValue,CancellationToken):ValueTask<long>",

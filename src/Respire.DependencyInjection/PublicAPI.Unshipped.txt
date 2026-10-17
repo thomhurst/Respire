@@ -7,6 +7,8 @@ Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetime.get -> S
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetime.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetimeJitter.get -> System.TimeSpan
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetimeJitter.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaLatencyTolerance.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaLatencyTolerance.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool

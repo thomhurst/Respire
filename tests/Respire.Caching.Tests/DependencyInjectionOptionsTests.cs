@@ -75,6 +75,7 @@ public class DependencyInjectionOptionsTests
             ["KeyPrefix"] = "keys:", ["PubSubPrefix"] = "channels:", ["ReadFrom"] = "Primary",
             ["HedgedReads:Delay"] = "00:00:00.025", ["ClientAvailabilityZone"] = "zone-1",
             ["ReplicaRefreshInterval"] = "00:00:02", ["UseCluster"] = "false",
+            ["ReplicaLatencyTolerance"] = "00:00:00.005",
             ["IncludeCrossSlotKeyContext"] = "true",
             ["SplitCrossSlotCommands"] = "true",
             ["SentinelPrimaryName"] = "primary", ["Username"] = "user", ["Password"] = "password",
