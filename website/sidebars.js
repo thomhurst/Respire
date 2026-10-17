@@ -105,6 +105,7 @@ const sidebars = {
         'guides/vector-sets',
         'guides/vector-data',
         'guides/semantic-cache',
+        'guides/chat-history',
         'guides/timeseries',
         'guides/probabilistic',
       ],

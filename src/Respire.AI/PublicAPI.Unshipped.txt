@@ -1,4 +1,23 @@
 #nullable enable
+[RSP0002]Respire.AI.RespireChatHistoryExtensions
+[RSP0002]Respire.AI.RespireChatHistoryOptions
+[RSP0002]Respire.AI.RespireChatHistoryOptions.RespireChatHistoryOptions() -> void
+[RSP0002]Respire.AI.RespireChatHistoryOptions.MaximumMessages.get -> int
+[RSP0002]Respire.AI.RespireChatHistoryOptions.MaximumMessages.init -> void
+[RSP0002]Respire.AI.RespireChatHistoryOptions.StoreName.get -> string!
+[RSP0002]Respire.AI.RespireChatHistoryOptions.StoreName.init -> void
+[RSP0002]Respire.AI.RespireChatHistoryOptions.TimeToLive.get -> System.TimeSpan
+[RSP0002]Respire.AI.RespireChatHistoryOptions.TimeToLive.init -> void
+[RSP0002]Respire.AI.RespireChatHistoryProvider
+[RSP0002]Respire.AI.RespireChatHistoryProvider.RespireChatHistoryProvider(Respire.AI.RespireChatHistoryStore! store, System.Func<Microsoft.Agents.AI.AgentSession!, string!>! conversationIdSelector, int maximumMessages = 100) -> void
+[RSP0002]Respire.AI.RespireChatHistoryStore
+[RSP0002]Respire.AI.RespireChatHistoryStore.RespireChatHistoryStore(Respire.IRespireClient! client, Respire.AI.RespireChatHistoryOptions? options = null) -> void
+[RSP0002]Respire.AI.RespireChatHistoryStore.AppendAsync(string! conversationId, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+[RSP0002]Respire.AI.RespireChatHistoryStore.ReadAsync(string! conversationId, int maximumMessages = 100, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!>
+[RSP0002]Respire.AI.RespireChatHistoryStore.TrimAsync(string! conversationId, int maximumMessages, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+[RSP0002]Respire.AI.RespireChatHistoryStore.ExpireAsync(string! conversationId, System.TimeSpan timeToLive, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+[RSP0002]Respire.AI.RespireChatHistoryStore.ClearAsync(string! conversationId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+[RSP0002]static Respire.AI.RespireChatHistoryExtensions.UseRespireChatHistory(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Respire.AI.RespireChatHistoryStore! store, string! conversationId, int maximumMessages = 100) -> Microsoft.Extensions.AI.ChatClientBuilder!
 *REMOVED*Respire.AI.RespireSemanticCacheExtensions
 [RSP0002]Respire.AI.RespireSemanticCacheExtensions
 *REMOVED*Respire.AI.RespireSemanticCacheOptions

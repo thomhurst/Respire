@@ -13,6 +13,7 @@
     <Project Path="samples/Respire.Samples.AspNetCore/Respire.Samples.AspNetCore.csproj" />
     <Project Path="samples/Respire.Samples.Azure/Respire.Samples.Azure.csproj" />
     <Project Path="samples/Respire.Samples.Basic/Respire.Samples.Basic.csproj" />
+    <Project Path="samples/Respire.Samples.ChatHistory/Respire.Samples.ChatHistory.csproj" />
     <Project Path="samples/Respire.Samples.Cluster/Respire.Samples.Cluster.csproj" />
     <Project Path="samples/Respire.Samples.Mappers/Respire.Samples.Mappers.csproj" />
     <Project Path="samples/Respire.Samples.Observability/Respire.Samples.Observability.csproj" />
