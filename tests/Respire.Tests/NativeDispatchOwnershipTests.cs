@@ -23,7 +23,6 @@ public class NativeDispatchOwnershipTests
         using var cancellation = new CancellationTokenSource();
         Exception expected = callerCancellation ? new OperationCanceledException(cancellation.Token)
             : new IOException("original setup failure");
-        if (callerCancellation) cancellation.Cancel();
         Exception? actual = null;
         try
         {
@@ -31,7 +30,11 @@ public class NativeDispatchOwnershipTests
             {
                 Protocol = RespireProtocol.Resp2,
                 ObserveEstablishmentErrors = true,
-                TestingStreamFactory = (_, _, _) => ValueTask.FromException<Stream>(expected),
+                ConnectionFactory = (_, _) =>
+                {
+                    if (callerCancellation) cancellation.Cancel();
+                    return ValueTask.FromException<Stream>(expected);
+                },
             }, cancellationToken: cancellation.Token);
         }
         catch (Exception error) { actual = error; }

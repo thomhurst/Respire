@@ -63,6 +63,8 @@ The factory receives the Redis destination, including discovered nodes. It runs 
 
 Return a readable and writable stream that supports concurrent asynchronous reads and writes. Respire takes ownership on return and disposes it on cancellation, setup failure, and connection closure. Disposal must unblock pending I/O. If acquisition throws, the factory must dispose any resources it created. `Respire.Testing` uses this same public hook.
 
+Writes must reach the peer without a flush. Respire sends each outgoing batch with `WriteAsync` and does not call `Flush` or `FlushAsync` on the stream. Do not return a buffering wrapper that holds bytes until it is flushed; use a write-through transport stream.
+
 The supplied token combines caller cancellation with `ConnectTimeout`. Observe it promptly throughout DNS, connect, and tunnel negotiation. Respire cannot interrupt a factory that ignores cancellation; if it returns after cancellation, Respire disposes the late stream. The connect deadline covers factory acquisition and TLS. Redis authentication and setup then use their normal command/handshake budgets.
 
 With `UseTls = true`, return the transport stream before Redis TLS. Respire applies `TlsOptions` and authenticates against the Redis destination host after the factory returns. Sentinel connections use their effective `SentinelUseTls` and `SentinelTlsOptions` overrides. A proxy or tunnel must finish negotiating before returning; configure any TLS to the proxy inside the factory.

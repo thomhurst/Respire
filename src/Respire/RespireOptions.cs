@@ -167,6 +167,7 @@ public sealed record RespireOptions
     /// Receives the destination endpoint and the combined caller/connect-timeout token. Calls may run concurrently
     /// and repeat for reconnects, discovered nodes, Sentinel, pub/sub, and dedicated connections.
     /// Return a fresh readable and writable stream; Respire owns and disposes it, including on setup failure.
+    /// Writes must reach the peer without flushing; Respire does not call Flush or FlushAsync on the stream.
     /// Dispose resources yourself if the factory throws. Observe cancellation promptly. Respire applies
     /// <see cref="UseTls"/> and <see cref="TlsOptions"/> to the returned stream, using the destination host.
     /// The factory owns DNS, socket options, and tunnel negotiation; built-in TCP options do not configure its stream.

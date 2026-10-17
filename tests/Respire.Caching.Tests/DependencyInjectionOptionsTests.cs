@@ -60,6 +60,8 @@ public class DependencyInjectionOptionsTests
         if (type == typeof(ILoggerFactory)) return NullLoggerFactory.Instance;
         if (type == typeof(RespirePipelineHook)) return new PipelineHook();
         if (type == typeof(RespireCommandHook)) return new CommandHook();
+        if (type == typeof(Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>))
+            return (Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>)((_, _) => throw new InvalidOperationException("Builder must not connect."));
         return Activator.CreateInstance(type)!;
     }
 
@@ -106,7 +108,7 @@ public class DependencyInjectionOptionsTests
         // Mapping is tested separately from validation: this exercises all fields, including
         // settings that cannot be enabled together on one client (replicas and circuit breaker).
         var options = RespireConfiguration.Apply(section, new RespireOptions());
-        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook"];
+        string[] runtimeServices = ["CredentialProvider", "SentinelCredentialProvider", "ConnectionFactory", "ConnectionHook", "Serializer", "LoggerFactory", "PipelineHook", "CommandHook"];
         foreach (var property in typeof(RespireOptions).GetProperties())
         {
             if (runtimeServices.Contains(property.Name)) continue;

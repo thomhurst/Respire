@@ -506,6 +506,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var started = Stopwatch.GetTimestamp();
         using var timeout = CreateConnectTimeout(options, cancellationToken);
         Stream? stream = null;
+        RespireConnection connection;
         var physicalConnected = false;
         try
         {
@@ -532,6 +533,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
+            logger?.ConnectionConnected(host, port);
+            connection = new RespireConnection(null, stream, host, port, options, logger);
         }
         catch (Exception error)
         {
@@ -545,8 +548,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 RespireTelemetry.RecordError(error, internallyHandled: true, endpoint: new(host, port));
             throw;
         }
-        logger?.ConnectionConnected(host, port);
-        var connection = new RespireConnection(null, stream, host, port, options, logger);
         try
         {
             cancellationToken.ThrowIfCancellationRequested();

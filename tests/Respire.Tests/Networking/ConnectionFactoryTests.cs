@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using Microsoft.Extensions.Logging;
 using Respire.Networking;
 using Respire.Testing;
 using TUnit.Assertions;
@@ -14,6 +15,79 @@ namespace Respire.Tests.Networking;
 public class ConnectionFactoryTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectedLoggingFailureDisposesFactoryStream(bool disposalFails)
+    {
+        using var stream = new DisposalStream(disposalFails);
+        var expected = new InvalidOperationException("Connected logging failed.");
+        var options = new RespireOptions { ConnectionFactory = (_, _) => ValueTask.FromResult<Stream>(stream) };
+
+        var error = await Assert.That(async () => await RespireConnection.ConnectAsync("custom", 6379,
+            options.ToConnectionOptions(), new ConnectedFailureLogger(expected))).Throws<InvalidOperationException>();
+
+        await Assert.That(error).IsSameReferenceAs(expected);
+        await Assert.That(stream.DisposedAsync).IsTrue();
+        await Assert.That(stream.CanRead).IsFalse();
+    }
+
+    [Test]
+    public async Task WriteThroughFactoryStreamSendsSetupAndCommandsWithoutFlushing()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var options = new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
+            ClientName = "write-through",
+            ConnectionFactory = async (endpoint, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+                    return new WriteThroughStream(socket);
+                }
+                catch { socket.Dispose(); throw; }
+            },
+        };
+        using var cancellation = new CancellationTokenSource(Limit);
+        await using var client = await RespireClient.ConnectAsync(options, cancellation.Token);
+        await client.PingAsync(cancellation.Token);
+        await Assert.That(server.ReceivedCommands).Contains("CLIENT SETNAME write-through");
+        await Assert.That(server.ReceivedCommands).Contains("PING");
+    }
+
+    private sealed class WriteThroughStream(Socket socket) : NetworkStream(socket, ownsSocket: true)
+    {
+        public override void Flush() => throw new InvalidOperationException("Write-through streams need no flush.");
+        public override Task FlushAsync(CancellationToken cancellationToken)
+            => throw new InvalidOperationException("Write-through streams need no flush.");
+    }
+
+    private sealed class DisposalStream(bool disposalFails) : MemoryStream
+    {
+        internal bool DisposedAsync { get; private set; }
+
+        public override async ValueTask DisposeAsync()
+        {
+            DisposedAsync = true;
+            await base.DisposeAsync();
+            if (disposalFails) throw new IOException("Stream cleanup failed.");
+        }
+    }
+
+    private sealed class ConnectedFailureLogger(Exception error) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (eventId.Name == "ConnectionConnected") throw error;
+        }
+    }
 
     [Test]
     [NotInParallel]
