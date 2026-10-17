@@ -63,17 +63,17 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return new RespireOptions { Endpoints = [new(_host, 6379)], TestingStreamFactory = Connect };
+            return new RespireOptions { Endpoints = [new(_host, 6379)], ConnectionFactory = Connect };
         }
     }
 
-    private ValueTask<Stream> Connect(string host, int port, CancellationToken cancellationToken)
+    private ValueTask<Stream> Connect(RespireEndpoint endpoint, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (host != _host || port != 6379)
+            if (endpoint.Host != _host || endpoint.Port != 6379)
                 throw new NotSupportedException($"Fake server options must retain endpoint {_host}:6379.");
             var requests = new Pipe();
             var responses = new Pipe();

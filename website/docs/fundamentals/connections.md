@@ -29,6 +29,48 @@ await using var redis = RespireClient.Create(options);
 
 `Create` performs no network I/O. The first command connects; a later command retries a failed attempt. Dependency-injection registration uses `Create`, so Redis availability does not block host startup.
 
+## Custom connection streams
+
+Set `RespireOptions.ConnectionFactory` to supply a connected duplex `Stream`. Use this for custom sockets, tunnels, or an in-memory test transport:
+
+```csharp
+using System.Net.Sockets;
+
+var options = new RespireOptions
+{
+    Endpoints = [new("cache.internal", 6379)],
+    ConnectionFactory = async (endpoint, cancellationToken) =>
+    {
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            // Configure your socket or establish a tunnel to endpoint here.
+            await socket.ConnectAsync(endpoint.Host, endpoint.Port, cancellationToken);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    },
+};
+
+await using var redis = await RespireClient.ConnectAsync(options);
+```
+
+The factory receives the Redis destination, including discovered nodes. It runs for every new physical connection: initial connections, reconnects, Cluster nodes, replicas, Sentinel discovery and monitoring, pub/sub, and dedicated blocking connections. Calls can overlap. Return a fresh stream each time; do not share a stream or send your own traffic after returning it. A Unix endpoint has its socket path in `Host` and a zero `Port`.
+
+Return a readable and writable stream that supports concurrent asynchronous reads and writes. Respire takes ownership on return and disposes it on cancellation, setup failure, and connection closure. Disposal must unblock pending I/O. If acquisition throws, the factory must dispose any resources it created. `Respire.Testing` uses this same public hook.
+
+Writes must reach the peer without a flush. Respire sends each outgoing batch with `WriteAsync` and does not call `Flush` or `FlushAsync` on the stream. Do not return a buffering wrapper that holds bytes until it is flushed; use a write-through transport stream.
+
+The supplied token combines caller cancellation with `ConnectTimeout`. Observe it promptly throughout DNS, connect, and tunnel negotiation. Respire cannot interrupt a factory that ignores cancellation; if it returns after cancellation, Respire disposes the late stream. The connect deadline covers factory acquisition and TLS. Redis authentication and setup then use their normal command/handshake budgets.
+
+With `UseTls = true`, return the transport stream before Redis TLS. Respire applies `TlsOptions` and authenticates against the Redis destination host after the factory returns. Sentinel connections use their effective `SentinelUseTls` and `SentinelTlsOptions` overrides. A proxy or tunnel must finish negotiating before returning; configure any TLS to the proxy inside the factory.
+
+The factory owns DNS, socket options, and proxy negotiation. Respire's built-in TCP keepalive and socket-buffer settings do not configure custom streams. Connection diagnostics identify the Redis destination; a custom stream does not expose the underlying network peer address. With `ConnectionFactory = null` (the default), Respire uses its ordinary socket transport. [Connection lifecycle hooks](../guides/connection-hooks.md) still surround the entire attempt.
+
 ## Full configuration
 
 ```csharp

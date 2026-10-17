@@ -216,12 +216,24 @@ public class SentinelTests
         await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var peer = new FakeRespServer(PrimaryReply(primary.Port));
         await using var seed = new FakeRespServer(PrimaryReply(stale.Port), PeersReply(peer.Port));
+        var opened = new System.Collections.Concurrent.ConcurrentQueue<int>();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)],
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(5),
+            ConnectionFactory = async (endpoint, token) =>
+            {
+                opened.Enqueue(endpoint.Port);
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            },
         });
         await client.PingAsync();
         await stale.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
@@ -231,6 +243,8 @@ public class SentinelTests
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster", "SENTINEL MASTER mymaster"]);
         // A newly learned peer is tried, but is not recursively expanded in this attempt.
         await Assert.That(peer.ReceivedCommands).IsEquivalentTo(["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL MASTER mymaster"]);
+        await Assert.That(opened.Contains(seed.Port) && opened.Contains(peer.Port)
+            && opened.Contains(stale.Port) && opened.Contains(primary.Port)).IsTrue();
     }
 
     [Test]

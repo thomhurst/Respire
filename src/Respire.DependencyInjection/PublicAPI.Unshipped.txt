@@ -1,4 +1,6 @@
 #nullable enable
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.get -> System.Func<Respire.RespireEndpoint, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.IO.Stream!>>?
+Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool

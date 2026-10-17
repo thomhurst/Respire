@@ -41,6 +41,7 @@ public class ConnectionHookTests
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
             Protocol = RespireProtocol.Resp2, Password = "secret", Database = 2, ConnectionHook = hook,
+            ConnectionFactory = OpenStreamAsync,
         }, cancellation.Token);
 
         await Assert.That(server.ReceivedCommands.Contains("AUTH secret")).IsTrue();
@@ -145,6 +146,7 @@ public class ConnectionHookTests
     {
         await using var server = new FakeRespServer(4, FakeRespServer.PongReply);
         var count = 0;
+        var opened = 0;
         var hook = new Hook
         {
             Before = (_, _) => Interlocked.Increment(ref count) == 2
@@ -154,6 +156,7 @@ public class ConnectionHookTests
             new RespireConnectionOptions
             {
                 ConnectionHook = hook,
+                ConnectionFactory = (endpoint, token) => { opened++; return OpenStreamAsync(endpoint, token); },
                 ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 },
             });
         using var cancellation = new CancellationTokenSource(Limit);
@@ -172,6 +175,7 @@ public class ConnectionHookTests
             RespireConnectionOutcome.Succeeded, RespireConnectionOutcome.Failed, RespireConnectionOutcome.Succeeded,
         });
         await Assert.That(ReferenceEquals(hook.Started.First(), hook.Started.Last())).IsFalse();
+        await Assert.That(opened).IsEqualTo(2);
     }
 
     [Test]
@@ -179,14 +183,20 @@ public class ConnectionHookTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         var hook = new Hook();
+        var opened = 0;
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new RespireOptions { ConnectionHook = hook, Protocol = RespireProtocol.Resp2 }.ToConnectionOptions(), null);
+            new RespireOptions
+            {
+                ConnectionHook = hook, Protocol = RespireProtocol.Resp2,
+                ConnectionFactory = (endpoint, token) => { opened++; return OpenStreamAsync(endpoint, token); },
+            }.ToConnectionOptions(), null);
         var first = await pool.RentAsync(default);
         pool.Return(first);
         var reused = await pool.RentAsync(default);
         await Assert.That(ReferenceEquals(first, reused)).IsTrue();
         pool.Return(reused);
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
+        await Assert.That(opened).IsEqualTo(1);
     }
 
     [Test]
@@ -210,11 +220,13 @@ public class ConnectionHookTests
             $"*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
         primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : FakeRespServer.OkReply;
         var hook = new Hook();
+        var opened = new ConcurrentQueue<RespireEndpoint>();
         using var cancellation = new CancellationTokenSource(Limit);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
             UseCluster = cluster, ClusterTopologyRefreshInterval = null, ConnectionHook = hook,
+            ConnectionFactory = (endpoint, token) => { opened.Enqueue(endpoint); return OpenStreamAsync(endpoint, token); },
             ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
         }, cancellation.Token);
         var value = await client.WithReadFrom(RespireReadFrom.Replica).GetStringAsync("key", cancellation.Token);
@@ -222,11 +234,15 @@ public class ConnectionHookTests
         await Assert.That(hook.Completed.Any(attempt => attempt.Context.Endpoint.Port == primary.Port)).IsTrue();
         await Assert.That(hook.Completed.Any(attempt => attempt.Context.Endpoint.Port == replica.Port)).IsTrue();
         await Assert.That(hook.Completed.All(attempt => attempt.Outcome == RespireConnectionOutcome.Succeeded)).IsTrue();
+        await Assert.That(opened.Any(endpoint => endpoint.Port == primary.Port)).IsTrue();
+        await Assert.That(opened.Any(endpoint => endpoint.Port == replica.Port)).IsTrue();
         if (cluster) await Assert.That(replica.ReceivedCommands.Contains("READONLY")).IsTrue();
     }
 
     [Test]
-    public async Task SuccessIncludesTlsAndEncryptedHandshake()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SuccessIncludesTlsAndEncryptedHandshake(bool factoryStream)
     {
         using var certificate = TestTlsCertificate.Create();
         using var cancellation = new CancellationTokenSource(Limit);
@@ -248,6 +264,7 @@ public class ConnectionHookTests
             new RespireConnectionOptions
             {
                 ConnectionHook = hook, UseTls = true, ClientName = "tls-hook", Protocol = RespireProtocol.Resp2,
+                ConnectionFactory = factoryStream ? OpenStreamAsync : null,
                 TlsOptions = new() { RemoteCertificateValidationCallback = (_, _, _, _) => true },
             }, cancellationToken: cancellation.Token)) { }
         await peerClosed.WaitAsync(cancellation.Token);
@@ -273,17 +290,20 @@ public class ConnectionHookTests
     public async Task ControlAndSentinelFactoriesPreserveHookAndEffectiveTls()
     {
         var hook = new Hook();
-        var options = new RespireOptions { ConnectionHook = hook, UseTls = true, SentinelUseTls = false };
+        var failure = new IOException("No test transport.");
+        Func<RespireEndpoint, CancellationToken, ValueTask<Stream>> factory = (_, _) => throw failure;
+        var options = new RespireOptions { ConnectionHook = hook, UseTls = true, SentinelUseTls = false, ConnectionFactory = factory };
         await Assert.That(ReferenceEquals(options.ToControlConnectionOptions().ConnectionHook, hook)).IsTrue();
+        await Assert.That(ReferenceEquals(options.ToControlConnectionOptions().ConnectionFactory, factory)).IsTrue();
         var discovery = SentinelResolver.CreateSentinelConnectionOptions(options);
         var monitor = SentinelMonitoring.CreateOptions(options, new("sentinel", 26379)).ToConnectionOptions();
         foreach (var connectionOptions in new[] { discovery, monitor })
         {
             await Assert.That(ReferenceEquals(connectionOptions.ConnectionHook, hook)).IsTrue();
+            await Assert.That(ReferenceEquals(connectionOptions.ConnectionFactory, factory)).IsTrue();
             await Assert.That(connectionOptions.UseTls).IsFalse();
-            var failure = new IOException("No test transport.");
-            await CaptureAsync(() => RespireConnection.ConnectAsync("sentinel", 26379,
-                connectionOptions with { TestingStreamFactory = (_, _, _) => throw failure }));
+            var error = await CaptureAsync(() => RespireConnection.ConnectAsync("sentinel", 26379, connectionOptions));
+            await Assert.That(ReferenceEquals(error, failure)).IsTrue();
         }
         await Assert.That(hook.Completed.All(attempt => !attempt.Context.UseTls
             && attempt.Context.Endpoint == new RespireEndpoint("sentinel", 26379))).IsTrue();
@@ -294,6 +314,17 @@ public class ConnectionHookTests
         try { await action().WaitAsync(Limit); }
         catch (Exception error) when (error is not TimeoutException) { return error; }
         throw new InvalidOperationException("Expected failure.");
+    }
+
+    private static async ValueTask<Stream> OpenStreamAsync(RespireEndpoint endpoint, CancellationToken token)
+    {
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch { socket.Dispose(); throw; }
     }
 
     private sealed class CountingProvider : IRespireCredentialProvider

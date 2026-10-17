@@ -19,8 +19,8 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         var endpoint = options.Endpoints[0];
         TcpClient? socket = null;
         Stream stream;
-        if (options.TestingStreamFactory is { } factory)
-            stream = await factory(endpoint.Host, endpoint.Port, deadline.Token);
+        if (options.ConnectionFactory is { } factory)
+            stream = await factory(endpoint, deadline.Token);
         else
         {
             socket = new TcpClient();

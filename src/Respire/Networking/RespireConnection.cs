@@ -317,7 +317,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         _maintenanceOptions = options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Disabled ? null : options;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
-        if (socket is not null && port != 0)
+        if (port != 0)
             _connectionMetrics = ConnectionTelemetry.Attach(this, options);
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
         _streamPayloadPool = options.StreamPayloadPool ?? ArrayPool<byte>.Shared;
@@ -400,8 +400,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         options = await ResolveCredentialsAsync(host, port, options, cancellationToken).ConfigureAwait(false);
 
-        if (options.TestingStreamFactory is not null)
-            return await ConnectTestingStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+        if (options.ConnectionFactory is not null)
+            return await ConnectFactoryStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
 
         var started = Stopwatch.GetTimestamp();
         var physicalConnected = false;
@@ -499,37 +499,55 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         return connection;
     }
 
-    private static async Task<RespireConnection> ConnectTestingStreamAsync(
+    private static async Task<RespireConnection> ConnectFactoryStreamAsync(
         string host, int port, RespireConnectionOptions options, ILogger? logger,
         CancellationToken cancellationToken, bool armHandshakeDeadline)
     {
-        if (options.UseTls) throw new NotSupportedException("In-memory testing connections do not support TLS.");
+        var started = Stopwatch.GetTimestamp();
         using var timeout = CreateConnectTimeout(options, cancellationToken);
         Stream? stream = null;
+        RespireConnection connection;
+        var physicalConnected = false;
         try
         {
             try
             {
-                stream = await options.TestingStreamFactory!(host, port, timeout.Token).ConfigureAwait(false);
+                timeout.Token.ThrowIfCancellationRequested();
+                stream = await options.ConnectionFactory!(new(host, port), timeout.Token).ConfigureAwait(false);
                 // A factory can return after cancellation instead of observing its token.
                 timeout.Token.ThrowIfCancellationRequested();
+                if (stream is null || !stream.CanRead || !stream.CanWrite)
+                    throw new InvalidOperationException("ConnectionFactory must return a connected readable and writable stream.");
+                physicalConnected = true;
+                if (options.UseTls)
+                {
+                    var tlsStream = new SslStream(stream);
+                    stream = tlsStream;
+                    await tlsStream.AuthenticateAsClientAsync(CreateTlsOptions(options.TlsOptions, host), timeout.Token)
+                        .ConfigureAwait(false);
+                    timeout.Token.ThrowIfCancellationRequested();
+                }
             }
             catch (OperationCanceledException error) when (
                 error.CancellationToken == timeout.Token && timeout.IsCancellationRequested)
             {
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
+            logger?.ConnectionConnected(host, port);
+            connection = new RespireConnection(null, stream, host, port, options, logger);
         }
         catch (Exception error)
         {
             RespireException.PopulateEndpoint(error, new(host, port));
             try { if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the factory cancellation or connection failure. */ }
+            if (physicalConnected && port != 0)
+                ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken,
+                    ConnectionTelemetry.IsPeerReset(error));
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
                 RespireTelemetry.RecordError(error, internallyHandled: true, endpoint: new(host, port));
             throw;
         }
-        var connection = new RespireConnection(null, stream, host, port, options, logger);
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -539,10 +557,13 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (options.Generation is { } generation)
                 await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             connection.StartCredentialRefresh(options);
+            connection._connectionMetrics?.Ready(started);
             return connection;
         }
         catch (Exception error)
         {
+            if (ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
+                connection.RequestMetricCloseReason(ConnectionTelemetry.CloseReason.Application);
             connection.Abort(error, observeErrors: options.ObserveEstablishmentErrors
                 && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken));
             try { await connection.DisposeAsync().ConfigureAwait(false); }
@@ -4443,7 +4464,13 @@ internal sealed record RespireConnectionOptions
 
     internal RespireConnectionHook? ConnectionHook { get; init; }
 
-    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
+    internal Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory { get; init; }
+
+    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory
+    {
+        get => ConnectionFactory is { } factory ? (host, port, token) => factory(new(host, port), token) : null;
+        init => ConnectionFactory = value is { } factory ? (endpoint, token) => factory(endpoint.Host, endpoint.Port, token) : null;
+    }
     /// <summary>
     /// Lets friend tests expire the owned source at a controlled transport boundary. The factory
     /// must link the initiating token, with caller-cancellation controls in the fixture proving

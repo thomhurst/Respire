@@ -75,6 +75,8 @@ Respire.RespireConnectionOutcome
 Respire.RespireConnectionOutcome.Succeeded = 0 -> Respire.RespireConnectionOutcome
 Respire.RespireConnectionOutcome.Failed = 1 -> Respire.RespireConnectionOutcome
 Respire.RespireConnectionOutcome.Canceled = 2 -> Respire.RespireConnectionOutcome
+Respire.RespireOptions.ConnectionFactory.get -> System.Func<Respire.RespireEndpoint, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.IO.Stream!>>?
+Respire.RespireOptions.ConnectionFactory.init -> void
 Respire.RespireOptions.ConnectionHook.get -> Respire.RespireConnectionHook?
 Respire.RespireOptions.ConnectionHook.init -> void
 Respire.RespireException.Endpoint.get -> Respire.RespireEndpoint?

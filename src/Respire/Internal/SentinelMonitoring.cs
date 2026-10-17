@@ -428,7 +428,7 @@ internal sealed class SentinelMonitoring(
         return new RespireOptions
         {
             Endpoints = [endpoint],
-            TestingStreamFactory = options.TestingStreamFactory,
+            ConnectionFactory = options.ConnectionFactory,
             ConnectionHook = options.ConnectionHook,
             LoggerFactory = options.LoggerFactory,
             ConnectTimeout = options.ConnectTimeout,
