@@ -31,6 +31,7 @@ internal static class RespireConfiguration
         SentinelUseTls = section.GetValue("SentinelUseTls", options.SentinelUseTls),
         SentinelTlsOptions = Tls(section.GetSection("SentinelTlsOptions"), options.SentinelTlsOptions),
         ClientName = section.GetValue("ClientName", options.ClientName),
+        LibraryName = OptionalString(section, "LibraryName", options.LibraryName),
         Database = section.GetValue("Database", options.Database),
         KeyPrefix = section["KeyPrefix"] is { } prefix ? (RespireKey)prefix : options.KeyPrefix,
         PubSubPrefix = section["PubSubPrefix"] is { } pubSubPrefix ? (RespireKey)pubSubPrefix : options.PubSubPrefix,
@@ -204,6 +205,14 @@ internal static class RespireConfiguration
         if (value is null) return fallback;
         if (value.Length == 0) return null;
         return Parse(section.GetSection(key), value => TimeSpan.Parse(value, CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Preserves absent values and treats an empty or null configured string as null.</summary>
+    private static string? OptionalString(IConfigurationSection section, string key, string? fallback)
+    {
+        var configured = section.GetChildren().FirstOrDefault(child => string.Equals(child.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (configured is null) return fallback;
+        return string.IsNullOrEmpty(configured.Value) ? null : configured.Value;
     }
 
     /// <summary>Preserves absent values and treats an empty configured integer as null.</summary>

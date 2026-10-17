@@ -7,6 +7,39 @@ namespace Respire.Tests;
 public class RespireOptionsTests
 {
     [Test]
+    public async Task LibraryName_DefaultAndControlOptions()
+    {
+        var options = ValidOptions();
+        await Assert.That(options.LibraryName).IsEqualTo("Respire");
+        await Assert.That(options.ToConnectionOptions().LibraryName).IsEqualTo("Respire");
+        await Assert.That((options with { LibraryName = "Respire(wrapper)" }).ToConnectionOptions().LibraryName).IsEqualTo("Respire(wrapper)");
+        await Assert.That(options.ToControlConnectionOptions().LibraryName).IsNull();
+        await Assert.That((options with { LibraryName = null }).ToConnectionOptions().LibraryName).IsNull();
+    }
+
+    [Test]
+    [Arguments("")]
+    [Arguments("library name")]
+    [Arguments("library\r\nname")]
+    [Arguments("library\0name")]
+    [Arguments("Respiré")]
+    [Arguments("library\u007fname")]
+    [Arguments("library\u0085name")]
+    [Arguments("library\ud800name")]
+    public async Task LibraryName_RejectsInvalidTokens(string name)
+    {
+        await Assert.That(() => (ValidOptions() with { LibraryName = name }).ValidateAndSnapshot())
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task LibraryName_AcceptsPrintableAsciiBoundaries()
+    {
+        var options = ValidOptions() with { LibraryName = "!Respire(wrapper)~" };
+        await Assert.That(options.ValidateAndSnapshot().LibraryName).IsEqualTo("!Respire(wrapper)~");
+    }
+
+    [Test]
     public async Task ReadRoutingRequiresReplicaTopologyAndKeepsStandaloneEndpointRules()
     {
         await Assert.That(() => RespireClient.Create(ValidOptions() with { ReadFrom = RespireReadFrom.Replica }))

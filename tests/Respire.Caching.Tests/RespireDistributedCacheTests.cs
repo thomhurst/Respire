@@ -670,6 +670,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             {
                 Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+                LibraryName = null,
                 CommandTimeout = TimeSpan.FromMilliseconds(50),
             });
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);

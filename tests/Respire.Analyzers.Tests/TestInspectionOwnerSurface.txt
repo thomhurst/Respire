@@ -244,13 +244,14 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 103
+# Count: Respire.Networking.RespireConnection | 104
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
+Respire.Networking.RespireConnection | field LibraryVersion : string
 Respire.Networking.RespireConnection | field MovingPublicationGeneration : long
 Respire.Networking.RespireConnection | field StreamChunkSize : int
 Respire.Networking.RespireConnection | interface IBatchCommand()
@@ -264,7 +265,7 @@ Respire.Networking.RespireConnection | method CreateCommandDeadline() : CommandD
 Respire.Networking.RespireConnection | method CreateTlsOptions(SslClientAuthenticationOptions?, string, bool) : SslClientAuthenticationOptions
 Respire.Networking.RespireConnection | method DisposeAsync() : ValueTask
 Respire.Networking.RespireConnection | method DrainPendingMaintenanceNotificationsAsync(CancellationToken) : Task
-Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, CancellationToken, string, RespireTelemetry.ErrorObservation, bool, CommandDeadline, bool) : ValueTask<ValueTask<RespValue>>
+Respire.Networking.RespireConnection | method EnqueuePinnedAsync`1(TCommand, CancellationToken, string, RespireTelemetry.ErrorObservation, bool, CommandDeadline, bool, bool) : ValueTask<ValueTask<RespValue>>
 Respire.Networking.RespireConnection | method EnsureConditionalExecSupportedAsync(CancellationToken, CommandDeadline) : ValueTask
 Respire.Networking.RespireConnection | method EnsureServerClientIdAsync(CancellationToken) : ValueTask<long>
 # Legacy test-only hook retained as baseline, not precedent for new hooks.

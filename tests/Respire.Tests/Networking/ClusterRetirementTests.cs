@@ -1956,6 +1956,7 @@ public class ClusterRetirementTests
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
+            LibraryName = null, // The fixture injects the held HELLO reply itself.
             Protocol = RespireProtocol.Resp3,
             UseCluster = true,
             Connections = 1,
@@ -2221,6 +2222,7 @@ public class ClusterRetirementTests
         await using var server = new FakeRespServer(8, ":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
         await using var client = RespireClient.Create(new RespireOptions
         {
+            LibraryName = null, // Only the intentionally suppressed HELLO may consume the timeout.
             Protocol = RespireProtocol.Resp3,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             CommandTimeout = TimeSpan.FromMilliseconds(200),

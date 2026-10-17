@@ -314,7 +314,8 @@ public class FakeServerTests
             _ => new InvalidOperationException("clock failure"),
         };
         var server = new RespireFakeServer(new ThrowingClock(expected));
-        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespireProtocol.Resp2 });
+        // Fail during the application command, after connection setup has completed.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespireProtocol.Resp2, LibraryName = null });
         await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
         var failure = await Assert.That(async () => await Task.Run(async () => await server.DisposeAsync())
             .WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
@@ -352,7 +353,7 @@ public class FakeServerTests
         {
             for (var index = 0; index < 3; index++)
             {
-                await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespireProtocol.Resp2 });
+                await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespireProtocol.Resp2, LibraryName = null });
                 await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
             }
             // Wait for server-loop cleanup after the client observes EOF. Inspect only the

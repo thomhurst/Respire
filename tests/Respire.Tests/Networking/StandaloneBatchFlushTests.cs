@@ -164,6 +164,7 @@ public class StandaloneBatchFlushTests
         CountingStream? transport = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            LibraryName = null, // Count only the batch's transport writes.
             Protocol = RespireProtocol.Resp2, Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             TestingStreamFactory = async (host, port, token) =>

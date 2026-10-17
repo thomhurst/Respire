@@ -163,6 +163,21 @@ public class ServerCompatibilityTests(CompatibleServer server)
     [Test]
     [Arguments(RespireProtocol.Resp2)]
     [Arguments(RespireProtocol.Resp3)]
+    [Arguments(RespireProtocol.Auto)]
+    public async Task LibraryInfoHandshakeIsOptional(RespireProtocol protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(server.Options(protocol));
+        // KeyDB rejects SETINFO; Garnet and Dragonfly may accept it. In every case,
+        // both optional replies must be consumed before publishing this connection.
+        var connection = await client.Server.GetClientConnectionAsync();
+        (await connection.GetNameAsync()).Should().Be("respire-compatibility");
+        await client.SetAsync("compat:library-info", "usable");
+        (await client.GetStringAsync("compat:library-info")).Should().Be("usable");
+    }
+
+    [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
     public async Task PubSub(RespireProtocol protocol)
     {
         await using var client = await RespireClient.ConnectAsync(server.Options(protocol));

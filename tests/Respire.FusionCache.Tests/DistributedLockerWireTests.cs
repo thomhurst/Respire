@@ -34,7 +34,14 @@ public class DistributedLockerWireTests
     {
         var readGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray()) { ReadGate = readGate.Task };
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        // Keep connection setup independent of the gate that parks the lease command.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            LibraryName = null,
+        });
         await using var locker = new RespireFusionCacheDistributedLocker(client,
             new() { PollInterval = TimeSpan.FromSeconds(1) });
         var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.FromMilliseconds(30)).AsTask();

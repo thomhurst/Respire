@@ -143,7 +143,7 @@ public class ClusterReconnectPolicyTests
             SuppressReply = _ => { received.TrySetResult(); return true; },
         };
         await using var second = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
-        await using var client = RespireClient.Create(Options(first.Port, second.Port));
+        await using var client = RespireClient.Create(Options(first.Port, second.Port) with { LibraryName = null });
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
