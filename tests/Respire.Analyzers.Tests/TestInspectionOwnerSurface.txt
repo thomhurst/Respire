@@ -251,6 +251,7 @@ Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, A
 Respire.Networking.RespireConnection | event MovingNotification : Action<Respire.Infrastructure.MovingAnnouncement>?
 Respire.Networking.RespireConnection | event PendingCommandsFailing : Action?
 Respire.Networking.RespireConnection | field LastQueuedMovingSequence : long
+Respire.Networking.RespireConnection | field LibraryVersion : string
 Respire.Networking.RespireConnection | field MovingPublicationGeneration : long
 Respire.Networking.RespireConnection | field StreamChunkSize : int
 Respire.Networking.RespireConnection | interface IBatchCommand()

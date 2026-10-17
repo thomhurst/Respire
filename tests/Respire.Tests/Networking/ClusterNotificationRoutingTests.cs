@@ -1921,6 +1921,7 @@ public class ClusterNotificationRoutingTests
         int port, bool resp3, RespireReconnectPolicy? reconnectPolicy = null)
         => RespireClient.Create(new RespireOptions
         {
+            LibraryName = null, // Tests inject delayed HELLO replies before later setup replies.
             UseCluster = true,
             Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             Connections = 1,

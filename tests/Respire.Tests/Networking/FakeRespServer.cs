@@ -312,6 +312,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 end += read;
 
                 var pos = 0;
+                var hasLibraryInfoReply = false;
                 while (RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var command) == RespParseStatus.Done)
                 {
                     var commandText = FormatCommand(in command, out var arguments);
@@ -319,11 +320,15 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     if (HandleLibraryInfo && inHandshake && commandText.StartsWith("CLIENT SETINFO LIB-", StringComparison.Ordinal))
                     {
                         pendingReplies.Add(OkReply);
+                        hasLibraryInfoReply = true;
                         continue;
                     }
                     if (!(commandText.StartsWith("AUTH ", StringComparison.Ordinal)
                         || commandText.StartsWith("HELLO ", StringComparison.Ordinal)
-                        || commandText.StartsWith("CLIENT SETNAME ", StringComparison.Ordinal)))
+                        || commandText.StartsWith("CLIENT SETNAME ", StringComparison.Ordinal)
+                        || commandText.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal)
+                        || commandText.StartsWith("SELECT ", StringComparison.Ordinal)
+                        || commandText is "READONLY" or "INFO SERVER"))
                         inHandshake = false;
                     if (SuppressReply is not null && pendingReplies.Count > 0 && MinimumCommandsBeforeReply <= 1)
                     {
@@ -376,7 +381,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     }
                 }
 
-                if (pendingReplies.Count >= MinimumCommandsBeforeReply)
+                // Automatic setup must complete before callers can send the application batch.
+                // Flush all earlier replies with metadata so AUTH/HELLO retain their FIFO position.
+                if (hasLibraryInfoReply || pendingReplies.Count >= MinimumCommandsBeforeReply)
                 {
                     try
                     {

@@ -318,6 +318,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            LibraryName = null, // Reads stay parked until the application write is in flight.
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(500) : null,
@@ -405,6 +406,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = pausedConsumer ? null : reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            LibraryName = null, // Reads may be parked before connection setup.
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
@@ -491,6 +493,7 @@ public sealed class GatheredSetTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            LibraryName = null, // Reads stay parked until the application write is in flight.
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             CommandTimeout = boundary == "deadline" ? TimeSpan.FromMilliseconds(250) : null,
@@ -793,6 +796,7 @@ public sealed class GatheredSetTests
         PausedWriteStream? stream = null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            LibraryName = null, // The stream parks its first write until the application cancels.
             Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
             Endpoints = [new("127.0.0.1", server.Port)],
             TestingStreamFactory = async (host, port, token) =>

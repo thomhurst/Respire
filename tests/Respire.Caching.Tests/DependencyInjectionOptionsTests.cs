@@ -81,7 +81,7 @@ public class DependencyInjectionOptionsTests
             ["CredentialRefreshBeforeExpiry"] = "00:02:00", ["CredentialRefreshRetryDelay"] = "00:00:03",
             ["SentinelUsername"] = "sentinel-user", ["SentinelPassword"] = "sentinel-password",
             ["SentinelUseTls"] = "true", ["SentinelTlsOptions:TargetHost"] = "sentinel",
-            ["ClientName"] = "test", ["Database"] = "2", ["AllowAdmin"] = "true", ["Protocol"] = "Resp3",
+            ["ClientName"] = "test", ["LibraryName"] = "configured-library", ["Database"] = "2", ["AllowAdmin"] = "true", ["Protocol"] = "Resp3",
             ["MaintenanceNotifications"] = "Auto", ["MaintenanceRelaxedTimeout"] = "00:00:45",
             ["MaintenanceWindowTimeout"] = "00:01:30", ["ConnectTimeout"] = "00:00:04",
             ["ReconnectPolicy:MaxAttempts"] = "4", ["ClusterTopologyRefreshInterval"] = "00:00:50",
@@ -127,6 +127,24 @@ public class DependencyInjectionOptionsTests
             else if (actual is TimeSpan time) await Assert.That(time).IsEqualTo(TimeSpan.Parse(expected!, CultureInfo.InvariantCulture));
             else await Assert.That(Convert.ToString(actual, CultureInfo.InvariantCulture)).IsEqualTo(expected);
         }
+    }
+
+    [Test]
+    [Arguments(false, null, "Respire", "Respire")]
+    [Arguments(false, null, "wrapper", "wrapper")]
+    [Arguments(false, null, null, null)]
+    [Arguments(true, "wrapper", "Respire", "wrapper")]
+    [Arguments(true, "", "Respire", null)]
+    [Arguments(true, null, "Respire", null)]
+    public async Task Configuration_LibraryName_PreservesAbsentValuesAndSupportsOptOut(
+        bool configured, string? value, string? initialValue, string? expectedValue)
+    {
+        var values = new Dictionary<string, string?>();
+        if (configured) values["LibraryName"] = value;
+
+        var options = RespireConfiguration.Apply(Section(values), new RespireOptions { LibraryName = initialValue });
+
+        await Assert.That(options.LibraryName).IsEqualTo(expectedValue);
     }
 
     [Test]
@@ -314,7 +332,8 @@ public class DependencyInjectionOptionsTests
               "Endpoints": [{ "Host": "localhost", "Port": 6389 }],
               "RetryPolicy": { "MaxAttempts": 8 },
               "CircuitBreaker": { "OpenDuration": "00:00:20" },
-              "StreamProducerId": "worker-1"
+              "StreamProducerId": "worker-1",
+              "LibraryName": null
             } }
             """;
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -327,6 +346,7 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.RetryPolicy!.MaxAttempts).IsEqualTo(8);
         await Assert.That(options.CircuitBreaker!.OpenDuration).IsEqualTo(TimeSpan.FromSeconds(20));
         await Assert.That(options.StreamProducerId).IsEqualTo("worker-1");
+        await Assert.That(options.LibraryName).IsNull();
     }
 
     private sealed class CommandHook : RespireCommandHook

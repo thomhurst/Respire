@@ -103,13 +103,15 @@ await using var redis = await RespireClient.ConnectAsync(options);
 | `AllowAdmin` | `false` | Set `true` only for callers allowed to run high-risk commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`. |
 | `ConnectionIdleReadTimeout`, `GatheredWriteStallTimeout` | `null` | See [Independent liveness bounds](#independent-liveness-bounds). |
 | `MaintenanceNotifications` | `Disabled` | See [Maintenance notifications](#maintenance-notifications). |
-
-Respire pipelines `CLIENT SETINFO LIB-NAME Respire` and `CLIENT SETINFO LIB-VER <package version>` with connection setup, without another round trip. Redis 7.2+, Redis 8.x, and Valkey expose these values as `lib-name` and `lib-ver`. Prerelease package versions retain their prerelease suffix; source commit metadata is omitted.
-
-Wrappers can set `LibraryName = "Respire(se-compat)"`. Names must be nonempty and contain no whitespace or control characters. Set `LibraryName = null` to omit both commands for proxies that reject unknown `CLIENT` subcommands. Server error replies, including unsupported commands and ACL denials, do not fail the handshake. Transport failures still fail the connection. The authentication-only control connection omits this optional setup.
 | `ClusterTopologyRefreshInterval` | 60 s | See [Cluster topology refresh](#cluster-topology-refresh). |
 | `ReadFrom` | `Primary` | See [Read from replicas](#read-from-replicas). |
 | `ReplicaRefreshInterval` | 1 s | See [Validation and staleness](#validation-and-staleness). |
+
+Respire pipelines `CLIENT SETINFO LIB-NAME Respire` and `CLIENT SETINFO LIB-VER <package version>` with connection setup, without another round trip. Redis 7.2+, Redis 8.x, and Valkey expose these values as `lib-name` and `lib-ver`. Prerelease package versions retain their prerelease suffix; source commit metadata is omitted.
+
+Wrappers can set `LibraryName = "Respire(se-compat)"`. Names must be nonempty and contain only ASCII characters from `!` through `~`. Set `LibraryName = null` to omit both commands for proxies that reject unknown `CLIENT` subcommands or close the connection when they receive them. Server error replies, including unsupported commands and ACL denials, do not fail the handshake. Transport failures still fail the connection. The authentication-only control connection omits this optional setup.
+
+In configuration, set `LibraryName` to `null` or an empty string to disable metadata. Omitting the key preserves the current value.
 
 For expiring passwords or tokens, use a caller-owned [`IRespireCredentialProvider`](../guides/renewable-credentials.md). It supplies credentials to new connections and renews them on live ones through AUTH.
 

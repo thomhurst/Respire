@@ -303,7 +303,7 @@ public sealed record RespireOptions
     /// <summary>
     /// Library name advertised with CLIENT SETINFO, alongside this package's version. Defaults to Respire.
     /// Wrappers can use a name such as Respire(se-compat). Set null to disable both metadata commands.
-    /// Server errors from this optional setup are ignored. Names must be nonempty and contain no whitespace or control characters.
+    /// Server errors from this optional setup are ignored. Names must be nonempty and contain only ASCII characters from ! through ~.
     /// </summary>
     public string? LibraryName { get; init; } = "Respire";
 
@@ -579,8 +579,8 @@ public sealed record RespireOptions
         Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be a defined RespireReadFrom policy");
         Require(ClientAvailabilityZone is null || !string.IsNullOrWhiteSpace(ClientAvailabilityZone),
             nameof(ClientAvailabilityZone), "must be nonempty when provided");
-        Require(LibraryName is null || LibraryName.Length > 0 && !LibraryName.Any(static character => char.IsWhiteSpace(character) || char.IsControl(character)),
-            nameof(LibraryName), "must be nonempty and contain no whitespace or control characters when provided");
+        Require(LibraryName is null || LibraryName.Length > 0 && LibraryName.All(static character => character is >= '!' and <= '~'),
+            nameof(LibraryName), "must be nonempty and contain only ASCII characters from ! through ~ when provided");
         Require(ReadFrom is not (RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary)
             || ClientAvailabilityZone is not null, nameof(ClientAvailabilityZone), "is required for AZ-affinity reads");
         HedgedReads?.Validate();

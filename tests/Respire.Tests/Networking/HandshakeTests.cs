@@ -15,6 +15,36 @@ public class HandshakeTests
     private static readonly byte[] HelloReply = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LibraryInfo_AutomaticRepliesIgnoreApplicationThreshold(bool authenticate)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.PongReply)
+        {
+            MinimumCommandsBeforeReply = 4,
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireOptions
+            {
+                Protocol = RespireProtocol.Resp2,
+                Password = authenticate ? "secret" : null,
+            }.ToConnectionOptions(), cancellationToken: timeout.Token);
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(authenticate ? 1 : 0);
+        server.MinimumCommandsBeforeReply = 1;
+        using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+        await Assert.That(reply.AsString()).IsEqualTo(authenticate ? "PONG" : "OK");
+    }
+
+    [Test]
+    public async Task LibraryInfo_VersionHasNoBuildMetadata()
+    {
+        await Assert.That(RespireConnection.LibraryVersion.Length > 0).IsTrue();
+        await Assert.That(RespireConnection.LibraryVersion.Contains('+')).IsFalse();
+    }
+
+    [Test]
     [Arguments(RespireProtocol.Resp2)]
     [Arguments(RespireProtocol.Resp3)]
     public async Task LibraryInfo_PipelinesWithAuthenticationAndSessionSetup(RespireProtocol protocol)

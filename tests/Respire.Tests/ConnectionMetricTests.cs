@@ -640,7 +640,7 @@ public class ConnectionMetricTests
         await using var target = MaintenanceServer();
         using var capture = new Capture(source.Port);
         await using var client = await RespireClient.ConnectAsync(Options(source) with
-        { Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
+        { Protocol = RespireProtocol.Resp3, LibraryName = null, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled });
         var old = client.Core.Multiplexer.GetConnection();
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -842,6 +842,7 @@ public class ConnectionMetricTests
         };
         var options = Options(source) with
         {
+            LibraryName = null, // The fixture injects a delayed HELLO reply itself.
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null,
         };

@@ -168,7 +168,7 @@ public partial class ErrorMetricsTests
         [Matrix(0, RespireConnection.StreamChunkSize)] int prefixLength, [Matrix(false, true)] bool cancelled)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
-        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command == "PING" ? FakeRespServer.PongReply : null,
         };
