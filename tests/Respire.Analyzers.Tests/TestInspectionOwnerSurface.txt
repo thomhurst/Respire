@@ -253,6 +253,7 @@ Respire.Networking.RespireConnection | method RecordConnectionRecycle() : void
 Respire.Networking.RespireConnection | property IsConnectionLifetimeExpired [internal; get] : bool
 Respire.Networking.RespireConnection | property LifetimeExpiresAt [internal; get, private set] : long?
 Respire.Networking.RespireConnection | property RemainingConnectionLifetime [internal; get] : TimeSpan?
+Respire.Networking.RespireConnection | property ReplicaRedirectsEnabled [internal; get, private set] : bool
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)

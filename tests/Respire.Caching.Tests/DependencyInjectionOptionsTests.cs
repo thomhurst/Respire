@@ -104,7 +104,7 @@ public class DependencyInjectionOptionsTests
             ["HedgedReads:Delay"] = "00:00:00.025", ["ClientAvailabilityZone"] = "zone-1",
             ["ReplicaRefreshInterval"] = "00:00:02", ["UseCluster"] = "false",
             ["ReplicaLatencyTolerance"] = "00:00:00.005",
-            ["IncludeCrossSlotKeyContext"] = "true",
+            ["IncludeCrossSlotKeyContext"] = "true", ["EnableReplicaRedirects"] = "true",
             ["SplitCrossSlotCommands"] = "true",
             ["SentinelPrimaryName"] = "primary", ["Username"] = "user", ["Password"] = "password",
             ["CredentialRefreshBeforeExpiry"] = "00:02:00", ["CredentialRefreshRetryDelay"] = "00:00:03",

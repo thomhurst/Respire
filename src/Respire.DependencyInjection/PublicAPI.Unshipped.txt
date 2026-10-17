@@ -1,6 +1,8 @@
 #nullable enable
 Respire.DependencyInjection.RespireOptionsBuilder.EnableMultipathTcp.get -> bool
 Respire.DependencyInjection.RespireOptionsBuilder.EnableMultipathTcp.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.EnableReplicaRedirects.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.EnableReplicaRedirects.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.get -> System.Func<Respire.RespireEndpoint, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.IO.Stream!>>?
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionFactory.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.LibraryName.get -> string?

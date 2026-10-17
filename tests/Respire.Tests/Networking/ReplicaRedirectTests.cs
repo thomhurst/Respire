@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Respire.Networking;
 using TUnit.Assertions;
@@ -82,6 +83,111 @@ public class ReplicaRedirectTests
         await Assert.That(primary.ReceivedCommands.Count(command => command == "RANDOMKEY")).IsEqualTo(1);
         await Assert.That(primary.ReceivedCommands.Count(command => command == "AUTH secret")).IsEqualTo(2);
         await Assert.That(primary.ReceivedCommands.Count(command => command == "SELECT 2")).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FireAndForgetFollowsRedirectBeforeCompleting(bool backlog)
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { BacklogPolicy = backlog ? RespireBacklogPolicy.Queue : RespireBacklogPolicy.FailFast });
+        await client.ExecuteFireAndForgetAsync("SET", "key", "value");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "SET key value"]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OrdinaryScriptsFollowRedirectAndNoScriptFallback(bool cache)
+    {
+        await using var primary = new FakeRespServer(4)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                ? Bytes("-NOSCRIPT missing\r\n") : command.StartsWith("EVAL ", StringComparison.Ordinal)
+                    ? Bytes(":7\r\n") : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command.StartsWith("EVAL", StringComparison.Ordinal)
+                    ? Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n") : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+        var script = RespireScript.Create("return 7");
+        var result = await client.Scripts.ExecuteIntegerAsync(script, "key");
+        await Assert.That(result).IsEqualTo(7);
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectTelemetryPreservesStoredProcedureName(bool redirect)
+    {
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var primary = new FakeRespServer(":7\r\n"u8.ToArray());
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : redirect ? Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n") : Bytes(":7\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port));
+        using var reply = await client.ExecuteAsync("FCALL", "my_function", 0);
+        Activity[] matches;
+        lock (activities) matches = activities.Where(activity => activity.GetTagItem("db.stored_procedure.name") as string == "my_function").ToArray();
+        await Assert.That(matches.Length).IsEqualTo(1);
+        await Assert.That(matches[0].DisplayName.Contains("my_function", StringComparison.Ordinal)).IsTrue();
+    }
+
+    [Test]
+    [Arguments("0")]
+    [Arguments("9")]
+    public async Task ServerCursorRedirectIsNotReplayed(string cursor)
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port));
+        var error = await Assert.That(async () => { using var reply = await client.ExecuteAsync("SCAN", cursor); })
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo("REDIRECT");
+        await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TypedScanDoesNotRedirectItsFirstPage()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port));
+        await using var scan = client.Keys.ScanAsync().GetAsyncEnumerator();
+        await Assert.That(async () => _ = await scan.MoveNextAsync()).Throws<RespireServerException>();
+        await Assert.That(primary.CommandsSeen).IsEqualTo(0);
     }
 
     [Test]
