@@ -107,8 +107,9 @@ internal sealed partial class ReadEndpointRouter
                         candidate.Replica?.IsReplicationLinkDown != true));
             }
             // The AZ policy must discover and sample preferred replicas before attempting a
-            // potentially unavailable primary. Lower tiers still compete with a local primary.
-            if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary && !best.HasPreferredCandidate)
+            // potentially unavailable primary. A known remote primary cannot outrank any replica.
+            if (!best.HasPreferredCandidate
+                && ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, Core.Multiplexer, preferredZone))
             {
                 var candidate = await GetNearestPrimaryAsync(sampler, cancellationToken, observation, preferredZone,
                     attempt, readyOnly, excludedPeer).ConfigureAwait(false);

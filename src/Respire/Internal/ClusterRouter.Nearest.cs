@@ -121,7 +121,8 @@ internal sealed partial class ClusterRouter
             if (pending.Candidate.IsAcceptingCommands)
                 best.Consider(pending.Candidate, latency, pending.Linked, pending.Order, pending.Priority);
         }
-        if (readFrom == RespireReadFrom.AzAffinityReplicasAndPrimary && !best.HasPreferredCandidate)
+        if (!best.HasPreferredCandidate
+            && ReadFallbackPolicy.ShouldProbeLocalPrimary(readFrom, GetKnownSlotOwner(slot), preferredZone))
         {
             var candidate = await GetNearestPrimaryAsync(slot, sampler, cancellationToken, discovery, observation,
                 preferredZone, excluded, excludedPeer).ConfigureAwait(false);

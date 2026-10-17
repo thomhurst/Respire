@@ -12,6 +12,65 @@ public partial class NearestReadRoutingTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task RemoteBandReplicaDoesNotSampleKnownRemotePrimary(bool cluster)
+    {
+        await using var primary = BandServer("primary", "remote");
+        await using var replica = BandServer("replica", "remote");
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
+        {
+            UseCluster = cluster, ClusterTopologyRefreshInterval = null,
+            ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
+            ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary, ClientAvailabilityZone = "local",
+            ReplicaLatencyTolerance = TimeSpan.Zero,
+        });
+        var primarySamples = 0;
+        var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
+        {
+            if (connection.Port == primary.Port) Interlocked.Increment(ref primarySamples);
+            return ValueTask.FromResult(10L);
+        }, () => 0);
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("replica");
+        await Assert.That(primarySamples).IsEqualTo(0);
+        await Assert.That(client.GetReadRoutingSnapshot()!.EligibleEndpoints.Single().Port).IsEqualTo(replica.Port);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RemoteBandPrimaryStillServesWhenReplicaUnavailable(bool cluster)
+    {
+        await using var primary = BandServer("primary", "remote");
+        await using var replica = BandServer("replica", "remote");
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
+        {
+            UseCluster = cluster, ClusterTopologyRefreshInterval = null,
+            ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
+            ReadFrom = RespireReadFrom.AzAffinityReplicasAndPrimary, ClientAvailabilityZone = "local",
+            ReplicaLatencyTolerance = TimeSpan.Zero,
+            TestingStreamFactory = async (host, port, token) =>
+            {
+                if (port == replica.Port) throw new RespireConnectionException("The replica is unavailable.");
+                var tcp = new System.Net.Sockets.TcpClient();
+                await tcp.ConnectAsync(host, port, token);
+                return tcp.GetStream();
+            },
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await client.GetStringAsync("key", deadline.Token)).IsEqualTo("primary");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task LocalBandReplicaDoesNotAcquireUnavailablePrimary(bool cluster)
     {
         await using var seed = BandServer("primary", "remote");
