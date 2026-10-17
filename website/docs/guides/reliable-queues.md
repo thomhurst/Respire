@@ -125,6 +125,7 @@ private consumer group tracks initial delivery; receipts fence subsequent work.
 | API | Use it when |
 | --- | --- |
 | Reliable queue | You want to send and receive messages and explicitly ACK/NACK them. |
+| [Reliable topic](reliable-topics.md) | Every named subscription must receive each retained publication independently. |
 | [Job queue](job-queues.md) | You want hosted handlers, scheduling, priorities, job flows, progress or job logs. |
 | [Stream workers](stream-workers.md) | You want to consume existing streams and control their groups and recovery policy. |
 
