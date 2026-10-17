@@ -28,7 +28,8 @@ handoffs. Configured seeds also pass through the map. Unlisted endpoints connect
 Unix sockets bypass mapping.
 
 Respire keeps the original endpoint for routing, diagnostics, and credential providers.
-Mapping changes only the socket destination. Map keys use exact host and port equality;
+Connection hooks receive the mapped socket destination before credentials or transport creation.
+Map keys ignore hostname case and match ports exactly;
 include the hostnames or IP addresses your servers actually advertise. IPv6 strings use
 brackets, for example `[fd00::5]:6379`. Entries must contain valid TCP endpoints.
 The client copies the map when connecting, so later dictionary changes do not affect it.
@@ -84,12 +85,16 @@ Callback failures fail that connection attempt. Resolution is synchronous; avoid
 network calls inside the callback.
 
 ```csharp
-NodeAddressResolver = endpoint => endpoint.Host switch
+var options = new RespireOptions
 {
-    "redis-0.internal" => new("localhost", 7001),
-    "redis-1.internal" => new("localhost", 7002),
-    _ => endpoint,
-},
+    Endpoints = [new("redis-0.internal", 6379)],
+    NodeAddressResolver = endpoint => endpoint.Host switch
+    {
+        "redis-0.internal" => new("localhost", 7001),
+        "redis-1.internal" => new("localhost", 7002),
+        _ => endpoint,
+    },
+};
 ```
 
 Do not configure both forms. Mapping is not recursive: the result is the socket destination,
@@ -119,3 +124,18 @@ redis://localhost:7001?cluster=true&nodeAddressMap=redis-1%3A6379%3Dlocalhost%3A
 ```
 
 Both forms also accept `useMappedHostForTls=true`. A callback requires `RespireOptions`.
+
+## Configuration registration
+
+`AddRespire(IConfigurationSection)` accepts the same semicolon-separated map as a scalar
+`NodeAddressMap` setting. `NodeAddressResolver` is configured in code only:
+
+```json
+{
+  "Redis": {
+    "Endpoints": ["localhost:7001"],
+    "NodeAddressMap": "redis-1:6379=localhost:7001;redis-2:6379=localhost:7002",
+    "UseMappedHostForTls": false
+  }
+}
+```

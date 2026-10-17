@@ -283,6 +283,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation)
     {
         var endpoint = options.PrimaryEndpoint;
+        // Mapping suppresses logical DNS evidence. Reconnect to check the current
+        // destination, even when the old peer still answers ROLE master. Resolve a
+        // callback only during that connection attempt, never as a reuse probe.
+        if (options.NodeAddressResolver is not null || options.NodeAddressMap?.ContainsKey(endpoint) == true)
+            return await ConnectGenerationAsync(options, hint, cancellationToken, observeEstablishmentErrors, observation).ConfigureAwait(false);
         var samePeer = new SentinelAddressEvidence(endpoint, addresses).SingleAddress is { } address
             && current.Multiplexer.AllCurrentPeersMatch(address, endpoint.Port);
         // A stable DNS name is not proof that its established socket is still the owner.

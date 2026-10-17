@@ -196,7 +196,8 @@ public sealed record RespireOptions
 
     /// <summary>Maps logical TCP endpoints to reachable socket addresses. Unlisted endpoints are unchanged.</summary>
     /// <remarks>Applies to seeds, discovered nodes, redirects, replicas, Sentinel peers, and maintenance handoffs.
-    /// Routing, diagnostics, and TLS retain the original endpoint. The map is copied when connecting.
+    /// Routing, diagnostics, and TLS retain the original endpoint. Host matching ignores case; ports match exactly.
+    /// The map is copied when connecting.
     /// Cannot be combined with <see cref="NodeAddressResolver"/>.</remarks>
     public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; init; }
 

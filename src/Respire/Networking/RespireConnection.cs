@@ -371,7 +371,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         RespireConnectionOptions? options = null,
         ILogger? logger = null,
         CancellationToken cancellationToken = default,
-        bool armHandshakeDeadline = true)
+        bool armHandshakeDeadline = true,
+        RespireEndpoint? resolvedSocketEndpoint = null)
     {
         options ??= RespireConnectionOptions.Default;
         if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout < MinWatchdogDelay)
@@ -408,18 +409,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         options = await ResolveCredentialsAsync(host, port, options, cancellationToken).ConfigureAwait(false);
 
-        // Preserve the logical endpoint for topology identity, credentials, and diagnostics.
-        // Resolve only at socket creation so reconnects and every discovery path share it.
-        var socketEndpoint = new RespireEndpoint(host, port);
-        if (!isUnixSocket)
-        {
-            if (options.NodeAddressResolver is { } resolver)
-                socketEndpoint = resolver(socketEndpoint);
-            else if (options.NodeAddressMap is { } map && map.TryGetValue(socketEndpoint, out var mapped))
-                socketEndpoint = mapped;
-            if (options.NodeAddressResolver is not null || options.NodeAddressMap is not null)
-                NodeAddressMapping.Validate(socketEndpoint);
-        }
+        // Hook attempts already resolved and approved this destination. Credentials,
+        // topology identity and diagnostics continue to use the logical endpoint.
+        var socketEndpoint = resolvedSocketEndpoint ?? ResolveSocketEndpoint(host, port, options);
 
         if (options.ConnectionFactory is not null)
             return await ConnectFactoryStreamAsync(host, port, socketEndpoint, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
@@ -520,6 +512,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         return connection;
+    }
+
+    private static RespireEndpoint ResolveSocketEndpoint(string host, int port, RespireConnectionOptions options)
+    {
+        var endpoint = new RespireEndpoint(host, port);
+        if (port == 0) return endpoint;
+        if (options.NodeAddressResolver is { } resolver)
+            endpoint = resolver(endpoint);
+        else if (options.NodeAddressMap is { } map && map.TryGetValue(endpoint, out var mapped))
+            endpoint = mapped;
+        if (options.NodeAddressResolver is not null || options.NodeAddressMap is not null)
+            NodeAddressMapping.Validate(endpoint);
+        return endpoint;
     }
 
     private static async Task<RespireConnection> ConnectFactoryStreamAsync(

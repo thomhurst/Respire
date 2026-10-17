@@ -4,16 +4,26 @@ namespace Respire;
 
 internal static class NodeAddressMapping
 {
+    private sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
+    {
+        internal static readonly EndpointComparer Instance = new();
+        public bool Equals(RespireEndpoint x, RespireEndpoint y)
+            => x.Port == y.Port && StringComparer.OrdinalIgnoreCase.Equals(x.Host, y.Host);
+        public int GetHashCode(RespireEndpoint endpoint)
+            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(endpoint.Host), endpoint.Port);
+    }
+
     internal static IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? Snapshot(
         IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? map)
     {
         if (map is null) return null;
-        var copy = new Dictionary<RespireEndpoint, RespireEndpoint>(map.Count);
+        var copy = new Dictionary<RespireEndpoint, RespireEndpoint>(map.Count, EndpointComparer.Instance);
         foreach (var (source, target) in map)
         {
             Validate(source);
             Validate(target);
-            copy.Add(source, target);
+            if (!copy.TryAdd(source, target))
+                throw new RespireConfigurationException("NodeAddressMap contains a duplicate source endpoint.");
         }
         return new ReadOnlyDictionary<RespireEndpoint, RespireEndpoint>(copy);
     }
@@ -27,7 +37,7 @@ internal static class NodeAddressMapping
 
     internal static IReadOnlyDictionary<RespireEndpoint, RespireEndpoint> Parse(string value)
     {
-        var map = new Dictionary<RespireEndpoint, RespireEndpoint>();
+        var map = new Dictionary<RespireEndpoint, RespireEndpoint>(EndpointComparer.Instance);
         foreach (var entry in value.Split(';'))
         {
             var separator = entry.IndexOf('=');
