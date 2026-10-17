@@ -1,4 +1,9 @@
 #nullable enable
+Respire.IRespireGeoCommands.SearchAsync(Respire.RespireKey key, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireGeoSearchResult[]!>
+Respire.IRespireGeoCommands.SearchStoreAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions), bool storeDistance = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
+Respire.IRespireBatchGeoCommands.Search(Respire.RespireKey key, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions)) -> Respire.RespirePending<Respire.RespireGeoSearchResult[]!>!
+Respire.IRespireBatchGeoCommands.SearchStore(Respire.RespireKey destination, Respire.RespireKey source, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions), bool storeDistance = false) -> Respire.RespirePending<long>!
+static Respire.RespireGeoSearchShape.Polygon(params System.ReadOnlySpan<Respire.RespireGeoPosition> vertices) -> Respire.RespireGeoSearchShape
 Respire.RespireCondition
 static Respire.RespireCondition.ValueEquals(Respire.RespireKey key, Respire.RespireValue value) -> Respire.RespireCondition!
 static Respire.RespireCondition.ValueNotEquals(Respire.RespireKey key, Respire.RespireValue value) -> Respire.RespireCondition!

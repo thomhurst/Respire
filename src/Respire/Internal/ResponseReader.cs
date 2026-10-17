@@ -239,5 +239,15 @@ internal static class ResponseReader
 
     public static RespireServerException ServerError(in RespValue value, string? commandName = null,
         RespireEndpoint? endpoint = null)
-        => new(value.GetErrorMessage(), commandName) { Endpoint = endpoint };
+    {
+        var message = value.GetErrorMessage();
+        if (message == "ERR syntax error" && commandName is "GEOSEARCH" or "GEOSEARCHSTORE")
+        {
+            // Older servers return only a syntax error for BYPOLYGON. Keep the original
+            // error code and give callers a compatibility hint without guessing the server version.
+            message += " Check server support for the requested options; BYPOLYGON requires Valkey 9.0+.";
+        }
+
+        return new(message, commandName) { Endpoint = endpoint };
+    }
 }

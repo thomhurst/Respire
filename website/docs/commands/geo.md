@@ -33,6 +33,45 @@ requires `Count` and `Sort = RespireGeoSortOrder.Unsorted`; it cannot be combine
 ascending sort in the example above. It lets the server stop early, so it does not
 guarantee the nearest matches. Distance uses the search shape's unit.
 
+## Polygon searches (Valkey 9.0+)
+
+Use `RespireGeoSearchShape.Polygon` with the overload that omits the origin:
+
+```csharp
+var area = RespireGeoSearchShape.Polygon(
+    new RespireGeoPosition(-0.2, 51.4),
+    new RespireGeoPosition(0, 51.4),
+    new RespireGeoPosition(0, 51.6),
+    new RespireGeoPosition(-0.2, 51.6));
+
+var matches = await redis.Geo.SearchAsync("{places}:cafes", area,
+    new RespireGeoSearchOptions { IncludeDistance = true, IncludeCoordinates = true });
+long stored = await redis.Geo.SearchStoreAsync("{places}:area", "{places}:cafes", area);
+```
+
+This sends `GEOSEARCH key BYPOLYGON count longitude latitude ...` or
+`GEOSEARCHSTORE destination source BYPOLYGON count longitude latitude ...`.
+The [Valkey command reference](https://valkey.io/commands/geosearch/) requires no
+`FROMMEMBER`, `FROMLONLAT`, or distance unit for polygons. Valkey computes the bounding
+box and a spherical centroid from the vertices. Distances from that centroid, including
+`STOREDIST` scores, are in meters.
+
+The factory copies the vertices. It accepts an open ring or a closed ring whose last
+vertex repeats the first; repeated closing vertices are removed before sending.
+At least three distinct vertices are required, with finite longitude in [-180, 180]
+and latitude in [-85.05112878, 85.05112878]. Supply vertices in boundary order;
+Respire does not check self-intersections or repair polygon geometry.
+An explicit origin is rejected for polygons. Circle and box searches still require an origin.
+
+Sorting, `Count`, `Any`, and result details work as for the other shapes.
+`batch.Geo.Search(key, area)` and `transaction.Geo.Search(key, area)`, plus their
+`SearchStore` counterparts, use the same shape and validation.
+
+Older Valkey and unsupported Redis servers reject `BYPOLYGON` with a
+`RespireServerException`. GEOSEARCH syntax errors include a `BYPOLYGON requires Valkey 9.0+`
+compatibility hint while retaining the server error code, command name, and endpoint.
+Other errors, such as `WRONGTYPE` or ACL denials, retain their original message.
+
 ## Commands and results
 
 | Method | Redis command | Result |
