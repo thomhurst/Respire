@@ -37,7 +37,7 @@ public enum RespireGeoSortOrder
 /// <summary>A longitude, latitude, and member tuple supplied to Redis GEOADD.</summary>
 public readonly record struct RespireGeoEntry(double Longitude, double Latitude, RespireValue Member);
 
-/// <summary>A longitude and latitude returned by Redis GEOPOS or GEOSEARCH.</summary>
+/// <summary>A longitude and latitude returned by GEOPOS/GEOSEARCH or supplied as a polygon vertex.</summary>
 public readonly record struct RespireGeoPosition(double Longitude, double Latitude);
 
 /// <summary>A Redis GEOSEARCH result with the optional details requested by <see cref="RespireGeoSearchOptions"/>.</summary>
@@ -154,17 +154,22 @@ public readonly struct RespireGeoSearchOrigin
         => new(null, longitude, latitude);
 }
 
-/// <summary>The circular or rectangular area searched by Redis GEOSEARCH.</summary>
+/// <summary>The circular, rectangular, or polygon area searched by GEOSEARCH.</summary>
 public readonly struct RespireGeoSearchShape
 {
-    private RespireGeoSearchShape(double radius, double width, double height, RespireGeoUnit unit)
+    private RespireGeoSearchShape(double radius, double width, double height, RespireGeoUnit unit,
+        RespireGeoPosition[]? vertices = null)
     {
         Radius = radius;
         Width = width;
         Height = height;
         Unit = unit;
+        _vertices = vertices;
     }
 
+    private readonly RespireGeoPosition[]? _vertices;
+    internal ReadOnlySpan<RespireGeoPosition> Vertices => _vertices;
+    internal bool IsPolygon => _vertices is not null;
     internal double Radius { get; }
     internal double Width { get; }
     internal double Height { get; }
@@ -184,6 +189,36 @@ public readonly struct RespireGeoSearchShape
         ValidatePositiveFinite(width, nameof(width));
         ValidatePositiveFinite(height, nameof(height));
         return new(0, width, height, unit);
+    }
+
+    /// <summary>Creates a Valkey 9.0+ <c>BYPOLYGON</c> shape from longitude/latitude vertices.</summary>
+    /// <remarks>Copies the vertices and removes a repeated closing vertex. At least three distinct
+    /// vertices are required. The server closes the ring and measures distances in meters.</remarks>
+    public static RespireGeoSearchShape Polygon(params ReadOnlySpan<RespireGeoPosition> vertices)
+    {
+        while (vertices.Length > 1 && vertices[0] == vertices[^1])
+        {
+            vertices = vertices[..^1];
+        }
+
+        if (vertices.Length < 3)
+        {
+            throw new ArgumentException("A polygon requires at least three distinct vertices.", nameof(vertices));
+        }
+
+        var distinct = new HashSet<RespireGeoPosition>();
+        foreach (var vertex in vertices)
+        {
+            GeoCommands.ValidateCoordinates(vertex.Longitude, vertex.Latitude);
+            distinct.Add(vertex);
+        }
+
+        if (distinct.Count < 3)
+        {
+            throw new ArgumentException("A polygon requires at least three distinct vertices.", nameof(vertices));
+        }
+
+        return new(0, 0, 0, RespireGeoUnit.Meters, vertices.ToArray());
     }
 
     internal static void ValidatePositiveFinite(double value, string parameterName)
@@ -286,9 +321,20 @@ public interface IRespireGeoCommands
         RespireKey key, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
         RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default);
 
+    /// <summary>Searches a polygon without an explicit origin. Requires Valkey 9.0+.</summary>
+    ValueTask<RespireGeoSearchResult[]> SearchAsync(
+        RespireKey key, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default);
+
     /// <summary>Stores matching members or distances in another sorted set. Redis: GEOSEARCHSTORE.</summary>
     ValueTask<long> SearchStoreAsync(
         RespireKey destination, RespireKey source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, bool storeDistance = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Stores a polygon search without an explicit origin. Requires Valkey 9.0+.</summary>
+    ValueTask<long> SearchStoreAsync(
+        RespireKey destination, RespireKey source, RespireGeoSearchShape shape,
         RespireGeoSearchOptions options = default, bool storeDistance = false,
         CancellationToken cancellationToken = default);
 }
@@ -409,6 +455,17 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
     }
 
     public ValueTask<RespireGeoSearchResult[]> SearchAsync(
+        RespireKey key, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default)
+        => SearchAsync(key, default, shape, options, cancellationToken);
+
+    public ValueTask<long> SearchStoreAsync(
+        RespireKey destination, RespireKey source, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, bool storeDistance = false,
+        CancellationToken cancellationToken = default)
+        => SearchStoreAsync(destination, source, default, shape, options, storeDistance, cancellationToken);
+
+    public ValueTask<RespireGeoSearchResult[]> SearchAsync(
         RespireKey key, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
         RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default)
     {
@@ -507,13 +564,18 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
 
     internal static void Validate(RespireGeoSearchOrigin origin, RespireGeoSearchShape shape, RespireGeoSearchOptions options)
     {
-        if (!origin.IsInitialized)
+        if (shape.IsPolygon && origin.IsInitialized)
+        {
+            throw new ArgumentException("Polygon searches cannot specify an origin.", nameof(origin));
+        }
+
+        if (!shape.IsPolygon && !origin.IsInitialized)
         {
             throw new ArgumentException(
                 "Origin must be created with FromMember or FromCoordinates.", nameof(origin));
         }
 
-        if (origin.Member is null)
+        if (!shape.IsPolygon && origin.Member is null)
         {
             ValidateCoordinates(origin.Longitude, origin.Latitude);
         }
@@ -522,7 +584,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         {
             RespireGeoSearchShape.ValidatePositiveFinite(shape.Radius, nameof(shape));
         }
-        else
+        else if (!shape.IsPolygon)
         {
             RespireGeoSearchShape.ValidatePositiveFinite(shape.Width, nameof(shape));
             RespireGeoSearchShape.ValidatePositiveFinite(shape.Height, nameof(shape));
@@ -550,7 +612,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         }
     }
 
-    private static void ValidateCoordinates(double longitude, double latitude)
+    internal static void ValidateCoordinates(double longitude, double latitude)
     {
         if (longitude is < -180 or > 180 || double.IsNaN(longitude))
         {
@@ -616,6 +678,21 @@ internal readonly struct GeoSearchCommand(
             destination ?? RespireValue.Null,
             storeDistance,
         ];
+        if (shape.IsPolygon)
+        {
+            var polygonArguments = new RespireValue[arguments.Length + 1 + shape.Vertices.Length * 2];
+            arguments.CopyTo(polygonArguments, 0);
+            var index = arguments.Length;
+            polygonArguments[index++] = "BYPOLYGON";
+            foreach (var vertex in shape.Vertices)
+            {
+                polygonArguments[index++] = vertex.Longitude;
+                polygonArguments[index++] = vertex.Latitude;
+            }
+
+            arguments = polygonArguments;
+        }
+
         cacheKey = new(operation, arguments);
         return true;
     }
@@ -625,10 +702,21 @@ internal readonly struct GeoSearchCommand(
 
     public void Write(ref RespWriter writer)
     {
+        var shapeArgumentCount = shape.IsRadius ? 3 : 4;
+        if (shape.IsPolygon)
+        {
+            shapeArgumentCount = 2 + shape.Vertices.Length * 2;
+        }
+
+        var originArgumentCount = 0;
+        if (!shape.IsPolygon)
+        {
+            originArgumentCount = origin.Member is null ? 3 : 2;
+        }
         var argumentCount = (destination.HasValue ? 1 : 0)
             + 1
-            + (origin.Member is null ? 3 : 2)
-            + (shape.IsRadius ? 3 : 4)
+            + originArgumentCount
+            + shapeArgumentCount
             + (options.Sort == RespireGeoSortOrder.Unsorted ? 0 : 1)
             + (options.Count.HasValue ? 2 + (options.Any ? 1 : 0) : 0)
             + (options.IncludeDistance ? 1 : 0)
@@ -643,19 +731,29 @@ internal readonly struct GeoSearchCommand(
         }
 
         source.WriteTo(ref writer);
-        if (origin.Member is { } member)
+        if (!shape.IsPolygon && origin.Member is { } member)
         {
             writer.WriteRaw(CommandOptionFrames.FROMMEMBER);
             member.WriteTo(ref writer);
         }
-        else
+        else if (!shape.IsPolygon)
         {
             writer.WriteRaw(CommandOptionFrames.FROMLONLAT);
             ((RespireValue)origin.Longitude).WriteTo(ref writer);
             ((RespireValue)origin.Latitude).WriteTo(ref writer);
         }
 
-        if (shape.IsRadius)
+        if (shape.IsPolygon)
+        {
+            writer.WriteBulkString("BYPOLYGON"u8);
+            writer.WriteBulkInteger(shape.Vertices.Length);
+            foreach (var vertex in shape.Vertices)
+            {
+                ((RespireValue)vertex.Longitude).WriteTo(ref writer);
+                ((RespireValue)vertex.Latitude).WriteTo(ref writer);
+            }
+        }
+        else if (shape.IsRadius)
         {
             writer.WriteRaw(CommandOptionFrames.BYRADIUS);
             ((RespireValue)shape.Radius).WriteTo(ref writer);
@@ -667,7 +765,11 @@ internal readonly struct GeoSearchCommand(
             ((RespireValue)shape.Height).WriteTo(ref writer);
         }
 
-        writer.WriteBulkString(GeoCommands.Unit(shape.Unit));
+        if (!shape.IsPolygon)
+        {
+            writer.WriteBulkString(GeoCommands.Unit(shape.Unit));
+        }
+
         if (options.Sort != RespireGeoSortOrder.Unsorted)
         {
             writer.WriteRaw(options.Sort == RespireGeoSortOrder.Ascending ? CommandOptionFrames.ASC : CommandOptionFrames.DESC);

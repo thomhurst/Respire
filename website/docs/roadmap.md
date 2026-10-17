@@ -21,6 +21,9 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ## Available now
 
+- [Polygon geo searches](commands/geo.md#polygon-searches-valkey-90) on Valkey 9.0+,
+  including search/store, batch and transaction APIs, and client-side vertex validation.
+
 - Opt-in [maximum connection lifetime](fundamentals/connections.md#maximum-connection-lifetime)
   with independent jitter, replacement-before-drain multiplexing, and idle-only dedicated recycling.
 
