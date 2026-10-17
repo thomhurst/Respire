@@ -30,7 +30,7 @@ internal sealed partial class ClusterRouter
     internal CorrectionLease GetCorrectionLease(RespireConnection original)
     {
         var identity = new CorrectionPoolIdentity(original.Multiplexer,
-            original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.Host);
+            original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.TlsHost);
         List<DedicatedConnectionPool> unused;
         CorrectionPoolEntry entry;
         lock (_nodesGate)
@@ -43,8 +43,7 @@ internal sealed partial class ClusterRouter
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                 };
-                if (options.UseTls)
-                    options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
+                options = options.PinToPeer(original.TlsHost);
                 var pool = new DedicatedConnectionPool(identity.PeerAddress, identity.PeerPort, options,
                     _options.CreateLogger($"Respire.Cluster.Correction.{original.Host}:{original.Port}"));
                 entry = new(pool);

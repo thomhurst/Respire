@@ -13,11 +13,12 @@ internal sealed class RedisClusterTestContainer(IContainer container) : IAsyncDi
 
     // Docker picks the random host ports, but on busy runners its listener can still lose the
     // port to another socket. Retry that bind race on a fresh container rather than failing the test.
-    internal static async Task<RedisClusterTestContainer> StartAsync(string image = "redis:7.0.15", bool loadBloomModule = false)
+    internal static async Task<RedisClusterTestContainer> StartAsync(
+        string image = "redis:7.0.15", bool loadBloomModule = false, bool announceInternalPorts = false)
     {
         for (var attempt = 1; ; attempt++)
         {
-            try { return await StartOnceAsync(image, loadBloomModule); }
+            try { return await StartOnceAsync(image, loadBloomModule, announceInternalPorts); }
             catch (DockerApiException error) when (attempt < 3 && IsPortConflict(error)) { }
         }
     }
@@ -27,7 +28,7 @@ internal sealed class RedisClusterTestContainer(IContainer container) : IAsyncDi
             && ((error.ResponseBody ?? "").Contains("address already in use", StringComparison.OrdinalIgnoreCase)
                 || (error.ResponseBody ?? "").Contains("port is already allocated", StringComparison.OrdinalIgnoreCase));
 
-    private static async Task<RedisClusterTestContainer> StartOnceAsync(string image, bool loadBloomModule)
+    private static async Task<RedisClusterTestContainer> StartOnceAsync(string image, bool loadBloomModule, bool announceInternalPorts)
     {
         // This fixture starts server binaries directly, bypassing Redis 8's module-loading entrypoint.
         // The optional module path matches the official redis:8-alpine image used by probabilistic tests.
@@ -45,7 +46,8 @@ internal sealed class RedisClusterTestContainer(IContainer container) : IAsyncDi
             await container.StartAsync();
             for (var node = 0; node < 3; node++)
             {
-                await cluster.CommandAsync(node, "CONFIG", "SET", "cluster-announce-port", cluster.Port(node).ToString());
+                if (!announceInternalPorts)
+                    await cluster.CommandAsync(node, "CONFIG", "SET", "cluster-announce-port", cluster.Port(node).ToString());
                 await cluster.CommandAsync(node, "CLUSTER", "SET-CONFIG-EPOCH", (node + 1).ToString());
                 await cluster.CommandAsync(node, "CLUSTER", "ADDSLOTSRANGE", (node * 5461).ToString(), (node == 2 ? 16383 : (node + 1) * 5461 - 1).ToString());
                 cluster._ids[node] = (await cluster.CommandAsync(node, "CLUSTER", "MYID")).Trim();

@@ -270,8 +270,7 @@ internal sealed class ClientCore : IAsyncDisposable
     internal CorrectionLease GetCorrectionLease(RespireEndpoint endpoint, RespireConnection? original)
     {
         var options = CreateConnectionOptions();
-        if (options.UseTls)
-            options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original?.Host ?? endpoint.Host) };
+        if (original is not null) options = options.PinToPeer(original.TlsHost);
         // Client IDs belong to the original physical server, not the current MOVING destination.
         lock (_hubGate)
         {

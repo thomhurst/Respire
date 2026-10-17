@@ -811,13 +811,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    // TlsHost is the name the socket was opened with; after a MOVING handoff it can differ
-    // from the multiplexer's configured host, and the fence must validate the same identity.
+    // TlsHost is the name used for TLS authentication; address mapping and MOVING can
+    // make it differ from the configured host. The fence must validate the same identity.
     private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port, string TlsHost)
     {
         internal static RetiredClientIdentity From(RespireConnection connection)
             => new(connection.ServerClientId, connection.NetworkPeerAddress ?? connection.Host,
-                connection.NetworkPeerPort ?? connection.Port, connection.Host);
+                connection.NetworkPeerPort ?? connection.Port, connection.TlsHost);
     }
 
     internal bool HasCurrentPeer(string host, int port)
@@ -898,8 +898,8 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                     Generation = null,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
-                    TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, identity.TlsHost) : _options.TlsOptions,
                 };
+                options = options.PinToPeer(identity.TlsHost);
                 try
                 {
                     await using var control = await RespireConnection.ConnectAsync(identity.Host, identity.Port,

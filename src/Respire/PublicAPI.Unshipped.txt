@@ -12,6 +12,12 @@ Respire.RespireOptions.ConnectionMaxLifetime.get -> System.TimeSpan?
 Respire.RespireOptions.ConnectionMaxLifetime.init -> void
 Respire.RespireOptions.ConnectionMaxLifetimeJitter.get -> System.TimeSpan
 Respire.RespireOptions.ConnectionMaxLifetimeJitter.init -> void
+Respire.RespireOptions.NodeAddressMap.get -> System.Collections.Generic.IReadOnlyDictionary<Respire.RespireEndpoint, Respire.RespireEndpoint>?
+Respire.RespireOptions.NodeAddressMap.init -> void
+Respire.RespireOptions.NodeAddressResolver.get -> System.Func<Respire.RespireEndpoint, Respire.RespireEndpoint>?
+Respire.RespireOptions.NodeAddressResolver.init -> void
+Respire.RespireOptions.UseMappedHostForTls.get -> bool
+Respire.RespireOptions.UseMappedHostForTls.init -> void
 Respire.RespireDedicatedPoolOptions
 Respire.RespireDedicatedPoolOptions.<Clone>$() -> Respire.RespireDedicatedPoolOptions!
 Respire.RespireDedicatedPoolOptions.Equals(Respire.RespireDedicatedPoolOptions? other) -> bool
