@@ -5,6 +5,13 @@ namespace Respire;
 /// Limits apply independently to each endpoint and routing generation, across ordinary and streaming leases.</remarks>
 public sealed record RespireDedicatedPoolOptions
 {
+    /// <summary>Attempts CLIENT UNBLOCK TIMEOUT on cancellation to reuse a blocked connection. Defaults to false.</summary>
+    /// <remarks>Requires CLIENT UNBLOCK permission, a client ID from HELLO or CLIENT ID, and a healthy multiplexed connection to the
+    /// same physical server. Cleanup waits at most one second before abandoning the dedicated connection.
+    /// Cancellation can race with a destructive command: a value may already have been consumed when
+    /// cancellation is reported. Use acknowledged queues when delivery must survive cancellation.</remarks>
+    public bool UnblockOnCancel { get; init; }
+
     /// <summary>Minimum live connections protected from timed idle retirement. Defaults to zero.</summary>
     public int MinimumSize { get; init; }
 

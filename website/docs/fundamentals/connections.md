@@ -152,6 +152,10 @@ var options = new RespireOptions
 - `IdleTimeout` retires idle connections above that floor. Leased connections are never
   selected. The timer scans at this interval, so an idle connection normally closes between
   one and two intervals after return. The interval must be one millisecond to one day.
+- `UnblockOnCancel` (default `false`) attempts `CLIENT UNBLOCK TIMEOUT` on a matching
+  multiplexed connection, drains the blocked reply, and retains the dedicated connection.
+  Failed cleanup falls back to discarding it after at most one second. See
+  [blocking cancellation and its completion race](../guides/blocking-queues.md#cancellation).
 
 Defaults are `MinimumSize = 0`, `MaximumSize = null`, `MaximumIdle = 4`, and
 `IdleTimeout = null`: unlimited demand-driven creation, four retained idle connections,

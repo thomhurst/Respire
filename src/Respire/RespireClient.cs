@@ -426,7 +426,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     /// <summary>
     /// Sends a command with optional policy flags and cancellation. Blocking commands use a
-    /// dedicated pooled connection; cancellation abandons that connection without stalling
+    /// dedicated pooled connection; cancellation cleans up that connection without stalling
     /// multiplexed traffic.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
@@ -4648,9 +4648,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     try
                     {
                         response = mutationFence.IsRequired
-                            ? await SendBlockingOnConnectionAsync(connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken,
+                            ? await SendBlockingOnConnectionAsync(pool, connection, new MutationCommand<TCommand>(command, mutationFence), cancellationToken,
                                 observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false)
-                            : await SendBlockingOnConnectionAsync(connection, command, cancellationToken,
+                            : await SendBlockingOnConnectionAsync(pool, connection, command, cancellationToken,
                                 observation.IsEmpty ? errorAttempts : observation.Attempts, observation).ConfigureAwait(false);
                     }
                     catch (RespireConnectionRetiredException error) when (core.Circuits is not null && core.Sentinel is not null
@@ -4712,7 +4712,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
-                    if (ex is RespireCircuitOpenException) pool!.Return(connection);
+                    if (ex is RespireCircuitOpenException or UnblockedCommandCanceledException) pool!.Return(connection);
                     else await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
@@ -4722,6 +4722,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     else RespireTelemetry.RecordError(timeoutError ?? ex, internallyHandled: false, errorAttempts, observation.Endpoint);
                 }
                 if (timeoutError is not null) throw timeoutError;
+                if (ex is UnblockedCommandCanceledException) throw new OperationCanceledException(cancellationToken);
                 throw;
             }
         }
@@ -4814,13 +4815,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                             connection.ThrowIfRetired();
                             admission = AcquireCircuit(connection, cancellationToken);
                         }
-                        response = await (sendAsking
-                            ? ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in command, cancellationToken,
-                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null,
-                                observation: observation)
-                            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken,
-                                observation.IsEmpty ? errorAttempts : observation.Attempts, pinToConnection: core.Circuits is not null,
-                                observation: observation))
+                        response = await SendBlockingWithCancellationAsync(pool, connection, command, cancellationToken,
+                                observation.IsEmpty ? errorAttempts : observation.Attempts, observation, sendAsking)
                             .ConfigureAwait(false);
                         admission.Success();
                     }
@@ -4907,11 +4903,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         acquiringRedirectPool || connection is null, slot, noRedirect, callerCancellationToken);
                     if (connection is not null && !returned)
                     {
-                        if (ex is RespireCircuitOpenException) pool.Return(connection);
+                        if (ex is RespireCircuitOpenException or UnblockedCommandCanceledException) pool.Return(connection);
                         else await pool.DiscardAsync(connection).ConfigureAwait(false);
                     }
 
                     if (timeoutError is not null) throw timeoutError;
+                    if (ex is UnblockedCommandCanceledException) throw new OperationCanceledException(cancellationToken);
                     throw;
                 }
             }
