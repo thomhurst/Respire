@@ -10,7 +10,7 @@ the compatibility matrix will need a new pin when the stable release is availabl
 `0` to `false`, and `1` to `true`:
 
 ```csharp
-bool? membership = await client.Sets.ContainsIfExistsAsync("members", "alice");
+bool? membership = await redis.Sets.ContainsIfExistsAsync("members", "alice");
 ```
 
 `RangeIfExistsAsync` and `RangeIfExistsWithScoresAsync` send `ZRANGE XX`. They return `null`
@@ -19,9 +19,9 @@ requested rank range, and an owned array otherwise. Both support `descending`, t
 deserialization, and batches or transactions through methods without the `Async` suffix.
 
 ```csharp
-var members = await client.SortedSets.RangeIfExistsAsync("ranking", start: 0, stop: 9);
-var scored = await client.SortedSets.RangeIfExistsWithScoresAsync("ranking");
-var binary = await client.SortedSets.RangeIfExistsAsync<byte[]>("ranking");
+var members = await redis.SortedSets.RangeIfExistsAsync("ranking", start: 0, stop: 9);
+var scored = await redis.SortedSets.RangeIfExistsWithScoresAsync("ranking");
+var binary = await redis.SortedSets.RangeIfExistsAsync<byte[]>("ranking");
 ```
 
 Existing `ContainsAsync`, `RangeAsync`, and `RangeWithScoresAsync` keep their existing reply
@@ -38,7 +38,7 @@ pending entries, null minimum and maximum IDs, and an empty consumers array.
 ## Replace a key in another database
 
 ```csharp
-bool moved = await client.Keys.MoveAsync("key", database: 2, replace: true);
+bool moved = await redis.Keys.MoveAsync("key", database: 2, replace: true);
 ```
 
 This sends `MOVE key 2 REPLACE`. The overload also works in batches and transactions.
@@ -48,10 +48,10 @@ numbers and Cluster clients. Key prefixes apply to the moved key.
 ## Configuration metadata and ACL roles
 
 ```csharp
-var configuration = await client.Server.ConfigInfoAsync(["maxmemory", "append*"]);
-var digest = await client.Server.AclDigestAsync();
-var roles = await client.Server.AclRolesAsync();
-var role = await client.Server.AclGetRoleAsync("reader");
+var configuration = await redis.Server.ConfigInfoAsync(["maxmemory", "append*"]);
+var digest = await redis.Server.AclDigestAsync();
+var roles = await redis.Server.AclRolesAsync();
+var role = await redis.Server.AclGetRoleAsync("reader");
 ```
 
 `ConfigInfoAsync` returns owned `RespireConfigurationInfo` records with names, server-defined
