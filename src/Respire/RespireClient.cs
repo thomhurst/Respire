@@ -2708,11 +2708,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool sendAsking,
         bool track, RespireTelemetry.ErrorObservation observation = default, CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsOperationEnabled(operation)
+    {
+        if (connection.ReplicaRedirectsEnabled && !CursorCommandMetadata.HasServerCursor(in command))
+            return SendWithReplicaRedirectsAsync(operation, connection, command, cancellationToken, commandDeadline, observation,
+                sendAsking: sendAsking, tracking: true, track: track);
+        return RespireTelemetry.IsOperationEnabled(operation)
             ? SendTrackedOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline)
             : SendTrackedOnConnectionCoreAsync(
                 operation, connection, command, cancellationToken, sendAsking, track, observation, commandDeadline);
+    }
 
     private ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
         string operation,
@@ -3770,10 +3775,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         string? storedProcedureName = null, RespireTelemetry.ErrorObservation observation = default,
         CommandDeadline commandDeadline = default)
         where TCommand : struct, IRespCommand
-        => _core.Circuits is not null && !_snapshotPrefixedBinaryKeys
+    {
+        if (connection.ReplicaRedirectsEnabled && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
+            && !RespireCommand.MayCloseWithoutReply(operation))
+            return SendDiscardedReplyAsync(operation, connection, command, cancellationToken, storedProcedureName, observation,
+                commandDeadline);
+        return _core.Circuits is not null && !_snapshotPrefixedBinaryKeys
             ? SendCircuitFireAndForgetAsync(operation, connection, command, cancellationToken, storedProcedureName, observation, commandDeadline)
             : SendFireAndForgetOnConnectionUncheckedAsync(operation, connection, command, cancellationToken, storedProcedureName,
                 capacityDeadline: commandDeadline, observation: observation);
+    }
 
     private ValueTask SendFireAndForgetOnConnectionUncheckedAsync<TCommand>(
         string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken,
@@ -4483,28 +4494,39 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool sendAsking = false,
         CommandDeadline commandDeadline = default,
         bool allowStreamingConnectionReroute = true,
-        bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default)
+        bool pinToConnection = false, RespireTelemetry.ErrorObservation observation = default,
+        bool allowReplicaRedirects = true)
         where TCommand : struct, IRespCommand
-        => RespireTelemetry.IsOperationEnabled(operation)
+    {
+        if (connection.ReplicaRedirectsEnabled && allowReplicaRedirects && !pinToConnection
+            && !CursorCommandMetadata.HasServerCursor(in command)
+            && command is not IStreamingRespCommand && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command))
+            return SendWithReplicaRedirectsAsync(operation, connection, command, cancellationToken, commandDeadline, observation,
+                sendAsking: sendAsking, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
+                storedProcedureName: storedProcedureName);
+        return RespireTelemetry.IsOperationEnabled(operation)
             ? SendOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute, pinToConnection, observation: observation)
             : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking,
                 commandDeadline, allowStreamingConnectionReroute, pinToConnection, observation: observation);
+    }
 
     internal ValueTask<RespValue> SendMutationOnConnectionAsync<TCommand>(
         string operation, RespireConnection connection, in TCommand command,
         ClientSideCacheCoordinator.MutationFence mutationFence, CancellationToken cancellationToken,
         string? storedProcedureName = null, bool sendAsking = false,
         bool allowStreamingConnectionReroute = true, RespireTelemetry.ErrorObservation observation = default,
-        CommandDeadline commandDeadline = default)
+        CommandDeadline commandDeadline = default, bool allowReplicaRedirects = true)
         where TCommand : struct, IRespCommand
         => mutationFence.IsRequired
             ? SendOnConnectionAsync(operation, connection, new MutationCommand<TCommand>(command, mutationFence),
                 cancellationToken, storedProcedureName, sendAsking,
-                commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute, observation: observation)
+                commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
+                observation: observation, allowReplicaRedirects: allowReplicaRedirects)
             : SendOnConnectionAsync(operation, connection, command, cancellationToken, storedProcedureName, sendAsking,
-                commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute, observation: observation);
+                commandDeadline: commandDeadline, allowStreamingConnectionReroute: allowStreamingConnectionReroute,
+                observation: observation, allowReplicaRedirects: allowReplicaRedirects);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -5330,7 +5352,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection!,
                     core.Options.Database, storedProcedureName: script.Sha1, started: started);
                 var result = await ExecuteScriptOnConnectionCoreAsync(connection!, script, tail, cancellationToken, mutationFence,
-                        observation: observation, commandDeadline: deadline).ConfigureAwait(false);
+                        observation: observation, commandDeadline: deadline,
+                        onConnectionSelected: connection!.ReplicaRedirectsEnabled ? selected =>
+                        {
+                            connection = selected;
+                            telemetry.UpdateServerEndpoint(selected.Host, selected.Port);
+                        } : null).ConfigureAwait(false);
                 telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
                 return result;
             }
@@ -5712,14 +5739,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken,
         ClientSideCacheCoordinator.MutationFence mutationFence,
         RespireTelemetry.ErrorObservation observation,
-        TrackedScriptExecution? execution = null, CommandDeadline commandDeadline = default)
+        TrackedScriptExecution? execution = null, CommandDeadline commandDeadline = default,
+        Action<RespireConnection>? onConnectionSelected = null)
     {
         RespValue reply;
         try
         {
             reply = await SendScriptCommandAsync(
                 script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
-                cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline).ConfigureAwait(false);
+                cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
+                onConnectionSelected).ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Code == RespireErrorCodes.NoScript)
         {
@@ -5728,7 +5757,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             observation.Handled(error);
             reply = await SendScriptCommandAsync(
                 script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
-                cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline).ConfigureAwait(false);
+                cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
+                onConnectionSelected).ConfigureAwait(false);
         }
         return new RespireResult(in reply, _core.Options.Serializer);
     }
@@ -5739,17 +5769,24 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         Cmd2N command,
         CancellationToken cancellationToken,
         TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence, bool cacheReadOnly,
-        RespireTelemetry.ErrorObservation observation, CommandDeadline commandDeadline = default)
+        RespireTelemetry.ErrorObservation observation, CommandDeadline commandDeadline = default,
+        Action<RespireConnection>? onConnectionSelected = null)
     {
         if (!mutationFence.IsRequired)
         {
             var readOnly = ReadOnlyCommand<Cmd2N>.ForAuditedScript(command, cacheReadOnly);
+            if (execution is null && connection.ReplicaRedirectsEnabled)
+                return SendWithReplicaRedirectsAsync(operation, connection, readOnly, cancellationToken,
+                    commandDeadline, observation, instrument: false, onConnectionSelected: onConnectionSelected);
             return execution is null
                 ? SendOnConnectionCoreAsync(operation, connection, readOnly, cancellationToken, observation: observation, commandDeadline: commandDeadline)
                 : SendOnConnectionCoreAsync(operation, connection,
                     new SendTimestampCommand<ReadOnlyCommand<Cmd2N>>(readOnly, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
         }
         var bound = new MutationCommand<Cmd2N>(command, mutationFence);
+        if (execution is null && connection.ReplicaRedirectsEnabled)
+            return SendWithReplicaRedirectsAsync(operation, connection, bound, cancellationToken,
+                commandDeadline, observation, instrument: false, onConnectionSelected: onConnectionSelected);
         return execution is null
             ? SendOnConnectionCoreAsync(operation, connection, bound, cancellationToken, observation: observation, commandDeadline: commandDeadline)
             : SendOnConnectionCoreAsync(operation, connection,

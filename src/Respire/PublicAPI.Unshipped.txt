@@ -6,6 +6,8 @@ static Respire.RespireCondition.KeyExists(Respire.RespireKey key) -> Respire.Res
 static Respire.RespireCondition.KeyNotExists(Respire.RespireKey key) -> Respire.RespireCondition!
 Respire.RespireTransaction.CommitAsync(Respire.RespireCondition! condition, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.RespireTransaction.CommitAsync(System.ReadOnlySpan<Respire.RespireCondition!> conditions, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.RespireOptions.EnableReplicaRedirects.get -> bool
+Respire.RespireOptions.EnableReplicaRedirects.init -> void
 Respire.RespireDedicatedPoolOptions
 Respire.RespireDedicatedPoolOptions.<Clone>$() -> Respire.RespireDedicatedPoolOptions!
 Respire.RespireDedicatedPoolOptions.Equals(Respire.RespireDedicatedPoolOptions? other) -> bool
