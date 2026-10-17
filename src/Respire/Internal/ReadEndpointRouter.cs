@@ -433,12 +433,12 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 try { return await GetPrimaryAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false); }
                 catch (BacklogSelectionRequiredException)
                 {
-                    return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                    return await GetReplicaAsync(cancellationToken, observation, readFrom, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
                 }
                 catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
                 {
                     RecordCandidateFailure(observation, error, observation.Endpoint);
-                    return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                    return await GetReplicaAsync(cancellationToken, observation, readFrom, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
                 }
             case RespireReadFrom.Replica:
                 return await GetReplicaAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
@@ -542,7 +542,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     {
         if (core.Options.ReplicaLatencyTolerance is not null)
             return await GetNearestAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly,
-                readFrom: readFrom == RespireReadFrom.PrimaryPreferred ? RespireReadFrom.Replica : readFrom,
+                readFrom: readFrom,
                 replicaEndpoints: endpoints, excludedPeer: excluded).ConfigureAwait(false);
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");
