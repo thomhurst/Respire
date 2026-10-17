@@ -19,7 +19,8 @@ public class PrimaryReadRetirementTests
         bool allowFallback, bool retirePool, bool connectTimeout)
     {
         var limit = TimeSpan.FromSeconds(5);
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        // The multiplexer and its dedicated replacement both perform connection setup.
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2, Connections = 1,

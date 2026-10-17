@@ -107,7 +107,7 @@ await using var redis = await RespireClient.ConnectAsync(options);
 | `ReadFrom` | `Primary` | See [Read from replicas](#read-from-replicas). |
 | `ReplicaRefreshInterval` | 1 s | See [Validation and staleness](#validation-and-staleness). |
 
-Respire pipelines `CLIENT SETINFO LIB-NAME Respire` and `CLIENT SETINFO LIB-VER <package version>` with connection setup, without another round trip. Redis 7.2+, Redis 8.x, and Valkey expose these values as `lib-name` and `lib-ver`. Prerelease package versions retain their prerelease suffix; source commit metadata is omitted.
+Respire pipelines `CLIENT SETINFO LIB-NAME Respire` and `CLIENT SETINFO LIB-VER <package version>` with session setup commands. With the default `Protocol.Auto`, protocol negotiation completes first; metadata adds one round trip when there are no other session setup commands. With explicit RESP3, metadata is pipelined with `HELLO`. Explicit RESP2 connections also need one round trip when metadata is their only setup. Redis 7.2+, Redis 8.x, and Valkey expose these values as `lib-name` and `lib-ver`. Prerelease package versions retain their prerelease suffix; source commit metadata is omitted.
 
 Wrappers can set `LibraryName = "Respire(se-compat)"`. Names must be nonempty and contain only ASCII characters from `!` through `~`. Set `LibraryName = null` to omit both commands for proxies that reject unknown `CLIENT` subcommands or close the connection when they receive them. Server error replies, including unsupported commands and ACL denials, do not fail the handshake. Transport failures still fail the connection. The authentication-only control connection omits this optional setup.
 

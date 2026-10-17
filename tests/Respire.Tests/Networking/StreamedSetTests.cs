@@ -1534,17 +1534,20 @@ public sealed class StreamedSetTests
     [Test]
     public async Task ThrowingSourceWithinFirstChunkLeavesConnectionOpen()
     {
-        await using var server = new FakeRespServer(1, "+OK\r\n"u8.ToArray())
+        await using var server = new FakeRespServer(2, "+OK\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command == "PING" ? "+PONG\r\n"u8.ToArray() : null,
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var sharedConnection = client.Core.Multiplexer.GetConnection();
 
         await Assert.That(async () => await client.Strings.SetAsync("broken", new ThrowingStream(), 4))
             .Throws<IOException>();
 
         await client.PingAsync();
-        await Assert.That(server.PeerClosed.IsCompleted).IsFalse();
+        // Discarding the failed upload's dedicated lease must not replace the shared connection.
+        await Assert.That(sharedConnection.IsConnected).IsTrue();
+        await Assert.That(client.Core.Multiplexer.GetConnection()).IsSameReferenceAs(sharedConnection);
         await Assert.That(server.ReceivedCommands.Contains("PING")).IsTrue();
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("SET"))).IsFalse();
     }
@@ -2239,6 +2242,7 @@ public sealed class StreamedSetTests
                         if (marker != '*') throw new InvalidDataException("Expected RESP array header.");
                         var count = int.Parse(await ReadLineAsync(stream, _stop.Token));
                         string? command = null;
+                        var libraryInfo = false;
                         for (var index = 0; index < count; index++)
                         {
                             if (await ReadByteAsync(stream, _stop.Token) != '$') throw new InvalidDataException("Expected bulk argument.");
@@ -2271,6 +2275,8 @@ public sealed class StreamedSetTests
                             {
                                 var argument = new byte[length];
                                 await stream.ReadExactlyAsync(argument, _stop.Token);
+                                if (command == "CLIENT" && index == 1)
+                                    libraryInfo = argument.AsSpan().SequenceEqual("SETINFO"u8);
                             }
 
                             var crlf = new byte[2];
@@ -2278,7 +2284,8 @@ public sealed class StreamedSetTests
                             if (crlf[0] != '\r' || crlf[1] != '\n') throw new InvalidDataException("Invalid bulk terminator.");
                         }
 
-                        _commands.Enqueue(command ?? "");
+                        // Setup metadata must not count as application upload traffic.
+                        if (!libraryInfo) _commands.Enqueue(command ?? "");
                         var reply = command == "PING" ? "+PONG\r\n"u8.ToArray() : "+OK\r\n"u8.ToArray();
                         await stream.WriteAsync(reply, _stop.Token);
                     }

@@ -215,7 +215,9 @@ public sealed class StreamingCommandHookTests
         var reads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(FakeRespServer.OkReply) { ReadGate = reads.Task };
         var hook = new Hook { ThrowOnCompleted = true };
-        await using var client = await RespireClient.ConnectAsync(Options(server, hook) with { CommandTimeout = null });
+        // The first read belongs to the upload whose buffer lifetime is under test.
+        await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
+            { CommandTimeout = null, LibraryName = null });
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
         var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;

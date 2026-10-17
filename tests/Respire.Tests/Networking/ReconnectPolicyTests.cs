@@ -109,8 +109,10 @@ public class ReconnectPolicyTests
         var acceptGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!closeBeforeAccept) acceptGate.SetResult();
         await using var server = new FakeRespServer(3, acceptGate.Task, FakeRespServer.PongReply);
+        // Initial setup must finish before this test releases the accept gate.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
-            new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0, MaxAttempts = 1 }));
+            new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0, MaxAttempts = 1 }) with
+            { LibraryName = null });
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += changes.Enqueue;
         var measured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
