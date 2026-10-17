@@ -79,9 +79,11 @@ public static class RespireRateLimiterOptionsExtensions
         {
             var key = partitionKeySelector(httpContext);
             if (key is null) throw new InvalidOperationException("The partition selector must not return null.");
-            var lifetime = httpContext.RequestServices.GetRequiredService<IHostApplicationLifetime>();
-            return RateLimitPartition.Get(key,
-                partitionKey => new HostOwnedRateLimiter(limiterFactory(partitionKey), lifetime.ApplicationStopping));
+            return RateLimitPartition.Get(key, partitionKey =>
+            {
+                var lifetime = httpContext.RequestServices.GetRequiredService<IHostApplicationLifetime>();
+                return new HostOwnedRateLimiter(limiterFactory(partitionKey), lifetime.ApplicationStopped);
+            });
         }
 
         public Func<OnRejectedContext, CancellationToken, ValueTask> OnRejected => RejectAsync;
@@ -101,19 +103,20 @@ public static class RespireRateLimiterOptionsExtensions
     }
 
     // ASP.NET Core evicts idle partitions, but does not dispose its endpoint cache on host shutdown.
+    // Dispose remaining limiters after requests drain, so queued acquisitions survive ApplicationStopping.
     // Unregister on idle disposal so the host token does not retain evicted partitions.
     private sealed class HostOwnedRateLimiter : RateLimiter
     {
         private readonly RateLimiter _inner;
-        private readonly CancellationTokenRegistration _stopping;
+        private readonly CancellationTokenRegistration _stopped;
         private int _disposed;
 
-        public HostOwnedRateLimiter(RateLimiter inner, CancellationToken applicationStopping)
+        public HostOwnedRateLimiter(RateLimiter inner, CancellationToken applicationStopped)
         {
             _inner = inner ?? throw new InvalidOperationException("The limiter factory must not return null.");
-            _stopping = applicationStopping.UnsafeRegister(static state => ((HostOwnedRateLimiter)state!).Dispose(), this);
-            // Registration can run synchronously if shutdown has already started.
-            if (Volatile.Read(ref _disposed) != 0) _stopping.Unregister();
+            _stopped = applicationStopped.UnsafeRegister(static state => ((HostOwnedRateLimiter)state!).Dispose(), this);
+            // Registration can run synchronously if the host has already stopped.
+            if (Volatile.Read(ref _disposed) != 0) _stopped.Unregister();
         }
 
         public override TimeSpan? IdleDuration => _inner.IdleDuration;
@@ -126,7 +129,7 @@ public static class RespireRateLimiterOptionsExtensions
         {
             if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                _stopping.Unregister();
+                _stopped.Unregister();
                 _inner.Dispose();
             }
             base.Dispose(disposing);
@@ -136,7 +139,7 @@ public static class RespireRateLimiterOptionsExtensions
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                _stopping.Unregister();
+                _stopped.Unregister();
                 await _inner.DisposeAsync().ConfigureAwait(false);
             }
         }

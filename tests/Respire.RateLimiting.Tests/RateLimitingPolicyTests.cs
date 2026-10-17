@@ -2,6 +2,8 @@ using System.Net;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -110,6 +112,55 @@ public class RateLimitingPolicyTests
     }
 
     [Test]
+    public async Task QueuedRequestCanCompleteBeforeHostStops()
+    {
+        var limiter = new TestLimiter(waitForPermit: true);
+        await using (var app = new RateLimitingApplication(options =>
+            options.AddRespirePartitionedLimiter("api", _ => "shared", _ => limiter)))
+        {
+            using var http = app.CreateClient();
+            var request = http.GetAsync("/api");
+            await limiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            app.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+            await Assert.That(limiter.Disposals).IsEqualTo(0);
+            limiter.PendingLease.TrySetResult(new TestLease(null, acquired: true));
+
+            using var response = await request.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(limiter.Disposals).IsEqualTo(0);
+        }
+        await Assert.That(limiter.Disposals).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task IdleEvictionDisposesLimiterAndNextRequestCreatesReplacement()
+    {
+        var first = new TestLimiter();
+        var second = new TestLimiter();
+        var factoryCalls = 0;
+        await using (var app = new RateLimitingApplication(options =>
+            options.AddRespirePartitionedLimiter("api", _ => "shared",
+                _ => Interlocked.Increment(ref factoryCalls) == 1 ? first : second)))
+        {
+            using var http = app.CreateClient();
+            using var firstResponse = await http.GetAsync("/api");
+            // Report an already-idle partition so the middleware's normal heartbeat evicts it.
+            first.MarkIdle();
+            await first.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            using var secondResponse = await http.GetAsync("/api");
+            await Assert.That(factoryCalls).IsEqualTo(2);
+            await Assert.That(first.Attempts).IsEqualTo(1);
+            await Assert.That(first.Disposals).IsEqualTo(1);
+            await Assert.That(second.Attempts).IsEqualTo(1);
+            await Assert.That(second.Disposals).IsEqualTo(0);
+        }
+        await Assert.That(first.Disposals).IsEqualTo(1);
+        await Assert.That(second.Disposals).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RequestCancellationReachesAsynchronousAcquisition()
     {
         await using var limiter = new TestLimiter(waitForCancellation: true);
@@ -139,13 +190,18 @@ public class RateLimitingPolicyTests
             .Throws<ArgumentException>();
     }
 
-    private sealed class TestLimiter(TimeSpan? retryAfter = null, bool waitForCancellation = false) : RateLimiter
+    private sealed class TestLimiter(TimeSpan? retryAfter = null, bool waitForCancellation = false,
+        bool waitForPermit = false) : RateLimiter
     {
+        private int _idle;
         public int Disposals;
         public int Attempts;
         public CancellationToken AcquisitionToken;
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public override TimeSpan? IdleDuration => null;
+        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<RateLimitLease> PendingLease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void MarkIdle() => Volatile.Write(ref _idle, 1);
+        public override TimeSpan? IdleDuration => Volatile.Read(ref _idle) != 0 ? TimeSpan.FromMinutes(1) : null;
         public override RateLimiterStatistics? GetStatistics() => null;
         protected override RateLimitLease AttemptAcquireCore(int permitCount) => new TestLease(null);
         protected override async ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
@@ -154,18 +210,29 @@ public class RateLimitingPolicyTests
             AcquisitionToken = cancellationToken;
             Entered.TrySetResult();
             if (waitForCancellation) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            if (waitForPermit) return await PendingLease.Task.WaitAsync(cancellationToken);
             return new TestLease(retryAfter);
         }
         protected override void Dispose(bool disposing)
         {
-            if (disposing) Interlocked.Increment(ref Disposals);
+            if (disposing)
+            {
+                Interlocked.Increment(ref Disposals);
+                if (waitForPermit) PendingLease.TrySetException(new ObjectDisposedException(nameof(TestLimiter)));
+                Disposed.TrySetResult();
+            }
             base.Dispose(disposing);
+        }
+        protected override ValueTask DisposeAsyncCore()
+        {
+            Dispose(true);
+            return default;
         }
     }
 
-    private sealed class TestLease(TimeSpan? retryAfter) : RateLimitLease
+    private sealed class TestLease(TimeSpan? retryAfter, bool acquired = false) : RateLimitLease
     {
-        public override bool IsAcquired => false;
+        public override bool IsAcquired => acquired;
         public override IEnumerable<string> MetadataNames => retryAfter.HasValue ? [MetadataName.RetryAfter.Name] : [];
         public override bool TryGetMetadata(string metadataName, out object? metadata)
         {

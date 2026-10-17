@@ -53,7 +53,8 @@ Keep binary Redis key storage unchanged for the policy's lifetime.
 ## Partition by user, IP, or API key
 
 `AddRespirePartitionedLimiter` accepts a partition selector and a limiter factory. The middleware caches
-one local limiter per partition and disposes idle limiters. Respire also disposes remaining limiters when the host stops.
+one local limiter per partition and disposes idle limiters. Respire disposes remaining limiters on
+`ApplicationStopped`, after the host drains requests, so queued acquisitions can finish during graceful shutdown.
 Return a **new limiter** from each factory call, including calls after idle eviction; do not share one
 limiter object between policies or partitions. The application owns the Redis client and must keep it alive
 until its HTTP hosts stop. Eviction and application restarts retain the budget stored in Redis.
