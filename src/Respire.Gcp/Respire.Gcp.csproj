@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Gcp</PackageId>
+    <Title>Respire.Gcp</Title>
+    <Description>Google Cloud Memorystore IAM credential provider for Respire.</Description>
+    <PackageTags>$(PackageTags);gcp;google-cloud;memorystore;iam;credentials</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <PackageReference Include="Google.Apis.Auth" />
+  </ItemGroup>
+</Project>

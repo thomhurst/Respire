@@ -606,6 +606,7 @@ jobs:
           suite health-checks tests Respire.HealthChecks.Tests Respire.HealthChecks.Tests
           suite resilience tests Respire.Resilience.Tests Respire.Resilience.Tests
           suite azure tests Respire.Azure.Tests Respire.Azure.Tests
+          suite gcp tests Respire.Gcp.Tests Respire.Gcp.Tests --minimum-expected-tests 13
           suite data-protection tests Respire.DataProtection.Tests Respire.DataProtection.Tests
           finish_suites
 

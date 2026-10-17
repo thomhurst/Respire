@@ -1,0 +1,5 @@
+#nullable enable
+Respire.Gcp.RespireMemorystoreCredentialProvider
+Respire.Gcp.RespireMemorystoreCredentialProvider.RespireMemorystoreCredentialProvider(Google.Apis.Auth.OAuth2.GoogleCredential! credential) -> void
+Respire.Gcp.RespireMemorystoreCredentialProvider.GetCredentialsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireCredentials!>
+const Respire.Gcp.RespireMemorystoreCredentialProvider.Scope = "https://www.googleapis.com/auth/cloud-platform" -> string!
