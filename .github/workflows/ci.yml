@@ -38,7 +38,7 @@ env:
     testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
     redis:7.0.15 redis:8.10-alpine redis:8.4-alpine redis:8.8.3-alpine redis:7.2-alpine redis:7.4-alpine
     valkey/valkey:9.0-alpine valkey/valkey:8.1-alpine valkey/valkey:9.1-alpine valkey/valkey:9-alpine
-    valkey/valkey:9.1.0-alpine redis:6.2.14-alpine redis:6.2-alpine redis:7.4.11-alpine redis:8.2-alpine
+    valkey/valkey:9.1.0-alpine valkey/valkey:9.2.0-rc1-alpine redis:6.2.14-alpine redis:6.2-alpine redis:7.4.11-alpine redis:8.2-alpine
     redis:8.6-alpine redis:8.8-alpine
   COMPONENT_IMAGES: >-
     testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0

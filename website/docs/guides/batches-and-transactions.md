@@ -316,9 +316,36 @@ await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
 The same disposal pattern works for batches and watched transactions. A watched transaction's asynchronous creation can also use `.ConfigureAwait(false)`.
 
+## Conditional transactions (Valkey 9.2+)
+
+Pass a `RespireCondition` to an unwatched transaction's `CommitAsync` to check current server state immediately before EXEC. This avoids WATCH and its dedicated connection lease.
+
+```csharp
+await using var transaction = redis.CreateTransaction();
+var balance = transaction.Set("{account}:balance", "90");
+transaction.Set("{account}:version", "2");
+bool committed = await transaction.CommitAsync(
+    RespireCondition.ValueEquals("{account}:version", "1"), cancellationToken);
+```
+
+Conditions map directly to [Valkey EXEC options](https://valkey.io/commands/exec/):
+
+- `ValueEquals(key, expected)`: `IFEQ`; requires an existing string with equal bytes.
+- `ValueNotEquals(key, expected)`: `IFNE`; requires a missing key or a string with different bytes.
+- `KeyNotExists(key)`: `NX`; requires a missing key.
+- `KeyExists(key)`: `XX`; requires an existing key of any type.
+
+To require several conditions, pass a nonempty collection: `await transaction.CommitAsync([condition1, condition2], cancellationToken)`. Every condition must match. Conditions inspect state before queued commands execute. Values use raw wire bytes, independent of serialization. Condition creation copies binary keys and operands; transaction keys receive the client's key prefix.
+
+A false result discards every queued command. Pendings have `Status == RespirePendingStatus.Aborted`; reading their results throws `RespireTransactionAbortedException`, as with a WATCH abort. Wrong-type comparisons and other server errors remain errors.
+
+Respire checks `INFO SERVER` on the selected physical connection before sending MULTI and caches support on that connection. Redis and older Valkey throw `NotSupportedException`. INFO permission is required; a denied probe also throws `NotSupportedException` with the server error as its inner exception. There is no WATCH fallback. Empty conditional transactions still evaluate their conditions. Conditional commits do not use automatic command retries and are unavailable for hash import sessions.
+
+In Cluster, every condition key and queued command key must share one hash slot, including after prefixing. Use matching hash tags such as `{account}`. Cross-slot conditions fail locally before MULTI; the transaction remains available for a corrected commit.
+
 ## Transient retries for batches and transactions
 
-With `RespireOptions.RetryPolicy` set, batches and unwatched transactions retry as whole units. The client never resends only the failed commands.
+With `RespireOptions.RetryPolicy` set, batches and unconditional unwatched transactions retry as whole units. The client never resends only the failed commands.
 
 - A standalone or Sentinel batch resends its whole pipeline. A Cluster batch retries each slot group separately. Pendings stay incomplete until the final decision, and only the final attempt's results are published.
 - An unwatched transaction resends `MULTI`, its commands, and `EXEC` together, on standalone, Sentinel, and Cluster. A lost `EXEC` reply counts as a possible execution, not an abort.

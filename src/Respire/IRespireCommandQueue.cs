@@ -10,7 +10,7 @@ namespace Respire;
 /// <remarks>
 /// Use this interface when helper code should queue the same work into either deferred execution
 /// model. Execution remains model-specific: call <see cref="RespireBatch.ExecuteAsync"/> for a
-/// pipeline or <see cref="RespireTransaction.CommitAsync"/> for a transaction.
+/// pipeline or <see cref="RespireTransaction.CommitAsync(CancellationToken)"/> for a transaction.
 /// </remarks>
 public interface IRespireCommandQueue
 {

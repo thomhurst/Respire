@@ -49,7 +49,7 @@ public enum RespirePipelineOutcome
     Failed,
     /// <summary>The first execution failure was cancellation.</summary>
     Canceled,
-    /// <summary>A watched transaction aborted without executing its queued commands.</summary>
+    /// <summary>A watched or conditional transaction aborted without executing its queued commands.</summary>
     Aborted,
     /// <summary>The admission callback threw; no queued command was submitted.</summary>
     Rejected,

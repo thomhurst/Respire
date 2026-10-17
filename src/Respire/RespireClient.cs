@@ -1514,7 +1514,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     /// <summary>
     /// Starts a MULTI/EXEC transaction. Queue commands, then
-    /// <see cref="RespireTransaction.CommitAsync"/>. Always commit or dispose the transaction.
+    /// <see cref="RespireTransaction.CommitAsync(CancellationToken)"/>. Always commit or dispose the transaction.
     /// </summary>
     public RespireTransaction CreateTransaction() => new(this);
 

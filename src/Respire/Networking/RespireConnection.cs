@@ -3745,7 +3745,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         Action? onAccepted = null, bool skipTracking = false) : IMutationAdmissionCommand
     {
         public void OnAccepted() => onAccepted?.Invoke();
-        public int GetWriteSizeHint() => checked(serializedCommands.Length + RespCommands.Exec.Length
+        public int GetWriteSizeHint() => checked(serializedCommands.Length + (transaction?.ConditionalExec?.Length ?? RespCommands.Exec.Length)
             + (includeMulti ? RespCommands.Multi.Length : 0)
             + (skipTracking ? new ClientCachingCommand(optOut: true).GetWriteSizeHint() : 0));
         internal void RecordConnection(RespireConnection connection)
@@ -3769,7 +3769,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             if (skipTracking) new ClientCachingCommand(optOut: true).Write(ref writer);
             if (includeMulti) writer.WriteRaw(RespCommands.Multi);
             writer.WriteRaw(serializedCommands.Span);
-            writer.WriteRaw(RespCommands.Exec);
+            writer.WriteRaw(transaction?.ConditionalExec ?? RespCommands.Exec);
         }
     }
 
