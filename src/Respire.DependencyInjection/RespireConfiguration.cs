@@ -14,7 +14,7 @@ internal static class RespireConfiguration
     {
         Endpoints = Endpoints(section.GetSection("Endpoints"), options.Endpoints),
         ReplicaEndpoints = Endpoints(section.GetSection("ReplicaEndpoints"), options.ReplicaEndpoints),
-        NodeAddressMap = section["NodeAddressMap"] is { } map
+        NodeAddressMap = section["NodeAddressMap"] is not null
             ? Parse(section.GetSection("NodeAddressMap"), NodeAddressMapping.Parse) : options.NodeAddressMap,
         UseMappedHostForTls = section.GetValue("UseMappedHostForTls", options.UseMappedHostForTls),
         ReadFrom = section.GetValue("ReadFrom", options.ReadFrom),
@@ -233,7 +233,7 @@ internal static class RespireConfiguration
     private static T Parse<T>(IConfigurationSection section, Func<string, T> parser)
     {
         try { return parser(section.Value!); }
-        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
+        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException or RespireConfigurationException)
         {
             throw new InvalidOperationException($"Invalid configuration at '{section.Path}'.", exception);
         }

@@ -15,9 +15,11 @@ namespace Respire.Tests.Networking;
 public class NodeAddressMappingTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ConnectionHookSeesMappedDestinationOnce(bool reject)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ConnectionHookSeesMappedDestinationOnce(bool reject, bool factory)
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         var source = new RespireEndpoint("private.internal", 6379);
@@ -27,6 +29,11 @@ public class NodeAddressMappingTests
         var options = new RespireConnectionOptions
         {
             Protocol = RespireProtocol.Resp2, ConnectionHook = hook,
+            ConnectionFactory = factory ? async (endpoint, token) =>
+            {
+                if (endpoint != target) throw new InvalidOperationException("Factory destination differs from hook destination.");
+                return await OpenStreamAsync(endpoint, token);
+            } : null,
             NodeAddressResolver = endpoint =>
             {
                 Interlocked.Increment(ref calls);
@@ -55,6 +62,49 @@ public class NodeAddressMappingTests
         await Assert.That(hook.Started!.Endpoint).IsEqualTo(target);
         await Assert.That(hook.Completed).IsSameReferenceAs(hook.Started);
         await Assert.That(calls).IsEqualTo(1);
+    }
+
+    private static async ValueTask<Stream> OpenStreamAsync(RespireEndpoint endpoint, CancellationToken token)
+    {
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch { socket.Dispose(); throw; }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SentinelClientsKeepMappedTransport(bool callback)
+    {
+        await using var sentinel = new FakeRespServer(4, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "INFO SERVER" => "$0\r\n\r\n"u8.ToArray(),
+                "PING" => FakeRespServer.PongReply,
+                _ => null,
+            },
+        };
+        var source = new RespireEndpoint("sentinel.internal", 26379);
+        var target = new RespireEndpoint("127.0.0.1", sentinel.Port);
+        var options = new RespireOptions
+        {
+            NodeAddressMap = callback ? null : new Dictionary<RespireEndpoint, RespireEndpoint> { [source] = target },
+            NodeAddressResolver = callback ? endpoint => endpoint == source ? target : endpoint : null,
+            UseMappedHostForTls = true,
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var monitorOptions = SentinelMonitoring.CreateOptions(options, source);
+        await Assert.That(monitorOptions.UseMappedHostForTls).IsTrue();
+        await using var monitor = await RespireClient.ConnectAsync(monitorOptions, deadline.Token);
+        await monitor.PingAsync(deadline.Token);
+        await using var admin = await RespireSentinelClient.ConnectAsync(source, options, deadline.Token);
+        await Assert.That(admin.Endpoint).IsEqualTo(source);
+        await Assert.That(await admin.PrimariesAsync(deadline.Token)).IsEmpty();
     }
 
     private sealed class MappingHook(RespireEndpoint expected, bool reject) : RespireConnectionHook
@@ -139,6 +189,63 @@ public class NodeAddressMappingTests
         await Assert.That(snapshot[new("REDIS.INTERNAL", 6380)]).IsEqualTo(new RespireEndpoint("localhost", 7002));
         await Assert.That(() => NodeAddressMapping.Parse("Redis:6379=localhost:7001;redis:6379=localhost:7002"))
             .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SentinelCloneAndFactoryKeepMappedTlsIdentity(bool useMappedHost)
+    {
+        var expectedHost = useMappedHost ? "localhost" : "sentinel.internal";
+        using var certificate = TestTlsCertificate.Create(expectedHost);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var listener = FakeRespServer.StartListener();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        string? serverName = null;
+        var errors = SslPolicyErrors.None;
+        var server = ServeAsync();
+        try
+        {
+            var source = new RespireEndpoint("sentinel.internal", 26379);
+            var options = SentinelMonitoring.CreateOptions(new RespireOptions
+            {
+                ConnectionFactory = OpenStreamAsync,
+                NodeAddressMap = new Dictionary<RespireEndpoint, RespireEndpoint> { [source] = new("localhost", port) },
+                SentinelUseTls = true,
+                UseMappedHostForTls = useMappedHost,
+                SentinelTlsOptions = new SslClientAuthenticationOptions
+                {
+                    RemoteCertificateValidationCallback = (_, _, _, observed) => { errors = observed; return true; },
+                },
+            }, source).ValidateAndSnapshot();
+            await using var connection = await RespireConnection.ConnectAsync(source.Host, source.Port,
+                options.ToConnectionOptions(), cancellationToken: deadline.Token);
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+            await server.WaitAsync(deadline.Token);
+            await Assert.That(serverName).IsEqualTo(expectedHost);
+            await Assert.That(connection.TlsHost).IsEqualTo(expectedHost);
+            await Assert.That(errors.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch)).IsFalse();
+        }
+        finally
+        {
+            await deadline.CancelAsync();
+            listener.Stop();
+            try { await server; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        }
+
+        async Task ServeAsync()
+        {
+            using var socket = await listener.AcceptSocketAsync(deadline.Token);
+            await using var stream = new SslStream(new NetworkStream(socket, ownsSocket: false));
+            await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            {
+                ServerCertificateSelectionCallback = (_, name) => { serverName = name; return certificate; },
+            }, deadline.Token);
+            await stream.ReadExactlyAsync(new byte[FakeRespServer.PingFrame.Length], deadline.Token);
+            await stream.WriteAsync(FakeRespServer.PongReply, deadline.Token);
+        }
     }
 
     [Test]

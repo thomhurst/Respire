@@ -429,6 +429,9 @@ internal sealed class SentinelMonitoring(
         {
             Endpoints = [endpoint],
             ConnectionFactory = options.ConnectionFactory,
+            NodeAddressMap = options.NodeAddressMap,
+            NodeAddressResolver = options.NodeAddressResolver,
+            UseMappedHostForTls = options.UseMappedHostForTls,
             ConnectionHook = options.ConnectionHook,
             LoggerFactory = options.LoggerFactory,
             ConnectTimeout = options.ConnectTimeout,

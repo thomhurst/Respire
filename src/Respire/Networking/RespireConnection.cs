@@ -190,6 +190,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
     public string Host { get; }
     public int Port { get; }
+    // Captures this handshake's effective identity. Reconnects use the original options.
     internal string TlsHost { get; }
     internal string? AvailabilityZone { get; private set; }
     public bool IsConnected => !Volatile.Read(ref _dead);
@@ -551,8 +552,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 {
                     var tlsStream = new SslStream(stream);
                     stream = tlsStream;
-                    await tlsStream.AuthenticateAsClientAsync(CreateTlsOptions(options.TlsOptions, host), timeout.Token)
-                        .ConfigureAwait(false);
+                    var tlsOptions = CreateTlsOptions(options.TlsOptions, options.UseMappedHostForTls ? socketEndpoint.Host : host);
+                    options = options with { TlsOptions = tlsOptions };
+                    await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeout.Token).ConfigureAwait(false);
                     timeout.Token.ThrowIfCancellationRequested();
                 }
             }
