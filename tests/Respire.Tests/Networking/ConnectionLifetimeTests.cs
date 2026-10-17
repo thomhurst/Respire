@@ -546,9 +546,11 @@ public class ConnectionLifetimeTests
 
     [Test]
     [NotInParallel]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RecycleMetricLogAndCloseReasonAreRecordedOnceOutsideOwnershipLocks(bool dedicated)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RecycleMetricLogAndCloseReasonAreRecordedOnceOutsideOwnershipLocks(bool dedicated, bool unixSocket)
     {
         using var configuration = new MetricConfigurationScope();
         var clock = new LifetimeClock();
@@ -578,9 +580,29 @@ public class ConnectionLifetimeTests
         listener.Start();
         var logged = NewSignal();
         var logger = new RecycleLogger();
-        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port, ConnectionOptions(clock), logger);
-        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
-            options: ConnectionOptions(clock) with { ConnectionMaxLifetime = dedicated ? null : Lifetime }, logger: logger);
+        var host = unixSocket ? "/tmp/respire-recycle.sock" : "127.0.0.1";
+        var port = unixSocket ? 0 : server.Port;
+        var options = ConnectionOptions(clock);
+        if (unixSocket)
+        {
+            // Preserve Unix endpoint identity and its absent metric state on every platform.
+            options = options with
+            {
+                ConnectionFactory = async (_, token) =>
+                {
+                    var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                    try
+                    {
+                        await socket.ConnectAsync("127.0.0.1", server.Port, token);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch { socket.Dispose(); throw; }
+                },
+            };
+        }
+        await using var pool = new DedicatedConnectionPool(host, port, options, logger);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync(host, port,
+            options: options with { ConnectionMaxLifetime = dedicated ? null : Lifetime }, logger: logger);
         logger.OnRecycle = () =>
         {
             try
@@ -608,9 +630,11 @@ public class ConnectionLifetimeTests
         await logged.Task.WaitAsync(Limit);
         await UntilAsync(() => !original.IsConnected && ConnectionTelemetry.PendingMeasurements == 0);
         await Assert.That(logger.Count).IsEqualTo(1);
-        await Assert.That(measurements.Where(item => item.Name == "redis.client.connection.recycle").Sum(item => item.Value)).IsEqualTo(1L);
+        var expectedMeasurements = unixSocket ? 0L : 1L;
+        await Assert.That(measurements.Where(item => item.Name == "redis.client.connection.recycle").Sum(item => item.Value))
+            .IsEqualTo(expectedMeasurements);
         await Assert.That(measurements.Where(item => item.Name == "redis.client.connection.closed" && item.Reason == "max_lifetime")
-            .Sum(item => item.Value)).IsEqualTo(1L);
+            .Sum(item => item.Value)).IsEqualTo(expectedMeasurements);
     }
 
     [Test]

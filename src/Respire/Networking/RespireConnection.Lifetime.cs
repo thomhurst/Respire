@@ -27,6 +27,6 @@ internal sealed partial class RespireConnection
     internal void RecordConnectionRecycle()
     {
         RequestMetricCloseReason(ConnectionTelemetry.CloseReason.MaxLifetime);
-        _connectionMetrics?.Recycled(_logger, Host, Port);
+        ConnectionTelemetry.State.Recycled(_connectionMetrics, _logger, Host, Port);
     }
 }

@@ -175,15 +175,16 @@ internal static class ConnectionTelemetry
             Queue(static pool => RespireTelemetry.ConnectionHandoffs.Add(1, pool.Tags), _pool);
         }
 
-        internal void Recycled(ILogger? logger, string host, int port)
+        internal static void Recycled(State? metrics, ILogger? logger, string host, int port)
         {
-            var enabled = RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionRecycles);
+            var enabled = metrics is not null
+                && RespireTelemetry.IsMetricEnabled(RespireMetricGroups.ConnectionBasic, RespireTelemetry.ConnectionRecycles);
             if (!enabled && logger is null) return;
             Queue(static state =>
             {
-                try { if (state.Enabled) RespireTelemetry.ConnectionRecycles.Add(1, state.Pool.Tags); }
+                try { if (state.Enabled) RespireTelemetry.ConnectionRecycles.Add(1, state.Pool!.Tags); }
                 finally { state.Logger?.ConnectionRecycled(state.Host, state.Port); }
-            }, (Pool: _pool, Logger: logger, Enabled: enabled, Host: host, Port: port));
+            }, (Pool: metrics?._pool, Logger: logger, Enabled: enabled, Host: host, Port: port));
         }
 
         internal bool HasRelaxedTimeout => Volatile.Read(ref _ready) != 0 && Volatile.Read(ref _closed) == 0
