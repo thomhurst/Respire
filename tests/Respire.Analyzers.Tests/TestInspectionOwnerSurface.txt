@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 428 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 429 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 65
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -244,7 +244,9 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 108
+# Count: Respire.Networking.RespireConnection | 109
+# Production shutdown operation: releases an inline completion before owner workers are joined.
+Respire.Networking.RespireConnection | method ReleaseCompletionRunner() : void
 Respire.Networking.RespireConnection | method RecordConnectionRecycle() : void
 Respire.Networking.RespireConnection | property IsConnectionLifetimeExpired [internal; get] : bool
 Respire.Networking.RespireConnection | property LifetimeExpiresAt [internal; get, private set] : long?

@@ -1369,19 +1369,26 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </remarks>
     internal Task RetireAsync()
     {
-        ReleaseLifetimeCompletionRunners();
         TaskCompletionSource completion;
-        bool publish;
+        bool publish = false;
+        bool start;
         lock (_lifecycleGate)
         {
-            if (_retirementCompletion is not null) return _retirementCompletion.Task;
-            completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            lock (_maintenanceHandlersGate)
+            start = _retirementCompletion is null;
+            completion = _retirementCompletion ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (start)
             {
-                Volatile.Write(ref _retired, 1);
+                lock (_maintenanceHandlersGate)
+                {
+                    Volatile.Write(ref _retired, 1);
+                }
+                publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
             }
-            publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
+        // Admission is closed under the publication gate before taking the drain snapshot.
+        // Repeat the caller-side handoff even when another caller already started shutdown.
+        ReleaseShutdownCompletionRunners();
+        if (!start) return completion.Task;
 #pragma warning disable CA1849 // Settle connect callbacks before starting retirement and publishing its synchronous notification.
         _stopConnecting.Cancel();
 #pragma warning restore CA1849
@@ -1440,6 +1447,7 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     {
         try
         {
+            await DrainLifetimeConnectionsBeforeRetirementAsync().ConfigureAwait(false);
             await WaitForPublicationAsync().ConfigureAwait(false);
             var connections = _connections.OfType<RespireConnection>().ToArray();
             foreach (var connection in connections) connection.StopAcceptingCommands();
@@ -1542,22 +1550,27 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
     /// </remarks>
     public ValueTask DisposeAsync()
     {
-        ReleaseLifetimeCompletionRunners();
         TaskCompletionSource completion;
-        bool publish;
+        bool publish = false;
+        bool start;
         lock (_lifecycleGate)
         {
-            if (_disposeCompletion is not null) return new ValueTask(_disposeCompletion.Task);
-            completion = _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            lock (_maintenanceHandlersGate)
+            start = _disposeCompletion is null;
+            completion = _disposeCompletion ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (start)
             {
-                var boundary = ClusterSlotMutationClock.Next();
-                Volatile.Write(ref _disposed, 1);
-                Volatile.Write(ref _retired, 1);
-                CloseMaintenanceHandlerEpoch(boundary);
+                lock (_maintenanceHandlersGate)
+                {
+                    var boundary = ClusterSlotMutationClock.Next();
+                    Volatile.Write(ref _disposed, 1);
+                    Volatile.Write(ref _retired, 1);
+                    CloseMaintenanceHandlerEpoch(boundary);
+                }
+                publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
             }
-            publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
+        ReleaseShutdownCompletionRunners();
+        if (!start) return new ValueTask(completion.Task);
 #pragma warning disable CA1849 // This synchronous admission boundary must finish callbacks before aborting sockets and starting shared disposal.
         _stopConnecting.Cancel();
         _abortCancellation.Cancel();

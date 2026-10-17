@@ -266,6 +266,110 @@ public class ConnectionLifetimeTests
     }
 
     [Test, NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RetirementBoundsLifetimeDrainOnlyAfterOwnerStops(bool commandTimeout, bool replyBeforeDeadline)
+    {
+        var clock = new LifetimeClock();
+        var maintenanceClock = new LifetimeClock();
+        var entered = NewSignal();
+        var release = NewSignal();
+        var timeout = TimeSpan.FromMinutes(commandTimeout ? 1 : 2);
+        await using var server = EchoServer(2);
+        server.GateCommand("PING", release.Task, () => entered.TrySetResult());
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
+            options: ConnectionOptions(clock) with
+            {
+                CommandTimeout = commandTimeout ? timeout : null,
+                RetirementDrainFallbackTimeout = TimeSpan.FromMinutes(2),
+                MaintenanceDrainTimeProvider = maintenanceClock,
+            });
+        var original = multiplexer.GetConnection();
+        var command = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            await UntilAsync(() => clock.ActiveTimers != 0);
+            clock.Advance(Lifetime);
+            await UntilAsync(() => !ReferenceEquals(multiplexer.GetConnection(), original));
+            await UntilAsync(() => !original.IsAcceptingCommands);
+            // Normal lifetime recycling must not create a maintenance drain deadline.
+            maintenanceClock.Advance(timeout + TimeSpan.FromHours(1));
+            await Assert.That(maintenanceClock.ActiveTimers).IsEqualTo(0);
+            await Assert.That(original.IsConnected).IsTrue();
+            await Assert.That(command.IsCompleted).IsFalse();
+
+            var retirement = multiplexer.RetireAsync();
+            await UntilAsync(() => maintenanceClock.ActiveTimers != 0);
+            maintenanceClock.Advance(timeout - TimeSpan.FromTicks(1));
+            await Assert.That(retirement.IsCompleted).IsFalse();
+            await Assert.That(original.IsConnected).IsTrue();
+            if (replyBeforeDeadline)
+            {
+                release.TrySetResult();
+                using var response = await command.WaitAsync(Limit);
+                await Assert.That(response.AsString()).IsEqualTo("PONG");
+            }
+            else maintenanceClock.Advance(TimeSpan.FromTicks(1));
+            await retirement.WaitAsync(Limit);
+            await Assert.That(original.IsConnected).IsFalse();
+            await Assert.That(original.DrainedSuccessfully).IsEqualTo(replyBeforeDeadline);
+            if (!replyBeforeDeadline)
+                await Assert.That(async () => { using var response = await command.WaitAsync(Limit); })
+                    .Throws<RespireConnectionException>();
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplyContinuationCanStopOwnerWhileReplacementPublishes(bool retire)
+    {
+        for (var attempt = 0; attempt < 16; attempt++)
+        {
+            var clock = new LifetimeClock();
+            var entered = NewSignal();
+            var release = NewSignal();
+            var completed = NewSignal();
+            var generation = new GatedReplacementGeneration();
+            await using var server = EchoServer(2);
+            server.GateCommand("PING", release.Task, () => entered.TrySetResult());
+            await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
+                options: ConnectionOptions(clock) with { Generation = generation });
+            var original = multiplexer.GetConnection();
+            var awaiter = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false).GetAwaiter();
+            awaiter.UnsafeOnCompleted(() =>
+            {
+                try
+                {
+                    using var response = awaiter.GetResult();
+                    // Let publication contend with the synchronous shutdown admission boundary.
+                    generation.Release.TrySetResult();
+                    var stopping = retire ? multiplexer.RetireAsync() : multiplexer.DisposeAsync().AsTask();
+                    stopping.WaitAsync(Limit).GetAwaiter().GetResult();
+                    completed.TrySetResult();
+                }
+                catch (Exception error) { completed.TrySetException(error); }
+            });
+            try
+            {
+                await entered.Task.WaitAsync(Limit);
+                await UntilAsync(() => clock.ActiveTimers != 0);
+                clock.Advance(Lifetime);
+                await generation.Entered.Task.WaitAsync(Limit);
+                release.TrySetResult();
+                await completed.Task.WaitAsync(Limit + TimeSpan.FromSeconds(1));
+                await Assert.That(original.IsConnected).IsFalse();
+                await Assert.That(clock.ActiveTimers).IsEqualTo(0);
+            }
+            finally { release.TrySetResult(); generation.Release.TrySetResult(); }
+        }
+    }
+
+    [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OldReplyContinuationCanSynchronouslyStopOwner(bool retire)
@@ -621,6 +725,22 @@ public class ConnectionLifetimeTests
     {
         using var timeout = new CancellationTokenSource(Limit);
         while (!condition()) await Task.Delay(1, timeout.Token);
+    }
+
+    private sealed class GatedReplacementGeneration : IConnectionGeneration
+    {
+        internal readonly TaskCompletionSource Entered = NewSignal();
+        internal readonly TaskCompletionSource Release = NewSignal();
+        private int _attempts;
+        public bool IsRetired => false;
+        public async ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _attempts) != 2) return;
+            Entered.TrySetResult();
+            await Release.Task;
+        }
+        public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response) { }
+        public void ConnectionClosed(RespireConnection connection, bool unexpected) { }
     }
 
     private sealed class RepeatedFailureGeneration(bool closeReplacement) : IConnectionGeneration

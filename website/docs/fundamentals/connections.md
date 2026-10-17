@@ -156,6 +156,11 @@ behavior still applies, and explicit client disposal aborts pending work. Very s
 therefore keep old sockets open beyond their configured age. Tracked client-side caches are flushed
 at publication so cached entries do not depend on a retired tracking connection.
 
+When maintenance or Sentinel retires the owning connection group, old lifetime sockets also use
+the retirement drain budget: `CommandTimeout`, or the 30-second fallback when command timeouts
+are disabled, extended by any active maintenance relaxation. A socket that still cannot drain
+is closed. Streamed replies retain their retirement idle grace while the consumer makes progress.
+
 Dedicated blocking, transaction, and upload leases recycle only when idle or returned. An expired
 borrowed lease finishes normally; expiration never interrupts a blocking command or upload.
 Idle lifetime expiration applies even without `DedicatedPool.IdleTimeout` and takes precedence

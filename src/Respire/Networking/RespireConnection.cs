@@ -4356,6 +4356,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         return Volatile.Read(ref _activeBulkStreamSource)?.HasStalledReader(idle) == true;
     }
 
+    /// <summary>Hands off an inline reply runner before its continuation joins owner cleanup.</summary>
+    internal void ReleaseCompletionRunner() => _completions.ReleaseCurrentRunner();
+
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
     /// <remarks>
     /// <para>Acceptance is rejected under the same write gate that publishes serialized frames to
@@ -4378,7 +4381,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     /// </remarks>
     internal Task RetireAsync()
     {
-        _completions.ReleaseCurrentRunner();
+        ReleaseCompletionRunner();
         TaskCompletionSource completion;
         lock (_writeGate)
         {

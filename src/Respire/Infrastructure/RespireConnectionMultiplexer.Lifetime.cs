@@ -8,14 +8,50 @@ internal sealed partial class RespireConnectionMultiplexer
     // Lifecycle-gated; allocated only after the first lifetime publication.
     private HashSet<RespireConnection>? _lifetimeDrains;
 
-    private void ReleaseLifetimeCompletionRunners()
+    private void ReleaseShutdownCompletionRunners()
+    {
+        RespireConnection[]? draining;
+        lock (_lifecycleGate) draining = _lifetimeDrains?.ToArray();
+        // Publication is closed. Release the caller's runner whichever side of publication
+        // its socket ended up on, before joining workers or sending maintenance barriers.
+        foreach (var connection in _connections) connection?.ReleaseCompletionRunner();
+        if (draining is not null)
+            foreach (var connection in draining) connection.ReleaseCompletionRunner();
+    }
+
+    private async Task DrainLifetimeConnectionsBeforeRetirementAsync()
     {
         RespireConnection[]? draining;
         lock (_lifecycleGate) draining = _lifetimeDrains?.ToArray();
         if (draining is null) return;
-        // Re-enter retirement on the caller's stack to release an inline reply runner
-        // before owner retirement/disposal joins the worker that drains that reply.
-        foreach (var connection in draining) _ = connection.RetireAsync();
+        await CleanupTasks.WhenAllAsync(draining.Select(DrainLifetimeConnectionBeforeRetirementAsync)).ConfigureAwait(false);
+    }
+
+    private async Task DrainLifetimeConnectionBeforeRetirementAsync(RespireConnection connection)
+    {
+        var drain = connection.RetireAsync();
+        var timeout = _options.CommandTimeout ?? _options.RetirementDrainFallbackTimeout;
+        if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
+            && _options.MaintenanceRelaxedTimeout > timeout)
+            timeout = _options.MaintenanceRelaxedTimeout;
+        try
+        {
+            await drain.WaitAsync(timeout, _options.MaintenanceDrainTimeProvider, _abortCancellation.Token).ConfigureAwait(false);
+            return;
+        }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) when (_abortCancellation.IsCancellationRequested) { }
+
+        try
+        {
+            // Match maintenance retirement: a streamed reply may continue while it makes progress.
+            var idleTimeout = timeout > _options.RetirementDrainFallbackTimeout
+                ? timeout : _options.RetirementDrainFallbackTimeout;
+            _ = await connection.WaitForActiveBulkStreamToCompleteAsync(idleTimeout, _abortCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_abortCancellation.IsCancellationRequested) { }
+        finally { await connection.DisposeAsync().ConfigureAwait(false); }
+        await drain.ConfigureAwait(false);
     }
 
     private void ScheduleConnectionLifetime(int slot, RespireConnection connection)
