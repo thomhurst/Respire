@@ -78,6 +78,10 @@ the entire transcript again duplicates it. Configure the provider for client-man
 history; request options with `ConversationId`, `ContinuationToken`, or background
 responses are rejected.
 
+System messages supplied on every call are also appended every time. Send them once
+per conversation while retained, or inject persistent policy instructions through
+separate middleware inside the history middleware.
+
 Streaming updates are forwarded as they arrive and aggregated with `ToChatResponse`.
 History is saved only when the stream completes successfully and is fully enumerated.
 Cancellation, provider failure, and early enumeration disposal do not save a partial
@@ -88,8 +92,39 @@ after an ambiguous network failure can duplicate a turn.
 Serialize model calls for the same conversation in your application. Atomic appends do
 not make concurrent model calls read each other's unfinished turns. Use one pipeline
 per conversation, or construct a pipeline per request with that request's trusted ID.
-Place function invocation middleware inside history middleware if the whole tool loop
-should be saved as one completed turn.
+When using tools, register `UseRespireChatHistory` **before** `UseFunctionInvocation`.
+Builder registration order places history outside the tool loop, so it loads once and
+saves the entire completed turn once:
+
+<!-- doc-test-declaration -->
+```csharp
+using Microsoft.Extensions.AI;
+using Respire.AI;
+
+public static class ToolConversationSetup
+{
+    public static IChatClient Build(IChatClient provider, RespireChatHistoryStore history, string conversationId)
+        => new ChatClientBuilder(provider)
+            .UseRespireChatHistory(history, conversationId)
+            .UseFunctionInvocation()
+            .Build();
+}
+```
+
+The reversed order is unsupported:
+
+<!-- doc-test-ignore: Deliberately unsupported ordering; provider, history, and conversationId come from the example above. -->
+```csharp
+// Wrong: history runs separately for each tool iteration.
+new ChatClientBuilder(provider)
+    .UseFunctionInvocation()
+    .UseRespireChatHistory(history, conversationId)
+    .Build();
+```
+
+In that order, each iteration reloads history and saves an overlapping request and
+response. Messages are duplicated in Redis and replayed to the provider. The middleware
+does not detect or repair this ordering; use the required registration order above.
 
 The [runnable sample](https://github.com/thomhurst/Respire/tree/main/samples/Respire.Samples.ChatHistory)
 shows two turns across separate pipelines using Redis and a deterministic demo provider.

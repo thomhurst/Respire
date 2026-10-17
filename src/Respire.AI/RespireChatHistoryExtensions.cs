@@ -8,6 +8,9 @@ public static class RespireChatHistoryExtensions
 {
     /// <summary>Loads history before each call and stores new request/response messages after success.</summary>
     /// <remarks>Pass only new messages. Serialize calls for the same conversation in the application.
+    /// Register this middleware before UseFunctionInvocation so history wraps the entire tool loop.
+    /// Reversing that order is unsupported: each tool iteration reloads and saves overlapping messages.
+    /// Repeated system messages are stored again; send them once per conversation while retained.
     /// Streaming stores messages only after complete enumeration. Storage and provider errors propagate.
     /// The caller owns the store and its Redis client; the pipeline owns the inner chat client.</remarks>
     public static ChatClientBuilder UseRespireChatHistory(this ChatClientBuilder builder, RespireChatHistoryStore store,

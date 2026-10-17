@@ -207,6 +207,42 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await store.ClearAsync("chat");
     }
 
+    [Test, Arguments(2, false), Arguments(3, false), Arguments(2, true), Arguments(3, true)]
+    public async Task ReversedMiddlewareOrderDuplicatesToolLoopMessages(int protocol, bool streaming)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        var provider = new ToolLoopChatClient();
+        // Unsupported order: demonstrates why history must wrap function invocation.
+        using var chat = new ChatClientBuilder(provider)
+            .UseFunctionInvocation()
+            .UseRespireChatHistory(store, "chat")
+            .Build();
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => "rain", "weather")],
+        };
+        if (streaming)
+        {
+            await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")], options)) { }
+        }
+        else
+        {
+            await chat.GetResponseAsync([new(ChatRole.User, "weather?")], options);
+        }
+
+        provider.Requests.Should().HaveCount(2);
+        provider.Requests[1].Select(m => m.Role).Should().Equal(
+            ChatRole.User, ChatRole.Assistant, ChatRole.User, ChatRole.Assistant, ChatRole.Tool);
+        var saved = await store.ReadAsync("chat");
+        saved.Select(m => m.Role).Should().Equal(
+            ChatRole.User, ChatRole.Assistant, ChatRole.User, ChatRole.Assistant, ChatRole.Tool, ChatRole.Assistant);
+        saved[0].Text.Should().Be("weather?");
+        saved[2].Text.Should().Be("weather?");
+        saved[5].Text.Should().Be("Bring an umbrella.");
+        await store.ClearAsync("chat");
+    }
+
     private static string SerializeMessage(ChatMessage message)
         => JsonSerializer.Serialize(message, AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage)));
 
