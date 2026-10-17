@@ -108,6 +108,20 @@ internal static class ReadFallbackPolicy
     internal static bool UsesAvailabilityZone(RespireReadFrom policy)
         => policy is RespireReadFrom.AzAffinity or RespireReadFrom.AzAffinityReplicasAndPrimary;
 
+    // Latency narrows only the best existing policy tier; it never overrides role, link or AZ.
+    internal static int LatencyPriority(RespireReadFrom policy, bool primary, bool local, bool linked)
+    {
+        if (!UsesAvailabilityZone(policy)) return linked ? 0 : 1;
+        if (policy == RespireReadFrom.AzAffinityReplicasAndPrimary)
+        {
+            if (primary) return local ? 1 : 5;
+            if (linked) return local ? 0 : 2;
+            return local ? 3 : 4;
+        }
+        if (linked) return local ? 0 : 1;
+        return local ? 2 : 3;
+    }
+
     internal static bool AllowsPrimaryFallback(RespireReadFrom policy)
         => policy == RespireReadFrom.ReplicaPreferred || UsesAvailabilityZone(policy);
 

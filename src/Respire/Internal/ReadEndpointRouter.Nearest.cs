@@ -4,14 +4,19 @@ namespace Respire.Internal;
 
 internal sealed partial class ReadEndpointRouter
 {
-    // Lazily created only by Nearest. Tests can supply deterministic measurements before use.
+    // Lazily created by Nearest or latency-band reads. Tests can inject deterministic measurements.
     internal ReadLatencySampler<RespireConnection>? NearestLatency;
+    internal RespireReadRoutingSnapshot? LastReadSelection;
     // LazyInitializer's ref-object overload uses Monitor internally; do not replace with Lock.
     private object? _nearestGate;
 
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool retry = true,
-        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null, bool readyOnly = false)
+        long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null, bool readyOnly = false,
+        RespireReadFrom readFrom = RespireReadFrom.Nearest, RespireEndpoint[]? replicaEndpoints = null,
+        RespireConnection? excludedPeer = null)
     {
+        var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
+        var includePrimary = readFrom is RespireReadFrom.Nearest or RespireReadFrom.AzAffinityReplicasAndPrimary;
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
         var sampler = LazyInitializer.EnsureInitialized(ref NearestLatency, ref _nearestGate, static () => ReadLatencySampler.Create());
         if (Volatile.Read(ref _disposed) != 0)
@@ -22,11 +27,13 @@ internal sealed partial class ReadEndpointRouter
         Selection? primary = null;
         Exception? lastError = previousFailure;
         var primaryCandidate = Core.Multiplexer;
-        if (attempt?.ContainsFailure(primaryCandidate.ActiveConnectionEndpoint) != true && sampler.CanConnect(primaryCandidate))
+        if (includePrimary && attempt?.ContainsFailure(primaryCandidate.ActiveConnectionEndpoint) != true && sampler.CanConnect(primaryCandidate))
         {
             try
             {
-                primary = await GetPrimaryAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                primary = await GetPrimaryAsync(cancellationToken, observation, preferredZone, attempt, readyOnly).ConfigureAwait(false);
+                if (excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, primary.Value.Connection))
+                    primary = null;
                 sampler.ConnectionSucceeded(primaryCandidate);
             }
             catch (BacklogSelectionRequiredException) when (readyOnly) { }
@@ -40,8 +47,12 @@ internal sealed partial class ReadEndpointRouter
             }
         }
 
-        var endpoints = Volatile.Read(ref _replicas);
-        try { endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: primary is null, readyOnly: readyOnly).ConfigureAwait(false); }
+        var endpoints = replicaEndpoints ?? Volatile.Read(ref _replicas);
+        try
+        {
+            if (replicaEndpoints is null)
+                endpoints = await GetReplicaEndpointsAsync(cancellationToken, waitForUnknown: primary is null, readyOnly: readyOnly).ConfigureAwait(false);
+        }
         catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
         {
             RecordCandidateFailure(observation, error);
@@ -51,7 +62,7 @@ internal sealed partial class ReadEndpointRouter
         var start = (uint)Interlocked.Increment(ref _nextReplica);
         try
         {
-            var best = new NearestReadSelection<Selection>(start, endpoints.Length + 1);
+            var best = new NearestReadSelection<Selection>(start, endpoints.Length + 1, core.Options.ReplicaLatencyTolerance);
             while (best.TryNext(out var index))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -61,19 +72,21 @@ internal sealed partial class ReadEndpointRouter
                     if (primary is not { } selectedPrimary) continue;
                     // The round-robin primary socket can have a pending probe while a sibling is idle. With no
                     // idle sibling, keep that socket so its probe can still answer within the budget.
-                    selection = NearestReadSelection.AvoidPendingProbe(selectedPrimary.Primary!, selectedPrimary.Connection, sampler)
+                    selection = NearestReadSelection.AvoidPendingProbe(selectedPrimary.Primary!, selectedPrimary.Connection, sampler, preferredZone)
                         is { } idle ? selectedPrimary with { Connection = idle } : selectedPrimary;
                 }
                 else
                 {
                     if (attempt?.ContainsFailure(endpoints[index - 1]) == true) continue;
+                    if (excludedPeer is not null && HedgedReadPolicy.IsOriginalEndpoint(endpoints[index - 1], excludedPeer)) continue;
                     var entry = await GetCurrentReplicaEntryAsync(endpoints[index - 1]).ConfigureAwait(false);
                     if (entry is null || entry.IsCoolingDown) continue;
                     observation.UseEndpoint(entry.Endpoint, cancellationToken);
                     try
                     {
-                        var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken, readyOnly).ConfigureAwait(false);
+                        var connection = await entry.GetNearestConnectionAsync(sampler, cancellationToken, readyOnly, preferredZone).ConfigureAwait(false);
                         if (connection is null) continue;
+                        if (excludedPeer is not null && !HedgedReadPolicy.IsDifferentPeer(excludedPeer, connection)) continue;
                         selection = new(connection, entry, null);
                     }
                     catch (BacklogSelectionRequiredException) when (readyOnly) { continue; }
@@ -88,7 +101,9 @@ internal sealed partial class ReadEndpointRouter
                 if (!selection.Connection.IsAcceptingCommands) continue;
                 var latency = sampler.GetLatencyAsync(selection.Connection, default, probeDeadline: deadline);
                 if (selection.Connection.IsAcceptingCommands && selection.Replica?.IsRoleEligible(selection.Connection) != false)
-                    best.QueueSample(selection, latency, selection.Replica?.IsReplicationLinkDown != true);
+                    best.QueueSample(selection, latency, priority: ReadFallbackPolicy.LatencyPriority(readFrom,
+                        selection.Replica is null, ReadFallbackPolicy.IsSameZone(selection.Connection, preferredZone),
+                        selection.Replica?.IsReplicationLinkDown != true));
             }
             // Start every eligible probe before waiting so a fast later candidate is visible even
             // when the first sample consumes the entire shared wait budget.
@@ -101,13 +116,21 @@ internal sealed partial class ReadEndpointRouter
                     .ConfigureAwait(false);
                 var candidate = pending.Candidate;
                 if (candidate.Connection.IsAcceptingCommands && candidate.Replica?.IsRoleEligible(candidate.Connection) != false)
-                    best.Consider(candidate, latency, candidate.Replica?.IsReplicationLinkDown != true, pending.Order);
+                    best.Consider(candidate, latency, order: pending.Order, priority: ReadFallbackPolicy.LatencyPriority(readFrom,
+                        candidate.Replica is null, ReadFallbackPolicy.IsSameZone(candidate.Connection, preferredZone),
+                        candidate.Replica?.IsReplicationLinkDown != true));
             }
             if (best.TryGet(out var selected))
             {
                 if (selected.Connection.IsAcceptingCommands && (selected.Replica is { } replica
                         ? IsCurrent(replica) && replica.IsRoleEligible(selected.Connection)
-                        : ReferenceEquals(selected.Primary, Core.Multiplexer))) return selected;
+                        : ReferenceEquals(selected.Primary, Core.Multiplexer)))
+                {
+                    if (core.Options.ReplicaLatencyTolerance is not null)
+                        Volatile.Write(ref LastReadSelection, best.CaptureSnapshot(readFrom, null,
+                            static value => new(value.Connection.Host, value.Connection.Port)));
+                    return selected;
+                }
                 lastError ??= new RespireConnectionException("The read topology changed during selection.");
             }
             if (readyOnly) throw new BacklogSelectionRequiredException();
@@ -125,7 +148,8 @@ internal sealed partial class ReadEndpointRouter
             }
             if (retry)
                 return await GetNearestAsync(cancellationToken, observation, retry: false, samplingDeadline: deadline,
-                    previousFailure: lastError, attempt: attempt, readyOnly: readyOnly).ConfigureAwait(false);
+                    previousFailure: lastError, attempt: attempt, readyOnly: readyOnly, readFrom: readFrom,
+                    replicaEndpoints: replicaEndpoints, excludedPeer: excludedPeer).ConfigureAwait(false);
             if (attempt?.FirstFailure is { } original)
             {
                 // Exclusions alone preserve the original exception. A later selection or
@@ -133,7 +157,7 @@ internal sealed partial class ReadEndpointRouter
                 if (lastError is null || ReferenceEquals(lastError, original)) attempt.ThrowFirstFailure();
                 lastError = ConnectionFailures.Combine(original, lastError);
             }
-            throw new RespireConnectionException("No healthy eligible endpoint is available for Nearest reads.",
+            throw new RespireConnectionException($"No healthy eligible endpoint is available for {readFrom} reads.",
                 lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };
         }
         catch (BacklogSelectionRequiredException)

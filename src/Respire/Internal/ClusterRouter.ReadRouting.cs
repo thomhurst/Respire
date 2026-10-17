@@ -109,6 +109,9 @@ internal sealed partial class ClusterRouter
         int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
         RespireReadFrom readFrom = RespireReadFrom.Replica, HashSet<RespireConnectionMultiplexer>? excluded = null)
     {
+        if (_options.ReplicaLatencyTolerance is not null)
+            return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
+                previousFailure: lastError, excluded: excluded, readFrom: readFrom).ConfigureAwait(false);
         var routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
 
         var attempted = 0;
@@ -151,6 +154,20 @@ internal sealed partial class ClusterRouter
         RespireReadFrom readFrom, HashSet<RespireConnectionMultiplexer>? excluded, RespireTelemetry.ErrorObservation observation,
         RespireConnection? excludedPeer = null)
     {
+        if (_options.ReplicaLatencyTolerance is not null)
+        {
+            try
+            {
+                var selected = await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
+                    excluded: excluded, readFrom: readFrom == RespireReadFrom.PrimaryPreferred ? RespireReadFrom.Replica : readFrom,
+                    excludedPeer: excludedPeer).ConfigureAwait(false);
+                return (selected, null, routes.Nodes.Length);
+            }
+            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+            {
+                return (null, error, routes.Nodes.Length);
+            }
+        }
         var candidates = new ClusterReplicaSelector(routes);
         var attempted = 0;
         Exception? lastError = null;

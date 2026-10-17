@@ -233,6 +233,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         return _core.Cluster?.CaptureRetirementSnapshot();
     }
 
+    /// <summary>Returns the last latency-band selection, or null before one has completed.</summary>
+    /// <remarks>Requires <see cref="RespireOptions.ReplicaLatencyTolerance"/>. Performs no I/O.
+    /// Views share the observation; Cluster snapshots identify the most recently selected slot.</remarks>
+    public RespireReadRoutingSnapshot? GetReadRoutingSnapshot()
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        return _core.Cluster is { } cluster ? Volatile.Read(ref cluster.LastReadSelection)
+            : Volatile.Read(ref _core.ReadRouter.LastReadSelection);
+    }
+
     /// <inheritdoc/>
     public IRespireClientSideCache? ClientSideCache => _core.ClientCache;
 
