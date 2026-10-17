@@ -110,6 +110,7 @@ internal static class NearestReadSelection
 /// </remarks>
 internal struct NearestReadSelection<T>
 {
+    private const int InlineBandCapacity = 8;
     private T _selected;
     private long _latency;
     private bool _linked;
@@ -130,7 +131,7 @@ internal struct NearestReadSelection<T>
     private List<BandSample>? _overflowBand;
     private int _bandCount;
 
-    [InlineArray(8)]
+    [InlineArray(InlineBandCapacity)]
     private struct BandBuffer
     {
         private BandSample _element0;
@@ -185,7 +186,7 @@ internal struct NearestReadSelection<T>
         if (_tolerance is not null)
         {
             var value = new BandSample(candidate, latency, linked, order, priority);
-            if (_bandCount < 8) _inlineBand[_bandCount] = value;
+            if (_bandCount < InlineBandCapacity) _inlineBand[_bandCount] = value;
             else (_overflowBand ??= []).Add(value);
             _bandCount++;
         }
@@ -208,19 +209,19 @@ internal struct NearestReadSelection<T>
             // Candidate indices are stable even though probes start in rotated order.
             // Rotate within the eligible set, so gaps left by slow nodes do not bias traffic.
             // Small replica groups stay inline. Larger groups combine their overflow only here.
-            Span<BandSample> band = _inlineBand[..Math.Min(_bandCount, 8)];
+            Span<BandSample> band = _inlineBand[..Math.Min(_bandCount, InlineBandCapacity)];
             if (_overflowBand is not null)
             {
                 var combined = new BandSample[_bandCount];
                 band.CopyTo(combined);
-                _overflowBand.CopyTo(combined, 8);
+                _overflowBand.CopyTo(combined, InlineBandCapacity);
                 band = combined;
             }
             band.Sort(static (left, right) => left.Order.CompareTo(right.Order));
             for (var index = 0; index < band.Length; index++)
             {
-                if (index < 8) _inlineBand[index] = band[index];
-                else _overflowBand![index - 8] = band[index];
+                if (index < InlineBandCapacity) _inlineBand[index] = band[index];
+                else _overflowBand![index - InlineBandCapacity] = band[index];
             }
             var count = 0;
             foreach (var sample in band)
@@ -242,6 +243,17 @@ internal struct NearestReadSelection<T>
         => sample.Priority == _priority && sample.Linked == _linked
             && (sample.Latency == long.MaxValue ? _latency == long.MaxValue
                 : sample.Latency - _latency <= _tolerance!.Value);
+
+    /// <summary>Revalidates every eligible member before the router publishes a band snapshot.</summary>
+    internal bool AllBandCandidatesMatch<TState>(TState state, Func<T, TState, bool> isCurrent)
+    {
+        for (var index = 0; index < _bandCount; index++)
+        {
+            var sample = BandAt(index);
+            if (IsInBand(sample) && !isCurrent(sample.Candidate, state)) return false;
+        }
+        return true;
+    }
 
     /// <summary>Captures the band in topology order after <see cref="TryGet"/> has sorted it.</summary>
     internal RespireReadRoutingSnapshot CaptureSnapshot(RespireReadFrom policy, int? slot,
@@ -268,5 +280,6 @@ internal struct NearestReadSelection<T>
         return new(policy, slot, Array.AsReadOnly(eligible));
     }
 
-    private BandSample BandAt(int index) => index < 8 ? _inlineBand[index] : _overflowBand![index - 8];
+    private BandSample BandAt(int index) => index < InlineBandCapacity
+        ? _inlineBand[index] : _overflowBand![index - InlineBandCapacity];
 }

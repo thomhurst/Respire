@@ -10,6 +10,20 @@ public class LatencyBandSelectionTests
     [Test]
     [Arguments(2)]
     [Arguments(12)]
+    public async Task BandRevalidationChecksUnselectedMembersAndIgnoresSlowerCandidates(int candidateCount)
+    {
+        var selection = new NearestReadSelection<int>(0, candidateCount + 1, TimeSpan.Zero);
+        while (selection.TryNext(out var index))
+            selection.QueueSample(index, ValueTask.FromResult(ReadLatencyResult.Measured(index == candidateCount ? 100 : 10)));
+        await Assert.That(selection.TryGet(out var selected)).IsTrue();
+        await Assert.That(selected).IsEqualTo(0);
+        await Assert.That(selection.AllBandCandidatesMatch(candidateCount - 1, static (candidate, removed) => candidate != removed)).IsFalse();
+        await Assert.That(selection.AllBandCandidatesMatch(candidateCount, static (candidate, removed) => candidate != removed)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(12)]
     public async Task SnapshotReuseRetainsImmutableObservationUntilBandChanges(int candidateCount)
     {
         RespireReadRoutingSnapshot? snapshot = null;

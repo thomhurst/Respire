@@ -10,6 +10,66 @@ namespace Respire.Tests.Networking;
 public partial class NearestReadRoutingTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task BandSnapshotRejectsTopologyChangesAfterSampling(bool cluster, bool promote)
+    {
+        await using var primary = Server("primary");
+        await using var first = Server("replica");
+        await using var second = Server("replica");
+        await using var third = Server("replica");
+        var replicas = new[] { first, second, third }.OrderBy(server => server.Port).ToArray();
+        var removed = replicas[0];
+        var remaining = replicas[1];
+        var trigger = replicas[2];
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, removed.Port, remaining.Port, trigger.Port) : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, removed, remaining, trigger) with
+        {
+            UseCluster = cluster, ClusterTopologyRefreshInterval = null, ReplicaLatencyTolerance = TimeSpan.Zero,
+            ReplicaEndpoints = cluster ? [] : replicas.Select(server => new RespireEndpoint("127.0.0.1", server.Port)).ToArray(),
+        });
+        var changed = false;
+        var sampled = new List<int>();
+        var sampler = new ReadLatencySampler<RespireConnection>(async (connection, _) =>
+        {
+            sampled.Add(connection.Port);
+            if (connection.Port != trigger.Port) return 10L;
+            // The first two replicas have already supplied usable samples. Change topology
+            // across an asynchronous probe without invalidating the remaining winner.
+            await Task.Yield();
+            changed = true;
+            if (cluster)
+            {
+                var router = client.Core.Cluster!;
+                router.ApplyTopology([new(0, 16383, new("127.0.0.1", promote ? removed.Port : primary.Port), null, [])
+                {
+                    Replicas = [new(new("127.0.0.1", remaining.Port), null, []), new(new("127.0.0.1", trigger.Port), null, [])],
+                }], router.TopologyVersion, long.MaxValue);
+            }
+            else
+            {
+                typeof(ReadEndpointRouter).GetMethod("SetEndpoints",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(client.Core.ReadRouter, [new RespireEndpoint[] { new("127.0.0.1", remaining.Port), new("127.0.0.1", trigger.Port) }]);
+            }
+            return 100L;
+        }, () => 0);
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var selected = cluster
+            ? await client.Core.Cluster!.GetReadConnectionAsync(1, RespireReadFrom.Replica, deadline.Token, default)
+            : (await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, deadline.Token, default)).Connection;
+        await Assert.That(changed).IsTrue();
+        await Assert.That(sampled.Take(3).SequenceEqual([removed.Port, remaining.Port, trigger.Port])).IsTrue();
+        await Assert.That(selected.Port).IsEqualTo(remaining.Port);
+        await Assert.That(client.GetReadRoutingSnapshot()!.EligibleEndpoints.Single().Port).IsEqualTo(remaining.Port);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task RemoteBandReplicaDoesNotSampleKnownRemotePrimary(bool cluster)
