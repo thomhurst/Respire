@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
@@ -689,6 +690,80 @@ public class ConnectionLifetimeTests
             await Assert.That(await client.GetStringAsync("pending")).IsEqualTo("new");
         }
         finally { release.TrySetResult(); }
+    }
+
+    [Test, NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LifetimeDisposalFailureStillRetiresCurrentConnections(bool currentDisposalFails)
+    {
+        var clock = new LifetimeClock();
+        var entered = NewSignal();
+        var release = NewSignal();
+        var oldFailure = new IOException("Old lifetime socket disposal failed.");
+        var currentFailure = new IOException("Current socket disposal failed.");
+        var created = 0;
+        await using var server = EchoServer(2);
+        server.GateCommand("PING", release.Task, () => entered.TrySetResult());
+        var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
+            options: ConnectionOptions(clock) with
+            {
+                TestingStreamFactory = async (host, port, token) =>
+                {
+                    var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+                    try
+                    {
+                        await socket.ConnectAsync(host, port, token);
+                        var failure = Interlocked.Increment(ref created) == 1 ? oldFailure
+                            : currentDisposalFails ? currentFailure : null;
+                        return new LifetimeDisposalFailureStream(socket, failure);
+                    }
+                    catch { socket.Dispose(); throw; }
+                },
+            });
+        var original = multiplexer.GetConnection();
+        var command = original.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            await UntilAsync(() => clock.ActiveTimers != 0);
+            clock.Advance(Lifetime);
+            await UntilAsync(() => !ReferenceEquals(multiplexer.GetConnection(), original));
+            await UntilAsync(() => !original.IsAcceptingCommands);
+            var current = multiplexer.GetConnection();
+            var retirement = multiplexer.RetireAsync();
+            release.TrySetResult();
+            using var response = await command.WaitAsync(Limit);
+            var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).Throws<Exception>();
+            await Assert.That(original.IsConnected).IsFalse();
+            await Assert.That(current.IsConnected).IsFalse();
+            await Assert.That(current.IsAcceptingCommands).IsFalse();
+            if (currentDisposalFails)
+            {
+                await Assert.That(error).IsTypeOf<AggregateException>();
+                var failures = ((AggregateException)error!).Flatten().InnerExceptions;
+                await Assert.That(failures.Count).IsEqualTo(2);
+                await Assert.That(failures.Contains(oldFailure)).IsTrue();
+                await Assert.That(failures.Contains(currentFailure)).IsTrue();
+            }
+            else await Assert.That(error).IsSameReferenceAs(oldFailure);
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { await multiplexer.DisposeAsync().AsTask().WaitAsync(Limit); }
+            catch (IOException error) when (ReferenceEquals(error, currentFailure)) { }
+        }
+    }
+
+    private sealed class LifetimeDisposalFailureStream(Socket socket, Exception? failure)
+        : NetworkStream(socket, ownsSocket: true)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing && failure is not null) throw failure;
+        }
     }
 
     private static RespireConnectionOptions ConnectionOptions(LifetimeClock clock, TimeSpan? lifetime = null)

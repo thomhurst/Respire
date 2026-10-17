@@ -1445,9 +1445,15 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
 
     private async Task RetireCoreAsync(TaskCompletionSource completion)
     {
+        List<Exception>? errors = null;
         try
         {
-            await DrainLifetimeConnectionsBeforeRetirementAsync().ConfigureAwait(false);
+            try { await DrainLifetimeConnectionsBeforeRetirementAsync().ConfigureAwait(false); }
+            catch (Exception error)
+            {
+                // Old-socket cleanup must not strand current sockets or their workers.
+                (errors ??= []).Add(error);
+            }
             await WaitForPublicationAsync().ConfigureAwait(false);
             var connections = _connections.OfType<RespireConnection>().ToArray();
             foreach (var connection in connections) connection.StopAcceptingCommands();
@@ -1475,12 +1481,17 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                         "Disposal prevented retirement from fencing failed Redis connections.", error, _abortCancellation.Token);
                 }
             }
-            completion.TrySetResult();
         }
         catch (Exception ex)
         {
-            completion.TrySetException(ex);
+            (errors ??= []).Add(ex);
         }
+        try
+        {
+            CleanupTasks.Rethrow(errors);
+            completion.TrySetResult();
+        }
+        catch (Exception error) { completion.TrySetException(error); }
     }
 
     private async Task DrainMaintenanceNotificationsBeforeRetirementAsync(RespireConnection connection)
