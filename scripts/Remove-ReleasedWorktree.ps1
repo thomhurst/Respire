@@ -86,6 +86,10 @@ function Remove-ReleasedWorktree {
     # shell started inside the worktree still blocks deletion; the sweep finishes it.
     Set-Location -LiteralPath $repo
     [Environment]::CurrentDirectory = $repo
+    if (-not (Remove-WorktreeDirectoryLinks -Worktree $target)) {
+        Write-Host "Preserving released worktree with directory links that could not be detached: $target"
+        return
+    }
     $pending = Register-PendingWorktreeRemoval -Repo $repo -Worktree $target -GitDirectory $gitDirectory `
         -LockName $LockName -PendingBranch $pendingBranch
     git -C $repo -c core.longpaths=true worktree remove --force -- $target

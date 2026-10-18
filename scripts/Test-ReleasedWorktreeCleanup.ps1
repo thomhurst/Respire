@@ -145,6 +145,19 @@ try {
                 Assert ([bool]$remoteHead) 'Remote branch was deleted although its checkout was preserved.'
             }
         }
+
+        # Git follows a junction while removing a worktree. Release must delete the link,
+        # never the shared directory it points to.
+        $shared = Join-Path $testRoot 'shared-store'
+        New-Item -ItemType Directory $shared | Out-Null
+        Set-Content (Join-Path $shared 'keep.txt') 'outside the worktree'
+        $path = New-Checkout linked
+        New-Item -ItemType Directory (Join-Path $path 'bin') | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $path 'bin/pkg') -Target $shared | Out-Null
+        $key = Claim linked $path
+        Lock release -LockName $key
+        Assert (-not (Test-Path $path)) 'Checkout with a junction survived release.'
+        Assert (Test-Path (Join-Path $shared 'keep.txt')) 'Release deleted the contents of a junction target outside the worktree.'
     }
 
     foreach ($kind in @('tracked', 'untracked', 'ignored', 'locked', 'main', 'foreign', 'harness', 'reassigned')) {
@@ -175,7 +188,7 @@ try {
         $status = & pwsh -NoProfile -File $agentLocks status -LockName $key -OwnerId $owner
         Assert ($status -eq 'FREE') "$kind lock was not released."
     }
-    Write-Host 'OK released worktree cleanup: generated output, unpublished branches, detached commits, re-checkout, busy-directory pending removal, dirty/ignored/locked/main/foreign/harness/reassigned preservation.'
+    Write-Host 'OK released worktree cleanup: generated output, unpublished branches, detached commits, re-checkout, busy-directory pending removal, junction targets, dirty/ignored/locked/main/foreign/harness/reassigned preservation.'
 } finally {
     if (Test-Path $repo) {
         Set-Location $repo

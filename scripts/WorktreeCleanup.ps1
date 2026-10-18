@@ -7,6 +7,7 @@
 #   - CLEAR known build artifacts and root-level workflow output covered by .gitignore.
 #   - PRESERVE the checkout itself: a free lock cannot rule out background directory handles.
 #     Explicit owner release removes checkouts after the owner stops its processes.
+#   - DETACH directory junctions and symlinks before deleting, so no delete follows a link.
 
 function New-OrdinalStringMap {
     [CmdletBinding()]
@@ -338,6 +339,35 @@ function Clear-CompletedWorktreeArtifacts {
         }
     }
     Write-Host "Cleared generated output; preserving checkout for owner release or manual recovery $Label : $Worktree"
+    return $true
+}
+
+# Git for Windows follows a directory junction while deleting a worktree: it empties the
+# target, then fails with "Directory not empty" on the link and leaves a remnant without
+# its .git file. Package managers link node_modules packages with junctions, and a junction
+# can also point into another checkout or a shared store. Delete each link itself, never its
+# target, before any recursive delete. Returns whether no directory link remains.
+function Remove-WorktreeDirectoryLinks {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Worktree,
+        [string]$Label = ''
+    )
+
+    if (-not $IsWindows) { return $true }
+
+    # Get-ChildItem does not recurse through links, so every match is a link to remove.
+    $find = { @(Get-ChildItem -LiteralPath $Worktree -Directory -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue) }
+    foreach ($link in (& $find)) {
+        # DirectoryInfo.Delete() without recursion removes the reparse point only.
+        try { $link.Delete() } catch { Write-Host "Could not detach directory link $($link.FullName): $_" }
+    }
+
+    $remaining = & $find
+    if ($remaining.Count -gt 0) {
+        Write-Host "WARNING: worktree $Label kept: $($remaining.Count) directory link(s) could not be detached, first $($remaining[0].FullName): $Worktree"
+        return $false
+    }
     return $true
 }
 
