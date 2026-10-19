@@ -94,6 +94,24 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
         .GetType("Respire.Streaming.JobCheckpoints")!.GetField("Save", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
 
     [Test]
+    public async Task EveryCompletionVariantFitsRedisLuaCompilerLimits()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var assembly = typeof(RespireJob<>).Assembly;
+        var wrap = assembly.GetType("Respire.Streaming.JobCheckpoints")!
+            .GetMethod("Complete", BindingFlags.NonPublic | BindingFlags.Static)!;
+        foreach (var type in new[] { "JobQueueScripts", "JobGroupControls" })
+        foreach (var name in new[] { "Complete", "CompleteAndDelete", "CompleteWithMetrics", "CompleteAndDeleteWithMetrics" })
+        {
+            var inner = (RespireScript)assembly.GetType("Respire.Streaming." + type)!
+                .GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            var wrapped = (RespireScript)wrap.Invoke(null, [inner])!;
+            using var loaded = await client.ExecuteAsync("SCRIPT", ["LOAD", wrapped.Source]);
+            await Assert.That(loaded.AsString().Length).IsEqualTo(40);
+        }
+    }
+
+    [Test]
     public async Task DeniedCleanupCannotAcknowledgeOrLoseCheckpoint()
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString) with { AllowAdmin = true });
@@ -165,6 +183,68 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
             var entries = await client.Streams.RangeAsync(queue.StreamKey);
             foreach (var entry in entries)
                 await Assert.That(await RespireJobCheckpoints.ReadAsync(client, queue.StreamKey, entry.Id)).IsNull();
+        }
+        finally { await worker.StopAsync(deadline.Token); }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ExplicitResultAfterRuntimeExpiryKeepsCompletionPolicy(int completion)
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var queue = Queue(client);
+        await queue.EnqueueScheduledAsync("job", "payload", new() { MaximumRuntime = TimeSpan.FromMilliseconds(250) });
+        var calls = 0;
+        RespireJob<string>? delivered = null;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var provider = Worker(client, new(async (job, token) =>
+        {
+            Interlocked.Increment(ref calls);
+            delivered = job;
+            await job.SaveCheckpointAsync("finished", [], cancellationToken: deadline.Token);
+            var expired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = token.Register(() => expired.TrySetResult());
+            // Observe that the runtime elapsed without throwing cancellation from the handler.
+            await expired.Task.WaitAsync(deadline.Token);
+            return completion switch
+            {
+                0 => RespireStreamWorkerResult.Ack,
+                1 => RespireStreamWorkerResult.Nack,
+                2 => RespireStreamWorkerResult.DeadLetter,
+                _ => job.RetryAfter(TimeSpan.FromHours(1)),
+            };
+        }), "late-result", deliveryLimit: completion == 3 ? 5 : 1);
+        var worker = provider.GetRequiredService<IHostedService>();
+        await worker.StartAsync(deadline.Token);
+        try
+        {
+            if (completion == 3)
+            {
+                await Until(async () => (await client.Streams.RangeAsync(queue.StreamKey + ":scheduled"))
+                    .Any(entry => entry.GetString("_respire.job.attempts") == "1"), deadline.Token);
+                var scheduled = (await client.Streams.RangeAsync(queue.StreamKey + ":scheduled")).Single();
+                await Assert.That(scheduled.GetString("_respire.job.attempts")).IsEqualTo("1");
+                using var due = await client.ExecuteAsync("ZSCORE", [queue.StreamKey + ":due", scheduled.Id.Value]);
+                using var time = await client.ExecuteAsync("TIME");
+                var remaining = double.Parse(due.AsString(), System.Globalization.CultureInfo.InvariantCulture)
+                    - long.Parse(time[0].AsString()) * 1000;
+                await Assert.That(remaining).IsGreaterThan(TimeSpan.FromMinutes(59).TotalMilliseconds);
+                await Assert.That(await client.Streams.CountAsync(queue.EventsStreamKey)).IsEqualTo(0);
+            }
+            else
+            {
+                await Until(async () => await client.Streams.CountAsync(queue.EventsStreamKey) == 1, deadline.Token);
+                await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(completion == 0 ? 0 : 1);
+                await Assert.That((await client.Streams.PendingSummaryAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup)).Count).IsEqualTo(0);
+            }
+            await Assert.That(Volatile.Read(ref calls)).IsEqualTo(1);
+            var checkpoint = await delivered!.ReadCheckpointAsync(deadline.Token);
+            if (completion == 0) await Assert.That(checkpoint).IsNull();
+            else await Assert.That(checkpoint!.Cursor).IsEqualTo("finished");
         }
         finally { await worker.StopAsync(deadline.Token); }
     }

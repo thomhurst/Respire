@@ -381,8 +381,13 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         using var runtime = checkpointKey is null ? null
             : CancellationTokenSource.CreateLinkedTokenSource(processingToken, _yielding.Token);
         if (runtime is not null)
-            runtime.CancelAfter(TimeSpan.FromMilliseconds(long.Parse(delivery.Entry.GetString("_respire.job.runtime")!,
-                System.Globalization.CultureInfo.InvariantCulture)));
+        {
+            if (!long.TryParse(delivery.Entry.GetString("_respire.job.runtime"),
+                    System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var runtimeMilliseconds)
+                || runtimeMilliseconds <= 0 || runtimeMilliseconds > uint.MaxValue - 1)
+                throw new InvalidOperationException("Resumable jobs require a valid positive _respire.job.runtime in milliseconds.");
+            runtime.CancelAfter(TimeSpan.FromMilliseconds(runtimeMilliseconds));
+        }
         var handlerToken = runtime?.Token ?? processingToken;
         var scope = scopeFactory.CreateAsyncScope();
         try
@@ -393,6 +398,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             var failureType = "";
             TimeSpan? retryDelay = null;
             byte[]? jobResult = null;
+            var yieldedForCancellation = false;
             try
             {
                 var message = deserialize(delivery.Entry);
@@ -412,6 +418,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             catch (OperationCanceledException) when (handlerToken.IsCancellationRequested)
             {
                 if (runtime is null) { observation.Outcome = "canceled"; return; }
+                yieldedForCancellation = true;
                 result = RespireStreamWorkerResult.Nack;
             }
             catch (Exception error)
@@ -425,7 +432,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 result = RespireStreamWorkerResult.Nack;
             }
 
-            if (runtime?.IsCancellationRequested == true && !observation.ProcessingFailed)
+            if (yieldedForCancellation)
             {
                 // The handler has left and awaited its final save. Requeue atomically,
                 // with a fresh cleanup token even when host shutdown canceled processing.

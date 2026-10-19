@@ -176,15 +176,11 @@ internal sealed class DashboardState
                 }
                 if (stream.IsJobQueue && !sourceUnavailable)
                 {
-                    try
-                    {
-                        foreach (var entry in pending)
-                            checkpoints[entry.Id] = await RespireJobCheckpoints.ReadAsync(_client, stream.Stream, entry.Id, token).ConfigureAwait(false);
-                    }
-                    catch (RespireException)
-                    {
+                    var checkpointReads = await ReadCheckpointsAsync(pending.Select(entry => entry.Id).ToArray(),
+                        (id, ct) => RespireJobCheckpoints.ReadAsync(_client, stream.Stream, id, ct), token).ConfigureAwait(false);
+                    checkpoints = checkpointReads.Checkpoints;
+                    if (checkpointReads.Unavailable)
                         error = (error is null ? "" : error + " ") + "Checkpoints unavailable. Check Redis permissions.";
-                    }
                 }
                 try
                 {
@@ -225,6 +221,34 @@ internal sealed class DashboardState
             return _snapshot;
         }
         finally { _readGate.Release(); }
+    }
+
+    internal static async Task<(Dictionary<RespireStreamId, RespireJobCheckpoint?> Checkpoints, bool Unavailable)> ReadCheckpointsAsync(
+        IReadOnlyList<RespireStreamId> ids, Func<RespireStreamId, CancellationToken, ValueTask<RespireJobCheckpoint?>> read,
+        CancellationToken cancellationToken)
+    {
+        var results = new (RespireJobCheckpoint? Checkpoint, bool Unavailable)[ids.Count];
+        // Four stream readers each issue at most four checkpoint reads at once.
+        await Parallel.ForEachAsync(Enumerable.Range(0, ids.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (index, token) =>
+        {
+            try
+            {
+                results[index] = (await read(ids[index], token).ConfigureAwait(false), false);
+            }
+            catch (RespireException)
+            {
+                results[index] = (null, true);
+            }
+        }).ConfigureAwait(false);
+        var checkpoints = new Dictionary<RespireStreamId, RespireJobCheckpoint?>(ids.Count);
+        var unavailable = false;
+        for (var index = 0; index < ids.Count; index++)
+        {
+            if (results[index].Unavailable) unavailable = true;
+            else checkpoints[ids[index]] = results[index].Checkpoint;
+        }
+        return (checkpoints, unavailable);
     }
 
     internal static async Task<DashboardJobBatch[]> ReadBatchesAsync(IList<string> ids,
