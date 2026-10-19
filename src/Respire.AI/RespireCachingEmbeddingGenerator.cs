@@ -31,7 +31,9 @@ internal sealed class RespireCachingEmbeddingGenerator(
             || options.RawRepresentationFactory is not null || options.AdditionalProperties is { Count: > 0 }))
             return await InnerGenerator.GenerateAsync(inputs, options, cancellationToken).ConfigureAwait(false);
 
-        var scope = GetScope(options);
+        var metadata = InnerGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
+        var effectiveDimensions = options?.Dimensions ?? metadata?.DefaultModelDimensions;
+        var scope = GetScope(options, metadata);
         var unique = inputs.Distinct(StringComparer.Ordinal).ToArray();
         var keys = unique.ToDictionary(input => input,
             input => (RespireKey)(scope + HashInput(input)), StringComparer.Ordinal);
@@ -43,7 +45,7 @@ internal sealed class RespireCachingEmbeddingGenerator(
             await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             for (var i = 0; i < unique.Length; i++)
             {
-                if (pending[i].Result is { } bytes && Decode(bytes, options?.Dimensions) is { } embedding)
+                if (pending[i].Result is { } bytes && Decode(bytes, effectiveDimensions) is { } embedding)
                     embeddings.Add(unique[i], embedding);
             }
         }
@@ -67,7 +69,7 @@ internal sealed class RespireCachingEmbeddingGenerator(
             // Validate the complete response before inserting any part of it.
             foreach (var embedding in generated)
             {
-                if (embedding.Vector.Length == 0 || options?.Dimensions is { } dimensions && embedding.Vector.Length != dimensions)
+                if (embedding.Vector.Length == 0 || effectiveDimensions is { } dimensions && embedding.Vector.Length != dimensions)
                     throw new InvalidOperationException("The embedding generator returned invalid dimensions.");
             }
             for (var i = 0; i < misses.Length; i++) embeddings.Add(misses[i], generated[i]);
@@ -103,9 +105,8 @@ internal sealed class RespireCachingEmbeddingGenerator(
         };
     }
 
-    private string GetScope(EmbeddingGenerationOptions? options)
+    private string GetScope(EmbeddingGenerationOptions? options, EmbeddingGeneratorMetadata? metadata)
     {
-        var metadata = InnerGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
@@ -152,6 +153,7 @@ internal sealed class RespireCachingEmbeddingGenerator(
             writer.Write((short)created.Offset.TotalMinutes);
         }
         // BinaryWriter stores IEEE 754 FLOAT32 values in little-endian order on all platforms.
+        writer.Write(embedding.Vector.Length);
         foreach (var value in embedding.Vector.Span) writer.Write(value);
         writer.Flush();
         return stream.ToArray();
@@ -166,10 +168,11 @@ internal sealed class RespireCachingEmbeddingGenerator(
             var model = reader.ReadBoolean() ? reader.ReadString() : null;
             DateTimeOffset? created = reader.ReadBoolean()
                 ? new DateTimeOffset(reader.ReadInt64(), TimeSpan.FromMinutes(reader.ReadInt16())) : null;
+            var length = reader.ReadInt32();
             var remaining = stream.Length - stream.Position;
-            if (remaining == 0 || remaining % sizeof(float) != 0 || dimensions is { } count && remaining / sizeof(float) != count)
+            if (length <= 0 || remaining != (long)length * sizeof(float) || dimensions is { } count && length != count)
                 return null;
-            var vector = new float[remaining / sizeof(float)];
+            var vector = new float[length];
             for (var i = 0; i < vector.Length; i++) vector[i] = reader.ReadSingle();
             return new(vector) { ModelId = model, CreatedAt = created };
         }

@@ -106,6 +106,54 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task DefaultDimensionsValidateTheWholeProviderBatch(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator { WrongDimensions = true };
+        using var cache = Build(provider, redis);
+        Func<Task> generate = () => cache.GenerateAsync(["invalid"]);
+        await generate.Should().ThrowAsync<InvalidOperationException>().WithMessage("*dimensions*");
+        (await Keys(redis)).Should().BeEmpty();
+        provider.WrongDimensions = false;
+        (await cache.GenerateAsync(["invalid"]))[0].Vector.Length.Should().Be(2);
+        await cache.GenerateAsync(["invalid"]);
+        provider.Batches.Should().HaveCount(2);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task DefaultDimensionsRejectAnOtherwiseValidCachedVector(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator();
+        using var cache = Build(provider, redis);
+        await cache.GenerateAsync(["default"]);
+        var defaultKey = (await Keys(redis)).Single();
+        await cache.GenerateAsync(["override"], new() { Dimensions = 3 });
+        var overrideKey = (await Keys(redis)).Single(key => key != defaultKey);
+        await redis.Strings.SetAsync(defaultKey, (RespireValue)(await redis.Strings.GetBytesAsync(overrideKey))!);
+        (await cache.GenerateAsync(["default"]))[0].Vector.Length.Should().Be(2);
+        await cache.GenerateAsync(["default"]);
+        provider.Batches.Should().HaveCount(3);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task WholeFloatTruncationAndExtensionAreMissesWithoutDimensionMetadata(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator { DefaultDimensions = null };
+        using var cache = Build(provider, redis);
+        await cache.GenerateAsync(["corrupt"]);
+        var key = (await Keys(redis)).Single();
+        var original = (await redis.Strings.GetBytesAsync(key))!;
+        await redis.Strings.SetAsync(key, (RespireValue)original[..^sizeof(float)]);
+        (await cache.GenerateAsync(["corrupt"]))[0].Vector.Length.Should().Be(2);
+        await redis.Strings.SetAsync(key, (RespireValue)original.Concat(new byte[sizeof(float)]).ToArray());
+        (await cache.GenerateAsync(["corrupt"]))[0].Vector.Length.Should().Be(2);
+        await cache.GenerateAsync(["corrupt"]);
+        provider.Batches.Should().HaveCount(3);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task CustomOptionsAndProviderPropertiesBypassStorage(int protocol)
     {
         await using var redis = await Connect(protocol);
@@ -183,7 +231,8 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     public async Task MetricsCountInputPositionsWithoutHighCardinalityTags()
     {
         await using var redis = await Connect(3);
-        using var cache = Build(new Generator(), redis);
+        var provider = new Generator();
+        using var cache = Build(provider, redis);
         var counts = new Dictionary<string, long>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
@@ -200,6 +249,16 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         await cache.GenerateAsync(["b", "c", "a"]);
         counts["respire.ai.embedding_cache.hits"].Should().Be(2);
         counts["respire.ai.embedding_cache.misses"].Should().Be(4);
+        provider.Error = new InvalidOperationException("provider failed");
+        Func<Task> fail = () => cache.GenerateAsync(["a", "failure"]);
+        await fail.Should().ThrowAsync<InvalidOperationException>();
+        provider.Error = null;
+        using var cancellation = new CancellationTokenSource();
+        provider.BeforeReturn = () => { cancellation.Cancel(); return Task.CompletedTask; };
+        Func<Task> cancel = () => cache.GenerateAsync(["a", "cancel"], cancellationToken: cancellation.Token);
+        await cancel.Should().ThrowAsync<OperationCanceledException>();
+        counts["respire.ai.embedding_cache.hits"].Should().Be(4);
+        counts["respire.ai.embedding_cache.misses"].Should().Be(6);
     }
 
     [Test]
@@ -253,6 +312,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         public Uri Uri { get; set; } = new("https://provider.example");
         public bool Empty { get; set; }
         public bool WrongDimensions { get; set; }
+        public int? DefaultDimensions { get; set; } = 2;
         public bool Disposed { get; private set; }
         public Exception? Error { get; set; }
         public AdditionalPropertiesDictionary? Properties { get; set; }
@@ -278,7 +338,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => serviceType == typeof(EmbeddingGeneratorMetadata)
-            ? new EmbeddingGeneratorMetadata(Provider, Uri, Model, 2) : null;
+            ? new EmbeddingGeneratorMetadata(Provider, Uri, Model, DefaultDimensions) : null;
 
         public void Dispose() => Disposed = true;
     }

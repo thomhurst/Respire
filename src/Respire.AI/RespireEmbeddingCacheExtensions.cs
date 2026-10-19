@@ -6,7 +6,10 @@ namespace Respire.AI;
 public static class RespireEmbeddingCacheExtensions
 {
     /// <summary>Caches FLOAT32 embeddings in Redis, batching lookups and generation of unique misses.</summary>
-    /// <remarks>The caller owns the Redis client. Disposing the pipeline disposes the inner generator.</remarks>
+    /// <remarks>
+    /// The caller owns the Redis client. Disposing the pipeline disposes the inner generator.
+    /// Result usage describes only generation of unique misses; all-hit responses have no usage.
+    /// </remarks>
     public static EmbeddingGeneratorBuilder<string, Embedding<float>> UseRespireEmbeddingCache(
         this EmbeddingGeneratorBuilder<string, Embedding<float>> builder,
         IRespireClient client,
