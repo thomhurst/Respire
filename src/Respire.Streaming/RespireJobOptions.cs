@@ -5,6 +5,10 @@ namespace Respire.Streaming;
 /// <summary>Scheduling settings for one enqueue. Durations use the Redis server clock.</summary>
 public sealed record RespireJobEnqueueOptions
 {
+    /// <summary>Enables checkpointed processing with this cooperative runtime limit per run. Null disables resumability.</summary>
+    /// <remarks>Requires scheduling-enabled workers. Handlers must observe cancellation and await checkpoint writes.</remarks>
+    public TimeSpan? MaximumRuntime { get; init; }
+
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     /// <summary>Optional application group identity. Null means ungrouped; non-null values must be nonblank valid Unicode.</summary>
@@ -22,6 +26,7 @@ public sealed record RespireJobEnqueueOptions
 
     internal void Validate()
     {
+        if (MaximumRuntime is { } runtime) JobQueueScheduling.ValidateDuration(runtime, nameof(MaximumRuntime));
         if (Group is not null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(Group);

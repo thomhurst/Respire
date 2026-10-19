@@ -11,6 +11,10 @@ streams, consumer groups, pending deliveries, dead letters, and a sampled delive
 Operators can retry or permanently delete individual dead letters, inspect retained job logs,
 inspect configured batch progress, and inspect, pause, or resume application job groups.
 
+For [resumable jobs](job-queues.md#resumable-jobs-and-checkpoints), the pending-deliveries
+table also shows the last saved cursor and optional completion percentage. Inspection is
+bounded by `EntryLimit` and does not display checkpoint state bytes or job payloads.
+
 Install `Respire.Streaming.Dashboard` and `Respire.DependencyInjection` in an ASP.NET Core app.
 The dashboard supports .NET 8 and .NET 10 and requires Redis 7 or later for retry permission
 checks. Upgrade it together with the matching `Respire` package version.

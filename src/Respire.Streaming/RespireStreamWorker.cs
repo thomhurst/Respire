@@ -14,6 +14,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     where THandler : class, IRespireStreamHandler<TMessage>
 {
     private readonly CancellationTokenSource _handlers = new();
+    private readonly CancellationTokenSource _yielding = new();
     private readonly string _identity = options.ConsumerName ?? Guid.NewGuid().ToString("N");
     private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _consumerDrain;
@@ -334,6 +335,10 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private async Task ProcessAsync(Delivery delivery, string consumer, StreamWorkerTelemetry.Attempt observation, CancellationToken processingToken)
     {
+        var checkpointKey = options.JobEventsStream is null ? null : JobCheckpoints.Key(stream, delivery.Entry);
+        if (checkpointKey is not null && options.JobQueue is null)
+            throw new InvalidOperationException("Resumable jobs require scheduling-enabled workers.");
+        if (checkpointKey is not null) JobQueueScheduling.ValidateKeys(client, [stream, checkpointKey]);
         if (options.DeadLetterStream is not null && delivery.Entry.Fields.Count > StreamWorkerScripts.MaximumDeadLetterFields)
             throw new InvalidOperationException("Dead-letter-enabled workers support at most 1024 field/value pairs per entry.");
         var totalAttempts = delivery.Attempt;
@@ -347,7 +352,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             if (cancelled == 1)
             {
                 var acknowledged = await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, options.DeleteAcknowledgedEntries),
-                    LeaseFenceKeys(delivery, CompletionKeys(delivery, batchEvents, false)),
+                    FencedCompletionKeys(delivery, batchEvents, false),
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "cancelled", "", "",
                         0, Array.Empty<byte>(), options.JobQueue?.MetricsRetentionMinutes ?? 0],
                     processingToken).ConfigureAwait(false);
@@ -373,6 +378,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             observation.Outcome = await DeadLetterAsync(delivery, consumer, "delivery-limit", "", processingToken).ConfigureAwait(false);
             return;
         }
+        using var runtime = checkpointKey is null ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(processingToken, _yielding.Token);
+        if (runtime is not null)
+            runtime.CancelAfter(TimeSpan.FromMilliseconds(long.Parse(delivery.Entry.GetString("_respire.job.runtime")!,
+                System.Globalization.CultureInfo.InvariantCulture)));
+        var handlerToken = runtime?.Token ?? processingToken;
         var scope = scopeFactory.CreateAsyncScope();
         try
         {
@@ -389,8 +400,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                     job.Attach(new(client, stream, events, group, consumer, delivery.Entry.Id, delivery.Attempt,
                         delivery.Entry.GetString("_respire.job.flow"),
                         int.Parse(delivery.Entry.GetString("_respire.job.node") ?? "0", System.Globalization.CultureInfo.InvariantCulture),
-                        job.Id, options.JobQueue, HasGroupLease(delivery)));
-                result = await handler.HandleAsync(message, processingToken).ConfigureAwait(false);
+                        job.Id, options.JobQueue, HasGroupLease(delivery), checkpointKey));
+                result = await handler.HandleAsync(message, handlerToken).ConfigureAwait(false);
                 if (result is not (RespireStreamWorkerResult.Ack or RespireStreamWorkerResult.Nack or RespireStreamWorkerResult.DeadLetter))
                     throw new InvalidOperationException("The stream handler returned an unknown completion result.");
                 if (result == RespireStreamWorkerResult.DeadLetter && options.DeadLetterStream is null)
@@ -398,8 +409,11 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 retryDelay = (message as IJobRetry)?.RetryDelay;
                 jobResult = (message as IJobDelivery)?.Result;
             }
-            catch (OperationCanceledException) when (processingToken.IsCancellationRequested)
-            { observation.Outcome = "canceled"; return; }
+            catch (OperationCanceledException) when (handlerToken.IsCancellationRequested)
+            {
+                if (runtime is null) { observation.Outcome = "canceled"; return; }
+                result = RespireStreamWorkerResult.Nack;
+            }
             catch (Exception error)
             {
                 observation.ProcessingFailed = true;
@@ -411,6 +425,19 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 result = RespireStreamWorkerResult.Nack;
             }
 
+            if (runtime?.IsCancellationRequested == true && !observation.ProcessingFailed)
+            {
+                // The handler has left and awaited its final save. Requeue atomically,
+                // with a fresh cleanup token even when host shutdown canceled processing.
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var yielded = await client.Scripts.ExecuteIntegerAsync(
+                    HasGroupLease(delivery) ? JobGroupControls.Retry : JobQueueScheduling.Retry,
+                    LeaseFenceKeys(delivery, [.. JobGroupScheduling.Keys(stream)]),
+                    [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, 0,
+                        options.DeleteAcknowledgedEntries ? 1 : 0, "yield"], cleanup.Token).ConfigureAwait(false);
+                observation.Outcome = yielded == 1 ? "yielded" : "stale";
+                return;
+            }
             if (processingToken.IsCancellationRequested) { observation.Outcome = "canceled"; return; }
             if (result == RespireStreamWorkerResult.Ack)
             {
@@ -418,7 +445,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                 // readers stop. StopAsync and Dispose must therefore cancel readers first.
                 var acknowledged = options.JobEventsStream is { } events
                     ? await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, options.DeleteAcknowledgedEntries),
-                        LeaseFenceKeys(delivery, CompletionKeys(delivery, events, false)),
+                        FencedCompletionKeys(delivery, events, false),
                         [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "completed", "", "",
                             jobResult is null ? 0 : 1, jobResult ?? [], options.JobQueue?.MetricsRetentionMinutes ?? 0], processingToken).ConfigureAwait(false)
                     : await client.Scripts.ExecuteIntegerAsync(options.DeleteAcknowledgedEntries
@@ -458,7 +485,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         if (processingToken.IsCancellationRequested) return "canceled";
         var completed = options.JobEventsStream is { } events
-            ? await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, false), LeaseFenceKeys(delivery, CompletionKeys(delivery, events, true)),
+            ? await client.Scripts.ExecuteIntegerAsync(CompletionScript(delivery, false), FencedCompletionKeys(delivery, events, true),
                 [group, consumer, delivery.Entry.Id.Value, delivery.Attempt, "dead-letter", reason, failureType,
                     0, Array.Empty<byte>(), options.JobQueue?.MetricsRetentionMinutes ?? 0],
                 processingToken).ConfigureAwait(false)
@@ -485,7 +512,19 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         return options.JobQueue?.MetricsRetentionMinutes > 0 ? [.. keys, stream + ":metrics"] : keys;
     }
 
+    private RespireKey[] FencedCompletionKeys(Delivery delivery, string events, bool deadLetter)
+    {
+        var keys = LeaseFenceKeys(delivery, CompletionKeys(delivery, events, deadLetter));
+        return JobCheckpoints.Key(stream, delivery.Entry) is { } checkpoint ? [.. keys, checkpoint] : keys;
+    }
+
     private RespireScript CompletionScript(Delivery delivery, bool delete)
+    {
+        var script = BaseCompletionScript(delivery, delete);
+        return JobCheckpoints.Key(stream, delivery.Entry) is null ? script : JobCheckpoints.Complete(script);
+    }
+
+    private RespireScript BaseCompletionScript(Delivery delivery, bool delete)
     {
         if (HasGroupLease(delivery))
             return options.JobQueue?.MetricsRetentionMinutes > 0
@@ -501,6 +540,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         _telemetry.StopPolling();
         // BackgroundService cancels readers immediately. Handlers keep a separate token while draining.
         var stopping = base.StopAsync(cancellationToken);
+        try { await _yielding.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { }
         using var abort = cancellationToken.UnsafeRegister(static state =>
             ((RespireStreamWorker<THandler, TMessage>)state!).CancelHandlers(), this);
         try { await stopping.ConfigureAwait(false); }
@@ -517,7 +558,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         try
         {
             try { base.Dispose(); }
-            finally { CancelHandlers(); }
+            finally
+            {
+                try { _yielding.Cancel(); }
+                catch (ObjectDisposedException) { }
+                finally { CancelHandlers(); }
+            }
         }
         finally
         {
@@ -525,9 +571,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             {
                 var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
                 if (running is not { IsCompleted: false })
+                {
                     _handlers.Dispose();
+                    _yielding.Dispose();
+                }
                 else
-                    _ = running.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), _handlers,
+                    _ = running.ContinueWith(_ => { _handlers.Dispose(); _yielding.Dispose(); },
                         CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             }
             // External teardown callbacks may block, so cancel and arrange handler cleanup first.

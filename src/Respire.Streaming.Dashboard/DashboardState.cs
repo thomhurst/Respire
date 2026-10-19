@@ -12,7 +12,8 @@ internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
     double? DeliveriesPerSecond, string? Error, bool SourceUnavailable = false, bool DeadLettersUnavailable = false,
     bool? IsPaused = null, long? RateLimitHits = null, IReadOnlyList<RespireJobMetricBucket>? Metrics = null,
-    RespireJobGroupPage? JobGroups = null, IReadOnlyList<DashboardJobBatch>? Batches = null);
+    RespireJobGroupPage? JobGroups = null, IReadOnlyList<DashboardJobBatch>? Batches = null,
+    IReadOnlyDictionary<RespireStreamId, RespireJobCheckpoint?>? Checkpoints = null);
 
 internal sealed class DashboardState
 {
@@ -123,6 +124,7 @@ internal sealed class DashboardState
                 IReadOnlyList<RespireJobMetricBucket>? metrics = null;
                 RespireJobGroupPage? jobGroups = null;
                 DashboardJobBatch[] batches = [];
+                var checkpoints = new Dictionary<RespireStreamId, RespireJobCheckpoint?>();
                 if (stream.IsJobQueue)
                 {
                     if (_batchQueues[i] is { } queue)
@@ -172,6 +174,18 @@ internal sealed class DashboardState
                     sourceUnavailable = true;
                     error = (error is null ? "" : error + " ") + "Source stream unavailable. Check the configured key, group and Redis permissions.";
                 }
+                if (stream.IsJobQueue && !sourceUnavailable)
+                {
+                    try
+                    {
+                        foreach (var entry in pending)
+                            checkpoints[entry.Id] = await RespireJobCheckpoints.ReadAsync(_client, stream.Stream, entry.Id, token).ConfigureAwait(false);
+                    }
+                    catch (RespireException)
+                    {
+                        error = (error is null ? "" : error + " ") + "Checkpoints unavailable. Check Redis permissions.";
+                    }
+                }
                 try
                 {
                     if (stream.DeadLetterStream is { } dead)
@@ -203,7 +217,7 @@ internal sealed class DashboardState
                     _samples[i] = (current, now);
                 }
                 result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
-                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups, batches);
+                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups, batches, checkpoints);
             }).ConfigureAwait(false);
             _snapshot = new(result);
             _snapshotTimestamp = _clock.GetTimestamp();

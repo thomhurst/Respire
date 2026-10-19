@@ -1,4 +1,14 @@
 #nullable enable
+Respire.Streaming.RespireJobCheckpoint
+Respire.Streaming.RespireJobCheckpoint.Cursor.get -> string!
+Respire.Streaming.RespireJobCheckpoint.State.get -> System.ReadOnlyMemory<byte>
+Respire.Streaming.RespireJobCheckpoint.Percent.get -> int?
+Respire.Streaming.RespireJobCheckpoints
+static Respire.Streaming.RespireJobCheckpoints.ReadAsync(Respire.IRespireClient! client, string! stream, Respire.RespireStreamId entryId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobCheckpoint?>
+Respire.Streaming.RespireJob<T>.ReadCheckpointAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireJobCheckpoint?>
+Respire.Streaming.RespireJob<T>.SaveCheckpointAsync(string! cursor, byte[]! state, int? percent = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireJobEnqueueOptions.MaximumRuntime.get -> System.TimeSpan?
+Respire.Streaming.RespireJobEnqueueOptions.MaximumRuntime.init -> void
 Respire.Streaming.RespireReliableTopic<T>
 Respire.Streaming.RespireReliableTopic<T>.PublishAsync(T payload, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId>
 Respire.Streaming.RespireReliableTopic<T>.RespireReliableTopic(Respire.IRespireClient! client, string! topicName, System.Func<T, byte[]!>! serialize, System.Func<byte[]!, T>! deserialize, int deliveryLimit = 5, int? maximumLength = null, System.TimeSpan? maximumAge = null) -> void
