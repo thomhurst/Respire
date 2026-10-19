@@ -25,6 +25,7 @@
       "matchPackageNames": [
         "Microsoft.AspNetCore.SignalR.Client",
         "Microsoft.AspNetCore.SignalR.Protocols.MessagePack",
+        "Microsoft.AspNetCore.Mvc.Testing",
         "Microsoft.AspNetCore.TestHost",
         "Microsoft.AspNetCore.SignalR.StackExchangeRedis",
         "Microsoft.AspNetCore.OutputCaching.StackExchangeRedis"
