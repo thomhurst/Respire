@@ -64,6 +64,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   including reconnects, dedicated connections, Cluster, replicas, and Sentinel.
 - [Custom connection streams](fundamentals/connections.md#custom-connection-streams) through a public factory,
   with owned disposal, TLS, reconnects, discovery, pub/sub, and dedicated connections.
+- [SOCKS5 and HTTP CONNECT proxies](guides/proxies.md) with proxy-side DNS, optional authentication,
+  bounded negotiation, cancellation, and Redis TLS through the tunnel.
 - [Dedicated pool sizing](fundamentals/connections.md#dedicated-connection-pools) with opt-in
   total limits, cancellation-aware acquisition, timed idle retirement and pool metrics.
 - Opt-in [blocking cancellation with CLIENT UNBLOCK](guides/blocking-queues.md#cancellation)
