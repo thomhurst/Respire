@@ -205,10 +205,11 @@ internal static class SentinelResolver
                     var primary = observation.Endpoint;
                     candidateEndpoint = primary;
                     string[]? primaryAddresses = null;
+                    var mappedPrimary = options.NodeAddressResolver is not null
+                        || options.NodeAddressMap?.ContainsKey(primary) == true;
                     // A mapped announcement may be private DNS that cannot resolve here.
-                    // Keep textual evidence; ROLE validation records the reachable socket peer.
-                    if (!IPAddress.TryParse(primary.Host, out _)
-                        && options.NodeAddressResolver is null && options.NodeAddressMap?.ContainsKey(primary) != true)
+                    // Its transport destination can change independently of Sentinel ownership.
+                    if (!mappedPrimary && !IPAddress.TryParse(primary.Host, out _))
                     {
                         try
                         {
@@ -252,7 +253,11 @@ internal static class SentinelResolver
                     var result = await connectPrimaryAsync(primaryOptions, primaryAddresses, connectTimeoutSource.Token).ConfigureAwait(false);
                     try
                     {
-                        discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses, getValidatedPeer?.Invoke(result));
+                        // Epochs identify the announced primary, not a proxy or port-forward.
+                        // Keep the generation's peer for reuse and retirement, but do not pin
+                        // mapped transport addresses as stable Sentinel owner evidence.
+                        discoveryState.AcceptConfiguration(primary, observation.Epoch, primaryAddresses,
+                            mappedPrimary ? null : getValidatedPeer?.Invoke(result));
                     }
                     catch
                     {
