@@ -286,6 +286,46 @@ public class TimeSeriesClientTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MultiRange_ExcludeEmptyPreservesOtherOptions(bool reverse)
+    {
+        await using var server = new FakeRespServer(Frame("*0\r\n"), Frame("*0\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var options = new RespireTimeSeriesRangeOptions
+        {
+            SelectedLabels = ["room"], Count = 2,
+            Aggregation = (RespireTimeSeriesAggregation.Avg, 10), Empty = true,
+            Filters = ["room=1", "sensor=temp"], ExcludeEmpty = true,
+        };
+        await ReadAsync(options);
+        await ReadAsync(options with { ExcludeEmpty = false });
+        var verb = reverse ? "TS.MREVRANGE" : "TS.MRANGE";
+        await Assert.That(Sent(server)).IsEqualTo(
+            $"{verb} 0 100 SELECTED_LABELS room COUNT 2 AGGREGATION AVG 10 EMPTY EXCLUDEEMPTY FILTER room=1 sensor=temp | " +
+            $"{verb} 0 100 SELECTED_LABELS room COUNT 2 AGGREGATION AVG 10 EMPTY FILTER room=1 sensor=temp");
+
+        ValueTask<IReadOnlyList<RespireTimeSeriesSeries>> ReadAsync(RespireTimeSeriesRangeOptions value)
+            => reverse ? timeSeries.MultiReverseRangeAsync(new(0, 100), value) : timeSeries.MultiRangeAsync(new(0, 100), value);
+    }
+
+    [Test]
+    public async Task ExcludeEmpty_RejectsUnsupportedCombinationsBeforeDispatch()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var options = new RespireTimeSeriesRangeOptions { ExcludeEmpty = true };
+        await Assert.That(async () => await timeSeries.RangeAsync("a", new(0, 100), options)).Throws<ArgumentException>();
+        await Assert.That(async () => await timeSeries.ReverseRangeAsync("a", new(0, 100), options)).Throws<ArgumentException>();
+        var grouped = options with { Filters = ["room=1"], GroupBy = ("room", "max") };
+        await Assert.That(async () => await timeSeries.MultiRangeAsync(new(0, 100), grouped)).Throws<ArgumentException>();
+        await Assert.That(async () => await timeSeries.MultiReverseRangeAsync(new(0, 100), grouped)).Throws<ArgumentException>();
+        await Assert.That(Sent(server)).IsEqualTo("");
+    }
+
+    [Test]
     public async Task KeyPrefixedView_PrefixesEverySeriesKey()
     {
         await using var server = new FakeRespServer(Ok, Frame(":1\r\n"), Frame("*2\r\n:1\r\n:2\r\n"), Ok, Ok, Frame("*0\r\n"));

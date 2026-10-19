@@ -1,3 +1,5 @@
 #nullable enable
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.ExcludeEmpty.get -> bool
+Respire.TimeSeries.RespireTimeSeriesRangeOptions.ExcludeEmpty.init -> void
 Respire.TimeSeries.RespireTimeSeriesClient.RangeKeysAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesRow!>!>
 Respire.TimeSeries.RespireTimeSeriesClient.ReverseRangeKeysAsync(Respire.RespireKey key, Respire.TimeSeries.RespireTimeSeriesRange range, Respire.TimeSeries.RespireTimeSeriesKeyRangeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Respire.TimeSeries.RespireTimeSeriesRow!>!>

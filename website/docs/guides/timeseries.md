@@ -91,9 +91,20 @@ With client-side caching enabled, each `AddAsync`, `IncrementByAsync`, `Decremen
 - `RangeAsync` and `ReverseRangeAsync` read one series, with exact timestamp and value filters, `COUNT`, `LATEST`, and aggregation with `ALIGN`, `BUCKETTIMESTAMP` and `EMPTY`.
 - `MultiGetAsync`, `MultiRangeAsync` and `MultiReverseRangeAsync` select series by label filters such as `sensor=temperature`, and accept `WITHLABELS` or `SELECTED_LABELS`. Multi-series ranges also accept `GROUPBY`/`REDUCE`; single-series ranges reject these locally.
 - `QueryIndexAsync` returns matching keys as `RespireKey`, preserving arbitrary bytes. Multi-series results expose the lossless key in `KeyValue`; `Key` is its display string.
-- `RespireTimeSeriesAggregation.CountNaN` and `CountAll` require Redis 8.10 in any range method.
+- `RespireTimeSeriesAggregation.CountNaN` and `CountAll` require Redis 8.6 in any range method.
 
 ## Redis 8.10 reads
+
+Set `ExcludeEmpty = true` on `RespireTimeSeriesRangeOptions` for `MultiRangeAsync`
+or `MultiReverseRangeAsync` to omit matching series with no samples in the requested
+range. The default includes those series with empty sample lists. Series containing
+only NaN samples are retained. This option requires Redis 8.10 and cannot be combined
+with `GroupBy`; single-series ranges reject it before dispatch.
+
+```csharp
+var nonempty = await timeSeries.MultiRangeAsync(new(0, 1_000),
+    new RespireTimeSeriesRangeOptions { Filters = ["sensor=temperature"], ExcludeEmpty = true });
+```
 
 `RangeKeysAsync` (`TS.NRANGE`) and `ReverseRangeKeysAsync` (`TS.NREVRANGE`) combine named series into timestamp rows. `RespireTimeSeriesRow.Values` follows key order, including duplicates. Missing values are `double.NaN`, indistinguishable from stored NaN. All keys must share a Cluster hash slot; prefixes and binary keys are preserved.
 
