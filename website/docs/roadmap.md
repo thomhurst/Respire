@@ -238,6 +238,10 @@ are described in the guides below; the remaining pre-release work is tracked sep
 
 ### Compatibility adapters
 
+- Migration guides cover [NRedisStack](./guides/nredisstack-migration.md),
+  [FreeRedis](./guides/freeredis-migration.md), and [CSRedisCore](./guides/csredis-migration.md),
+  including command mappings, module APIs, serialization, subscriptions, and transactions.
+
 - A [coordination migration guide](./guides/coordination-migration.md) maps RedLock.net and
   DistributedLock.Redis to Respire, including quorum, renewal, timeout, and fencing differences.
 
