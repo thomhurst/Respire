@@ -15,7 +15,7 @@ internal sealed partial class ClientSideCacheCoordinator
     private MutationFence BeginKeyMutation(RespireKey key)
         => BeginMutation(MutationFenceKind.Key, key, null);
 
-    private MutationFence BeginKeysMutation(RespireKey[] keys)
+    internal MutationFence BeginKeysMutation(RespireKey[] keys)
         => BeginMutation(MutationFenceKind.Keys, default, keys);
 
     private MutationFence BeginMutation(MutationFenceKind kind, RespireKey key, RespireKey[]? keys)

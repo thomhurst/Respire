@@ -5362,12 +5362,13 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool captureSendTimestampOnly,
         Action<long>? onSerialized,
         Action? onCommandNotApplied,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, bool physicalKeys)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        var mutationFence = cache is null || script.IsReadOnly ? default : cache.BeginUnknownMutation();
+        var mutationFence = cache is null || (physicalKeys ? script.IsCacheReadOnly : script.IsReadOnly) ? default
+            : physicalKeys ? cache.BeginKeysMutation(keys) : cache.BeginUnknownMutation();
         var responseOwnsFence = false;
         var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
         var telemetryDispatched = false;
@@ -5375,7 +5376,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         {
             var requiresIdentity = !captureSendTimestampOnly && (requireReliableCorrectionOrdering
                 || RequiresReliableCorrectionOrdering(cancellationToken));
-            var tail = BuildScriptTail(keys, args);
+            var tail = physicalKeys ? BuildPhysicalCacheAsideScriptTail(keys, args) : BuildScriptTail(keys, args);
 
             RespireConnection connection;
             if (core.Cluster is { } cluster)

@@ -107,20 +107,22 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Reads or refreshes a Redis-backed cache-aside entry with optional distributed single-flight and XFetch early refresh.</summary>
     /// <remarks>
     /// Uses a dedicated hash representation at key; do not mix with GET/SET or the overload without options.
-    /// Requires scripting permissions. Does not require ClientSideCache and always reads the primary.
+    /// Requires scripting permissions; single-flight also requires CLIENT ID/KILL for ordered cancellation cleanup.
+    /// Does not require ClientSideCache and always reads the primary.
     /// The hash stores the serialized payload, recompute duration, version and stale retention together.
     /// Contention waits are bounded by WaitTimeout; expiration of a crashed owner's lease allows recovery.
     /// Factories must honor cancellation and complete within LockTimeout. An expired owner cannot publish
     /// or release a successor's lease. Failover or lease expiry can still permit overlapping factories;
     /// use this for idempotent cache population, not exactly-once side effects.
     /// Each caller owns its cancellation. Null results and factory failures are not cached.
-    /// Custom implementations may override this default, which throws NotSupportedException.
+    /// Lease timeout throws TimeoutException; caller cancellation throws OperationCanceledException.
+    /// A rejected publication returns a fresh winner or an independent copy of the computed value without caching it.
+    /// Custom implementations must implement this capability explicitly.
     /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
-        RespireExpiry expiry, RespireCacheAsideOptions options, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This client does not implement Redis-backed cache-aside stampede protection.");
+    ValueTask<T?> GetOrSetAsync<T>(RespireKey key, RespireCacheAsideOptions options,
+        Func<CancellationToken, ValueTask<T?>> factory, RespireExpiry expiry, CancellationToken cancellationToken = default);
 
     /// <summary>Gets raw bytes, or null when the key is absent. Redis: GET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);

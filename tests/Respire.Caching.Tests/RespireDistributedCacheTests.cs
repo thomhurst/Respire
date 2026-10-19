@@ -1774,6 +1774,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireExpiry expiry, CancellationToken cancellationToken = default)
             => inner.GetOrSetAsync(key, factory, expiry, cancellationToken);
 
+        public ValueTask<T?> GetOrSetAsync<T>(RespireKey key, RespireCacheAsideOptions options,
+            Func<CancellationToken, ValueTask<T?>> factory, RespireExpiry expiry, CancellationToken cancellationToken = default)
+            => inner.GetOrSetAsync(key, options, factory, expiry, cancellationToken);
+
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
         public RespireChannel ResolveChannel(RespireChannel channel) => inner.ResolveChannel(channel);
 

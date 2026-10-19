@@ -6,6 +6,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
+[NotInParallel(TestConstraints.ClientCacheHits)]
 public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
 {
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(15);
@@ -35,7 +36,7 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
                     return $"generation-{generation}";
                 }
                 var reads = clients.SelectMany(client => Enumerable.Range(0, 4)
-                    .Select(_ => client.GetOrSetAsync(key, Factory, Ttl, Options).AsTask())).ToArray();
+                    .Select(_ => client.GetOrSetAsync(key, Options, Factory, Ttl).AsTask())).ToArray();
                 try { await entered.Task.WaitAsync(Limit); }
                 finally { release.TrySetResult(); }
                 var results = await Task.WhenAll(reads).WaitAsync(Limit);
@@ -55,11 +56,11 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         await client.SetAsync(lockKey, "crashed-process", TimeSpan.FromMilliseconds(150));
         var started = Stopwatch.GetTimestamp();
         var calls = 0;
-        var result = await client.GetOrSetAsync<string>(key, _ =>
+        var result = await client.GetOrSetAsync<string>(key, Options, _ =>
         {
             calls++;
             return ValueTask.FromResult<string?>("recovered");
-        }, Ttl, Options).AsTask().WaitAsync(Limit);
+        }, Ttl).AsTask().WaitAsync(Limit);
         await Assert.That(result).IsEqualTo("recovered");
         await Assert.That(calls).IsEqualTo(1);
         await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(5)).IsTrue();
@@ -74,11 +75,11 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var lockKey = RespireClient.CreateCacheAsideLockKey(key);
         await client.SetAsync(lockKey, "owner", Ttl);
         var calls = 0;
-        await Assert.That(async () => await client.GetOrSetAsync<string>(key, _ =>
+        await Assert.That(async () => await client.GetOrSetAsync<string>(key, Options with { WaitTimeout = TimeSpan.FromMilliseconds(60) }, _ =>
         {
             calls++;
             return ValueTask.FromResult<string?>("unexpected");
-        }, Ttl, Options with { WaitTimeout = TimeSpan.FromMilliseconds(60) }))
+        }, Ttl))
             .ThrowsExactly<TimeoutException>();
         await Assert.That(calls).IsEqualTo(0);
         await Assert.That(await client.GetStringAsync(lockKey)).IsEqualTo("owner");
@@ -91,28 +92,27 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         await using var second = await ConnectAsync();
         var key = NewKey();
         var options = Options with { StaleWhileRevalidate = TimeSpan.FromMinutes(1) };
-        await first.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("old"), Ttl, options);
+        await first.GetOrSetAsync<string>(key, options, _ => ValueTask.FromResult<string?>("old"), Ttl);
         // Move the logical freshness boundary into the past while retaining the stale window.
         await first.ExpireAsync(key, TimeSpan.FromSeconds(30));
         var entered = Signal();
         var release = Signal();
-        var refresh = first.GetOrSetAsync<string>(key, async token =>
+        var refresh = first.GetOrSetAsync<string>(key, options, async token =>
         {
             entered.TrySetResult();
             await release.Task.WaitAsync(token);
             return "new";
-        }, Ttl, options).AsTask();
+        }, Ttl).AsTask();
         try
         {
             await entered.Task.WaitAsync(Limit);
-            var stale = await second.GetOrSetAsync<string>(key, _ => throw new Exception("contender factory"),
-                Ttl, options).AsTask().WaitAsync(Limit);
+            var stale = await second.GetOrSetAsync<string>(key, options, _ => throw new Exception("contender factory"), Ttl).AsTask().WaitAsync(Limit);
             await Assert.That(stale).IsEqualTo("old");
             await Assert.That(refresh.IsCompleted).IsFalse();
         }
         finally { release.TrySetResult(); }
         await Assert.That(await refresh.WaitAsync(Limit)).IsEqualTo("new");
-        await Assert.That(await second.GetOrSetAsync<string>(key, _ => throw new Exception("hit factory"), Ttl, options))
+        await Assert.That(await second.GetOrSetAsync<string>(key, options, _ => throw new Exception("hit factory"), Ttl))
             .IsEqualTo("new");
     }
 
@@ -122,11 +122,11 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         await using var first = await ConnectAsync();
         await using var second = await ConnectAsync();
         var key = NewKey();
-        await first.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("old"), Ttl, Options);
-        await second.GetOrSetAsync<string>(key, _ => throw new Exception("beta zero"), Ttl, Options);
+        await first.GetOrSetAsync<string>(key, Options, _ => ValueTask.FromResult<string?>("old"), Ttl);
+        await second.GetOrSetAsync<string>(key, Options, _ => throw new Exception("beta zero"), Ttl);
         // Force the election for any Random.NextDouble sample in [0, 1).
         var refresh = Options with { EarlyRefreshBeta = double.MaxValue };
-        await Assert.That(await second.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("early"), Ttl, refresh))
+        await Assert.That(await second.GetOrSetAsync<string>(key, refresh, _ => ValueTask.FromResult<string?>("early"), Ttl))
             .IsEqualTo("early");
         using var duration = await first.ExecuteAsync("HGET", key, "duration");
         await Assert.That(duration.AsDouble() >= 1).IsTrue();
@@ -141,19 +141,19 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var lockKey = RespireClient.CreateCacheAsideLockKey(key);
         var entered = Signal();
         var release = Signal();
-        var pending = first.GetOrSetAsync<string>(key, async _ =>
+        var pending = first.GetOrSetAsync<string>(key, Options, async _ =>
         {
             entered.TrySetResult();
             await release.Task; // Deliberately ignore cancellation to exercise server fencing.
             return "obsolete";
-        }, Ttl, Options).AsTask();
+        }, Ttl).AsTask();
         try
         {
             await entered.Task.WaitAsync(Limit);
             await second.SetAsync(lockKey, "successor", Ttl);
         }
         finally { release.TrySetResult(); }
-        await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<TimeoutException>();
+        await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("obsolete");
         await Assert.That(await second.GetStringAsync(lockKey)).IsEqualTo("successor");
         await Assert.That(await second.ExistsAsync(key)).IsFalse();
     }
@@ -163,15 +163,15 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     {
         await using var client = await ConnectAsync();
         var key = NewKey();
-        await Assert.That(async () => await client.GetOrSetAsync<string>(key, async token =>
+        await Assert.That(async () => await client.GetOrSetAsync<string>(key, Options with { LockTimeout = TimeSpan.FromMilliseconds(100) }, async token =>
         {
             using var registration = token.Register(static () => throw new InvalidOperationException("callback"));
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return "never";
-        }, Ttl, Options with { LockTimeout = TimeSpan.FromMilliseconds(100) }))
-            .Throws<OperationCanceledException>();
+        }, Ttl))
+            .ThrowsExactly<TimeoutException>();
         await Assert.That(await client.ExistsAsync(RespireClient.CreateCacheAsideLockKey(key))).IsFalse();
-        await Assert.That(await client.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>("recovered"), Ttl, Options))
+        await Assert.That(await client.GetOrSetAsync<string>(key, Options, _ => ValueTask.FromResult<string?>("recovered"), Ttl))
             .IsEqualTo("recovered");
     }
 
@@ -181,20 +181,19 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync();
         var key = NewKey();
         var lockKey = RespireClient.CreateCacheAsideLockKey(key);
-        await Assert.That(async () => await client.GetOrSetAsync<string>(key,
-            _ => throw new InvalidOperationException("factory"), Ttl, Options)).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(async () => await client.GetOrSetAsync<string>(key, Options, _ => throw new InvalidOperationException("factory"), Ttl)).ThrowsExactly<InvalidOperationException>();
         await Assert.That(await client.ExistsAsync(lockKey)).IsFalse();
-        await Assert.That(await client.GetOrSetAsync<string>(key, _ => ValueTask.FromResult<string?>(null), Ttl, Options)).IsNull();
+        await Assert.That(await client.GetOrSetAsync<string>(key, Options, _ => ValueTask.FromResult<string?>(null), Ttl)).IsNull();
         await Assert.That(await client.ExistsAsync(key)).IsFalse();
         await Assert.That(await client.ExistsAsync(lockKey)).IsFalse();
         using var canceled = new CancellationTokenSource();
         var entered = Signal();
-        var pending = client.GetOrSetAsync<string>(key, async token =>
+        var pending = client.GetOrSetAsync<string>(key, Options, async token =>
         {
             entered.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return "never";
-        }, Ttl, Options, canceled.Token).AsTask();
+        }, Ttl, canceled.Token).AsTask();
         await entered.Task.WaitAsync(Limit);
         canceled.Cancel();
         await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
@@ -208,16 +207,15 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var key = NewKey();
         var entered = Signal();
         var release = Signal();
-        var holder = client.GetOrSetAsync<string>(key, async token =>
+        var holder = client.GetOrSetAsync<string>(key, Options, async token =>
         {
             entered.TrySetResult(); await release.Task.WaitAsync(token); return "holder";
-        }, Ttl, Options).AsTask();
+        }, Ttl).AsTask();
         try
         {
             await entered.Task.WaitAsync(Limit);
             using var canceled = new CancellationTokenSource();
-            var waiter = client.GetOrSetAsync<string>(key, _ => throw new Exception("waiter factory"),
-                Ttl, Options, canceled.Token).AsTask();
+            var waiter = client.GetOrSetAsync<string>(key, Options, _ => throw new Exception("waiter factory"), Ttl, canceled.Token).AsTask();
             canceled.Cancel();
             await Assert.That(async () => await waiter.WaitAsync(Limit)).Throws<OperationCanceledException>();
             await Assert.That(holder.IsCompleted).IsFalse();
@@ -235,15 +233,15 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             Connections = 1, CommandHook = hook,
         });
         var key = NewKey();
-        await client.GetOrSetAsync<string>(key, async token =>
+        await client.GetOrSetAsync<string>(key, Options, async token =>
         {
             await client.PingAsync(token);
             return "value";
-        }, Ttl, Options);
+        }, Ttl);
         await Assert.That(string.Join(",", hook.Commands)).IsEqualTo("GETORSET,PING");
         await Assert.That(hook.Completed).IsEqualTo(2);
         hook.Commands.Clear();
-        await client.GetOrSetAsync<string>(key, _ => throw new Exception("hit"), Ttl, Options);
+        await client.GetOrSetAsync<string>(key, Options, _ => throw new Exception("hit"), Ttl);
         await Assert.That(string.Join(",", hook.Commands)).IsEqualTo("GETORSET");
         await Assert.That(hook.Completed).IsEqualTo(3);
     }
@@ -258,10 +256,10 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         IRespireClient view = client.WithKeyPrefix(prefix);
         if (bypass) view = view.WithoutClientCache();
         var created = new Payload { Value = "original" };
-        var first = await view.GetOrSetAsync<Payload>("key", _ => ValueTask.FromResult<Payload?>(created), Ttl, Options);
+        var first = await view.GetOrSetAsync<Payload>("key", Options, _ => ValueTask.FromResult<Payload?>(created), Ttl);
         created.Value = "factory mutation";
         first!.Value = "caller mutation";
-        var second = await client.GetOrSetAsync<Payload>(prefix + "key", _ => throw new Exception("hit"), Ttl, Options);
+        var second = await client.GetOrSetAsync<Payload>(prefix + "key", Options, _ => throw new Exception("hit"), Ttl);
         await Assert.That(second!.Value).IsEqualTo("original");
         await Assert.That(await client.ExistsAsync(RespireClient.CreateCacheAsideLockKey(prefix + "key"))).IsFalse();
     }
@@ -275,9 +273,95 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var key = NewKey();
         var deadline = past ? DateTimeOffset.UnixEpoch.AddSeconds(1) : DateTimeOffset.UtcNow.AddMinutes(5);
         var options = Options with { DistributedSingleFlight = false, EarlyRefreshBeta = 1 };
-        await Assert.That(await client.GetOrSetAsync<int>(key, _ => ValueTask.FromResult(42), deadline, options)).IsEqualTo(42);
+        await Assert.That(await client.GetOrSetAsync<int>(key, options, _ => ValueTask.FromResult(42), deadline)).IsEqualTo(42);
         if (past) await Assert.That(await client.ExistsAsync(key)).IsFalse();
         else await Assert.That((await client.Keys.ExpiryTimeAsync(key)).UnixTimeMilliseconds).IsEqualTo(deadline.ToUnixTimeMilliseconds());
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RefreshRetainsGenerationBeyondPayloadExpiryWithoutServingExpiredData(bool stale)
+    {
+        await using var first = await ConnectAsync();
+        await using var second = await ConnectAsync();
+        var key = NewKey();
+        var options = Options with { StaleWhileRevalidate = stale ? TimeSpan.FromMilliseconds(200) : TimeSpan.Zero };
+        await first.GetOrSetAsync<string>(key, options, _ => ValueTask.FromResult<string?>("old"), TimeSpan.FromSeconds(1));
+        var entered = Signal();
+        var release = Signal();
+        var refresh = first.GetOrSetAsync<string>(key, options with { EarlyRefreshBeta = double.MaxValue }, async token =>
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return "new";
+        }, Ttl).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            await Task.Delay(1500); // Cross both the original freshness and stale deadlines.
+            await Assert.That(await second.ExistsAsync(key)).IsTrue();
+            await Assert.That(async () => await second.GetOrSetAsync<string>(key,
+                options with { WaitTimeout = TimeSpan.Zero }, _ => throw new Exception("contender factory"), Ttl))
+                .ThrowsExactly<TimeoutException>();
+        }
+        finally { release.TrySetResult(); }
+        await Assert.That(await refresh.WaitAsync(Limit)).IsEqualTo("new");
+        await Assert.That(await second.GetOrSetAsync<string>(key, Options, _ => throw new Exception("hit"), Ttl)).IsEqualTo("new");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RefreshCannotOverwriteDeletedOrReplacedGeneration(bool replace)
+    {
+        await using var client = await ConnectAsync();
+        var key = NewKey();
+        await client.GetOrSetAsync<Payload>(key, Options, _ => ValueTask.FromResult<Payload?>(new() { Value = "old" }), Ttl);
+        var entered = Signal();
+        var release = Signal();
+        var created = new Payload { Value = "computed" };
+        var refresh = client.GetOrSetAsync<Payload>(key, Options with { EarlyRefreshBeta = double.MaxValue }, async token =>
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return created;
+        }, Ttl).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(Limit);
+            await client.DeleteAsync(key);
+            if (replace)
+                await client.GetOrSetAsync<Payload>(key, Options with { DistributedSingleFlight = false },
+                    _ => ValueTask.FromResult<Payload?>(new() { Value = "winner" }), Ttl);
+        }
+        finally { release.TrySetResult(); }
+        var result = await refresh.WaitAsync(Limit);
+        await Assert.That(result!.Value).IsEqualTo(replace ? "winner" : "computed");
+        created.Value = "mutated";
+        await Assert.That(result.Value).IsEqualTo(replace ? "winner" : "computed");
+        await Assert.That(await client.ExistsAsync(key)).IsEqualTo(replace);
+    }
+
+    [Test]
+    public async Task LeaseScriptsPreserveUnrelatedClientCacheEntries()
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
+        { Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
+        var unrelated = NewKey();
+        await client.SetAsync(unrelated, "cached");
+        await client.GetStringAsync(unrelated);
+        var hits = client.ClientSideCache!.GetStatistics().Hits;
+        await client.GetOrSetAsync<string>(NewKey(), Options, async _ =>
+        {
+            // The acquisition fence must not evict an unrelated cached value.
+            await Assert.That(await client.GetStringAsync(unrelated)).IsEqualTo("cached");
+            return "published";
+        }, Ttl);
+        await client.GetStringAsync(unrelated);
+        await client.GetOrSetAsync<string>(NewKey(), Options, _ => ValueTask.FromResult<string?>(null), Ttl);
+        await client.GetStringAsync(unrelated);
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(hits + 3);
     }
 
     public sealed class Payload { public string? Value { get; set; } }

@@ -7,6 +7,28 @@ namespace Respire.Tests.Networking;
 public class CacheStampedeTests
 {
     [Test]
+    public async Task ExistingDefaultTokenCallsRemainUnambiguous()
+    {
+        using var endpoint = new ReservedUnavailablePort();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", endpoint.Port)], ThreadPoolMonitoring = false,
+        });
+        IRespireClient contract = client;
+        Func<CancellationToken, ValueTask<string?>> factory = _ => ValueTask.FromResult<string?>("value");
+
+        // Invalid expiry rejects before network access; these calls also guard source compatibility.
+        await Assert.That(async () => await client.GetOrSetAsync("key", factory, TimeSpan.Zero, default))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await contract.GetOrSetAsync("key", factory, TimeSpan.Zero, default))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.GetOrSetAsync("key", factory, default, default))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await contract.GetOrSetAsync("key", factory, default, default))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     [Arguments(100L, 10d, 0d, 0.0001d, false)]
     [Arguments(100L, 10d, 1d, 0.5d, false)]
     [Arguments(100L, 10d, 1d, 0.00001d, true)]

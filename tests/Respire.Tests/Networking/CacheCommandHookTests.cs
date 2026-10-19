@@ -18,11 +18,11 @@ public partial class CommandHookTests
             Endpoints = [new("127.0.0.1", endpoint.Port)], CommandHook = hook, ThreadPoolMonitoring = false,
         });
         await Assert.That(await Failure(async () => await client.GetOrSetAsync<string>("key",
-            _ => throw new Exception("factory"), TimeSpan.FromMinutes(1), new RespireCacheAsideOptions { EarlyRefreshBeta = -1 }))
+            new RespireCacheAsideOptions { EarlyRefreshBeta = -1 }, _ => throw new Exception("factory"), TimeSpan.FromMinutes(1)))
             is ArgumentOutOfRangeException).IsTrue();
         await Assert.That(hook.Entered).IsEmpty();
         await Assert.That(await Failure(async () => await client.GetOrSetAsync<string>("key",
-            _ => throw new Exception("factory"), TimeSpan.FromMinutes(1), new RespireCacheAsideOptions()))
+            new RespireCacheAsideOptions(), _ => throw new Exception("factory"), TimeSpan.FromMinutes(1)))
             is InvalidOperationException).IsTrue();
         await Assert.That(hook.Entered.Single().Command).IsEqualTo("GETORSET");
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Rejected);
@@ -294,7 +294,7 @@ public partial class CommandHookTests
             case "hash-many": await client.Hashes.GetManyAsync("key", ["field", "field"], token); break;
             case "hash-map": await client.Hashes.GetAllAsync<int>("key", token); break;
             case "aside": await client.GetOrSetAsync<int>("key", _ => throw new Exception("Factory must not run on a hit."), TimeSpan.FromMinutes(1), token); break;
-            case "protected-aside": await client.GetOrSetAsync<int>("key", _ => throw new Exception("Factory must not run."), TimeSpan.FromMinutes(1), new RespireCacheAsideOptions(), token); break;
+            case "protected-aside": await client.GetOrSetAsync<int>("key", new RespireCacheAsideOptions(), _ => throw new Exception("Factory must not run."), TimeSpan.FromMinutes(1), token); break;
             default: throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
