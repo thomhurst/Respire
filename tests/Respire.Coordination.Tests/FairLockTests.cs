@@ -95,6 +95,73 @@ public class FairLockTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task ExpiredHeadCleanupIsBoundedAndPreservesLiveWaiterOrder()
+    {
+        await using var client = await ConnectAsync();
+        var fair = Create(client);
+        await SeedExpiredWaitersAsync(client, fair);
+        using (var first = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["first", 20000, 10000, "join"]))
+            await Assert.That(first[0].AsInteger()).IsEqualTo(2);
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("orphan64");
+        var deadline = await client.Hashes.GetStringAsync(fair.QueueKey, "dfirst");
+        using (var second = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["second", 20000, 10000, "join"]))
+            await Assert.That(second[0].AsInteger()).IsEqualTo(2);
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("orphan128");
+        using (var waiting = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["second", 20000, 10000, "retry"]))
+            await Assert.That(waiting[0].AsInteger()).IsEqualTo(0);
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("first");
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "dfirst")).IsEqualTo(deadline);
+        using (var acquired = await client.Scripts.ExecuteAsync(RespireFairLock.Acquire,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], ["first", 20000, 10000, "retry"]))
+            await Assert.That(acquired[0].AsInteger()).IsEqualTo(1);
+        await Assert.That(await client.Hashes.GetStringAsync(fair.QueueKey, "head")).IsEqualTo("second");
+    }
+
+    [Test]
+    public async Task ManagedAcquisitionContinuesExpiredHeadCleanupWithoutWaiting()
+    {
+        await using var client = await ConnectAsync();
+        var fair = Create(client);
+        await SeedExpiredWaitersAsync(client, fair);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var acquired = await fair.AcquireAsync(Lease, Wait, timeout.Token);
+        await Assert.That(acquired.FencingToken).IsEqualTo(1);
+        await Assert.That(await client.Keys.ExistsAsync(fair.QueueKey)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CleanupOnlyReleasesMatchingUnreturnedOwner(bool matchingOwner)
+    {
+        await using var client = await ConnectAsync();
+        var fair = Create(client);
+        await using var holder = await fair.AcquireAsync(Lease, Wait);
+        RespireValue owner = matchingOwner ? holder.OwnerToken.Bytes : "another-owner";
+        using var cleanup = await client.Scripts.ExecuteAsync(RespireFairLock.RemoveWaiter,
+            [fair.Key, fair.FencingCounterKey, fair.QueueKey], [owner, "release"]);
+        await Assert.That(await holder.VerifyStillHeldAsync()).IsEqualTo(!matchingOwner);
+    }
+
+    private static async Task SeedExpiredWaitersAsync(IRespireClient client, RespireFairLock fair)
+    {
+        using var seeded = await client.Scripts.ExecuteAsync(RespireScript.Create("""
+            for i = 0, 129 do
+                local owner = 'orphan' .. i
+                redis.call('HSET', KEYS[1], 'd' .. owner, '0')
+                if i > 0 then redis.call('HSET', KEYS[1], 'p' .. owner, 'orphan' .. (i - 1)) end
+                if i < 129 then redis.call('HSET', KEYS[1], 'n' .. owner, 'orphan' .. (i + 1)) end
+            end
+            redis.call('HSET', KEYS[1], 'head', 'orphan0', 'tail', 'orphan129')
+            redis.call('PEXPIRE', KEYS[1], 60000)
+            return 1
+            """), [fair.QueueKey], []);
+    }
+
+    [Test]
     public async Task WaitTimeoutDoesNotRejoinOrConsumeAFence()
     {
         await using var client = await ConnectAsync();

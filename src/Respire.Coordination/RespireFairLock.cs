@@ -55,6 +55,9 @@ public sealed class RespireFairLock
         """;
 
     internal static readonly RespireScript RemoveWaiter = RespireScript.Create(QueuePrelude + """
+        if ARGV[2] == 'release' and redis.call('GET', KEYS[1]) == ARGV[1] then
+            redis.call('DEL', KEYS[1])
+        end
         remove(ARGV[1])
         return 1
         """);
@@ -78,8 +81,10 @@ public sealed class RespireFairLock
         local now = t[1] * 1000 + math.floor(t[2] / 1000)
         local owner = ARGV[1]
         local head = redis.call('HGET', KEYS[3], 'head')
-        while head and tonumber(redis.call('HGET', KEYS[3], 'd' .. head)) <= now do
+        local cleaned = 0
+        while head and cleaned < 64 and tonumber(redis.call('HGET', KEYS[3], 'd' .. head)) <= now do
             remove(head)
+            cleaned = cleaned + 1
             head = redis.call('HGET', KEYS[3], 'head')
         end
         local deadline = redis.call('HGET', KEYS[3], 'd' .. owner)
@@ -100,6 +105,10 @@ public sealed class RespireFairLock
         end
         deadline = tonumber(deadline)
         if deadline <= now then remove(owner); return {-1, '', 0} end
+        -- Enqueue before yielding so cleanup continuations preserve arrival order and deadline.
+        if head and tonumber(redis.call('HGET', KEYS[3], 'd' .. head)) <= now then
+            return {2, '', 0}
+        end
         local ttl = redis.call('PTTL', KEYS[1])
         if ttl == -1 then return redis.error_reply('ERR fair lock lease must expire') end
         if head == owner and ttl == -2 then
@@ -145,6 +154,8 @@ public sealed class RespireFairLock
         var physicalQueueKey = _client.ResolveKey(QueueKey).Snapshot();
         if (_client is RespireClient concrete)
         {
+            if (concrete.GetBatchReadFromPolicy() != RespireReadFrom.Primary)
+                throw new RespireConfigurationException("Fair locks require primary reads so tracking observes lease and queue writes.");
             if (concrete.Core.Options.ClientSideCache?.NoLoop == true)
                 throw new RespireConfigurationException("Fair locks require ClientSideCache.NoLoop=false so same-client releases wake waiters.");
             if (concrete.ReadCache is not { } readCache || !readCache.CanTrack(physicalLeaseKey) || !readCache.CanTrack(physicalQueueKey))
@@ -164,7 +175,6 @@ public sealed class RespireFairLock
             throw new NotSupportedException("Fair lock subscriptions must expose cancellable Stopped tokens.");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, leaseSubscription.Stopped, queueSubscription.Stopped);
         var owner = RespireLock.NewToken();
-        RespireLock? lease = null;
         var acquisitionUncertain = false;
         long started = 0;
         var transferred = false;
@@ -187,7 +197,7 @@ public sealed class RespireFairLock
                 if (status < 0) throw new TimeoutException("The fair lock waiter expired before acquisition.");
                 if (status == 1)
                 {
-                    lease = new RespireLock(_client.Locks, Key, owner,
+                    var lease = new RespireLock(_client.Locks, Key, owner,
                         TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started, TimeProvider.System);
                     if (!long.TryParse(response[1].AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var fence) || fence <= 0)
                         throw new RespireProtocolException("Fair lock acquisition did not return a positive Int64 fencing token.");
@@ -196,6 +206,7 @@ public sealed class RespireFairLock
                     transferred = true;
                     return new RespireFencedLock(lease, FencingCounterKey, fence);
                 }
+                if (status == 2) continue; // Bounded cleanup has more expired heads to remove.
                 var delay = TimeSpan.FromMilliseconds(response[2].AsInteger()) - Stopwatch.GetElapsedTime(started);
                 if (delay > TimeSpan.Zero)
                     _ = await signal.WaitAsync(delay, linked.Token).ConfigureAwait(false);
@@ -210,19 +221,13 @@ public sealed class RespireFairLock
         {
             if (!transferred)
             {
-                // A command whose reply was lost may have acquired; retain bounded lease expiry
-                // as the fallback if this owner-checked cleanup races an uncertain transport.
-                if (acquisitionUncertain)
-                {
-                    lease ??= new RespireLock(_client.Locks, Key, owner,
-                        TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started, TimeProvider.System);
-                    await lease.DisposeUnhookedAsync().ConfigureAwait(false);
-                }
+                // Bound both owner-checked lease release and waiter removal, even when command
+                // timeouts are disabled. Lease/queue expiry remain the fallback on lost replies.
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1));
                 try
                 {
                     using var ignored = await CoordinationCommandHooks.ExecuteAsync(_client, RemoveWaiter,
-                        [Key, FencingCounterKey, QueueKey], [owner.Bytes], cleanup.Token).ConfigureAwait(false);
+                        [Key, FencingCounterKey, QueueKey], [owner.Bytes, acquisitionUncertain ? "release" : "remove"], cleanup.Token).ConfigureAwait(false);
                 }
                 catch (Exception) { }
             }

@@ -37,6 +37,9 @@ fencing-token locks. Arrival order means the order Redis accepts enqueue command
 not mean the order tasks were started on different machines.
 
 ```csharp
+using Respire;
+using Respire.Coordination;
+
 await using var client = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = [new("localhost", 6379)],
@@ -61,20 +64,26 @@ does not make a lock reentrant.
 `waitTimeout` is a fixed server queue lifetime from one millisecond through 24 days. It starts
 when Redis enqueues the waiter, is truncated to whole milliseconds, and does not extend on
 wake-ups. A waiter that misses its deadline receives `TimeoutException` and loses its place.
-Cancellation best-effort removes its queue entry. If a client crashes, the next attempt
-removes expired entries at the head; the queue hash itself expires at its latest waiter
+Cancellation best-effort releases any unreturned lease and removes its queue entry within a
+one-second cleanup budget. If a client crashes, each attempt removes up to 64 expired entries
+at the head, continuing in another script call when needed. Expired entries behind a live head
+remain until they reach the head or are cancelled. The queue hash itself expires at its latest waiter
 deadline when nobody remains to clean it up. Network unavailability can delay a client's
 observation of that expiry.
 
 RESP3 tracking invalidations notify waiters when a lease is released or the queue changes.
 Keep `ClientSideCache.NoLoop` disabled (the default); the fair-lock API rejects it because it
 can suppress same-client release notifications. Tracking prefixes must cover both the lease
-and queue keys, and the client view must not bypass its cache.
+and queue keys, and the client view must not bypass its cache or use replica reads.
 Waiters also wake at the earliest relevant lease or queue deadline, so a missed notification
 does not leave them waiting indefinitely. There is no periodic acquisition polling. A long
 lease renewal can keep the lock held beyond a waiter's deadline; choose the timeout to suit
 the expected contention. A command whose outcome is uncertain may leave an unreturned lease
 until its duration expires.
+
+Every queue mutation can wake all waiters because they track the same hash. A burst of N
+contenders can therefore cause O(N²) acquisition attempts; keep contention modest and measure
+your workload before using one lock for a large fan-in.
 
 Each successful acquisition gets a new fencing token; failed or uncertain commands may consume
 tokens too. Renewal preserves the token, and stale owners cannot release their replacements.
