@@ -102,6 +102,11 @@ only NaN samples are retained. This option requires Redis 8.10 and cannot be com
 with `GroupBy`; single-series ranges reject it before dispatch.
 
 ```csharp
+using Respire;
+using Respire.TimeSeries;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+var timeSeries = client.TimeSeries;
 var nonempty = await timeSeries.MultiRangeAsync(new(0, 1_000),
     new RespireTimeSeriesRangeOptions { Filters = ["sensor=temperature"], ExcludeEmpty = true });
 ```
