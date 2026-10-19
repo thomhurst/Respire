@@ -106,6 +106,41 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task ExplicitModelUsesItsOwnDimensionsAndCacheScope(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator { AlternateDimensions = 3 };
+        using var cache = Build(provider, redis);
+        var options = new EmbeddingGenerationOptions { ModelId = "other" };
+        (await cache.GenerateAsync(["same"], options))[0].Vector.Length.Should().Be(3);
+        (await cache.GenerateAsync(["same"], options))[0].Vector.Length.Should().Be(3);
+        // Metadata for the default model must not change the alternate model's key.
+        provider.DefaultDimensions = 4;
+        (await cache.GenerateAsync(["same"], options))[0].Vector.Length.Should().Be(3);
+        provider.Batches.Should().ContainSingle();
+        (await cache.GenerateAsync(["same"], new() { ModelId = "other", Dimensions = 5 }))[0].Vector.Length.Should().Be(5);
+        provider.Batches.Should().HaveCount(2);
+        provider.WrongDimensions = true;
+        Func<Task> generate = () => cache.GenerateAsync(["invalid"], new() { ModelId = "other", Dimensions = 5 });
+        await generate.Should().ThrowAsync<InvalidOperationException>().WithMessage("*dimensions*");
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task ExplicitDefaultModelRetainsDefaultDimensionValidation(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator { WrongDimensions = true };
+        using var cache = Build(provider, redis);
+        Func<Task> generate = () => cache.GenerateAsync(["invalid"], new() { ModelId = provider.Model });
+        await generate.Should().ThrowAsync<InvalidOperationException>().WithMessage("*dimensions*");
+        (await Keys(redis)).Should().BeEmpty();
+        provider.WrongDimensions = false;
+        await cache.GenerateAsync(["same"]);
+        await cache.GenerateAsync(["same"], new() { ModelId = provider.Model });
+        provider.Batches.Should().HaveCount(2);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task DefaultDimensionsValidateTheWholeProviderBatch(int protocol)
     {
         await using var redis = await Connect(protocol);
@@ -313,6 +348,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         public bool Empty { get; set; }
         public bool WrongDimensions { get; set; }
         public int? DefaultDimensions { get; set; } = 2;
+        public int AlternateDimensions { get; set; } = 2;
         public bool Disposed { get; private set; }
         public Exception? Error { get; set; }
         public AdditionalPropertiesDictionary? Properties { get; set; }
@@ -329,7 +365,8 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
             LastOptions = options;
             if (BeforeReturn is { } before) await before();
             return new(Empty ? [] : inputs.Select(input => new Embedding<float>(
-                Enumerable.Repeat((float)input.Length, WrongDimensions ? 1 : options?.Dimensions ?? 2).ToArray())
+                Enumerable.Repeat((float)input.Length, WrongDimensions ? 1 : options?.Dimensions
+                    ?? (options?.ModelId is { } model && model != Model ? AlternateDimensions : 2)).ToArray())
             {
                 ModelId = options?.ModelId ?? Model,
                 CreatedAt = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.FromHours(2)),

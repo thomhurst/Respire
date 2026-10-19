@@ -32,8 +32,11 @@ internal sealed class RespireCachingEmbeddingGenerator(
             return await InnerGenerator.GenerateAsync(inputs, options, cancellationToken).ConfigureAwait(false);
 
         var metadata = InnerGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
-        var effectiveDimensions = options?.Dimensions ?? metadata?.DefaultModelDimensions;
-        var scope = GetScope(options, metadata);
+        // Default dimensions describe only the default model, not an explicitly selected alternative.
+        var usesDefaultModel = options?.ModelId is null
+            || string.Equals(options.ModelId, metadata?.DefaultModelId, StringComparison.Ordinal);
+        var effectiveDimensions = options?.Dimensions ?? (usesDefaultModel ? metadata?.DefaultModelDimensions : null);
+        var scope = GetScope(options, metadata, effectiveDimensions);
         var unique = inputs.Distinct(StringComparer.Ordinal).ToArray();
         var keys = unique.ToDictionary(input => input,
             input => (RespireKey)(scope + HashInput(input)), StringComparer.Ordinal);
@@ -105,7 +108,7 @@ internal sealed class RespireCachingEmbeddingGenerator(
         };
     }
 
-    private string GetScope(EmbeddingGenerationOptions? options, EmbeddingGeneratorMetadata? metadata)
+    private string GetScope(EmbeddingGenerationOptions? options, EmbeddingGeneratorMetadata? metadata, int? effectiveDimensions)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -115,7 +118,7 @@ internal sealed class RespireCachingEmbeddingGenerator(
             writer.WriteStringValue(metadata?.ProviderName);
             writer.WriteStringValue(metadata?.ProviderUri?.ToString());
             writer.WriteStringValue(options?.ModelId ?? metadata?.DefaultModelId);
-            writer.WriteStringValue((options?.Dimensions ?? metadata?.DefaultModelDimensions)?.ToString(CultureInfo.InvariantCulture));
+            writer.WriteStringValue(effectiveDimensions?.ToString(CultureInfo.InvariantCulture));
             writer.WriteEndArray();
         }
         return "respire:embedding:v1:" + Hash(stream.ToArray()) + ":";
