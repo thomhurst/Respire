@@ -11,6 +11,7 @@
       "tests/Respire.Idempotency.Tests/Respire.Idempotency.Tests.csproj",
       "tests/Respire.RateLimiting.Tests/Respire.RateLimiting.Tests.csproj",
       "tests/Respire.Azure.Tests/Respire.Azure.Tests.csproj",
+      "tests/Respire.Gcp.Tests/Respire.Gcp.Tests.csproj",
       "tests/Respire.DataProtection.Tests/Respire.DataProtection.Tests.csproj",
       "tests/Respire.Caching.Tests/Respire.Caching.Tests.csproj",
       "tests/Respire.Caching.Hybrid.Tests/Respire.Caching.Hybrid.Tests.csproj",
