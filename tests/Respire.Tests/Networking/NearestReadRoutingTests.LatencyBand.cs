@@ -10,6 +10,65 @@ namespace Respire.Tests.Networking;
 public partial class NearestReadRoutingTests
 {
     [Test]
+    [Arguments(RespireReadFrom.Replica, false)]
+    [Arguments(RespireReadFrom.Replica, true)]
+    [Arguments(RespireReadFrom.Nearest, false)]
+    [Arguments(RespireReadFrom.Nearest, true)]
+    [Arguments(RespireReadFrom.AzAffinity, false)]
+    [Arguments(RespireReadFrom.AzAffinity, true)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true)]
+    public async Task BandRejectsReplicationLinkChangesAfterSampling(RespireReadFrom policy, bool changeSelected)
+    {
+        await using var primary = BandServer("primary", "remote");
+        await using var first = BandServer("replica", "local");
+        await using var second = BandServer("replica", "local");
+        await using var third = BandServer("replica", "local");
+        var replicas = new[] { first, second, third }.OrderBy(server => server.Port).ToArray();
+        var changedReplica = replicas[changeSelected ? 1 : 0];
+        var remaining = replicas[changeSelected ? 0 : 1];
+        var trigger = replicas[2];
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replicas) with
+        {
+            ReplicaLatencyTolerance = TimeSpan.Zero, ClientAvailabilityZone = "local",
+        });
+        var router = client.Core.ReadRouter;
+        var changed = false;
+        var sampled = new List<int>();
+        router.NearestLatency = new ReadLatencySampler<RespireConnection>(async (connection, token) =>
+        {
+            sampled.Add(connection.Port);
+            if (connection.Port != trigger.Port) return connection.Port == primary.Port ? 1_000L : 10L;
+            // Both fast replicas already supplied samples. Revalidate one through ROLE while
+            // this later probe is pending, as a concurrent reader can do on the same entry.
+            await Task.Yield();
+            var original = changedReplica.ReplyOverride!;
+            changedReplica.ReplyOverride = (id, command) => command == "ROLE"
+                ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$7\r\nconnect\r\n:0\r\n"u8.ToArray()
+                : original(id, command);
+            var entries = (System.Collections.Concurrent.ConcurrentDictionary<RespireEndpoint, ReadEndpointRouter.Entry>)
+                typeof(ReadEndpointRouter).GetField("_entries",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(router)!;
+            var entry = entries[new("127.0.0.1", changedReplica.Port)];
+            var interval = router.RoleRevalidationInterval;
+            router.RoleRevalidationInterval = TimeSpan.Zero;
+            try { await entry.GetConnectionAsync(token); }
+            finally { router.RoleRevalidationInterval = interval; }
+            changed = entry.IsReplicationLinkDown;
+            return 100L;
+        }, () => 0);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var selected = await router.SelectAsync(policy, deadline.Token, default);
+        await Assert.That(changed).IsTrue();
+        await Assert.That(sampled.Where(port => port != primary.Port).Take(3)
+            .SequenceEqual(replicas.Select(server => server.Port))).IsTrue();
+        await Assert.That(selected.Connection.Port).IsEqualTo(remaining.Port);
+        var snapshot = client.GetReadRoutingSnapshot()!;
+        await Assert.That(snapshot.ReadFrom).IsEqualTo(policy);
+        await Assert.That(snapshot.EligibleEndpoints.Single().Port).IsEqualTo(remaining.Port);
+    }
+
+    [Test]
     [Arguments(false, RespireReadFrom.PrimaryPreferred)]
     [Arguments(true, RespireReadFrom.PrimaryPreferred)]
     [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary)]

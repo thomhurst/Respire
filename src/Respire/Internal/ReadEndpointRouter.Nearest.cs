@@ -130,10 +130,16 @@ internal sealed partial class ReadEndpointRouter
             if (best.TryGet(out var selected))
             {
                 // An earlier sample can become stale while a later probe awaits. Retry the
-                // current topology if any published band member is no longer eligible.
+                // current topology if any published band member is no longer eligible or
+                // its replication link / zone no longer belongs to the sampled priority.
                 if (IsCurrentNearestSelection(selected) && (core.Options.ReplicaLatencyTolerance is null
-                    || best.AllBandCandidatesMatch(this, static (candidate, router) => router.IsCurrentNearestSelection(candidate)
-                        && (candidate.Replica is not { } replica || ContainsEndpoint(Volatile.Read(ref router._replicas), replica.Endpoint)))))
+                    || best.AllBandCandidatesMatch((router: this, readFrom, preferredZone, priority: best.SelectedPriority),
+                        static (candidate, state) => state.router.IsCurrentNearestSelection(candidate)
+                            && (candidate.Replica is not { } replica
+                                || ContainsEndpoint(Volatile.Read(ref state.router._replicas), replica.Endpoint))
+                            && ReadFallbackPolicy.LatencyPriority(state.readFrom, candidate.Replica is null,
+                                ReadFallbackPolicy.IsSameZone(candidate.Connection, state.preferredZone),
+                                candidate.Replica?.IsReplicationLinkDown != true) == state.priority)))
                 {
                     if (core.Options.ReplicaLatencyTolerance is not null)
                     {

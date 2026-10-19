@@ -141,6 +141,7 @@ internal struct NearestReadSelection<T>
     private readonly record struct BandSample(T Candidate, long Latency, bool Linked, int Order, int Priority);
     internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
     internal readonly bool HasPreferredCandidate => _hasValue && _priority == 0;
+    internal readonly int SelectedPriority => _priority;
 
     internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true, int priority = 0)
     {
