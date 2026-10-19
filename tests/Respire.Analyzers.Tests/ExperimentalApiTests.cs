@@ -43,7 +43,7 @@ public class ExperimentalApiTests
             await Assert.That(errors.Length).IsGreaterThan(0).Because($"Expected {id} for {framework}: {code}");
             await Assert.That(errors.All(d => d.Id == id)).IsTrue().Because(string.Join("\n", errors.Select(d => d.ToString())));
             await Assert.That(errors.All(d => d.Descriptor.HelpLinkUri ==
-                $"https://thomhurst.github.io/Respire/docs/diagnostics/{id}")).IsTrue();
+                $"https://respire.tomlonghurst.dev/docs/diagnostics/{id}")).IsTrue();
 
             var optedIn = Compile(references, code, id);
             await Assert.That(optedIn.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse()

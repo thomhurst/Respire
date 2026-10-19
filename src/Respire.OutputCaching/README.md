@@ -28,4 +28,4 @@ app.Run();
 
 Use this in an ASP.NET Core application. The store reuses the registered client.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/output-caching) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/output-caching) for configuration, requirements, and further examples.

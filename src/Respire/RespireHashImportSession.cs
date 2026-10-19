@@ -14,7 +14,7 @@ namespace Respire;
 /// Cluster sessions accept only keys in the routing key's effective slot.
 /// Disposal closes the connection without waiting for an in-flight operation; that operation fails without replay.
 /// </remarks>
-[Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+[Experimental("RSP0004", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
 public sealed class RespireHashImportSession : IAsyncDisposable
 {
     // Connection-local names are not routing keys. Catalog verbs default to argument zero.

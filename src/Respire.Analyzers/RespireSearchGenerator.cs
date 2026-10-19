@@ -15,7 +15,7 @@ public sealed class RespireSearchGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor InvalidSchema = new(
         DiagnosticIds.InvalidGeneratedSearch, "Unsupported Search schema", "{0}", DiagnosticIds.Category,
         DiagnosticSeverity.Error, isEnabledByDefault: true,
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/guides/generated-search-schemas");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/guides/generated-search-schemas");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {

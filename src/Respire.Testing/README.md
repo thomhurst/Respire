@@ -22,4 +22,4 @@ Console.WriteLine(await client.GetStringAsync("greeting"));
 
 Keep this package and Respire at the same version. The fake supports a documented subset of commands; use a real server for compatibility tests.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/in-memory-testing) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/in-memory-testing) for configuration, requirements, and further examples.

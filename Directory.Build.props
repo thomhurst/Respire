@@ -116,7 +116,7 @@
     <Company>Respire</Company>
     <Product>Respire</Product>
     <Copyright>Copyright (c) 2026 Tom Hurst</Copyright>
-    <PackageProjectUrl>https://thomhurst.github.io/Respire/</PackageProjectUrl>
+    <PackageProjectUrl>https://respire.tomlonghurst.dev/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/thomhurst/Respire</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

@@ -21,4 +21,4 @@ await json.SetJsonAsync("customer:42", """{"name":"Ada"}""");
 
 Requires Redis JSON support on the server. See the guide for typed reads and writes using source-generated JSON metadata.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/json) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/json) for configuration, requirements, and further examples.

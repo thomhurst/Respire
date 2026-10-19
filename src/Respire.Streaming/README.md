@@ -3,11 +3,11 @@
 Hosted Redis stream consumers with scoped handlers, bounded concurrency, recovery, and explicit acknowledgements.
 
 For caller-driven message processing without hosted handlers, use
-[`RespireReliableQueue<T>`](https://thomhurst.github.io/Respire/docs/guides/reliable-queues)
+[`RespireReliableQueue<T>`](https://respire.tomlonghurst.dev/docs/guides/reliable-queues)
 with visibility timeouts, ACK/NACK, delivery limits, dead letters and optional send deduplication.
 
 For durable fanout, use
-[`RespireReliableTopic<T>`](https://thomhurst.github.io/Respire/docs/guides/reliable-topics).
+[`RespireReliableTopic<T>`](https://respire.tomlonghurst.dev/docs/guides/reliable-topics).
 Each named subscription receives every retained publication, with competing consumers,
 ACK/NACK, independent dead letters, retention bounds and replay by ID or timestamp.
 
@@ -50,4 +50,4 @@ public sealed class OrderHandler : IRespireStreamHandler<RespireStreamEntry>
 
 Handlers must be idempotent: recovery and lost acknowledgements can deliver an entry more than once. Return Ack only after completing the application operation.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/stream-workers) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/stream-workers) for configuration, requirements, and further examples.

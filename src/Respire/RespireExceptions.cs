@@ -311,7 +311,7 @@ public sealed class RespireTimeoutException : RespireException
 
     private RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
         RespireTimeoutDiagnostics diagnostics, string message)
-        : base(message + " See https://thomhurst.github.io/Respire/docs/guides/timeouts for timeout troubleshooting.", innerException!)
+        : base(message + " See https://respire.tomlonghurst.dev/docs/guides/timeouts for timeout troubleshooting.", innerException!)
     {
         CommandName = commandName;
         Timeout = timeout;

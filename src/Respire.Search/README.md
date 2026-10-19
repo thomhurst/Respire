@@ -28,4 +28,4 @@ var results = await search.SearchAsync("books", new RespireSearchQuery(
 
 Requires a server with Redis Search support. Run index creation once during setup; installing this package does not enable server modules.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/search) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/search) for configuration, requirements, and further examples.

@@ -17,7 +17,7 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
         "Use 'await' instead of synchronously waiting for a Respire operation",
         DiagnosticIds.Category, DiagnosticSeverity.Warning, isEnabledByDefault: true,
         description: "Respire uses asynchronous I/O. Blocking on its tasks can cause thread pool starvation or deadlocks.",
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/guides/async-only");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/guides/async-only");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
 

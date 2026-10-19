@@ -13,4 +13,4 @@ Reads consume the input span directly. Mark your models [MemoryPackable] and par
 Generated formatters are required for trimming/AOT. Reflection-based fallback and runtime-Type dispatch are not guaranteed AOT-safe. The adapter retains IRespireSerializer's trimming/dynamic-code warnings; validate your concrete model graph in a published application.
 
 Wire formats are not interchangeable with JSON or other adapters. Use a separate key namespace or migrate stored data when changing serializers.
-See the [serialization guide](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization).
+See the [serialization guide](https://respire.tomlonghurst.dev/docs/fundamentals/values-and-serialization).

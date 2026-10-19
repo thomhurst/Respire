@@ -171,7 +171,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         => Keys.Expire(key, expiry, when);
 
     /// <inheritdoc cref="IRespireCommandQueue.Execute"/>
-    [Experimental("RSP0005", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+    [Experimental("RSP0005", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     public RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args)
         => DeferredRawCommands.Enqueue(this, command, args);
 

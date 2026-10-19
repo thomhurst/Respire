@@ -26,4 +26,4 @@ var greeting = await cache.GetOrCreateAsync(
 
 L1 coherence is opt-in; see the guide for tracking, invalidation, and supported configurations.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/caching) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/caching) for configuration, requirements, and further examples.

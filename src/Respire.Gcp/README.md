@@ -17,4 +17,4 @@ var provider = new RespireMemorystoreCredentialProvider(credential);
 Set `RespireOptions.CredentialProvider` to this provider. Enable TLS and trust the instance's server CA.
 Google caches and refreshes access tokens; Respire re-authenticates live connections before their actual expiry.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/google-cloud-memorystore) for IAM roles, cluster configuration, TLS, and verification.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/google-cloud-memorystore) for IAM roles, cluster configuration, TLS, and verification.

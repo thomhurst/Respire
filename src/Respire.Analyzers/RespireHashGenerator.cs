@@ -12,7 +12,7 @@ public sealed class RespireHashGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor InvalidModel = new(
         DiagnosticIds.InvalidGeneratedHash, "Unsupported hash model", "{0}", DiagnosticIds.Category,
         DiagnosticSeverity.Error, isEnabledByDefault: true,
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/guides/generated-hash-codecs");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/guides/generated-hash-codecs");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {

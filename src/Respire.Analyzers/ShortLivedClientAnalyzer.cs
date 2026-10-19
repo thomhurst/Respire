@@ -16,7 +16,7 @@ public sealed class ShortLivedClientAnalyzer : DiagnosticAnalyzer
         "Reuse a shared RespireClient instead of creating one for each operation",
         DiagnosticIds.Category, DiagnosticSeverity.Warning, isEnabledByDefault: true,
         description: "RespireClient multiplexes connections and should normally live for the application lifetime.",
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/diagnostics/RESP010");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/diagnostics/RESP010");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
 

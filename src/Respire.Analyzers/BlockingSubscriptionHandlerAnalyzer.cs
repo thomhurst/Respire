@@ -16,7 +16,7 @@ public sealed class BlockingSubscriptionHandlerAnalyzer : DiagnosticAnalyzer
         "'{0}' blocks subscription processing; use asynchronous work or hand it off to a worker",
         DiagnosticIds.Category, DiagnosticSeverity.Warning, isEnabledByDefault: true,
         description: "Blocking subscription consumers delays messages; blocking DeliveryGap handlers stalls the receive path.",
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/diagnostics/RESP012");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/diagnostics/RESP012");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
 

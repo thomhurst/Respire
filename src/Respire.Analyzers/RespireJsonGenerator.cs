@@ -13,7 +13,7 @@ public sealed class RespireJsonGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor InvalidModel = new(
         DiagnosticIds.InvalidGeneratedJson, "Unsupported JSON model", "{0}", DiagnosticIds.Category,
         DiagnosticSeverity.Error, isEnabledByDefault: true,
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/guides/generated-json-mappers");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/guides/generated-json-mappers");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {

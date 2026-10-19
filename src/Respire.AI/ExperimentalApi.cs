@@ -1,3 +1,3 @@
 using System.Diagnostics.CodeAnalysis;
 
-[assembly: Experimental("RSP0002", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+[assembly: Experimental("RSP0002", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]

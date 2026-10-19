@@ -29,5 +29,5 @@ streams, failover retry loops, or watched-transaction retry helpers without sepa
 establishing replay safety. Pass the callback token to commands. The outer pipeline
 does not use Respire's per-command retry categories or transport write evidence.
 
-See the [resilience guide](https://thomhurst.github.io/Respire/docs/guides/external-resilience)
+See the [resilience guide](https://respire.tomlonghurst.dev/docs/guides/external-resilience)
 for timeout budgets, circuit breaker ownership, telemetry, and Microsoft DI integration.

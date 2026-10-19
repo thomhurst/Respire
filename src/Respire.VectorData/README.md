@@ -22,4 +22,4 @@ await foreach (var collection in store.ListCollectionNamesAsync())
 
 Requires standalone Redis Query Engine; Cluster is unsupported. To create and query typed collections, register an explicit hash or JSON mapper as shown in the guide. The store leaves the supplied client caller-owned.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/vector-data) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/vector-data) for configuration, requirements, and further examples.

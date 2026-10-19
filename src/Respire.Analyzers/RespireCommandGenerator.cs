@@ -14,7 +14,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor InvalidDeclaration = new(
         DiagnosticIds.InvalidGeneratedCommand, "Unsupported generated command declaration", "{0}",
         DiagnosticIds.Category, DiagnosticSeverity.Error, isEnabledByDefault: true,
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/guides/generated-commands");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/guides/generated-commands");
 
     private static readonly SymbolDisplayFormat TypeFormat = SymbolDisplayFormat.FullyQualifiedFormat
         .WithMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers

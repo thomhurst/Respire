@@ -13,4 +13,4 @@ Reads consume the input span directly. Root null values are rejected because pro
 The default protobuf-net runtime model and runtime-Type dispatch are not a NativeAOT guarantee. Preserve contract metadata when trimming; use System.Text.Json with a generated context if you require Respire's supported AOT path.
 
 Wire formats are not interchangeable with JSON or other adapters. Use a separate key namespace or migrate stored data when changing serializers.
-See the [serialization guide](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization).
+See the [serialization guide](https://respire.tomlonghurst.dev/docs/fundamentals/values-and-serialization).

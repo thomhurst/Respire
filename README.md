@@ -5,10 +5,10 @@ of Redis are one call each**
 
 Works with Redis, Valkey, KeyDB, and other RESP-compatible servers.
 
-[Documentation](https://thomhurst.github.io/Respire/) ·
-[Getting started](https://thomhurst.github.io/Respire/docs/getting-started) ·
-[Benchmarks](https://thomhurst.github.io/Respire/docs/benchmarks) ·
-[Coming from StackExchange.Redis?](https://thomhurst.github.io/Respire/docs/stackexchange-redis)
+[Documentation](https://respire.tomlonghurst.dev/) ·
+[Getting started](https://respire.tomlonghurst.dev/docs/getting-started) ·
+[Benchmarks](https://respire.tomlonghurst.dev/docs/benchmarks) ·
+[Coming from StackExchange.Redis?](https://respire.tomlonghurst.dev/docs/stackexchange-redis)
 
 ```bash
 dotnet add package Respire
@@ -24,9 +24,9 @@ User? user = await redis.GetAsync<User>("user:1");
 That is the whole setup. No multiplexer to configure, no `RedisValue` to unwrap.
 
 > The public API may change before the first supported major release, **2.0.0**. See
-> [release candidates](https://thomhurst.github.io/Respire/docs/getting-started#release-candidates),
-> the [roadmap](https://thomhurst.github.io/Respire/docs/roadmap), and the
-> [experimental API policy](https://thomhurst.github.io/Respire/docs/experimental-apis).
+> [release candidates](https://respire.tomlonghurst.dev/docs/getting-started#release-candidates),
+> the [roadmap](https://respire.tomlonghurst.dev/docs/roadmap), and the
+> [experimental API policy](https://respire.tomlonghurst.dev/docs/experimental-apis).
 
 ## Why Respire?
 
@@ -155,17 +155,17 @@ string? expired = await client.GetStringAsync("session"); // null
 
 | You need | With Respire |
 | --- | --- |
-| [ASP.NET Core registration](https://thomhurst.github.io/Respire/docs/integrations/dependency-injection) | `services.AddRespire(connectionString)` |
-| [`IDistributedCache` and `HybridCache`](https://thomhurst.github.io/Respire/docs/integrations/caching) | `services.AddRespireHybridCache(...)` |
-| [.NET Aspire](https://thomhurst.github.io/Respire/docs/integrations/aspire) | `builder.AddRespireClient("cache")` |
-| [Stream consumer workers](https://thomhurst.github.io/Respire/docs/guides/stream-workers) | `services.AddRespireStreamWorker<THandler>(stream, group)` |
-| [Job queues with retries and scheduling](https://thomhurst.github.io/Respire/docs/guides/job-queues) | `services.AddRespireJobQueue<THandler, TJob>(...)` |
-| [Leader election with fencing tokens](https://thomhurst.github.io/Respire/docs/guides/coordination) | `new RespireLeaderElection(...)` |
-| [Semaphores, read-write locks, latches, Redlock](https://thomhurst.github.io/Respire/docs/guides/coordination) | `redis.Coordination.CreateSemaphore(key, capacity)` |
-| [A blocking work queue](https://thomhurst.github.io/Respire/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
-| [Cluster and Sentinel](https://thomhurst.github.io/Respire/docs/fundamentals/connections) | `?cluster=true` for Cluster, `?serviceName=mymaster` for Sentinel |
-| [OpenTelemetry](https://thomhurst.github.io/Respire/docs/integrations/observability) | Traces and metrics built in |
-| [NativeAOT](https://thomhurst.github.io/Respire/docs/fundamentals/values-and-serialization#nativeaot-and-trimming) | Pass a source-generated `JsonSerializerContext` |
+| [ASP.NET Core registration](https://respire.tomlonghurst.dev/docs/integrations/dependency-injection) | `services.AddRespire(connectionString)` |
+| [`IDistributedCache` and `HybridCache`](https://respire.tomlonghurst.dev/docs/integrations/caching) | `services.AddRespireHybridCache(...)` |
+| [.NET Aspire](https://respire.tomlonghurst.dev/docs/integrations/aspire) | `builder.AddRespireClient("cache")` |
+| [Stream consumer workers](https://respire.tomlonghurst.dev/docs/guides/stream-workers) | `services.AddRespireStreamWorker<THandler>(stream, group)` |
+| [Job queues with retries and scheduling](https://respire.tomlonghurst.dev/docs/guides/job-queues) | `services.AddRespireJobQueue<THandler, TJob>(...)` |
+| [Leader election with fencing tokens](https://respire.tomlonghurst.dev/docs/guides/coordination) | `new RespireLeaderElection(...)` |
+| [Semaphores, read-write locks, latches, Redlock](https://respire.tomlonghurst.dev/docs/guides/coordination) | `redis.Coordination.CreateSemaphore(key, capacity)` |
+| [A blocking work queue](https://respire.tomlonghurst.dev/docs/guides/blocking-queues) | `redis.Lists.LeftPopAsync(key, waitFor: timeout)` |
+| [Cluster and Sentinel](https://respire.tomlonghurst.dev/docs/fundamentals/connections) | `?cluster=true` for Cluster, `?serviceName=mymaster` for Sentinel |
+| [OpenTelemetry](https://respire.tomlonghurst.dev/docs/integrations/observability) | Traces and metrics built in |
+| [NativeAOT](https://respire.tomlonghurst.dev/docs/fundamentals/values-and-serialization#nativeaot-and-trimming) | Pass a source-generated `JsonSerializerContext` |
 
 ## Packages
 
@@ -180,7 +180,7 @@ string? expired = await client.GetStringAsync("session"); // null
 | `Respire.Testing`, `Respire.Testing.Containers` | An in-memory server, or Redis in a container |
 
 Plus SignalR, DataProtection, output caching, health checks, FusionCache, and more:
-see [all packages](https://thomhurst.github.io/Respire/docs/packages).
+see [all packages](https://respire.tomlonghurst.dev/docs/packages).
 
 ## License
 

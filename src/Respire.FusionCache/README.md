@@ -31,4 +31,4 @@ await cache.GetOrSetAsync("product:42", _ => Task.FromResult(42));
 
 Add Respire.Caching and a FusionCache serializer for distributed L2 storage; see the shared-client setup in the guide. Dispose the service provider before the supplied client.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/fusioncache) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/fusioncache) for configuration, requirements, and further examples.

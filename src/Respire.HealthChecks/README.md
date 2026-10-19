@@ -32,4 +32,4 @@ app.Run();
 
 The check opens no connections; a lazy client that has never connected reports unhealthy. Connect or send a bounded PING during startup when initial readiness is required.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/health-checks) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/health-checks) for configuration, requirements, and further examples.

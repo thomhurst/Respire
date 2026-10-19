@@ -26,4 +26,4 @@ var samples = await timeSeries.RangeAsync("sensor:room-1", new(0, timestamp));
 
 Requires a server with Redis time-series support. Create the series once before adding samples.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/timeseries) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/timeseries) for configuration, requirements, and further examples.

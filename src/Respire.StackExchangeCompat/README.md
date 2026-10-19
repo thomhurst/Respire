@@ -23,4 +23,4 @@ await redis.Strings.SetAsync(key.ToRespireKey(), value.ToRespireValue());
 
 This is a compatibility subset. Check the guide before replacing a multiplexer; unsupported members throw NotSupportedException.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/stackexchange-interop) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/stackexchange-interop) for configuration, requirements, and further examples.

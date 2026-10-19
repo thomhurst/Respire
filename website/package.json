@@ -4,7 +4,7 @@
   "description": "Documentation website for Respire.",
   "private": true,
   "license": "MIT",
-  "homepage": "https://thomhurst.github.io/Respire/",
+  "homepage": "https://respire.tomlonghurst.dev/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/thomhurst/Respire.git",

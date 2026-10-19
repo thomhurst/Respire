@@ -8,5 +8,5 @@ Register `AddRespireIdempotency` with a trusted `CallerScope`, add `UseRespireId
 after routing and authorization, and mark finite-response endpoints with
 `WithRespireIdempotency("endpoint-name")`. The registered `IRespireClient` is shared.
 
-[Read the HTTP guide](https://thomhurst.github.io/Respire/docs/integrations/idempotency)
+[Read the HTTP guide](https://respire.tomlonghurst.dev/docs/integrations/idempotency)
 for a minimal API example, buffering limits, response headers, and failure behavior.

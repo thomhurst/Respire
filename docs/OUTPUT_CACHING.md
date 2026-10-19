@@ -2,7 +2,7 @@
 
 How to validate and measure the `Respire.OutputCaching` store. When you rerun the tagging probe,
 update the performance table on the website. The user guide is
-[Output caching](https://thomhurst.github.io/Respire/docs/integrations/output-caching).
+[Output caching](https://respire.tomlonghurst.dev/docs/integrations/output-caching).
 
 ## Validation tests
 

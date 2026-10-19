@@ -4,7 +4,7 @@ Persist ASP.NET Core DataProtection keys in Redis through a shared Respire clien
 
 Use `RespireDataProtectionValueCodec` to opt in to authenticated payload encryption through
 cache codec settings, serializer decoration, or map/job/stream value delegates. Optional
-compression runs before encryption. See the [payload encryption guide](https://thomhurst.github.io/Respire/docs/guides/payload-encryption)
+compression runs before encryption. See the [payload encryption guide](https://respire.tomlonghurst.dev/docs/guides/payload-encryption)
 for feature examples, key rotation, and the metadata that remains plaintext.
 
 ## Install
@@ -35,4 +35,4 @@ await using var provider = services.BuildServiceProvider();
 
 Provision the encryption certificate on every application instance. Keep Redis keys durable and non-evictable; losing the key ring makes existing protected data unreadable.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/data-protection) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/data-protection) for configuration, requirements, and further examples.

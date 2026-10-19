@@ -24,4 +24,4 @@ builder.Services.AddSignalR().AddRespire(options => options.ChannelPrefix = "mya
 
 Use this in an ASP.NET Core application and map your hubs with MapHub<THub>. Servers sharing a backplane must use matching hub names, protocols, and channel prefixes.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/signalr) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/signalr) for configuration, requirements, and further examples.

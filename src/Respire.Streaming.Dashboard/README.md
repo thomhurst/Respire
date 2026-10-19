@@ -20,5 +20,5 @@ Requires ASP.NET Core on .NET 8 or .NET 10 and Redis 7 or later. Dead-letter act
 the envelope written by `Respire.Streaming`. Source and dead-letter keys must resolve to
 different keys in the same Redis Cluster slot, including on standalone servers.
 
-[Read the setup guide](https://thomhurst.github.io/Respire/docs/guides/stream-dashboard)
+[Read the setup guide](https://respire.tomlonghurst.dev/docs/guides/stream-dashboard)
 for configuration, authorization, retry semantics, and operational limits.

@@ -14,7 +14,7 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
         "'{0}' can return an unbounded result; use {1} for large collections",
         DiagnosticIds.Category, DiagnosticSeverity.Warning, isEnabledByDefault: true,
         description: "Whole-collection reads can stall Redis and allocate large replies. Scan or read bounded pages instead.",
-        helpLinkUri: "https://thomhurst.github.io/Respire/docs/diagnostics/RESP011");
+        helpLinkUri: "https://respire.tomlonghurst.dev/docs/diagnostics/RESP011");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
 

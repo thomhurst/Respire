@@ -24,4 +24,4 @@ if (attempt.Acquired)
 
 Pass the fencing token with protected writes; the receiving resource must enforce it. The guide covers failure and lease-expiry semantics.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/coordination) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/coordination) for configuration, requirements, and further examples.

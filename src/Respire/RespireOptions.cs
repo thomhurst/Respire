@@ -227,7 +227,7 @@ public sealed record RespireOptions
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
     /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
-    [Experimental("RSP0003", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+    [Experimental("RSP0003", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     public RespireHedgedReadOptions? HedgedReads { get; init; }
 
     /// <summary>

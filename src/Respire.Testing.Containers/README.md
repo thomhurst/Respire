@@ -22,4 +22,4 @@ Console.WriteLine(await client.GetStringAsync("greeting"));
 
 Requires a local Docker engine running Linux containers. Keep this Testcontainers-based package in test projects; it does not support Native AOT. Dispose clients before the fixture.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/testing-containers) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/testing-containers) for configuration, requirements, and further examples.

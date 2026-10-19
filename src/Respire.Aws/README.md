@@ -28,4 +28,4 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 
 Replace the endpoint, region, cache, and user with your IAM-enabled resource. The AWS identity needs connect permissions. Use RespireMemoryDbIamCredentialProvider for MemoryDB.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/aws-iam-credentials) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/aws-iam-credentials) for configuration, requirements, and further examples.

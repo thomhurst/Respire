@@ -24,4 +24,4 @@ await cache.SetStringAsync("greeting", "hello");
 Console.WriteLine(await cache.GetStringAsync("greeting"));
 ```
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/caching) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/caching) for configuration, requirements, and further examples.

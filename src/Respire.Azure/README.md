@@ -28,4 +28,4 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 
 Grant the identity Redis access and replace the endpoint and identity object ID. RESP3 allows subscriptions to renew credentials on the same socket.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/azure-managed-redis) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/azure-managed-redis) for configuration, requirements, and further examples.

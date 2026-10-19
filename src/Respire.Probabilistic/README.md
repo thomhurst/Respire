@@ -23,4 +23,4 @@ bool maybeSeen = await probabilistic.BloomExistsAsync("seen:users", "user:42");
 
 Requires the corresponding probabilistic commands on the server. Reserve the filter once; a positive membership result can be a false positive.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/probabilistic) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/probabilistic) for configuration, requirements, and further examples.

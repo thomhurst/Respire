@@ -7,19 +7,19 @@ namespace Respire;
 public partial interface IRespireBatchHashCommands
 {
     /// <summary>Queues HIMPORT PREPARE on a hash import session's batch or transaction.</summary>
-    [Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+    [Experimental("RSP0004", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     RespirePending<bool> PrepareImport(RespireValue name, params ReadOnlySpan<RespireValue> fields);
 
     /// <summary>Queues HIMPORT SET on a hash import session's batch or transaction.</summary>
-    [Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+    [Experimental("RSP0004", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     RespirePending<bool> Import(RespireKey key, RespireValue name, params ReadOnlySpan<RespireValue> values);
 
     /// <summary>Queues HIMPORT DISCARD; the pending reports whether the fieldset existed.</summary>
-    [Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+    [Experimental("RSP0004", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     RespirePending<bool> DiscardImport(RespireValue name);
 
     /// <summary>Queues HIMPORT DISCARDALL; the pending reports the number removed.</summary>
-    [Experimental("RSP0004", UrlFormat = "https://thomhurst.github.io/Respire/docs/diagnostics/{0}")]
+    [Experimental("RSP0004", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     RespirePending<long> DiscardAllImports();
 }
 

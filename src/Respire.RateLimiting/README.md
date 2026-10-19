@@ -28,5 +28,5 @@ All application instances using the same Redis key share the limit. Rejections r
 and a `Retry-After` delay rounded up to whole seconds when the lease supplies retry metadata.
 The middleware owns limiter lifetimes; your application owns the Redis client.
 
-See the [ASP.NET Core rate limiting guide](https://thomhurst.github.io/Respire/docs/integrations/rate-limiting)
+See the [ASP.NET Core rate limiting guide](https://respire.tomlonghurst.dev/docs/integrations/rate-limiting)
 for partitioned policies, rejection callbacks, queues, and deployment guidance.

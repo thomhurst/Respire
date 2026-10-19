@@ -7,7 +7,7 @@ streaming and non-streaming calls, and `RespireChatHistoryProvider` for Microsof
 Framework. History supports tool calls and results, atomic concurrent appends, trimming,
 expiry, and clearing; it does not require Redis Search.
 
-[Chat history guide](https://thomhurst.github.io/Respire/docs/guides/chat-history).
+[Chat history guide](https://respire.tomlonghurst.dev/docs/guides/chat-history).
 
 When composing history with tools, register `UseRespireChatHistory` before
 `UseFunctionInvocation` so history wraps the whole tool loop. Reversing this order is
@@ -51,4 +51,4 @@ public static class ChatSetup
 
 Supply your chat provider and embedding generator, and match Dimensions to its output. Requires standalone Redis Query Engine. Set UserId in request AdditionalProperties to isolate users; see the guide for scope, bypass, and cache lifetime behavior.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/semantic-cache) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/semantic-cache) for configuration, requirements, and further examples.

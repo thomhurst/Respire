@@ -30,4 +30,4 @@ await redis.SetAsync("profile", new Dictionary<string, string>
 
 Compression is opt-in and uses Respire framing. Primitive values such as strings and raw bytes bypass the serializer. Configure matching codecs for readers and writers.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/guides/value-codecs) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/guides/value-codecs) for configuration, requirements, and further examples.

@@ -126,9 +126,9 @@ public class PublicApiLifecycleTests
             .Any(feature => feature.FeatureName == CompilerFeatureRequiredAttribute.RequiredMembers);
 
     [Test]
-    [Arguments("RESPIRE001", "https://thomhurst.github.io/Respire/docs/migrations/{0}", true)]
-    [Arguments(null, "https://thomhurst.github.io/Respire/docs/migrations/{0}", false)]
-    [Arguments(" ", "https://thomhurst.github.io/Respire/docs/migrations/{0}", false)]
+    [Arguments("RESPIRE001", "https://respire.tomlonghurst.dev/docs/migrations/{0}", true)]
+    [Arguments(null, "https://respire.tomlonghurst.dev/docs/migrations/{0}", false)]
+    [Arguments(" ", "https://respire.tomlonghurst.dev/docs/migrations/{0}", false)]
     [Arguments("RESPIRE001", null, false)]
     [Arguments("RESPIRE001", "", false)]
     [Arguments("RESPIRE001", "/docs/migrations/{0}", false)]

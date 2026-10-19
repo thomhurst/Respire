@@ -25,4 +25,4 @@ await redis.SetAsync("greeting", "hello");
 
 The service provider owns clients it creates. Reuse the registered client rather than creating one per request.
 
-[Read the guide](https://thomhurst.github.io/Respire/docs/integrations/dependency-injection) for configuration, requirements, and further examples.
+[Read the guide](https://respire.tomlonghurst.dev/docs/integrations/dependency-injection) for configuration, requirements, and further examples.
