@@ -739,7 +739,7 @@ public partial class NearestReadRoutingTests
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         var first = await nearest.GetStringAsync("key");
         var second = await nearest.GetStringAsync("key");
-        await Assert.That(new[] { first, second }).IsEquivalentTo(new[] { "primary", "replica" });
+        await Assert.That(new[] { first, second }).IsEquivalentTo(new string?[] { "primary", "replica" });
     }
 
     [Test]

@@ -105,14 +105,24 @@ internal sealed partial class ClusterRouter
             ? owner.GetConnectionForZone(zone, slot) : primary;
     }
 
-    private async ValueTask<RespireConnection> GetReplicaConnectionAsync(
+    private ValueTask<RespireConnection> GetReplicaConnectionAsync(
         int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
         RespireReadFrom readFrom = RespireReadFrom.Replica, HashSet<RespireConnectionMultiplexer>? excluded = null,
         RespireReadFrom? snapshotReadFrom = null)
     {
-        if (_options.ReplicaLatencyTolerance is not null)
-            return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
-                previousFailure: lastError, excluded: excluded, readFrom: readFrom, snapshotReadFrom: snapshotReadFrom).ConfigureAwait(false);
+        // Dispatch before entering either state machine so opt-in sampling does not enlarge
+        // the default route's state or add another await to a completed replica selection.
+        return _options.ReplicaLatencyTolerance is not null
+            ? GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
+                previousFailure: lastError, excluded: excluded, readFrom: readFrom, snapshotReadFrom: snapshotReadFrom)
+            : GetReplicaConnectionWithoutLatencyBandAsync(slot, cancellationToken, lastError, discovery, observation, readFrom, excluded);
+    }
+
+    private async ValueTask<RespireConnection> GetReplicaConnectionWithoutLatencyBandAsync(
+        int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery,
+        RespireTelemetry.ErrorObservation observation, RespireReadFrom readFrom,
+        HashSet<RespireConnectionMultiplexer>? excluded)
+    {
         var routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
 
         var attempted = 0;
@@ -150,25 +160,39 @@ internal sealed partial class ClusterRouter
             : new RespireConnectionException(message, lastError) { HasAmbiguousEndpoint = true };
     }
 
-    private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(
+    private ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaAsync(
         ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
         RespireReadFrom readFrom, HashSet<RespireConnectionMultiplexer>? excluded, RespireTelemetry.ErrorObservation observation,
         RespireConnection? excludedPeer = null)
     {
-        if (_options.ReplicaLatencyTolerance is not null)
+        return _options.ReplicaLatencyTolerance is not null
+            ? TrySelectReplicaWithLatencyBandAsync(routes, slot, cancellationToken, discovery, readFrom, excluded, observation, excludedPeer)
+            : TrySelectReplicaWithoutLatencyBandAsync(routes, slot, cancellationToken, discovery, readFrom, excluded, observation, excludedPeer);
+    }
+
+    private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaWithLatencyBandAsync(
+        ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        RespireReadFrom readFrom, HashSet<RespireConnectionMultiplexer>? excluded, RespireTelemetry.ErrorObservation observation,
+        RespireConnection? excludedPeer)
+    {
+        try
         {
-            try
-            {
-                var selected = await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
-                    excluded: excluded, readFrom: readFrom,
-                    excludedPeer: excludedPeer).ConfigureAwait(false);
-                return (selected, null, routes.Nodes.Length);
-            }
-            catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
-            {
-                return (null, error, routes.Nodes.Length);
-            }
+            var selected = await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
+                excluded: excluded, readFrom: readFrom,
+                excludedPeer: excludedPeer).ConfigureAwait(false);
+            return (selected, null, routes.Nodes.Length);
         }
+        catch (Exception error) when (IsReadCandidateFailure(error, cancellationToken))
+        {
+            return (null, error, routes.Nodes.Length);
+        }
+    }
+
+    private async ValueTask<(RespireConnection? Connection, Exception? LastError, int Attempted)> TrySelectReplicaWithoutLatencyBandAsync(
+        ClusterReplicaSet routes, int slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        RespireReadFrom readFrom, HashSet<RespireConnectionMultiplexer>? excluded, RespireTelemetry.ErrorObservation observation,
+        RespireConnection? excludedPeer)
+    {
         var candidates = new ClusterReplicaSelector(routes);
         var attempted = 0;
         Exception? lastError = null;
