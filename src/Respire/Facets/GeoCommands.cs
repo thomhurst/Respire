@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Commands;
 using Respire.Internal;
@@ -470,7 +471,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         RespireGeoSearchOptions options = default, CancellationToken cancellationToken = default)
     {
         Validate(origin, shape, options);
-        return client.ConvertResponseAsync(
+        var response = client.ConvertResponseAsync(
             "GEOSEARCH",
             new GeoSearchCommand(
                 RespireCommands.Geo.GEOSEARCH.Verb, client.Key(in key), origin, shape, options,
@@ -478,6 +479,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
             cancellationToken,
             options,
             static (RespireGeoSearchOptions state, in RespValue value) => ParseSearch(in value, state));
+        return shape.IsPolygon ? CompletePolygonAsync(response) : response;
     }
 
     public ValueTask<long> SearchStoreAsync(
@@ -487,13 +489,32 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
     {
         Validate(origin, shape, options);
         ValidateSearchStore(options);
-        return client.IntegerAsync(
+        var response = client.IntegerAsync(
             "GEOSEARCHSTORE",
             new GeoSearchCommand(
                 RespireCommands.Geo.GEOSEARCHSTORE.Verb, client.Key(in source), origin, shape, options,
                 client.Key(in destination), storeDistance),
             cancellationToken);
+        return shape.IsPolygon ? CompletePolygonAsync(response) : response;
     }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<T> CompletePolygonAsync<T>(ValueTask<T> response)
+    {
+        try { return await response.ConfigureAwait(false); }
+        catch (RespireServerException error) when (error.Message == "ERR syntax error")
+        {
+            throw PolygonError(error);
+        }
+    }
+
+    internal static Exception PolygonError(Exception error)
+        => error is RespireServerException { Message: "ERR syntax error", CommandName: "GEOSEARCH" or "GEOSEARCHSTORE" } server
+            ? new RespireServerException(server.Message + " Check server support for the requested options; BYPOLYGON requires Valkey 9.0+.", server.CommandName)
+                { Endpoint = server.Endpoint }
+            : error;
 
     internal static RespireGeoSearchResult[] ParseSearch(in RespValue reply, RespireGeoSearchOptions options)
     {
@@ -639,6 +660,8 @@ internal readonly struct GeoSearchCommand(
     Verb verb, RespireValue source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
     RespireGeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
 {
+    internal bool IsPolygon => shape.IsPolygon;
+
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
     public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;

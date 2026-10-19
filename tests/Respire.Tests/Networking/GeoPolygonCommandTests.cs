@@ -105,4 +105,70 @@ public class GeoPolygonCommandTests
 
     private static GeoSearchCommand Command(RespireGeoSearchShape shape)
         => new(RespireCommands.Geo.GEOSEARCH.Verb, "places", default, shape, default, null, false);
+
+    [Test]
+    public async Task NonPolygonSyntaxErrorsRemainUnchanged()
+    {
+        await using var server = new FakeRespServer(Enumerable.Repeat("-ERR syntax error\r\n"u8.ToArray(), 6).ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var origin = RespireGeoSearchOrigin.FromCoordinates(0, 0);
+        await Assert.That(async () => await client.Geo.SearchAsync("places", origin, RespireGeoSearchShape.Circle(1)))
+            .Throws<RespireServerException>().WithMessage("ERR syntax error");
+        await Assert.That(async () => await client.Geo.SearchStoreAsync("dest", "places", origin, RespireGeoSearchShape.Box(1, 1)))
+            .Throws<RespireServerException>().WithMessage("ERR syntax error");
+        await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.Geo.GEOSEARCH, ["places", "invalid"]); })
+            .Throws<RespireServerException>().WithMessage("ERR syntax error");
+        await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.Geo.GEOSEARCHSTORE, ["dest", "places", "invalid"]); })
+            .Throws<RespireServerException>().WithMessage("ERR syntax error");
+        using var batch = client.CreateBatch();
+        var search = batch.Geo.Search("places", origin, RespireGeoSearchShape.Box(1, 1));
+        var store = batch.Geo.SearchStore("dest", "places", origin, RespireGeoSearchShape.Circle(1));
+        await batch.TryExecuteAsync();
+        await Assert.That(search.Error!.Message).IsEqualTo("ERR syntax error");
+        await Assert.That(store.Error!.Message).IsEqualTo("ERR syntax error");
+    }
+
+    [Test]
+    public async Task PolygonStoreAndBatchSearchSyntaxErrorsKeepHintAndMetadata()
+    {
+        await using var server = new FakeRespServer("-ERR syntax error\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var polygon = RespireGeoSearchShape.Polygon(new(0, 0), new(0, 1), new(1, 0));
+        await Assert.That(async () => await client.Geo.SearchStoreAsync("dest", "places", polygon))
+            .Throws<RespireServerException>().WithMessage("ERR syntax error Check server support for the requested options; BYPOLYGON requires Valkey 9.0+.");
+        using var batch = client.CreateBatch();
+        var pending = batch.Geo.Search("places", polygon);
+        await batch.TryExecuteAsync();
+        var error = (RespireServerException)pending.Error!;
+        await Assert.That(error.Message).Contains("BYPOLYGON requires Valkey 9.0+");
+        await Assert.That(error.Code).IsEqualTo("ERR");
+        await Assert.That(error.CommandName).IsEqualTo("GEOSEARCH");
+        await Assert.That(error.Endpoint).IsNotNull();
+    }
+
+    [Test]
+    public async Task PolygonKeepsInteriorRepeatedVertices()
+    {
+        var polygon = RespireGeoSearchShape.Polygon(new(0, 0), new(0, 1), new(0, 0), new(1, 0), new(0, 0));
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await client.Geo.SearchAsync("places", polygon);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "GEOSEARCH places BYPOLYGON 4 0 0 0 1 0 0 1 0" });
+    }
+
+    [Test]
+    public async Task TransactionEnrichesOnlyPolygonSyntaxErrors()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply,
+            "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
+            "*2\r\n-ERR syntax error\r\n-ERR syntax error\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var transaction = client.CreateTransaction();
+        var polygon = transaction.Geo.Search("places", RespireGeoSearchShape.Polygon(new(0, 0), new(0, 1), new(1, 0)));
+        var circle = transaction.Geo.SearchStore("dest", "places", RespireGeoSearchOrigin.FromCoordinates(0, 0), RespireGeoSearchShape.Circle(1));
+        await transaction.CommitAsync();
+        await Assert.That(polygon.Error!.Message).Contains("BYPOLYGON requires Valkey 9.0+");
+        await Assert.That(((RespireServerException)polygon.Error).Endpoint).IsNotNull();
+        await Assert.That(circle.Error!.Message).IsEqualTo("ERR syntax error");
+    }
 }

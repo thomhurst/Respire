@@ -1125,7 +1125,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         public override bool? IsCursorContinuation => command.ReadKind == ReadCommandKind.CursorRead && Operation != "ARSCAN"
             ? CursorCommandMetadata.IsCursorContinuation(in command) : null;
 
-        public override void Fail(Exception error) => pending.Fail(error);
+        public override void Fail(Exception error)
+            => pending.Fail(command is GeoSearchCommand { IsPolygon: true } ? GeoCommands.PolygonError(error) : error);
         public override bool ReportError() => pending.ReportError();
         public override void AllowErrorInspection() => pending.AllowErrorInspection();
         public override RespireTelemetry.ErrorObservation Observation => pending.Observation;
@@ -1191,7 +1192,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             catch (Exception ex)
             {
                 if (SnapshotState is not null || SnapshotError is not null) CaptureFailure(ex);
-                else pending.Fail(ex);
+                else Fail(ex);
                 return ex;
             }
 
@@ -1224,7 +1225,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
             catch (Exception ex)
             {
-                pending.Fail(ex);
+                Fail(ex);
                 return Task.FromResult<Exception?>(ex);
             }
         }
@@ -1293,7 +1294,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
             catch (Exception ex)
             {
-                pending.Fail(ex);
+                Fail(ex);
                 return ex;
             }
         }
@@ -1305,7 +1306,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 if (value.IsError)
                 {
                     var error = ResponseReader.ServerError(in value, Operation);
-                    pending.Fail(error);
+                    Fail(error);
                     return error;
                 }
 
@@ -1317,7 +1318,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 catch (Exception ex)
                 {
                     // Conversion failed after Redis completed successfully; not a DB error.
-                    pending.Fail(ex);
+                    Fail(ex);
                     return ex;
                 }
             }

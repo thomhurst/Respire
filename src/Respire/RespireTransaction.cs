@@ -1063,6 +1063,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         var pending = new RespirePending<T>();
         _ops.Add(ScriptingEngineInfo.IsScriptingCommand(operation)
             ? new ScriptingTxOp<T>(operation, pending, convert, ScriptingEngineInfo.ExpectedEngine(in command, operation))
+            : command is GeoSearchCommand { IsPolygon: true }
+                ? new PolygonTxOp<T>(operation, pending, convert)
             : new TxOp<T>(operation, pending, convert));
         _hasOptOutRead |= _client.ShouldSkipTracking(operation, in command);
         return pending;
@@ -1162,7 +1164,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             if (element.IsError)
             {
                 var error = ResponseReader.ServerError(in element, Operation);
-                pending.Fail(error);
+                Fail(error);
                 return error;
             }
 
@@ -1185,6 +1187,13 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
         public override RespireTelemetry.ErrorObservation Observation => pending.Observation;
 
         public override void Abort() => pending.Abort();
+    }
+
+    // Ordinary queued operations retain their existing object size.
+    private sealed class PolygonTxOp<T>(string operation, RespirePending<T> pending,
+        Func<RespireClient, RespValue, T> convert) : TxOp<T>(operation, pending, convert)
+    {
+        public override void Fail(Exception error) => base.Fail(GeoCommands.PolygonError(error));
     }
 
     // Ordinary queued operations retain their existing object size.

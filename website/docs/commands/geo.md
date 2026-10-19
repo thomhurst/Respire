@@ -68,8 +68,9 @@ Sorting, `Count`, `Any`, and result details work as for the other shapes.
 `SearchStore` counterparts, use the same shape and validation.
 
 Older Valkey and unsupported Redis servers reject `BYPOLYGON` with a
-`RespireServerException`. GEOSEARCH syntax errors include a `BYPOLYGON requires Valkey 9.0+`
+`RespireServerException`. Typed polygon syntax errors include a `BYPOLYGON requires Valkey 9.0+`
 compatibility hint while retaining the server error code, command name, and endpoint.
+Raw commands and circle/box searches retain the server's original error message.
 Other errors, such as `WRONGTYPE` or ACL denials, retain their original message.
 
 ## Commands and results
