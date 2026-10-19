@@ -37,6 +37,7 @@ public sealed partial class RespireClient
             ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database,
                 storedProcedureName: storedProcedureName) : default;
         DedicatedConnectionPool? pool = null;
+        RespireConnection? rentedConnection = null;
         Exception? failure = null;
         try
         {
@@ -66,11 +67,13 @@ public sealed partial class RespireClient
                 {
                     var completedPool = pool;
                     pool = null;
-                    completedPool.Return(connection);
+                    completedPool.Return(rentedConnection!);
+                    rentedConnection = null;
                     await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                 }
                 pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
-                connection = await pool.RentAsync(acquisition.Token).ConfigureAwait(false);
+                rentedConnection = await pool.RentAsync(acquisition.Token).ConfigureAwait(false);
+                connection = rentedConnection;
                 telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                 onConnectionSelected?.Invoke(connection);
                 acquisition.CheckDeadline(operation, _core, connection);
@@ -103,8 +106,7 @@ public sealed partial class RespireClient
             {
                 if (pool is not null)
                 {
-                    // A failed rent leaves the previous hop here; Return ignores foreign connections.
-                    pool.Return(connection);
+                    if (rentedConnection is not null) pool.Return(rentedConnection);
                     await _core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
                 }
             }

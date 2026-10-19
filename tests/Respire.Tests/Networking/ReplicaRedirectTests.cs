@@ -104,6 +104,60 @@ public class ReplicaRedirectTests
     }
 
     [Test]
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    public async Task FireAndForgetSurfacesTerminalRedirect(bool backlog, bool follow, bool loop)
+    {
+        var targetPort = 0;
+        await using var target = new FakeRespServer(20)
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes(loop ? $"-REDIRECT 127.0.0.1:{targetPort}\r\n" : "-REDIRECT bad\r\n"),
+        };
+        targetPort = target.Port;
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes(follow ? $"-REDIRECT 127.0.0.1:{targetPort}\r\n" : "-REDIRECT bad\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { BacklogPolicy = backlog ? RespireBacklogPolicy.Queue : RespireBacklogPolicy.FailFast });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var error = await Assert.That(async () =>
+            await client.ExecuteFireAndForgetAsync("SET", ["key", "value"], timeout.Token))
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo("REDIRECT");
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "SET key value"))
+            .IsEqualTo(loop ? Respire.Internal.ClusterRouter.RedirectLimit : follow ? 1 : 0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FireAndForgetDiscardsOrdinaryErrorsAfterRedirect(bool backlog)
+    {
+        await using var primary = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes("-WRONGTYPE wrong value kind\r\n"),
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { BacklogPolicy = backlog ? RespireBacklogPolicy.Queue : RespireBacklogPolicy.FailFast });
+        await client.ExecuteFireAndForgetAsync("SET", "key", "value");
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT", "SET key value"]);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OrdinaryScriptsFollowRedirectAndNoScriptFallback(bool cache)
@@ -413,8 +467,18 @@ public class ReplicaRedirectTests
     [Arguments(true, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
+    [NotInParallel]
     public async Task TargetHandshakeSharesCommandDeadlineAndCallerCancellation(bool cancelCaller, bool retry)
     {
+        // Compile the redirect and optional retry path before the deliberately short deadline.
+        // Keep this timing assertion separate from CPU-heavy source inventory tests.
+        await using (var warmTarget = new FakeRespServer(FakeRespServer.OkReply, Bytes("$1\r\nx\r\n")))
+        await using (var warmReplica = new FakeRespServer(FakeRespServer.OkReply,
+            Bytes($"-REDIRECT 127.0.0.1:{warmTarget.Port}\r\n")))
+        await using (var warmClient = await RespireClient.ConnectAsync(Options(warmReplica.Port) with
+            { CommandTimeout = TimeSpan.FromSeconds(5), RetryPolicy = retry ? new() : null }))
+            await Assert.That(await warmClient.GetStringAsync("key")).IsEqualTo("x");
+
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var target = new FakeRespServer
         {

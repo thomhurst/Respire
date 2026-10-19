@@ -63,8 +63,11 @@ public sealed partial class RespireClient
             using var response = await SendOnConnectionAsync(operation, connection, command, cancellationToken,
                 storedProcedureName, commandDeadline: deadline, observation: observation).ConfigureAwait(false);
         }
-        catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is not null)
+        catch (Exception error) when (RespireException.GetDefinitiveServerError(error) is { } serverError
+            && (!connection.ReplicaRedirectsEnabled || serverError.Code != "REDIRECT"))
         {
+            // A terminal redirect rejected the mutation before execution; it must reach the caller.
+            // Ordinary command replies retain fire-and-forget's discard semantics.
             RespireTelemetry.RecordError(error, internallyHandled: true, observation.Attempts, observation.Endpoint);
         }
     }
