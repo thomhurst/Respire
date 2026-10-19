@@ -3418,7 +3418,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 if (initialRejection.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                        connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                 }
                 discoveryPending = false;
             }
@@ -3477,7 +3477,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -3501,7 +3501,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     }
                     discoveryPending = false;
 
@@ -4261,7 +4261,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -4277,7 +4277,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     }
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;

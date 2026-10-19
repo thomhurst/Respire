@@ -37,11 +37,23 @@ internal sealed partial class ClusterRouter
     /// <summary>Selects a replacement after retirement, keeping the primary path's retry loop.</summary>
     internal ValueTask<RespireConnection> GetReadReplacementConnectionAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
-        string? preferredZone = null)
+        string? preferredZone = null, RespireReadFrom? snapshotReadFrom = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery, observation, preferredZone);
-        return GetReadConnectionAsync(slot.Value, readFrom, cancellationToken, observation, discovery, preferredZone);
+        return GetReadRetryConnectionAsync(slot.Value, readFrom, cancellationToken, discovery, observation, preferredZone, snapshotReadFrom);
+    }
+
+    private ValueTask<RespireConnection> GetReadRetryConnectionAsync(
+        int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
+        RespireTelemetry.ErrorObservation observation, string? preferredZone, RespireReadFrom? snapshotReadFrom)
+    {
+        // A role switch narrows eligibility, while the diagnostic retains the logical read's policy.
+        if (readFrom == RespireReadFrom.Replica && snapshotReadFrom is not null)
+            return GetReplicaConnectionAsync(slot, cancellationToken, null, discovery, observation,
+                preferredZone is null ? RespireReadFrom.Replica : RespireReadFrom.AzAffinity,
+                snapshotReadFrom: snapshotReadFrom);
+        return GetReadConnectionAsync(slot, readFrom, cancellationToken, observation, discovery, preferredZone);
     }
 
     private async ValueTask<RespireConnection> GetReadConnectionWithPolicyAsync(
@@ -481,7 +493,8 @@ internal sealed partial class ClusterRouter
 
     internal async ValueTask<RespireConnection> SelectReadConnectionAfterRedirectAsync(
         RespireConnection redirected, int? slot, RespireReadFrom readFrom,
-        CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, string? preferredZone = null)
+        CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, string? preferredZone = null,
+        RespireReadFrom? snapshotReadFrom = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is not { } value) return redirected;
         if (!await RefreshTopologyFromAsync(redirected, value, cancellationToken, discovery).ConfigureAwait(false))
@@ -495,6 +508,6 @@ internal sealed partial class ClusterRouter
             return redirected;
         }
 
-        return await GetReadConnectionAsync(value, readFrom, cancellationToken, observation, discovery, preferredZone).ConfigureAwait(false);
+        return await GetReadRetryConnectionAsync(value, readFrom, cancellationToken, discovery, observation, preferredZone, snapshotReadFrom).ConfigureAwait(false);
     }
 }

@@ -17,6 +17,29 @@ namespace Respire.Caching.Tests;
 public class DependencyInjectionOptionsTests
 {
     [Test]
+    public async Task Configuration_InvalidLatencyToleranceIncludesPath()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => RespireConfiguration.Apply(
+            Section(new() { ["ReplicaLatencyTolerance"] = "invalid" }), new RespireOptions()));
+        await Assert.That(error!.Message).Contains("Redis:ReplicaLatencyTolerance");
+    }
+
+    [Test]
+    [Arguments(null, 5)]
+    [Arguments("", null)]
+    [Arguments("00:00:00", 0)]
+    [Arguments("00:00:00.002", 2)]
+    public async Task Configuration_LatencyTolerance_CanClearInheritedValue(string? value, int? expectedMilliseconds)
+    {
+        var values = new Dictionary<string, string?>();
+        if (value is not null) values["ReplicaLatencyTolerance"] = value;
+        var options = RespireConfiguration.Apply(Section(values),
+            new RespireOptions { ReplicaLatencyTolerance = TimeSpan.FromMilliseconds(5) });
+        await Assert.That(options.ReplicaLatencyTolerance).IsEqualTo(
+            expectedMilliseconds is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : (TimeSpan?)null);
+    }
+
+    [Test]
     public async Task Builder_HasEveryPublicOption_WithCoreDefaults_AndForwardsEverySetter()
     {
         var builder = new RespireOptionsBuilder();
