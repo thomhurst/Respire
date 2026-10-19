@@ -21,6 +21,11 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ## Available now
 
+- A [cache-aside API project template](getting-started.md#project-template), packaged
+  as `Respire.Templates` for the next release. Job worker/dashboard and Aspire
+  starters are tracked in [#1936](https://github.com/thomhurst/Respire/issues/1936)
+  and [#1937](https://github.com/thomhurst/Respire/issues/1937).
+
 - [Polygon geo searches](commands/geo.md#polygon-searches-valkey-90) on Valkey 9.0+,
   including search/store, batch and transaction APIs, and client-side vertex validation.
 

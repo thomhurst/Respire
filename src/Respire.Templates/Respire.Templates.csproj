@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks />
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Respire.Templates</PackageId>
+    <Description>Project templates for applications using Respire and Redis.</Description>
+    <PackageType>Template</PackageType>
+    <PackageTags>$(PackageTags);dotnet-new;templates</PackageTags>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeSymbols>false</IncludeSymbols>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <IsAotCompatible>false</IsAotCompatible>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+  </PropertyGroup>
+
+  <!-- Stage content at pack time, including releases packed without rebuilding. Never edit template
+       sources to stamp a release version. The generated app restores that exact release. -->
+  <Target Name="StageRespireTemplates" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_TemplateStage>$(BaseIntermediateOutputPath)templates/$(PackageVersion)/</_TemplateStage>
+    </PropertyGroup>
+    <RemoveDir Directories="$(_TemplateStage)" />
+    <ItemGroup>
+      <_TemplateSource Include="templates/**/*" Exclude="templates/**/bin/**;templates/**/obj/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_TemplateSource)" DestinationFiles="@(_TemplateSource->'$(_TemplateStage)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <ItemGroup>
+      <_TemplateProject Include="$(_TemplateStage)**/*.csproj" />
+    </ItemGroup>
+    <XmlPoke XmlInputPath="%(_TemplateProject.Identity)"
+             Query="/Project/ItemGroup/PackageReference[starts-with(@Include, 'Respire')]/@Version"
+             Value="$(PackageVersion)" />
+    <ItemGroup>
+      <Content Include="$(_TemplateStage)**/*" Pack="true" PackagePath="content/" />
+    </ItemGroup>
+  </Target>
+</Project>
