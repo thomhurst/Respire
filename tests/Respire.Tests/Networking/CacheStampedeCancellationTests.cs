@@ -8,6 +8,61 @@ namespace Respire.Tests.Networking;
 public class CacheStampedeCancellationTests
 {
     [Test]
+    [Arguments("null")]
+    [Arguments("failure")]
+    [Arguments("cancellation")]
+    public async Task StalledReleaseIsBoundedWithoutCommandTimeout(string outcome)
+    {
+        var releaseReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(6, FakeRespServer.OkReply);
+        server.SuppressReply = command =>
+        {
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                || server.ReceivedArguments[^1].Length != 6) return false;
+            releaseReceived.TrySetResult();
+            return true;
+        };
+        server.ReplyOverride = (connection, command) =>
+        {
+            if (command == "CLIENT ID") return Encoding.ASCII.GetBytes($":{connection + 1}\r\n");
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return FakeRespServer.OkReply;
+            return server.ReceivedArguments[^1].Length == 5
+                ? "*4\r\n$-1\r\n:0\r\n:0\r\n$0\r\n\r\n"u8.ToArray()
+                : ":1\r\n"u8.ToArray();
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null, ThreadPoolMonitoring = false,
+        });
+        using var cancellation = new CancellationTokenSource();
+        var failure = new InvalidOperationException("factory failed");
+        var pending = client.GetOrSetAsync<string>("key", new RespireCacheAsideOptions(), token =>
+        {
+            if (outcome == "failure") throw failure;
+            if (outcome == "cancellation")
+            {
+                cancellation.Cancel();
+                token.ThrowIfCancellationRequested();
+            }
+            return ValueTask.FromResult<string?>(null);
+        }, TimeSpan.FromMinutes(1), cancellation.Token).AsTask();
+        await releaseReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        if (outcome == "null")
+            await Assert.That(await pending.WaitAsync(TimeSpan.FromSeconds(10))).IsNull();
+        else if (outcome == "failure")
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(ReferenceEquals(error, failure)).IsTrue();
+        }
+        else
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+                .Throws<OperationCanceledException>();
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

@@ -175,8 +175,11 @@ public sealed partial class RespireClient
     {
         try
         {
+            // CommandTimeout can be disabled. Bound cleanup independently of the caller's
+            // canceled token so a stalled release cannot hide its result or exception.
+            using var cleanup = new CancellationTokenSource(_core.Options.ConnectTimeout);
             using var released = await RunCacheAsideScriptAsync(ProtectedCacheRelease, key, lockKey,
-                [token], CancellationToken.None, observation).ConfigureAwait(false);
+                [token], cleanup.Token, observation).ConfigureAwait(false);
         }
         catch (Exception) { /* Cleanup cannot mask the original failure; PX bounds a failed release. */ }
     }
