@@ -8,6 +8,25 @@ namespace Respire.Pipeline.Tests;
 public class CreateGitHubReleaseModuleTests
 {
     [Test]
+    [Arguments("2.0.0")]
+    [Arguments("2.0.0-rc.1935")]
+    public async Task CreateReleaseBody_InstallsTemplatesWithoutAddingAProjectDependency(string version)
+    {
+        var releaseBody = CreateGitHubReleaseModule.CreateReleaseBody(
+            "## What's Changed",
+            version,
+            new[]
+            {
+                new FileInfo($"Respire.{version}.nupkg"),
+                new FileInfo($"Respire.Templates.{version}.nupkg")
+            });
+
+        await Assert.That(releaseBody).Contains($"dotnet new install Respire.Templates@{version}");
+        await Assert.That(releaseBody).DoesNotContain("dotnet add package Respire.Templates");
+        await Assert.That(releaseBody).Contains($"dotnet add package Respire --version {version}");
+    }
+
+    [Test]
     public async Task CreateReleaseTag_PrefixesVersionWithV()
     {
         await Assert.That(CreateGitHubReleaseModule.CreateReleaseTag("1.2.3")).IsEqualTo("v1.2.3");

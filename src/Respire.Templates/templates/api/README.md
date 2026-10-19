@@ -27,7 +27,9 @@ To export Respire traces and metrics, set `OTEL_EXPORTER_OTLP_ENDPOINT` to your
 collector URL before starting the app. Without it, no exporter is configured.
 Use the standard OpenTelemetry environment variables for exporter authentication
 and protocol settings. A bounded startup PING establishes the connection before
-`/health/ready` probes it.
+`/health/ready` probes it. Startup fails if Redis cannot answer within 30 seconds;
+the app exits rather than serving an unhealthy endpoint. Start Redis before
+`dotnet run`.
 
 Stop the application with Ctrl+C, then remove this project's Redis container:
 

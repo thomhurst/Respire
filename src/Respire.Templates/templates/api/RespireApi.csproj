@@ -8,6 +8,7 @@
     <!-- Pack stamps these with the template package's release version. -->
     <PackageReference Include="Respire.DependencyInjection" Version="0.0.0-template" />
     <PackageReference Include="Respire.HealthChecks" Version="0.0.0-template" />
+    <!-- Maintainers: update these alongside OpenTelemetry in Directory.Packages.props. -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.20.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.0" />
   </ItemGroup>

@@ -14,8 +14,14 @@ Respire targets both `net8.0` and `net10.0`. For an existing .NET 8 app, use a *
 
 For a ready-to-run cache-aside API, install the template package with the **.NET 10 SDK**:
 
+Choose the exact template version from its
+[GitHub release](https://github.com/thomhurst/Respire/releases), including the
+`-rc.N` suffix for a release candidate. Replace `<exact-version>` below before running
+the command. Before the first stable template release, an unversioned install
+cannot select a candidate.
+
 ```bash
-dotnet new install Respire.Templates
+dotnet new install Respire.Templates@<exact-version>
 dotnet new respire-api -n MyCacheApi
 cd MyCacheApi
 docker compose up -d --wait
@@ -33,11 +39,8 @@ The container requires Docker Compose and uses Redis 7. Set
 Stop the app with Ctrl+C and run `docker compose down` to remove the local container.
 The generated README covers configuration and custom HTTP ports.
 
-Templates are shipped with Respire releases. Before the first stable template
-release, install a published candidate with
-`dotnet new install Respire.Templates@<exact-version>` using the version from its
-[GitHub release](https://github.com/thomhurst/Respire/releases). Generated Respire
-package references use that same version. To remove the templates, run
+Templates are shipped with Respire releases. Generated Respire package references
+use that same version. To remove the templates, run
 `dotnet new uninstall Respire.Templates`.
 
 The walkthrough below builds a different example by hand, with typed values,

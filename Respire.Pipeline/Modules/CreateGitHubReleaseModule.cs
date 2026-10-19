@@ -153,7 +153,10 @@ public class CreateGitHubReleaseModule : Module<string>
             ## NuGet packages
 
             ```bash
-            {string.Join(Environment.NewLine, packageIds.Select(packageId => $"dotnet add package {packageId} --version {version}"))}
+            {string.Join(Environment.NewLine, packageIds.Select(packageId =>
+                string.Equals(packageId, "Respire.Templates", StringComparison.OrdinalIgnoreCase)
+                    ? $"dotnet new install {packageId}@{version}"
+                    : $"dotnet add package {packageId} --version {version}"))}
             ```
             """);
     }

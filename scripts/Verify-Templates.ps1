@@ -98,15 +98,16 @@ exit $LASTEXITCODE
     $script:stdout = $script:appProcess.StandardOutput.ReadToEndAsync()
     $script:stderr = $script:appProcess.StandardError.ReadToEndAsync()
     $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    $lastReadinessError = 'No request exception was observed.'
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($script:appProcess.HasExited) { throw "Generated app exited before readiness. Logs: $evidence" }
         try {
             if ((Invoke-WebRequest "$url/health/ready" -TimeoutSec 2).Content.Trim() -eq 'Healthy') { return $url }
         }
-        catch { }
+        catch { $lastReadinessError = $_.Exception.Message }
         Start-Sleep -Milliseconds 100
     }
-    throw "Generated app did not become healthy. Logs: $evidence"
+    throw "Generated app did not become healthy. Last readiness error: $lastReadinessError Logs: $evidence"
 }
 
 try {
