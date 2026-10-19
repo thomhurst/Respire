@@ -70,7 +70,9 @@ public sealed partial class RespireClient
                 acquired = attempt.AsInteger() == 1;
             }
             if (acquired)
-                return await PopulateProtectedCacheAsync(key, lockKey, token, version, factory, expiry,
+                // Publication must replace the pending generation, so a contender that read
+                // the empty marker cannot acquire after another caller publishes its value.
+                return await PopulateProtectedCacheAsync(key, lockKey, token, version.Length == 0 ? token + ":pending" : version, factory, expiry,
                     options, cancellationToken, observation).ConfigureAwait(false);
 
             // A refresh contender can use the value it just read. Missing values never bypass the lease.
@@ -134,7 +136,7 @@ public sealed partial class RespireClient
         }
         finally
         {
-            if (options.DistributedSingleFlight && !published)
+            if (!published)
                 await ReleaseProtectedCacheAsync(key, lockKey, token, observation).ConfigureAwait(false);
         }
     }
@@ -210,8 +212,7 @@ public sealed partial class RespireClient
         RespireKey[] keys = [key, lockKey];
         var tail = BuildPhysicalCacheAsideScriptTail(keys, args);
         var cache = _core.ClientCache;
-        var fence = cache is null || script.IsCacheReadOnly ? default
-            : cache.BeginKeysMutation(ReferenceEquals(script, ProtectedCacheRelease) ? [lockKey] : keys);
+        var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginKeysMutation(keys);
         var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, observation);
         return RespireResult.MaterializeAsync(fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response);
     }
@@ -228,7 +229,7 @@ public sealed partial class RespireClient
     // Audited as non-mutating, but use EVAL so a replica read policy cannot route coordination reads away from the primary.
     private static readonly RespireScript ProtectedCacheRead = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'value', 'duration', 'version', 'stale', 'retained')
-        if not entry[1] then return {false, 0, 0, ''} end
+        if not entry[1] then return {false, 0, 0, entry[3] or ''} end
         local ttl = redis.call('PTTL', KEYS[1]) - tonumber(entry[5] or '0')
         if ttl <= 0 then return {false, 0, 0, entry[3]} end
         return {entry[1], ttl - tonumber(entry[4]), entry[2], entry[3]}
@@ -237,6 +238,10 @@ public sealed partial class RespireClient
     private static readonly RespireScript ProtectedCacheAcquire = RespireScript.Create("""
         if (redis.call('HGET', KEYS[1], 'version') or '') ~= ARGV[1] then return 0 end
         if ARGV[4] == '1' and not redis.call('SET', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3]) then return 0 end
+        if ARGV[1] == '' then
+          redis.call('HSET', KEYS[1], 'version', ARGV[2] .. ':pending')
+          redis.call('PEXPIRE', KEYS[1], ARGV[3])
+        end
         local ttl = redis.call('PTTL', KEYS[1])
         local lease = tonumber(ARGV[3])
         if ttl >= 0 and ttl < lease then
@@ -265,6 +270,9 @@ public sealed partial class RespireClient
         """);
 
     private static readonly RespireScript ProtectedCacheRelease = RespireScript.Create("""
+        if redis.pcall('HGET', KEYS[1], 'version') == ARGV[1] .. ':pending' and redis.call('HEXISTS', KEYS[1], 'value') == 0 then
+          redis.call('DEL', KEYS[1])
+        end
         if redis.call('GET', KEYS[2]) == ARGV[1] then return redis.call('DEL', KEYS[2]) end
         return 0
         """);

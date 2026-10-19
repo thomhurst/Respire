@@ -360,7 +360,11 @@ member explicitly, as they do the existing cache-aside overload.
 Relative expiry begins at publication; absolute expiry uses the Redis clock. Hits do not extend
 freshness. An active refresh may retain the hash's generation until its lease deadline so natural
 expiry cannot reject its publication; this does not extend the period in which readers can use the old
-payload. Explicit deletion or replacement still prevents that refresh from publishing. Each refresh
+payload. Cold fills create a temporary generation marker in the data hash before calling the factory,
+so explicit deletion or replacement also prevents a first fill from publishing. The marker expires
+after `LockTimeout`, including when single-flight is disabled; a slower fill can return its computed
+value without caching it. Null results, failures, and cancellation remove only the caller's own empty
+marker during bounded cleanup. Each refresh
 replaces the payload and its duration atomically. Reads always go to the primary
 through Lua scripts, including hits, so this trades local-cache hit speed for shared coordination.
 Redis ACLs must allow scripting, hash reads/writes (including HINCRBY), SET, DEL, PTTL, PEXPIRE and TIME. The deterministic
