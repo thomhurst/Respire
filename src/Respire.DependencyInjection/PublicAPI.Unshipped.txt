@@ -7,6 +7,12 @@ Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetime.get -> S
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetime.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetimeJitter.get -> System.TimeSpan
 Respire.DependencyInjection.RespireOptionsBuilder.ConnectionMaxLifetimeJitter.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressMap.get -> System.Collections.Generic.IReadOnlyDictionary<Respire.RespireEndpoint, Respire.RespireEndpoint>?
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressMap.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressResolver.get -> System.Func<Respire.RespireEndpoint, Respire.RespireEndpoint>?
+Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressResolver.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.UseMappedHostForTls.get -> bool
+Respire.DependencyInjection.RespireOptionsBuilder.UseMappedHostForTls.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool

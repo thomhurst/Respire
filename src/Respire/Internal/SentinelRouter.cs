@@ -98,11 +98,10 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
                 Generation = null, EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
-            if (options.UseTls)
-                options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
+            options = options.PinToPeer(original.TlsHost);
             // Corrections remain on the original physical peer, even after DNS or Sentinel moves.
-            var pool = new DedicatedConnectionPool(original.NetworkPeerAddress ?? original.Host,
-                original.NetworkPeerPort ?? original.Port, options, core.Logger);
+            var pool = new DedicatedConnectionPool(original.PeerKey.Host,
+                original.PeerKey.Port, options, core.Logger);
             _correctionPools.Add(pool);
             return new(this, pool);
         }
@@ -284,6 +283,11 @@ internal sealed partial class SentinelRouter(ClientCore core) : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation)
     {
         var endpoint = options.PrimaryEndpoint;
+        // Mapping suppresses logical DNS evidence. Reconnect to check the current
+        // destination, even when the old peer still answers ROLE master. Resolve a
+        // callback only during that connection attempt, never as a reuse probe.
+        if (options.NodeAddressResolver is not null || options.NodeAddressMap?.ContainsKey(endpoint) == true)
+            return await ConnectGenerationAsync(options, hint, cancellationToken, observeEstablishmentErrors, observation).ConfigureAwait(false);
         var samePeer = new SentinelAddressEvidence(endpoint, addresses).SingleAddress is { } address
             && current.Multiplexer.AllCurrentPeersMatch(address, endpoint.Port);
         // A stable DNS name is not proof that its established socket is still the owner.
