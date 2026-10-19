@@ -4786,7 +4786,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     try
                     {
                         (pool, connection) = await cluster.RentDedicatedConnectionAsync(
-                            pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
+                            pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource, fallback.Policy),
                             cancellationToken, discovery, observation, preferredZone: preferredZone).ConfigureAwait(false);
                     }
                     catch (Exception error) when (askRedirect is null && fallback.OriginalFailure is not null
@@ -4855,7 +4855,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                             if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                             {
                                 redirectedPool = await cluster.GetReadDedicatedPoolAsync(
-                                        slot, readFrom, cancellationToken, discovery, observation, preferredZone)
+                                        slot, readFrom, cancellationToken, discovery, observation, preferredZone,
+                                        snapshotReadFrom: fallback.Policy)
                                     .ConfigureAwait(false);
                             }
                             acquiringRedirectPool = false;

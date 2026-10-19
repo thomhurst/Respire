@@ -46,14 +46,15 @@ internal sealed partial class ClusterRouter
 
     private ValueTask<RespireConnection> GetReadRetryConnectionAsync(
         int slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation, string? preferredZone, RespireReadFrom? snapshotReadFrom)
+        RespireTelemetry.ErrorObservation observation, string? preferredZone, RespireReadFrom? snapshotReadFrom,
+        HashSet<RespireConnectionMultiplexer>? excluded = null)
     {
         // A role switch narrows eligibility, while the diagnostic retains the logical read's policy.
         if (readFrom == RespireReadFrom.Replica && snapshotReadFrom is not null)
             return GetReplicaConnectionAsync(slot, cancellationToken, null, discovery, observation,
                 preferredZone is null ? RespireReadFrom.Replica : RespireReadFrom.AzAffinity,
-                snapshotReadFrom: snapshotReadFrom);
-        return GetReadConnectionAsync(slot, readFrom, cancellationToken, observation, discovery, preferredZone);
+                excluded: excluded, snapshotReadFrom: snapshotReadFrom);
+        return GetReadConnectionAsync(slot, readFrom, cancellationToken, observation, discovery, preferredZone, excluded);
     }
 
     private async ValueTask<RespireConnection> GetReadConnectionWithPolicyAsync(

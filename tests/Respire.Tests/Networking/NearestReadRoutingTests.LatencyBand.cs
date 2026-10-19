@@ -10,23 +10,29 @@ namespace Respire.Tests.Networking;
 public partial class NearestReadRoutingTests
 {
     [Test]
-    [Arguments(RespireReadFrom.PrimaryPreferred, false)]
-    [Arguments(RespireReadFrom.PrimaryPreferred, true)]
-    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, false)]
-    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, true)]
-    public async Task ClusterBandRoleFallbackThenMovedPreservesPolicy(RespireReadFrom policy, bool streaming)
+    [Arguments(RespireReadFrom.PrimaryPreferred, "typed")]
+    [Arguments(RespireReadFrom.PrimaryPreferred, "streaming")]
+    [Arguments(RespireReadFrom.PrimaryPreferred, "blocking")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, "typed")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, "streaming")]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary, "blocking")]
+    public async Task ClusterBandRoleFallbackThenMovedPreservesPolicy(RespireReadFrom policy, string path)
     {
         await using var primary = BandServer("primary", "local");
         await using var replica = BandServer("replica", "remote");
         var primaryReply = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
             ? SlotReply(primary.Port, 0, 16383, replica.Port)
-            : command.StartsWith("GET ") ? "-LOADING unavailable\r\n"u8.ToArray() : primaryReply(id, command);
+            : command.StartsWith("GET ") || command.StartsWith("XREAD ")
+                ? "-LOADING unavailable\r\n"u8.ToArray() : primaryReply(id, command);
         var replicaReply = replica.ReplyOverride!;
         var replicaReads = 0;
         var slot = ClusterHash.GetSlot("key");
-        replica.ReplyOverride = (id, command) => command.StartsWith("GET ") && Interlocked.Increment(ref replicaReads) == 1
-            ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{primary.Port}\r\n") : replicaReply(id, command);
+        replica.ReplyOverride = (id, command) => command.StartsWith("GET ") || command.StartsWith("XREAD ")
+            ? Interlocked.Increment(ref replicaReads) == 1
+                ? Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{primary.Port}\r\n")
+                : "$7\r\nreplica\r\n"u8.ToArray()
+            : replicaReply(id, command);
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
         {
             UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null,
@@ -35,7 +41,13 @@ public partial class NearestReadRoutingTests
         client.Core.Cluster!.NearestLatency = new((_, _) => ValueTask.FromResult(10L), () => 0);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         string? value;
-        if (streaming)
+        if (path == "blocking")
+        {
+            using var response = await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+                deadline.Token, ["BLOCK", 1, "STREAMS", "key", "0"]);
+            value = response.AsString();
+        }
+        else if (path == "streaming")
         {
             await using var stream = await client.Strings.GetStreamAsync("key", deadline.Token);
             using var reader = new StreamReader(stream!);
@@ -45,6 +57,47 @@ public partial class NearestReadRoutingTests
         await Assert.That(value).IsEqualTo("replica");
         await Assert.That(replicaReads).IsEqualTo(2);
         await Assert.That(client.GetReadRoutingSnapshot()!.ReadFrom).IsEqualTo(policy);
+        await Assert.That(client.GetReadRoutingSnapshot()!.EligibleEndpoints.Single().Port).IsEqualTo(replica.Port);
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.PrimaryPreferred)]
+    [Arguments(RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task ClusterBandDedicatedRetirementPreservesOriginalPolicy(RespireReadFrom policy)
+    {
+        await using var primary = BandServer("primary", "local");
+        await using var replica = BandServer("replica", "local");
+        await using var replacement = BandServer("replica", "local");
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port, replacement.Port) : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
+        {
+            UseCluster = true, ReplicaEndpoints = [], ClusterTopologyRefreshInterval = null,
+            ReadFrom = policy, ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
+        });
+        var router = client.Core.Cluster!;
+        router.NearestLatency = new((connection, _) => ValueTask.FromResult(connection.Port == replica.Port ? 10L : 100L), () => 0);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var fallback = new ReadFallbackPolicy.RoleFallback(policy);
+        await Assert.That(fallback.TrySwitch(new RespireServerException("LOADING unavailable"), onReplica: false)).IsTrue();
+        var pool = await router.GetOtherRoleDedicatedPoolAsync(1, fallback, deadline.Token, null, default);
+        await pool.RetireAsync();
+        // Reselection now has a different eligible pool; returning the same stopped pool
+        // correctly fails rather than looping, so make the replacement the fastest band.
+        router.NearestLatency = new((connection, _) => ValueTask.FromResult(connection.Port == replacement.Port ? 10L : 100L), () => 0);
+        var zone = ReadFallbackPolicy.UsesAvailabilityZone(policy) ? "local" : null;
+        var lease = await router.RentDedicatedConnectionAsync(pool,
+            new ClusterRouter.DedicatedRoute(1, fallback.RecoveryPolicy, SnapshotReadFrom: fallback.Policy),
+            deadline.Token, null, default, preferredZone: zone);
+        try
+        {
+            await Assert.That(lease.Connection.Port).IsEqualTo(replacement.Port);
+            await Assert.That(lease.Pool.IsReadOnly).IsTrue();
+            await Assert.That(client.GetReadRoutingSnapshot()!.ReadFrom).IsEqualTo(policy);
+            await Assert.That(client.GetReadRoutingSnapshot()!.EligibleEndpoints.Single().Port).IsEqualTo(replacement.Port);
+        }
+        finally { lease.Pool.Return(lease.Connection); }
     }
 
     [Test]

@@ -835,12 +835,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<DedicatedConnectionPool> GetReadDedicatedPoolAsync(
         int? slot, RespireReadFrom readFrom, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
-        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null)
+        string? preferredZone = null, HashSet<RespireConnectionMultiplexer>? excluded = null,
+        RespireReadFrom? snapshotReadFrom = null)
     {
         if (readFrom == RespireReadFrom.Primary || slot is null)
             return await GetDedicatedPoolAsync(slot, cancellationToken, discovery, observation).ConfigureAwait(false);
 
-        var connection = await GetReadConnectionAsync(slot, readFrom, cancellationToken, observation, discovery, preferredZone, excluded)
+        var connection = await GetReadRetryConnectionAsync(slot.Value, readFrom, cancellationToken, discovery, observation,
+                preferredZone, snapshotReadFrom, excluded)
             .ConfigureAwait(false);
         return connection.Multiplexer is { } node
             ? GetOrCreateDedicatedPool(node)
@@ -1031,14 +1033,16 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         int? Slot,
         RespireReadFrom ReadFrom = RespireReadFrom.Primary,
         RespireServerException? AskRedirect = null,
-        RespireConnection? RedirectSource = null);
+        RespireConnection? RedirectSource = null,
+        RespireReadFrom? SnapshotReadFrom = null);
 
     private ValueTask<DedicatedConnectionPool> ReselectDedicatedPoolAsync(
         DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery, string? preferredZone,
         HashSet<RespireConnectionMultiplexer>? excluded, RespireTelemetry.ErrorObservation observation)
         => route.AskRedirect is { } ask
             ? GetRedirectDedicatedPoolAsync(ask, route.RedirectSource!, cancellationToken, route.Slot, discovery, observation)
-            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, observation, preferredZone, excluded);
+            : GetReadDedicatedPoolAsync(route.Slot, route.ReadFrom, cancellationToken, discovery, observation,
+                preferredZone, excluded, route.SnapshotReadFrom);
 
     internal ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
         DedicatedConnectionPool pool, DedicatedRoute route, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
