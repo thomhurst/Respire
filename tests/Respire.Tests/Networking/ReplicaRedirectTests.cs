@@ -144,7 +144,7 @@ public class ReplicaRedirectTests
         await using var primary = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var replica = CorrectionReplica(primary.Port, lua);
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
-        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null, RetryPolicy = new() });
         await client.EnsureReliableCorrectionOrderingAsync();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var execution = await client.StartLockExecutionAsync("key", "owner", extend ? 1000 : null,
@@ -159,6 +159,27 @@ public class ReplicaRedirectTests
     }
 
     [Test]
+    public async Task RetryPolicyCanRetryMutationWhenRedirectTargetHandshakeFailsBeforeSend()
+    {
+        await using var target = new FakeRespServer(2)
+        {
+            CloseConnectionAfterCommand = 1,
+            ReplyOverride = (_, command) => command == "INCR counter" ? Bytes(":1\r\n") : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+        using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
+        await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
@@ -168,7 +189,7 @@ public class ReplicaRedirectTests
         await using var primary = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var replica = CorrectionReplica(primary.Port, lua: false);
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
-        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null });
+        { ClientSideCache = cache ? new RespireClientSideCacheOptions() : null, RetryPolicy = new() });
         await client.EnsureReliableCorrectionOrderingAsync();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var execution = await client.StartTrackedScriptExecutionAsync(RespireScript.Create("return 1"),
@@ -268,9 +289,11 @@ public class ReplicaRedirectTests
     }
 
     [Test]
-    [Arguments("0")]
-    [Arguments("9")]
-    public async Task ServerCursorRedirectIsNotReplayed(string cursor)
+    [Arguments("0", false)]
+    [Arguments("9", false)]
+    [Arguments("0", true)]
+    [Arguments("9", true)]
+    public async Task ServerCursorRedirectIsNotReplayed(string cursor, bool retry)
     {
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer
@@ -278,7 +301,8 @@ public class ReplicaRedirectTests
             ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
                 : Bytes($"-REDIRECT 127.0.0.1:{primary.Port}\r\n"),
         };
-        await using var client = await RespireClient.ConnectAsync(Options(replica.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { RetryPolicy = retry ? new() : null });
         var error = await Assert.That(async () => { using var reply = await client.ExecuteAsync("SCAN", cursor); })
             .Throws<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("REDIRECT");
@@ -365,7 +389,9 @@ public class ReplicaRedirectTests
     }
 
     [Test]
-    public async Task RedirectLoopsAreBounded()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectLoopsAreBounded(bool retry)
     {
         var port = 0;
         await using var server = new FakeRespServer(20)
@@ -374,7 +400,8 @@ public class ReplicaRedirectTests
                 : Bytes($"-REDIRECT 127.0.0.1:{port}\r\n"),
         };
         port = server.Port;
-        await using var client = await RespireClient.ConnectAsync(Options(port));
+        await using var client = await RespireClient.ConnectAsync(Options(port) with
+        { RetryPolicy = retry ? new() : null });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Assert.That(async () => await client.GetStringAsync("key", timeout.Token)).Throws<RespireServerException>();
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key"))
@@ -382,9 +409,11 @@ public class ReplicaRedirectTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task TargetHandshakeSharesCommandDeadlineAndCallerCancellation(bool cancelCaller)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task TargetHandshakeSharesCommandDeadlineAndCallerCancellation(bool cancelCaller, bool retry)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var target = new FakeRespServer
@@ -398,7 +427,7 @@ public class ReplicaRedirectTests
         };
         using var caller = new CancellationTokenSource();
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
-        { CommandTimeout = TimeSpan.FromMilliseconds(cancelCaller ? 5000 : 300) });
+        { CommandTimeout = TimeSpan.FromMilliseconds(cancelCaller ? 5000 : 300), RetryPolicy = retry ? new() : null });
         var pending = client.GetStringAsync("key", caller.Token).AsTask();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (cancelCaller)
@@ -411,6 +440,160 @@ public class ReplicaRedirectTests
             await Assert.That(async () => await pending).Throws<RespireTimeoutException>();
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT"]);
+    }
+
+    [Test]
+    [Arguments("typed-read")]
+    [Arguments("raw-read")]
+    [Arguments("catalog-read")]
+    [Arguments("typed-write")]
+    [Arguments("raw-write")]
+    [Arguments("catalog-write")]
+    [Arguments("fire-and-forget")]
+    public async Task RetryPolicyFollowsRedirectForImmediateCommands(string shape)
+    {
+        await using var target = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "GET key" ? Bytes("$5\r\nvalue\r\n") : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with { RetryPolicy = new() });
+        switch (shape)
+        {
+            case "typed-read": await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value"); break;
+            case "raw-read":
+                using (var reply = await client.ExecuteAsync("GET", "key"))
+                    await Assert.That(reply.AsString()).IsEqualTo("value");
+                break;
+            case "catalog-read":
+                using (var reply = await client.ExecuteAsync(RespireCommands.String.GET, ["key"]))
+                    await Assert.That(reply.AsString()).IsEqualTo("value");
+                break;
+            case "typed-write": await client.SetAsync("key", "value"); break;
+            case "raw-write":
+                using (var reply = await client.ExecuteAsync("SET", "key", "value"))
+                    await Assert.That(reply.AsString()).IsEqualTo("OK");
+                break;
+            case "catalog-write":
+                using (var reply = await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"]))
+                    await Assert.That(reply.AsString()).IsEqualTo("OK");
+                break;
+            default: await client.ExecuteFireAndForgetAsync("SET", "key", "value"); break;
+        }
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo([
+            "CLIENT CAPA REDIRECT", shape.EndsWith("read", StringComparison.Ordinal) ? "GET key" : "SET key value"]);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetryPolicyRetriesTargetFailureAndReportsFinalEndpoint(bool fail)
+    {
+        var reads = 0;
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(listener);
+        await using var target = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "GET key"
+                ? Interlocked.Increment(ref reads) == 1 || fail ? Bytes("-TRYAGAIN busy\r\n") : Bytes("$5\r\nvalue\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+        if (fail)
+            await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireServerException>();
+        else
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(reads).IsEqualTo(2);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(2);
+        Activity[] traces;
+        lock (activities) traces = activities.Where(activity => Equals(activity.GetTagItem("db.operation.name"), "GET")).ToArray();
+        await Assert.That(traces.Length).IsEqualTo(1);
+        await Assert.That(traces[0].GetTagItem("server.port")).IsEqualTo(target.Port);
+        await Assert.That(traces[0].Status == ActivityStatusCode.Error).IsEqualTo(fail);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetryPolicyRetainsRedirectTargetWriteEvidence(bool permitAccumulating)
+    {
+        await using var target = new FakeRespServer(2)
+        {
+            CloseConnectionAfterCommand = 2,
+            ReplyOverride = (_, command) => command == "INCR counter" ? Bytes(":2\r\n") : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        {
+            RetryPolicy = new()
+            {
+                MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = permitAccumulating ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly,
+            },
+        });
+        if (permitAccumulating)
+        {
+            using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
+            await Assert.That(reply.AsInteger()).IsEqualTo(2);
+        }
+        else
+            await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]); })
+                .Throws<RespireConnectionException>();
+        await Assert.That(target.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(permitAccumulating ? 2 : 1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(permitAccumulating ? 2 : 1);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RedirectedCacheReadsAreNotPublishedFromTemporaryTarget(bool retry, bool multi)
+    {
+        var reads = 0;
+        var operation = multi ? "MGET key" : "GET key";
+        await using var target = new FakeRespServer(2)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command == operation ? Bytes((multi ? "*1\r\n" : "") + $"$1\r\n{Interlocked.Increment(ref reads)}\r\n")
+                : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command == operation ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        { ClientSideCache = new(), RetryPolicy = retry ? new() : null });
+        for (var expected = 1; expected <= 2; expected++)
+        {
+            var value = multi ? (await client.Strings.GetManyAsync("key"))[0] : await client.GetStringAsync("key");
+            await Assert.That(value).IsEqualTo(expected.ToString());
+        }
+        await Assert.That(reads).IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("CLIENT CACHING ", StringComparison.Ordinal)
+            || command.StartsWith("CLIENT TRACKING ", StringComparison.Ordinal))).IsFalse();
     }
 
     private static RespireOptions Options(int port) => new()

@@ -742,7 +742,15 @@ Valkey returns `REDIRECT host:port` when a command belongs on its primary. Respi
 these replies for individual buffered commands, including keyless writes such as `FLUSHDB`.
 Redirects use the configured credentials, TLS, and database, and share a bounded redirect
 count and command deadline. No general retry policy is needed: the server rejected the
-command before executing it. Cluster continues to use its existing `MOVED`/`ASK` handling.
+command before executing it. When a retry policy is configured, each attempt can follow
+redirects within the original command deadline; transport failures still use the policy's
+write-safety rules. Cluster continues to use its existing `MOVED`/`ASK` handling.
+
+Redirect targets use temporary connections without persistent client tracking. Redirected
+reads therefore bypass client-side cache publication and invalidate existing cache continuity;
+repeated redirected reads still reach the server. Configure the primary endpoint directly
+to retain client-side caching. Persistent tracked redirect targets are planned in
+[#1910](https://github.com/thomhurst/Respire/issues/1910).
 
 Read-policy connections send `READONLY` after successful capability negotiation. Read-only
 commands, including `SCAN` and `RANDOMKEY`, can therefore keep using replicas and accept

@@ -410,6 +410,11 @@ public class StandaloneCommandRetryTests
         server.ReplyOverride = (_, command) => command == "GET key"
             ? Interlocked.Increment(ref reads) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : "$1\r\nx\r\n"u8.ToArray()
             : Setup(command);
+        // Compile both attempt paths before starting the deliberately short shared deadline.
+        await using (var warmup = await RespireClient.ConnectAsync(Options(server) with
+            { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } }))
+            await Assert.That(await warmup.GetStringAsync("key")).IsEqualTo("x");
+        reads = 0;
         server.DelayCommand("GET key", 150);
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { CommandTimeout = TimeSpan.FromMilliseconds(250), RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } });

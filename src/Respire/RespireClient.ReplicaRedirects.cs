@@ -103,6 +103,7 @@ public sealed partial class RespireClient
             {
                 if (pool is not null)
                 {
+                    // A failed rent leaves the previous hop here; Return ignores foreign connections.
                     pool.Return(connection);
                     await _core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
                 }
