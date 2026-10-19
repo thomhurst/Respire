@@ -47,6 +47,7 @@ jobs:
             tests/Respire.Idempotency.Tests \
             tests/Respire.RateLimiting.Tests \
             tests/Respire.Azure.Tests \
+            tests/Respire.Gcp.Tests \
             tests/Respire.DataProtection.Tests \
             tests/Respire.Caching.Tests \
             tests/Respire.Caching.Hybrid.Tests \

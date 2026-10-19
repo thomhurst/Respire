@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="..\..\src\Respire.Gcp\Respire.Gcp.csproj" />
+    <Compile Include="../CredentialTestClock.cs" Link="CredentialTestClock.cs" />
+    <Compile Include="../Respire.Tests/Networking/FakeRespServer.cs" Link="FakeRespServer.cs" />
+  </ItemGroup>
+</Project>

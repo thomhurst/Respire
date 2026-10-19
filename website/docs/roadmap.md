@@ -94,7 +94,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   endpoint on standalone, Sentinel, and Cluster clients. They [compose with command retries](guides/circuit-breakers.md#retries): an open
   endpoint is never retried.
 - [Renewable credentials](guides/renewable-credentials.md), separate Sentinel authentication,
-  and [Azure Managed Redis](guides/azure-managed-redis.md) / [AWS IAM](guides/aws-iam-credentials.md) adapters.
+  and [Azure Managed Redis](guides/azure-managed-redis.md), [AWS IAM](guides/aws-iam-credentials.md),
+  and [Google Cloud Memorystore](guides/google-cloud-memorystore.md) adapters.
 
 ### Commands and coordination
 
