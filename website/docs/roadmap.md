@@ -160,7 +160,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
   [Keyspace, keyevent, and Redis 8.8 subkey notifications](guides/keyspace-notifications.md) work
   on Cluster. Reconnects can lose notifications; topology changes can lose or duplicate them.
 - [Distributed locks](guides/distributed-locks.md) and [coordination](guides/coordination.md):
-  fencing tokens, leases, semaphores, and fixed-window, sliding-window, token-bucket and
+  fencing tokens, [fair FIFO locks](guides/coordination.md#fair-fifo-locks), leases, semaphores, and fixed-window, sliding-window, token-bucket and
   [GCRA rate limiting](guides/coordination.md#gcra), plus
   [atomic composite rate limits](guides/coordination.md#composite-limits) and
   [runtime rate-limit updates](guides/coordination.md#updating-settings-at-runtime), plus

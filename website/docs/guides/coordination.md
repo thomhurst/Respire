@@ -12,6 +12,7 @@ Moving from RedLock.net or DistributedLock.Redis? Read the
 - [Fencing-token locks](#fencing-token-locks): an expiring lease plus an increasing token that the
   protected resource checks.
 - [Named leases in hash fields](#named-leases-in-hash-fields)
+- [Fair FIFO locks](#fair-fifo-locks)
 - [Read-write leases](#read-write-leases)
 - [Multi-node Redlock](#multi-node-redlock)
 - [Distributed countdown latch](#distributed-countdown-latch)
@@ -27,6 +28,60 @@ With C# 14 or later, import `Respire.Coordination` and use the `client.Coordinat
 property on `RespireClient` or `IRespireClient`. It returns one wrapper per client (key-prefixed
 views get their own), including its `RateLimiters` factory, and does no network I/O. On older
 language versions, use `new RespireCoordination(client)`. The coordinator never disposes the client.
+
+## Fair FIFO locks
+
+`CreateFairLock` creates a non-reentrant `RespireFairLock` view. Each acquisition joins a
+Redis-owned FIFO queue and returns the same renewable `RespireFencedLock` handle used by
+fencing-token locks. Arrival order means the order Redis accepts enqueue commands; it does
+not mean the order tasks were started on different machines.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    Protocol = RespireProtocol.Resp3,
+    ClientSideCache = new(),
+});
+var fair = new RespireCoordination(client).CreateFairLock(
+    "{invoice:42}:lease", "{invoice:42}:fence", "{invoice:42}:queue");
+await using var lease = await fair.AcquireAsync(
+    duration: TimeSpan.FromSeconds(30),
+    waitTimeout: TimeSpan.FromSeconds(10),
+    cancellationToken);
+// Pass lease.FencingToken to the resource, which must reject stale tokens atomically.
+```
+
+The three keys must be distinct and dedicated to this lock. Use a shared hash tag on Cluster,
+including any client prefix, and enable client tracking on slot-owner connections. All
+participants must use the same key triple and the fair-lock API; ordinary lock acquisition
+on the lease key bypasses the queue. Creating another view or acquiring twice from one client
+does not make a lock reentrant.
+
+`waitTimeout` is a fixed server queue lifetime from one millisecond through 24 days. It starts
+when Redis enqueues the waiter, is truncated to whole milliseconds, and does not extend on
+wake-ups. A waiter that misses its deadline receives `TimeoutException` and loses its place.
+Cancellation best-effort removes its queue entry. If a client crashes, the next attempt
+removes expired entries at the head; the queue hash itself expires at its latest waiter
+deadline when nobody remains to clean it up. Network unavailability can delay a client's
+observation of that expiry.
+
+RESP3 tracking invalidations notify waiters when a lease is released or the queue changes.
+Keep `ClientSideCache.NoLoop` disabled (the default); the fair-lock API rejects it because it
+can suppress same-client release notifications. Tracking prefixes must cover both the lease
+and queue keys, and the client view must not bypass its cache.
+Waiters also wake at the earliest relevant lease or queue deadline, so a missed notification
+does not leave them waiting indefinitely. There is no periodic acquisition polling. A long
+lease renewal can keep the lock held beyond a waiter's deadline; choose the timeout to suit
+the expected contention. A command whose outcome is uncertain may leave an unreturned lease
+until its duration expires.
+
+Each successful acquisition gets a new fencing token; failed or uncertain commands may consume
+tokens too. Renewal preserves the token, and stale owners cannot release their replacements.
+Retain the counter without expiry or
+eviction. As with other Redis leases, asynchronous failover, restored backups, or counter
+rollback can invalidate monotonicity. Fencing requires enforcement by the protected resource;
+the lock alone cannot prevent an expired client from continuing external work.
 
 ## Idempotency claims and result replay
 
