@@ -288,7 +288,7 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
             {
                 true => await GetReplicaAsync(cancellationToken, observation,
                     ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? RespireReadFrom.AzAffinity : RespireReadFrom.Replica,
-                    attempt).ConfigureAwait(false),
+                    attempt, snapshotReadFrom: readFrom).ConfigureAwait(false),
                 false => default,
                 _ => await SelectAsync(readFrom, cancellationToken, observation, attempt).ConfigureAwait(false),
             };
@@ -507,11 +507,12 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
     }
 
     private async ValueTask<Selection> GetReplicaAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
-        RespireReadFrom readFrom = RespireReadFrom.Replica, ReadAttempt? attempt = null, bool readyOnly = false)
+        RespireReadFrom readFrom = RespireReadFrom.Replica, ReadAttempt? attempt = null, bool readyOnly = false,
+        RespireReadFrom? snapshotReadFrom = null)
     {
         if (core.Options.ReplicaLatencyTolerance is not null)
             return await GetNearestAsync(cancellationToken, observation, attempt: attempt, readyOnly: readyOnly,
-                readFrom: readFrom).ConfigureAwait(false);
+                readFrom: readFrom, snapshotReadFrom: snapshotReadFrom).ConfigureAwait(false);
         var endpoints = await GetReplicaEndpointsAsync(cancellationToken, readyOnly: readyOnly).ConfigureAwait(false);
         if (endpoints.Length == 0)
             throw new RespireConnectionException("No eligible read replicas are configured or known to Sentinel.");

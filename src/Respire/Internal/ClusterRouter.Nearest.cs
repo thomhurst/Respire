@@ -16,7 +16,7 @@ internal sealed partial class ClusterRouter
         int slot, CancellationToken cancellationToken, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation, bool retry = true,
         long? samplingDeadline = null, Exception? previousFailure = null,
         HashSet<RespireConnectionMultiplexer>? excluded = null, RespireReadFrom readFrom = RespireReadFrom.Nearest,
-        RespireConnection? excludedPeer = null)
+        RespireConnection? excludedPeer = null, RespireReadFrom? snapshotReadFrom = null)
     {
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? _options.ClientAvailabilityZone : null;
         var includePrimary = readFrom is RespireReadFrom.Nearest or RespireReadFrom.AzAffinityReplicasAndPrimary;
@@ -45,7 +45,7 @@ internal sealed partial class ClusterRouter
             if (retry)
                 return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation, retry: false,
                     samplingDeadline: deadline, previousFailure: lastError, excluded: excluded, readFrom: readFrom,
-                    excludedPeer: excludedPeer).ConfigureAwait(false);
+                    excludedPeer: excludedPeer, snapshotReadFrom: snapshotReadFrom).ConfigureAwait(false);
             primary = null;
         }
         var routes = route.Replicas;
@@ -155,7 +155,8 @@ internal sealed partial class ClusterRouter
                 if (_options.ReplicaLatencyTolerance is not null)
                 {
                     var previous = Volatile.Read(ref LastReadSelection);
-                    var snapshot = best.CaptureSnapshot(readFrom, slot,
+                    // Role fallback narrows eligibility but diagnostics retain the client's policy.
+                    var snapshot = best.CaptureSnapshot(snapshotReadFrom ?? readFrom, slot,
                         static connection => new(connection.Host, connection.Port), previous);
                     if (!ReferenceEquals(previous, snapshot)) Volatile.Write(ref LastReadSelection, snapshot);
                 }
@@ -173,7 +174,7 @@ internal sealed partial class ClusterRouter
                 await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
             return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation, retry: false,
                 samplingDeadline: deadline, previousFailure: lastError, excluded: excluded, readFrom: readFrom,
-                excludedPeer: excludedPeer).ConfigureAwait(false);
+                excludedPeer: excludedPeer, snapshotReadFrom: snapshotReadFrom).ConfigureAwait(false);
         }
         throw new RespireConnectionException($"Redis Cluster slot {slot} has no healthy eligible endpoint for {readFrom} reads.",
             lastError ?? new InvalidOperationException("The read topology changed during selection.")) { HasAmbiguousEndpoint = true };

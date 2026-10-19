@@ -10,6 +10,58 @@ namespace Respire.Tests.Networking;
 public partial class NearestReadRoutingTests
 {
     [Test]
+    [Arguments(false, RespireReadFrom.PrimaryPreferred)]
+    [Arguments(true, RespireReadFrom.PrimaryPreferred)]
+    [Arguments(false, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    [Arguments(true, RespireReadFrom.AzAffinityReplicasAndPrimary)]
+    public async Task ServerRoleFallbackBandPreservesPolicy(bool cluster, RespireReadFrom policy)
+    {
+        await using var primary = Server("primary");
+        await using var replica = Server("replica");
+        var original = primary.ReplyOverride!;
+        primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS"
+            ? SlotReply(primary.Port, 0, 16383, replica.Port) : original(id, command);
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica) with
+        {
+            UseCluster = cluster, ReplicaEndpoints = cluster ? [] : [new("127.0.0.1", replica.Port)],
+            ClusterTopologyRefreshInterval = null, ReadFrom = policy,
+            ClientAvailabilityZone = "local", ReplicaLatencyTolerance = TimeSpan.Zero,
+        });
+        var primarySamples = 0;
+        var sampler = new ReadLatencySampler<RespireConnection>((connection, _) =>
+        {
+            if (connection.Port == primary.Port) Interlocked.Increment(ref primarySamples);
+            return ValueTask.FromResult(10L);
+        }, () => 0);
+        if (cluster) client.Core.Cluster!.NearestLatency = sampler;
+        else client.Core.ReadRouter.NearestLatency = sampler;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        foreach (var code in new[] { "LOADING", "MASTERDOWN", "CLUSTERDOWN" })
+        {
+            var fallback = new ReadFallbackPolicy.RoleFallback(policy);
+            await Assert.That(fallback.TrySwitch(new RespireServerException(code + " unavailable"), onReplica: false)).IsTrue();
+            if (cluster)
+            {
+                var selected = await client.Core.Cluster!.GetOtherRoleReadConnectionAsync(1, fallback,
+                    deadline.Token, discovery: null, observation: default);
+                await Assert.That(selected.Port).IsEqualTo(replica.Port);
+            }
+            else
+            {
+                var lease = await client.Core.ReadRouter.RentDedicatedConnectionAsync(policy,
+                    deadline.Token, observation: default, preferredZone: "local", replicaOnly: fallback.ReplicaOnly);
+                try { await Assert.That(lease.Connection.Port).IsEqualTo(replica.Port); }
+                finally { lease.Pool.Return(lease.Connection); }
+            }
+            var snapshot = client.GetReadRoutingSnapshot()!;
+            await Assert.That(snapshot.ReadFrom).IsEqualTo(policy);
+            await Assert.That(snapshot.EligibleEndpoints.Single().Port).IsEqualTo(replica.Port);
+            await Assert.That(snapshot.ClusterSlot).IsEqualTo(cluster ? (int?)1 : null);
+        }
+        await Assert.That(primarySamples).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task PrimaryPreferredBandFallbackPreservesPolicy(bool cluster)

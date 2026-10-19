@@ -107,11 +107,12 @@ internal sealed partial class ClusterRouter
 
     private async ValueTask<RespireConnection> GetReplicaConnectionAsync(
         int slot, CancellationToken cancellationToken, Exception? lastError, DiscoveryRound? discovery, RespireTelemetry.ErrorObservation observation,
-        RespireReadFrom readFrom = RespireReadFrom.Replica, HashSet<RespireConnectionMultiplexer>? excluded = null)
+        RespireReadFrom readFrom = RespireReadFrom.Replica, HashSet<RespireConnectionMultiplexer>? excluded = null,
+        RespireReadFrom? snapshotReadFrom = null)
     {
         if (_options.ReplicaLatencyTolerance is not null)
             return await GetNearestReadConnectionAsync(slot, cancellationToken, discovery, observation,
-                previousFailure: lastError, excluded: excluded, readFrom: readFrom).ConfigureAwait(false);
+                previousFailure: lastError, excluded: excluded, readFrom: readFrom, snapshotReadFrom: snapshotReadFrom).ConfigureAwait(false);
         var routes = await GetReplicaRoutesAsync(slot, cancellationToken).ConfigureAwait(false);
 
         var attempted = 0;
@@ -418,7 +419,8 @@ internal sealed partial class ClusterRouter
             // Preserve replica zone ranking without probing the primary that just rejected the read.
             var replicaPolicy = ReadFallbackPolicy.UsesAvailabilityZone(readFrom)
                 ? RespireReadFrom.AzAffinity : RespireReadFrom.Replica;
-            return await GetReplicaConnectionAsync(slot, cancellationToken, lastError: error, discovery, observation, replicaPolicy).ConfigureAwait(false);
+            return await GetReplicaConnectionAsync(slot, cancellationToken, lastError: error, discovery, observation,
+                replicaPolicy, snapshotReadFrom: readFrom).ConfigureAwait(false);
         }
         catch (Exception candidateError) when (IsReadCandidateFailure(candidateError, cancellationToken))
         {

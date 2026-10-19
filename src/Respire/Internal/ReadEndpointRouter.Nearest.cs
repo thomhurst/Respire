@@ -13,7 +13,7 @@ internal sealed partial class ReadEndpointRouter
     private async ValueTask<Selection> GetNearestAsync(CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool retry = true,
         long? samplingDeadline = null, Exception? previousFailure = null, ReadAttempt? attempt = null, bool readyOnly = false,
         RespireReadFrom readFrom = RespireReadFrom.Nearest, RespireEndpoint[]? replicaEndpoints = null,
-        RespireConnection? excludedPeer = null)
+        RespireConnection? excludedPeer = null, RespireReadFrom? snapshotReadFrom = null)
     {
         var preferredZone = ReadFallbackPolicy.UsesAvailabilityZone(readFrom) ? core.Options.ClientAvailabilityZone : null;
         var deadline = samplingDeadline ?? NearestReadSelection.CreateDeadline();
@@ -138,7 +138,8 @@ internal sealed partial class ReadEndpointRouter
                     if (core.Options.ReplicaLatencyTolerance is not null)
                     {
                         var previous = Volatile.Read(ref LastReadSelection);
-                        var snapshot = best.CaptureSnapshot(readFrom, null,
+                        // Role fallback narrows eligibility but diagnostics retain the client's policy.
+                        var snapshot = best.CaptureSnapshot(snapshotReadFrom ?? readFrom, null,
                             static value => new(value.Connection.Host, value.Connection.Port), previous);
                         if (!ReferenceEquals(previous, snapshot)) Volatile.Write(ref LastReadSelection, snapshot);
                     }
@@ -162,7 +163,7 @@ internal sealed partial class ReadEndpointRouter
             if (retry)
                 return await GetNearestAsync(cancellationToken, observation, retry: false, samplingDeadline: deadline,
                     previousFailure: lastError, attempt: attempt, readyOnly: readyOnly, readFrom: readFrom,
-                    replicaEndpoints: replicaEndpoints, excludedPeer: excludedPeer).ConfigureAwait(false);
+                    replicaEndpoints: replicaEndpoints, excludedPeer: excludedPeer, snapshotReadFrom: snapshotReadFrom).ConfigureAwait(false);
             if (attempt?.FirstFailure is { } original)
             {
                 // Exclusions alone preserve the original exception. A later selection or
