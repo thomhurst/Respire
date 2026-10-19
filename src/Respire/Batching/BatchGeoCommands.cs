@@ -30,9 +30,18 @@ public interface IRespireBatchGeoCommands
     RespirePending<RespireGeoSearchResult[]> Search(
         RespireKey key, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape, RespireGeoSearchOptions options = default);
 
+    /// <summary>Searches a polygon without an explicit origin. Requires Valkey 9.0+.</summary>
+    RespirePending<RespireGeoSearchResult[]> Search(
+        RespireKey key, RespireGeoSearchShape shape, RespireGeoSearchOptions options = default);
+
     /// <summary>Stores a search into <paramref name="destination"/>; returns its size. Redis: GEOSEARCHSTORE.</summary>
     RespirePending<long> SearchStore(
         RespireKey destination, RespireKey source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, bool storeDistance = false);
+
+    /// <summary>Stores a polygon search without an explicit origin. Requires Valkey 9.0+.</summary>
+    RespirePending<long> SearchStore(
+        RespireKey destination, RespireKey source, RespireGeoSearchShape shape,
         RespireGeoSearchOptions options = default, bool storeDistance = false);
 }
 
@@ -82,6 +91,15 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IRespireBatchGeoComm
             new Cmd1N(RespireCommands.Geo.GEOPOS.Verb, sink.Client.Key(in key), members.ToArray()),
             static (c, v) => GeoCommands.ParsePositions(in v));
     }
+
+    public RespirePending<RespireGeoSearchResult[]> Search(
+        RespireKey key, RespireGeoSearchShape shape, RespireGeoSearchOptions options = default)
+        => Search(key, default, shape, options);
+
+    public RespirePending<long> SearchStore(
+        RespireKey destination, RespireKey source, RespireGeoSearchShape shape,
+        RespireGeoSearchOptions options = default, bool storeDistance = false)
+        => SearchStore(destination, source, default, shape, options, storeDistance);
 
     public RespirePending<RespireGeoSearchResult[]> Search(
         RespireKey key, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape, RespireGeoSearchOptions options = default)

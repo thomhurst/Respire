@@ -18,6 +18,8 @@
         "PositionAsync(RespireKey,RespireValue,CancellationToken):ValueTask<RespireGeoPosition?[]>",
         "PositionAsync(RespireKey,params ReadOnlySpan<RespireValue>):ValueTask<RespireGeoPosition?[]>",
         "SearchAsync(RespireKey,RespireGeoSearchOrigin,RespireGeoSearchShape,RespireGeoSearchOptions,CancellationToken):ValueTask<RespireGeoSearchResult[]>",
+        "SearchAsync(RespireKey,RespireGeoSearchShape,RespireGeoSearchOptions,CancellationToken):ValueTask<RespireGeoSearchResult[]>",
+        "SearchStoreAsync(RespireKey,RespireKey,RespireGeoSearchShape,RespireGeoSearchOptions,bool,CancellationToken):ValueTask<long>",
         "SearchStoreAsync(RespireKey,RespireKey,RespireGeoSearchOrigin,RespireGeoSearchShape,RespireGeoSearchOptions,bool,CancellationToken):ValueTask<long>"
       ],
       "Contract": "Start the caller owner before validation or command construction. Keep it through dispatch, native result inspection, typed conversion and cleanup. Delegated methods borrow it; cache hits and successful calls keep the default failure-only owner."
@@ -25,6 +27,10 @@
   ],
   "Boundaries": [],
   "NonRoutes": [
+    {
+      "Member": "Respire.RespireGeoSearchShape.Polygon(params ReadOnlySpan<RespireGeoPosition>):RespireGeoSearchShape",
+      "Reason": "Local value construction and validation; no command dispatch."
+    },
     {
       "Member": "Respire.RespireGeoSearchOrigin.FromCoordinates(double,double):RespireGeoSearchOrigin",
       "Reason": "Local value construction, validation, formatting, comparison or state inspection; no command dispatch."
