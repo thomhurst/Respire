@@ -19,10 +19,10 @@ public sealed class RespireQueueMessage<T>
     public string Receipt { get; }
 }
 
-/// <summary>A typed, at-least-once message queue with visibility leases, delayed rejection and dead letters.</summary>
+/// <summary>A typed, at-least-once message queue with scheduled sends, visibility leases, delayed rejection and dead letters.</summary>
 /// <remarks>Requires Redis 7+ or Valkey with scripting. The client is caller-owned, codecs must be thread-safe,
 /// and all instances sharing a queue must use the same delivery limit and codecs. Reserve the generated key
-/// namespace exclusively for this queue. Poll ReceiveAsync to drive redelivery and dead-letter movement.</remarks>
+/// namespace exclusively for this queue. Poll ReceiveAsync to drive scheduled promotion, redelivery and dead-letter movement.</remarks>
 public sealed class RespireReliableQueue<T>
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -46,7 +46,8 @@ public sealed class RespireReliableQueue<T>
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(deliveryLimit);
         StreamKey = "{respire-queue:" + queueName + "}:ready";
         DeadLetterStreamKey = StreamKey + ":dead";
-        _keys = [StreamKey, StreamKey + ":due", StreamKey + ":receipts", StreamKey + ":attempts", DeadLetterStreamKey];
+        _keys = [StreamKey, StreamKey + ":due", StreamKey + ":receipts", StreamKey + ":attempts",
+            DeadLetterStreamKey, StreamKey + ":scheduled", StreamKey + ":scheduled-due"];
         JobQueueScheduling.ValidateKeys(client, _keys);
         (_client, _serialize, _deserialize, _deliveryLimit) = (client, serialize, deserialize, deliveryLimit);
     }
@@ -77,10 +78,38 @@ public sealed class RespireReliableQueue<T>
         return new(reply.AsString());
     }
 
-    /// <summary>Receives up to max messages without blocking, recovering due messages before reading new ones.</summary>
+    /// <summary>Schedules an initial send after a server-time delay, returning an opaque cancellation ID.</summary>
+    /// <remarks>Delay is nonnegative and at most Int32.MaxValue milliseconds, rounded up to milliseconds.
+    /// Each call creates a new schedule; retrying after an uncertain response can duplicate it. The ID is
+    /// distinct from the stream entry ID assigned on promotion. Poll ReceiveAsync to promote due messages.</remarks>
+    public async ValueTask<string> ScheduleAsync(T payload, TimeSpan delay, CancellationToken cancellationToken = default)
+    {
+        JobQueueScheduling.ValidateDuration(delay, nameof(delay), allowZero: true);
+        cancellationToken.ThrowIfCancellationRequested();
+        var bytes = _serialize(payload) ?? throw new InvalidOperationException("The message serializer returned null.");
+        var id = Guid.NewGuid().ToString("N");
+        using var reply = await _client.Scripts.ExecuteAsync(ReliableQueueScripts.Schedule, [_keys[5], _keys[6]],
+            [id, bytes, (long)Math.Ceiling(delay.TotalMilliseconds)], cancellationToken).ConfigureAwait(false);
+        return id;
+    }
+
+    /// <summary>Cancels a pending schedule. Returns false for unknown, cancelled or already promoted IDs.</summary>
+    /// <remarks>Cancellation and promotion are atomic: a true result prevents delivery. A due schedule remains
+    /// cancellable until a receiver promotes it. IDs are scoped to the queue and client key prefix.</remarks>
+    public async ValueTask<bool> CancelScheduledAsync(string scheduledMessageId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scheduledMessageId);
+        cancellationToken.ThrowIfCancellationRequested();
+        using var reply = await _client.Scripts.ExecuteAsync(ReliableQueueScripts.CancelScheduled, [_keys[5], _keys[6]],
+            [scheduledMessageId], cancellationToken).ConfigureAwait(false);
+        return reply.AsInteger() == 1;
+    }
+
+    /// <summary>Promotes up to max due schedules and receives up to max messages without blocking, recovering due deliveries first.</summary>
     /// <remarks>Max is 1 through 1000. Visibility must be positive and at most Int32.MaxValue milliseconds.
     /// Uses server time. An empty batch can also mean this call moved exhausted messages to dead letters.
-    /// A codec failure or lost response leaves the batch leased until expiry; processing must tolerate duplicates.</remarks>
+    /// A codec failure or lost response leaves the batch leased until expiry; processing must tolerate duplicates.
+    /// With no backlog, scheduled delivery occurs on the first poll after its due time. Backlogs need additional polls.</remarks>
     public async ValueTask<RespireQueueMessage<T>[]> ReceiveAsync(TimeSpan visibilityTimeout, int max = 1,
         CancellationToken cancellationToken = default)
     {

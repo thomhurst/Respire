@@ -156,7 +156,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Reliable topics](guides/reliable-topics.md) with durable named subscriptions, competing consumers,
   acknowledgement leases, delayed rejection, per-subscription dead letters, retention and replay.
 - [Reliable message queues](guides/reliable-queues.md) with per-delivery visibility timeouts,
-  receipt-fenced ACK, delayed NACK, delivery limits, dead letters and optional send deduplication.
+  receipt-fenced ACK, initial delayed sends with cancellation, delayed NACK, delivery limits,
+  dead letters and optional send deduplication.
 - [Hosted stream consumers](guides/stream-workers.md) with bounded concurrency, scoped typed
   handlers, idle recovery, delivery limits, dead-lettering, graceful draining, metrics, and
   W3C trace propagation.
