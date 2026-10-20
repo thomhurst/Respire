@@ -13,7 +13,7 @@
     <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.1" />
     <PackageReference Include="Aspire.Hosting.Redis" Version="13.6.1" />
     <!-- Aspire.Hosting 13.6.1 requests 2.5.302; keep the patched 2.5 release (GHSA-qhrr-8q5h-9q3h). -->
-    <PackageReference Include="MessagePack" Version="2.5.303" />
+    <PackageReference Include="MessagePack" Version="3.1.12" />
     <!-- A stable metadata name also supports project names containing dots or hyphens. -->
     <ProjectReference Include="../Respire.Aspire-Starter.Api/Respire.Aspire-Starter.Api.csproj" AspireProjectMetadataTypeName="Api" />
   </ItemGroup>
