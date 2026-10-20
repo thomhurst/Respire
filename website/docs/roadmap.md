@@ -21,10 +21,10 @@ Public interface compatibility and the post-2.0 extension policy are described i
 
 ## Available now
 
-- A [cache-aside API project template](getting-started.md#project-template), packaged
-  as `Respire.Templates` for the next release. Job worker/dashboard and Aspire
-  starters are tracked in [#1936](https://github.com/thomhurst/Respire/issues/1936)
-  and [#1937](https://github.com/thomhurst/Respire/issues/1937).
+- [Cache-aside API](getting-started.md#project-template) and
+  [Aspire project templates](getting-started.md#aspire-starter), packaged as
+  `Respire.Templates` for the next release. The job worker/dashboard starter is
+  tracked in [#1936](https://github.com/thomhurst/Respire/issues/1936).
 
 - [Weighted sorted-set unions and intersections](commands/collections.md#weighted-unions-and-intersections),
   including SUM/MIN/MAX and Redis 8.8+ COUNT in immediate, batch, and transaction APIs.

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Respire.Aspire-Starter.Api/Respire.Aspire-Starter.Api.csproj" />
+  <Project Path="Respire.Aspire-Starter.AppHost/Respire.Aspire-Starter.AppHost.csproj" />
+</Solution>

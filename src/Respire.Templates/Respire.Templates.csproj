@@ -32,7 +32,7 @@
       <_TemplateProject Include="$(_TemplateStage)**/*.csproj" />
     </ItemGroup>
     <XmlPoke XmlInputPath="%(_TemplateProject.Identity)"
-             Query="/Project/ItemGroup/PackageReference[starts-with(@Include, 'Respire')]/@Version"
+             Query="/Project/ItemGroup/PackageReference[starts-with(@Include, 'Respire') or starts-with(@Include, 'Aspire.Respire')]/@Version"
              Value="$(PackageVersion)" />
     <ItemGroup>
       <Content Include="$(_TemplateStage)**/*" Pack="true" PackagePath="content/" />
