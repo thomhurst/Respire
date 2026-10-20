@@ -67,6 +67,33 @@ internal sealed record Customer(string Name, string Email);
   a serialization failure writes nothing.
 - `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
 
+### Floating point array storage
+
+Redis 8.8 added `JSON.SET ... FPHA` to choose storage for floating point homogeneous arrays.
+Use `RespireJsonFloatingPointType.Fp16`, `Bf16`, `Fp32`, or `Fp64` with the typed `SetAsync`
+or text/UTF-8 `SetJsonAsync` overloads. The type is the first argument; existing overloads leave
+storage selection to Redis. `Nx` and `Xx` still control whether the write takes place.
+
+```csharp
+using Respire;
+using Respire.Json;
+
+await using var client = await RespireClient.ConnectAsync("localhost:6379");
+bool created = await client.Json.SetJsonAsync(
+    RespireJsonFloatingPointType.Fp16, "embedding:42", "[1.5,-2.5,4000.0]",
+    condition: RespireJsonSetCondition.Nx);
+```
+
+The selected type trades precision for storage size. Redis converts eligible arrays, including
+nested arrays, and reports a `RespireServerException` if a value exceeds the selected type's
+range. Respire rejects unknown enum values before dispatch. Older servers reject the FPHA option;
+use the existing overloads when targeting them. See the [Redis JSON.SET reference](https://redis.io/docs/latest/commands/json.set/)
+and [Redis 8.8 changes](https://redis.io/docs/latest/develop/whats-new/8-8/).
+
+`JSON.MSET` has no FPHA option. JSON commands currently have no typed batch facet and are not
+supported by the raw batch API. Immediate `ExecuteAsync` with `RespireCommands.Json.JSON_SET`
+supports the raw FPHA arguments and key prefixing; dispose its `RespireResult`.
+
 ## Low-level commands
 
 `MergeAsync<T>(key, patch, jsonTypeInfo, path)` applies an RFC 7396 merge patch:
@@ -83,7 +110,7 @@ type, response, and toggle commands, including `Commands.MergeAsync` (`JSON.MERG
 
 - They return Redis replies as `RespireResult`; dispose each result.
 - `ArrayLengthAsync` keeps null entries for JSONPath matches that are not arrays.
-- Conditional `JSON.SET` and `JSON.DEBUG MEMORY` are available only through the typed `SetAsync`,
+- Conditional and FPHA `JSON.SET` and `JSON.DEBUG MEMORY` are available only through the typed `SetAsync`,
   `SetJsonAsync`, and `GetMemoryUsageAsync`.
 
 ### Projections

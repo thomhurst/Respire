@@ -190,6 +190,24 @@ public sealed class RespireJsonClient
                 static s => s.Owner.SetUnhookedAsync(s.key, s.value, s.jsonTypeInfo, s.path, s.condition, s.cancellationToken))
             : SetUnhookedAsync(key, value, jsonTypeInfo, path, condition, cancellationToken);
 
+    /// <summary>Serializes a document and selects its floating point homogeneous array storage type.</summary>
+    /// <remarks>Requires Redis 8.8 or later. Redis rejects values outside the selected type's range.
+    /// Argument and serialization failures are reported through the returned task.</remarks>
+    /// <returns>False when the path cannot be set or the condition rejects the write.</returns>
+    public ValueTask<bool> SetAsync<T>(
+        RespireJsonFloatingPointType floatingPointType,
+        RespireKey key,
+        T value,
+        JsonTypeInfo<T> jsonTypeInfo,
+        RespireJsonPath path = default,
+        RespireJsonSetCondition condition = RespireJsonSetCondition.None,
+        CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.SET", cancellationToken,
+                (Owner: this, floatingPointType, key, value, jsonTypeInfo, path, condition, cancellationToken),
+                static s => s.Owner.SetUnhookedAsync(s.key, s.value, s.jsonTypeInfo, s.path, s.condition, s.cancellationToken, s.floatingPointType))
+            : SetUnhookedAsync(key, value, jsonTypeInfo, path, condition, cancellationToken, floatingPointType);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool> SetUnhookedAsync<T>(
         RespireKey key,
@@ -197,13 +215,15 @@ public sealed class RespireJsonClient
         JsonTypeInfo<T> jsonTypeInfo,
         RespireJsonPath path = default,
         RespireJsonSetCondition condition = RespireJsonSetCondition.None,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RespireJsonFloatingPointType? floatingPointType = null)
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         var token = ConditionToken(condition);
+        var floatingPointToken = FloatingPointToken(floatingPointType);
         using var buffer = RentBuffer(jsonTypeInfo.Options);
         var payload = buffer.Serialize(value, jsonTypeInfo);
-        return await SetCoreAsync(key, payload, path, token, cancellationToken).ConfigureAwait(false);
+        return await SetCoreAsync(key, payload, path, token, cancellationToken, floatingPointToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets pre-serialized JSON text.</summary>
@@ -225,16 +245,34 @@ public sealed class RespireJsonClient
                 static s => s.Owner.SetJsonUnhookedAsync(s.key, s.json, s.path, s.condition, s.cancellationToken))
             : SetJsonUnhookedAsync(key, json, path, condition, cancellationToken);
 
-    private async ValueTask<bool> SetJsonUnhookedAsync(
+    /// <summary>Sets JSON text with a floating point homogeneous array storage type (Redis 8.8 or later).</summary>
+    /// <remarks>Redis validates JSON and the selected type's numeric range. Argument failures are reported through the returned task.</remarks>
+    /// <returns>False when the path cannot be set or the condition rejects the write.</returns>
+    public ValueTask<bool> SetJsonAsync(
+        RespireJsonFloatingPointType floatingPointType,
         RespireKey key,
         string json,
         RespireJsonPath path = default,
         RespireJsonSetCondition condition = RespireJsonSetCondition.None,
         CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.SET", cancellationToken,
+                (Owner: this, floatingPointType, key, json, path, condition, cancellationToken),
+                static s => s.Owner.SetJsonUnhookedAsync(s.key, s.json, s.path, s.condition, s.cancellationToken, s.floatingPointType))
+            : SetJsonUnhookedAsync(key, json, path, condition, cancellationToken, floatingPointType);
+
+    private async ValueTask<bool> SetJsonUnhookedAsync(
+        RespireKey key,
+        string json,
+        RespireJsonPath path = default,
+        RespireJsonSetCondition condition = RespireJsonSetCondition.None,
+        CancellationToken cancellationToken = default,
+        RespireJsonFloatingPointType? floatingPointType = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
         var token = ConditionToken(condition);
-        return await SetCoreAsync(key, json, path, token, cancellationToken).ConfigureAwait(false);
+        var floatingPointToken = FloatingPointToken(floatingPointType);
+        return await SetCoreAsync(key, json, path, token, cancellationToken, floatingPointToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets pre-serialized UTF-8 JSON without a UTF-16 round trip.</summary>
@@ -255,16 +293,34 @@ public sealed class RespireJsonClient
                 static s => s.Owner.SetJsonUnhookedAsync(s.key, s.utf8Json, s.path, s.condition, s.cancellationToken))
             : SetJsonUnhookedAsync(key, utf8Json, path, condition, cancellationToken);
 
-    private async ValueTask<bool> SetJsonUnhookedAsync(
+    /// <summary>Sets UTF-8 JSON with a floating point homogeneous array storage type (Redis 8.8 or later).</summary>
+    /// <remarks>Redis validates JSON and the selected type's numeric range. Argument failures are reported through the returned task.</remarks>
+    /// <returns>False when the path cannot be set or the condition rejects the write.</returns>
+    public ValueTask<bool> SetJsonAsync(
+        RespireJsonFloatingPointType floatingPointType,
         RespireKey key,
         ReadOnlyMemory<byte> utf8Json,
         RespireJsonPath path = default,
         RespireJsonSetCondition condition = RespireJsonSetCondition.None,
         CancellationToken cancellationToken = default)
+        => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
+            ? CommandHookScope.RunAsync(hook, "JSON.SET", cancellationToken,
+                (Owner: this, floatingPointType, key, utf8Json, path, condition, cancellationToken),
+                static s => s.Owner.SetJsonUnhookedAsync(s.key, s.utf8Json, s.path, s.condition, s.cancellationToken, s.floatingPointType))
+            : SetJsonUnhookedAsync(key, utf8Json, path, condition, cancellationToken, floatingPointType);
+
+    private async ValueTask<bool> SetJsonUnhookedAsync(
+        RespireKey key,
+        ReadOnlyMemory<byte> utf8Json,
+        RespireJsonPath path = default,
+        RespireJsonSetCondition condition = RespireJsonSetCondition.None,
+        CancellationToken cancellationToken = default,
+        RespireJsonFloatingPointType? floatingPointType = null)
     {
         if (utf8Json.IsEmpty) throw new ArgumentException("JSON must not be empty.", nameof(utf8Json));
         var token = ConditionToken(condition);
-        return await SetCoreAsync(key, utf8Json, path, token, cancellationToken).ConfigureAwait(false);
+        var floatingPointToken = FloatingPointToken(floatingPointType);
+        return await SetCoreAsync(key, utf8Json, path, token, cancellationToken, floatingPointToken).ConfigureAwait(false);
     }
 
     /// <summary>Gets one path from one key, preserving the multi-key result shape.</summary>
@@ -491,12 +547,18 @@ public sealed class RespireJsonClient
     }
 
     private async ValueTask<bool> SetCoreAsync(
-        RespireKey key, RespireValue json, RespireJsonPath path, string? condition, CancellationToken cancellationToken)
+        RespireKey key, RespireValue json, RespireJsonPath path, string? condition, CancellationToken cancellationToken,
+        string? floatingPointType)
     {
-        using var result = condition is null
-            ? await DispatchAsync(SetCommand, [key, path.Value, json], cancellationToken).ConfigureAwait(false)
-            : await DispatchAsync(SetCommand, [key, path.Value, json, condition], cancellationToken).ConfigureAwait(false);
-        // NX and XX rejections are the only null replies; unconditional writes reply OK or fail.
+        RespireValue[] arguments = (condition, floatingPointType) switch
+        {
+            (null, null) => [key, path.Value, json],
+            (not null, null) => [key, path.Value, json, condition],
+            (null, not null) => [key, path.Value, json, "FPHA", floatingPointType],
+            _ => [key, path.Value, json, condition!, "FPHA", floatingPointType!],
+        };
+        using var result = await DispatchAsync(SetCommand, arguments, cancellationToken).ConfigureAwait(false);
+        // Redis also returns null when a path cannot be created inside an existing document.
         return !result.IsNull;
     }
 
@@ -535,6 +597,16 @@ public sealed class RespireJsonClient
         RespireJsonSetCondition.Nx => "NX",
         RespireJsonSetCondition.Xx => "XX",
         _ => throw new ArgumentOutOfRangeException(nameof(condition)),
+    };
+
+    private static string? FloatingPointToken(RespireJsonFloatingPointType? floatingPointType) => floatingPointType switch
+    {
+        null => null,
+        RespireJsonFloatingPointType.Fp16 => "FP16",
+        RespireJsonFloatingPointType.Bf16 => "BF16",
+        RespireJsonFloatingPointType.Fp32 => "FP32",
+        RespireJsonFloatingPointType.Fp64 => "FP64",
+        _ => throw new ArgumentOutOfRangeException(nameof(floatingPointType)),
     };
 
     private static RespireJsonGetResult<T>[] DeserializeValues<T>(

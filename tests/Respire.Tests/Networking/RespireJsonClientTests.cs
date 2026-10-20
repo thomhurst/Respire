@@ -453,6 +453,7 @@ public partial class RespireJsonClientTests
     }
 
     [JsonSerializable(typeof(Profile))]
+    [JsonSerializable(typeof(double[]))]
     [JsonSerializable(typeof(Node))]
     private sealed partial class JsonTestContext : JsonSerializerContext;
 
