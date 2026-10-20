@@ -65,6 +65,14 @@ Do not enable Development on an exposed deployment. The enqueue API also require
 the operator policy; replace it with your application's producer authorization
 when integrating clients.
 
+Forwarded headers are not enabled by this starter. Behind a TLS-terminating
+proxy, the application sees HTTP and returns 403 for authenticated endpoints,
+even when the browser used HTTPS. Configure ASP.NET Core Forwarded Headers
+Middleware for your deployment's known proxies or networks, and call
+`app.UseForwardedHeaders()` before authentication so that `Request.IsHttps`
+reflects the original connection. Never accept forwarded headers from arbitrary
+clients: a forged `X-Forwarded-Proto` could bypass the HTTPS requirement.
+
 For another HTTP port, run
 `dotnet run --no-launch-profile -- --urls http://localhost:5081` and explicitly
 set `ASPNETCORE_ENVIRONMENT=Development` for the local HTTP authentication exception.

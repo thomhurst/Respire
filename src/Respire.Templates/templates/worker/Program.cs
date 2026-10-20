@@ -17,8 +17,8 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["Dashboard:Password"]))
 builder.Services.AddAuthentication(OperatorAuthenticationHandler.SchemeName)
     .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, OperatorAuthenticationHandler>(
         OperatorAuthenticationHandler.SchemeName, _ => { });
-builder.Services.AddAuthorization(options => options.AddPolicy("QueueOperators",
-    policy => policy.RequireAuthenticatedUser().RequireRole("QueueOperator")));
+builder.Services.AddAuthorization(options => options.AddPolicy(OperatorAuthenticationHandler.PolicyName,
+    policy => policy.RequireAuthenticatedUser().RequireRole(OperatorAuthenticationHandler.RoleName)));
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("ConnectionStrings:Redis is required."));
 builder.Services.AddHealthChecks().AddRespire();
@@ -53,11 +53,11 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapHealthChecks("/health/ready");
 app.MapGet("/", () => "See README.md to enqueue a job. Operator dashboard: /workers/");
-app.MapRespireStreamingDashboard("/workers", "QueueOperators");
-var jobs = app.MapGroup("/jobs").RequireAuthorization("QueueOperators");
+app.MapRespireStreamingDashboard("/workers", OperatorAuthenticationHandler.PolicyName);
+var jobs = app.MapGroup("/jobs").RequireAuthorization(OperatorAuthenticationHandler.PolicyName);
 jobs.MapPost("/{id}", async (string id, SampleJob job, IServiceProvider services, CancellationToken ct) =>
 {
-    if (string.IsNullOrWhiteSpace(id) || id.Length > 128
+    if (!IsValidJobId(id)
         || string.IsNullOrWhiteSpace(job.Message) || job.Message.Length > 1000)
         return Results.BadRequest("Supply an ID of 1–128 characters and a message of 1–1000 characters.");
 
@@ -70,7 +70,12 @@ jobs.MapPost("/{id}", async (string id, SampleJob job, IServiceProvider services
 });
 jobs.MapGet("/{id}", async (string id, IRespireClient redis, CancellationToken ct) =>
 {
+    if (!IsValidJobId(id))
+        return Results.BadRequest("Supply an ID of 1–128 characters.");
+
     var result = await redis.GetAsync<string>($"RespireWorker:result:{id}", ct);
     return result is null ? Results.NotFound() : Results.Ok(new { id, result });
 });
 await app.RunAsync();
+
+static bool IsValidJobId(string id) => !string.IsNullOrWhiteSpace(id) && id.Length <= 128;

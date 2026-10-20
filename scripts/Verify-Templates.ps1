@@ -175,6 +175,10 @@ function New-TemplateApp([string]$Template, [string]$Name, [int]$ReferenceCount)
         if ($reference.Version -cne $Version) { throw "Unstamped package reference: $($reference.OuterXml)" }
     }
     if (Test-Path (Join-Path $destination '.template.config')) { throw 'Template engine metadata leaked into generated app.' }
+    $ignore = Get-Content -LiteralPath (Join-Path $destination '.gitignore')
+    foreach ($pattern in @('bin/', 'obj/', '.vs/', '*.user', '.env')) {
+        if ($pattern -cnotin $ignore) { throw "Generated $Template is missing ignore rule $pattern." }
+    }
     Invoke-DotNet @('build', $project, '-c', 'Release', '-warnaserror',
         "-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
 }
@@ -245,6 +249,14 @@ try {
         }
         # Dashboard mutations still require antiforgery, even for an authenticated operator.
         Assert-HttpStatus "$url/workers/0/retry" 400 $headers 'POST'
+        foreach ($invalidId in @('%20', ('x' * 129))) {
+            Assert-HttpStatus "$url/jobs/$invalidId" 400 $headers
+            Assert-HttpStatus "$url/jobs/$invalidId" 400 $headers 'POST' '{"message":"invalid ID"}'
+        }
+        foreach ($validId in @('x', ('x' * 128))) {
+            Assert-HttpStatus "$url/jobs/$validId" 404 $headers
+            Assert-HttpStatus "$url/jobs/$validId" 202 $headers 'POST' '{"message":"valid ID"}'
+        }
         $submitted = Invoke-RestMethod "$url/jobs/smoke" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"message":"hello worker"}' -TimeoutSec 10
         $duplicate = Invoke-RestMethod "$url/jobs/smoke" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"message":"ignored duplicate"}' -TimeoutSec 10
         if (-not $submitted.enqueued -or $duplicate.enqueued -or $submitted.entryId -ne $duplicate.entryId) {
@@ -268,6 +280,9 @@ try {
         # Valid credentials cannot enable the starter's HTTP exception outside Development.
         $url = Start-App 'Production'
         Assert-HttpStatus "$url/workers/" 403 $headers
+        $spoofedHeaders = $headers.Clone()
+        $spoofedHeaders['X-Forwarded-Proto'] = 'https'
+        Assert-HttpStatus "$url/workers/" 403 $spoofedHeaders
         $insecure = Invoke-WebRequest "$url/workers/" -SkipHttpErrorCheck -TimeoutSec 10
         if ($insecure.StatusCode -ne 403 -or $insecure.Headers.ContainsKey('WWW-Authenticate')) {
             throw 'Production HTTP must reject access without prompting for plaintext credentials.'

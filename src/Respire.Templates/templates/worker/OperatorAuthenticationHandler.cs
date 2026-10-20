@@ -17,6 +17,8 @@ public sealed class OperatorAuthenticationHandler(
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = "OperatorBasic";
+    public const string PolicyName = "QueueOperators";
+    public const string RoleName = "QueueOperator";
 
     private bool AllowsCredentials => Request.IsHttps || (environment.IsDevelopment()
         && Context.Connection.RemoteIpAddress is { } address && IPAddress.IsLoopback(address));
@@ -44,7 +46,7 @@ public sealed class OperatorAuthenticationHandler(
 
         var identity = new ClaimsIdentity([
             new Claim(ClaimTypes.NameIdentifier, "operator"), new Claim(ClaimTypes.Name, "operator"),
-            new Claim(ClaimTypes.Role, "QueueOperator")
+            new Claim(ClaimTypes.Role, RoleName)
         ], SchemeName);
         return Task.FromResult(AuthenticateResult.Success(
             new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));
