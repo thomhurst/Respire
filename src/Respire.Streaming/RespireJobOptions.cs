@@ -24,8 +24,12 @@ public sealed record RespireJobEnqueueOptions
     /// <summary>Deduplication window from enqueue. Defaults to one day.</summary>
     public TimeSpan DeduplicationWindow { get; init; } = TimeSpan.FromDays(1);
 
+    /// <summary>Duplicate policy fixed by the first successful enqueue for its window. Defaults to FirstSubmissionWins.</summary>
+    public RespireJobDeduplicationMode DeduplicationMode { get; init; }
+
     internal void Validate()
     {
+        JobDeduplication.Validate(DeduplicationMode);
         if (MaximumRuntime is { } runtime) JobQueueScheduling.ValidateDuration(runtime, nameof(MaximumRuntime));
         if (Group is not null)
         {

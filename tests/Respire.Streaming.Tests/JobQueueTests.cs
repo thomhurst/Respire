@@ -10,6 +10,24 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test]
+    public async Task InvalidDeduplicationModesAreRejectedBeforeSerialization()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        var queue = new RespireJobQueue<string>(client, "queue", _ => throw new InvalidOperationException());
+        var invalid = (RespireJobDeduplicationMode)42;
+        await Assert.That(async () => await queue.EnqueueAsync(invalid, "job", "payload"))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await queue.EnqueueScheduledAsync("job", "payload", new() { DeduplicationMode = invalid }))
+            .Throws<ArgumentOutOfRangeException>();
+        await using var transaction = client.CreateTransaction();
+        await Assert.That(() => queue.Enqueue(transaction, invalid, "job", "payload"))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => queue.EnqueueScheduled(transaction, "job", "payload", new() { DeduplicationMode = invalid }))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     [Arguments(-1)]
     [Arguments(1441)]
     public async Task InvalidMetricsRetentionIsRejected(int retention)

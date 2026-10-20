@@ -123,7 +123,7 @@ internal static class DashboardPage
         else
         {
             html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Entry</th><th scope=\"col\">Consumer</th><th scope=\"col\">Idle seconds</th><th scope=\"col\">Deliveries</th>");
-            if (config.IsJobQueue) html.Append("<th scope=\"col\">Checkpoint</th>");
+            if (config.IsJobQueue) html.Append("<th scope=\"col\">Deduplication identity</th><th scope=\"col\">Mode</th><th scope=\"col\">Checkpoint</th>");
             html.Append("</tr></thead><tbody>");
             foreach (var entry in stream.Pending)
             {
@@ -131,6 +131,9 @@ internal static class DashboardPage
                     .Append("</td><td>").Append(entry.IdleTime.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).Append("</td><td>").Append(N(entry.DeliveryCount)).Append("</td>");
                 if (config.IsJobQueue)
                 {
+                    var policy = stream.Deduplication?.GetValueOrDefault(entry.Id);
+                    html.Append("<td>").Append(E(policy?.Identity ?? "—"))
+                        .Append("</td><td>").Append(E(policy?.Mode ?? "—")).Append("</td>");
                     html.Append("<td>");
                     if (stream.Checkpoints?.TryGetValue(entry.Id, out var checkpoint) == true && checkpoint is not null)
                     {

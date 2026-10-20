@@ -15,14 +15,16 @@ public sealed partial class RespireJobQueue<T>
     public const string ConsumerGroup = "respire-jobs";
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-    private static readonly RespireScript EnqueueScript = RespireScript.Create("""
-        local existing = redis.call('GET', KEYS[2])
-        if existing then return {existing, 0} end
+    private static readonly RespireScript EnqueueScript = RespireScript.Create(
+        "local deduplicationKey = KEYS[2]\n" + JobDeduplication.Duplicate + """
         -- Lua errors do not roll back writes. Check both mutations and rollback before appending.
         if not redis.acl_check_cmd then
             return redis.error_reply('ERR job enqueue requires Redis 7.0 or later')
         end
         local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2]}
+        if ARGV[6] == '1' then
+            table.insert(fields, '_respire.job.deduplication'); table.insert(fields, 'Extend')
+        end
         if ARGV[4] and ARGV[4] ~= '' then
             table.insert(fields, 'traceparent'); table.insert(fields, ARGV[4])
             if ARGV[5] and ARGV[5] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[5]) end
@@ -33,7 +35,7 @@ public sealed partial class RespireJobQueue<T>
             return redis.error_reply('NOPERM job enqueue is not permitted')
         end
         local id = redis.call('XADD', KEYS[1], '*', unpack(fields))
-        local recorded = redis.pcall('SET', KEYS[2], id, 'PX', ARGV[3])
+        local recorded = redis.pcall('SET', KEYS[2], record(id, ARGV[6], ARGV[3]), 'PX', ARGV[3])
         if type(recorded) == 'table' and recorded.err then
             redis.call('XDEL', KEYS[1], id)
             return recorded
@@ -92,14 +94,26 @@ public sealed partial class RespireJobQueue<T>
     }
 
     /// <summary>Enqueues a job once within a window, returning the original entry ID on duplicate submissions.</summary>
-    /// <remarks>The window starts at the first successful enqueue and is not extended by duplicates.
+    /// <remarks>A new job uses FirstSubmissionWins: its window starts at the first successful enqueue and is not extended by duplicates.
     /// It defaults to one day and must be positive and at most Int32.MaxValue milliseconds.
     /// Reuse the same job ID after an ambiguous network outcome. Duplicate submissions preserve the first payload,
-    /// even after that job completes. The window expires only deduplication metadata, never the job itself.</remarks>
-    public async ValueTask<RespireJobEnqueueResult> EnqueueAsync(string jobId, T payload,
+    /// even after that job completes. An existing Extend job instead renews its original window.
+    /// The window expires only deduplication metadata, never the job itself.</remarks>
+    public ValueTask<RespireJobEnqueueResult> EnqueueAsync(string jobId, T payload,
         TimeSpan? deduplicationWindow = null, CancellationToken cancellationToken = default)
+        => EnqueueAsync(RespireJobDeduplicationMode.FirstSubmissionWins, jobId, payload,
+            deduplicationWindow, cancellationToken);
+
+    /// <summary>Enqueues with an explicit deduplication policy using the application job ID as identity.</summary>
+    /// <remarks>The first successful enqueue fixes the mode and window until that window expires.
+    /// Extend renews the original window on duplicates, including after completion, without replacing payload or options.
+    /// Upgrade all producers before opting into Extend. Workers do not renew the window on acquisition or retries.</remarks>
+    public async ValueTask<RespireJobEnqueueResult> EnqueueAsync(RespireJobDeduplicationMode deduplicationMode,
+        string jobId, T payload, TimeSpan? deduplicationWindow = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
+        JobDeduplication.Validate(deduplicationMode);
         var window = deduplicationWindow ?? TimeSpan.FromDays(1);
         if (window <= TimeSpan.Zero || window > TimeSpan.FromMilliseconds(int.MaxValue))
             throw new ArgumentOutOfRangeException(nameof(deduplicationWindow));
@@ -114,7 +128,8 @@ public sealed partial class RespireJobQueue<T>
         using var trace = new JobEnqueueTrace();
         var bytes = _serialize(payload) ?? throw new InvalidOperationException("The job serializer returned null.");
         using var result = await _client.Scripts.ExecuteAsync(EnqueueScript, [StreamKey, deduplicationKey],
-            [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State], cancellationToken).ConfigureAwait(false);
+            [jobId, bytes, (long)Math.Ceiling(window.TotalMilliseconds), trace.Parent, trace.State,
+                (int)deduplicationMode], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }
@@ -141,7 +156,8 @@ public sealed partial class RespireJobQueue<T>
                 (long)Math.Ceiling(options.Delay.TotalMilliseconds), options.Priority,
                 (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State,
                 options.Group ?? string.Empty, (long)Math.Ceiling(options.MaximumRuntime?.TotalMilliseconds ?? 0),
-                options.MaximumRuntime is null ? string.Empty : Guid.NewGuid().ToString("N")], cancellationToken).ConfigureAwait(false);
+                options.MaximumRuntime is null ? string.Empty : Guid.NewGuid().ToString("N"),
+                (int)options.DeduplicationMode], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }

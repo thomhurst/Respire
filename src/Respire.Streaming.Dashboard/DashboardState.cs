@@ -7,13 +7,15 @@ internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> 
 internal sealed record DashboardJobLogs(string QueueName, string JobId, string[] Lines);
 internal sealed record DashboardJobGroups(int Index, string QueueName, IReadOnlyList<RespireJobGroupInfo> Groups, string? NextCursor);
 internal sealed record DashboardJobBatch(string Id, RespireJobBatchStatus? Status, bool Unavailable = false);
+internal sealed record DashboardJobDeduplication(string Identity, string Mode);
 internal sealed record DashboardStreamSnapshot(int Index, RespireDashboardStream Configuration,
     long Length, long DeadLetterLength, RespireStreamGroupInfo[] Groups,
     RespireStreamPendingEntry[] Pending, RespireStreamEntry[] DeadLetters,
     double? DeliveriesPerSecond, string? Error, bool SourceUnavailable = false, bool DeadLettersUnavailable = false,
     bool? IsPaused = null, long? RateLimitHits = null, IReadOnlyList<RespireJobMetricBucket>? Metrics = null,
     RespireJobGroupPage? JobGroups = null, IReadOnlyList<DashboardJobBatch>? Batches = null,
-    IReadOnlyDictionary<RespireStreamId, RespireJobCheckpoint?>? Checkpoints = null);
+    IReadOnlyDictionary<RespireStreamId, RespireJobCheckpoint?>? Checkpoints = null,
+    IReadOnlyDictionary<RespireStreamId, DashboardJobDeduplication>? Deduplication = null);
 
 internal sealed class DashboardState
 {
@@ -182,6 +184,23 @@ internal sealed class DashboardState
                     if (checkpointReads.Unavailable)
                         error = (error is null ? "" : error + " ") + "Checkpoints unavailable. Check Redis permissions.";
                 }
+                Dictionary<RespireStreamId, DashboardJobDeduplication>? deduplication = null;
+                if (stream.IsJobQueue && !sourceUnavailable && pending.Length > 0)
+                {
+                    try
+                    {
+                        using var policies = await _client.Scripts.ExecuteAsync(DashboardScripts.Deduplication,
+                            [stream.Stream], pending.Select(entry => (RespireValue)entry.Id.Value).ToArray(), token).ConfigureAwait(false);
+                        deduplication = new();
+                        for (var row = 0; row < policies.Count; row++)
+                            deduplication[new(policies[row][0].AsString())] =
+                                new(policies[row][1].AsString(), policies[row][2].AsString());
+                    }
+                    catch (RespireException)
+                    {
+                        error = (error is null ? "" : error + " ") + "Deduplication details unavailable. Check Redis permissions.";
+                    }
+                }
                 try
                 {
                     if (stream.DeadLetterStream is { } dead)
@@ -213,7 +232,7 @@ internal sealed class DashboardState
                     _samples[i] = (current, now);
                 }
                 result[i] = new(i, stream, length, deadLength, groups, pending, entries, _rates[i], error,
-                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups, batches, checkpoints);
+                    sourceUnavailable, deadLettersUnavailable, paused, rateLimitHits, metrics, jobGroups, batches, checkpoints, deduplication);
             }).ConfigureAwait(false);
             _snapshot = new(result);
             _snapshotTimestamp = _clock.GetTimestamp();

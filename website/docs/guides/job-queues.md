@@ -93,7 +93,7 @@ Before appending, the script checks permissions for both writes and rollback. If
 deduplication key fails, it removes the new entry before returning the error, so a retry cannot
 create a duplicate from that failed append.
 
-The window starts at the successful enqueue and duplicate calls do not extend it. Acknowledgement
+By default (`FirstSubmissionWins`), the window starts at the successful enqueue and duplicate calls do not extend it. Acknowledgement
 or dead-letter completion does not remove the deduplication record. Once it expires, the same
 application ID can create a new stream entry, even if the earlier entry is still pending.
 The deduplication window is **not a job TTL** and does not delete the payload.
@@ -102,6 +102,61 @@ A network failure or cancellation after sending may leave the enqueue outcome un
 Retry with the same job ID within the window. An expired or evicted deduplication record allows
 another enqueue, so handlers still need idempotent side effects. A deduplicated submission returns
 the earlier stream ID even if an operator has since deleted that entry.
+
+### Extending the window
+
+Use `Extend` to renew the winning enqueue's window on each duplicate:
+
+<!-- doc-test-tail-declaration: split-before=public sealed record EmailJob -->
+```csharp
+using System.Text.Json;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<EmailJob>(client, "email",
+    job => JsonSerializer.SerializeToUtf8Bytes(job));
+await queue.EnqueueAsync(RespireJobDeduplicationMode.Extend,
+    "email:customer-42", new EmailJob("customer@example.com"),
+    deduplicationWindow: TimeSpan.FromMinutes(10));
+
+public sealed record EmailJob(string Recipient);
+```
+
+For scheduled jobs, set `RespireJobEnqueueOptions.DeduplicationMode` to
+`RespireJobDeduplicationMode.Extend`. Transactional `Enqueue` accepts the same mode argument;
+`EnqueueScheduled` uses the same options. Renewal happens inside the enqueue script, or inside
+`EXEC` for a transaction.
+
+The **first successful enqueue fixes both mode and window** for that generation of the application
+job ID. Duplicates retain its payload, trace context, group, delay, priority, lifetime and checkpoint
+options, and return its original `EntryId` with `Enqueued == false`. Supplying another mode or
+window on a duplicate does not change that policy. This also applies when switching between
+immediate, scheduled and transactional APIs: a default call renews an existing Extend record,
+and an Extend call cannot change an existing FirstSubmissionWins record.
+
+| State when a duplicate arrives | Extend behavior |
+| --- | --- |
+| Queued or scheduled | Renew deduplication only; do not postpone the due time or replace options. |
+| Active or waiting for a retry | Renew deduplication; leave the delivery, attempt count and retry backoff intact. |
+| Completed, dead-lettered, or expired by job TTL | Renew the retained record and return the original ID; do not enqueue another job. |
+| Deduplication record expired or evicted | Create a new independent job with the new submission's mode and options. Earlier work may still exist. |
+
+Acquisition, promotion, retries, cooperative yields and completion never renew the window themselves.
+Concurrent duplicates and worker acquisition are serialized by Redis; renewal does not mutate a
+stream entry or worker ownership. Extend is a sliding suppression window, not debounce or payload
+replacement. Replace and KeepLastIfActive are tracked in
+[#1986](https://github.com/thomhurst/Respire/issues/1986) and
+[#1987](https://github.com/thomhurst/Respire/issues/1987).
+
+Upgrade **all producers**, including transactional producers, before enabling Extend. Its
+deduplication record includes the winning mode and duration; older producers understand only
+plain stream IDs. Default records remain compatible. Both modes use the existing `GET`/`SET`
+permissions; an Extend duplicate needs `SET` to renew, while a default duplicate remains read-only.
+
+The dashboard's bounded pending-delivery table shows the application job ID as the deduplication
+identity and the mode retained on the winning entry. These are submission metadata, not an
+indication that the deduplication window is still live. No payload is fetched for this display.
 
 ## Transactional enqueue
 
