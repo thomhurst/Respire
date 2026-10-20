@@ -12,6 +12,33 @@ public class JobSchedulingClusterTests
 {
     [Test]
     [NotInParallel]
+    public async Task ReplaceUsesExplicitSameSlotLifecycleKeysWithPrefixedTransactionsAndAcquisition()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new()
+        {
+            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+        });
+        await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+        foreach (var prefix in new[] { "tenant:", "{tenant}:" })
+        {
+            var client = root.WithKeyPrefix(prefix);
+            var queue = new RespireJobQueue<string>(client, "replacement", Encoding.UTF8.GetBytes);
+            await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace, "job", "old");
+            await using var transaction = client.CreateTransaction();
+            var replace = queue.EnqueueScheduled(transaction, "job", "new", new() { Group = "group:{other}:東京" });
+            await transaction.CommitAsync();
+            await Assert.That(replace.Result.Enqueued).IsTrue();
+            await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+            var entries = new List<RespireStreamEntry>();
+            for (var i = 0; i < 3; i++) entries.AddRange(await JobReplacementIntegrationTests.Read(client, queue, grouped: true));
+            await Assert.That(entries.Count).IsEqualTo(1);
+            await Assert.That(entries[0].GetString("_respire.job.payload")).IsEqualTo("new");
+            await Assert.That((await queue.EnqueueAsync("job", "active duplicate")).Enqueued).IsFalse();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task TransactionalEnqueueSharesCallerHashSlotAndRejectsCrossSlotWrites()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()

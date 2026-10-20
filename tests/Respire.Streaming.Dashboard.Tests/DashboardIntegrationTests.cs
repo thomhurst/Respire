@@ -338,7 +338,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
-    public async Task JobRetryRetainsIdentityAndResetsAttemptAndExpiry()
+    public async Task JobRetryRetainsIdentityAndResetsAttemptExpiryAndReplacementFence()
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
         var queue = new RespireJobQueue<string>(client, "dashboard", System.Text.Encoding.UTF8.GetBytes);
@@ -350,13 +350,18 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
             ("_respire.source_id", "1-0"), ("_respire.group", RespireJobQueue<string>.ConsumerGroup),
             ("_respire.attempt", "3"), ("_respire.reason", "explicit"), ("_respire.exception_type", ""),
             ("_respire.job.id", "job-42"), ("_respire.job.payload", "data"),
-            ("_respire.job.attempts", "9"), ("_respire.job.expires", "1"));
+            ("_respire.job.attempts", "9"), ("_respire.job.expires", "1"),
+            ("_respire.job.deduplication", "Replace"), ("_respire.job.generation", "terminal"),
+            ("_respire.job.revision", "old"));
         await Assert.That(await new DashboardState(client, options).MutateAsync(0, id.ToString(), true, default)).IsEqualTo(1);
         var entry = (await client.Streams.RangeAsync(queue.StreamKey)).Single();
         await Assert.That(entry.GetString("_respire.job.id")).IsEqualTo("job-42");
         await Assert.That(entry.GetString("_respire.job.payload")).IsEqualTo("data");
         await Assert.That(entry.GetString("_respire.job.attempts")).IsEqualTo("0");
         await Assert.That(entry.GetString("_respire.job.expires")).IsEqualTo("0");
+        await Assert.That(entry.GetString("_respire.job.generation")).IsNull();
+        await Assert.That(entry.GetString("_respire.job.revision")).IsNull();
+        await Assert.That(entry.GetString("_respire.job.deduplication")).IsEqualTo("Separate lifecycle");
     }
 
     [Test]

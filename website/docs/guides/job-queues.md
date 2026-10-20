@@ -85,7 +85,7 @@ once per service collection, and worker `TelemetryName` values must also be uniq
 
 Enqueue runs one Lua script that checks an expiring deduplication key, appends to the ready
 stream, and records the new stream ID. Concurrent submissions with the same job ID return that
-original ID; only one has `Enqueued == true`. The first payload wins, so resubmitting an ID does
+original ID; with the default mode only one has `Enqueued == true`. The first payload wins, so resubmitting an ID does
 not update a queued job. The default deduplication window is one day; a custom window must be
 positive and at most `Int32.MaxValue` milliseconds. Fractions round up to one millisecond.
 
@@ -145,9 +145,8 @@ and an Extend call cannot change an existing FirstSubmissionWins record.
 Acquisition, promotion, retries, cooperative yields and completion never renew the window themselves.
 Concurrent duplicates and worker acquisition are serialized by Redis; renewal does not mutate a
 stream entry or worker ownership. Extend is a sliding suppression window, not debounce or payload
-replacement. Replace and KeepLastIfActive are tracked in
-[#1986](https://github.com/thomhurst/Respire/issues/1986) and
-[#1987](https://github.com/thomhurst/Respire/issues/1987).
+replacement. For pending payload replacement, use `Replace` below. Active follow-up submissions
+(`KeepLastIfActive`) are tracked in [#1987](https://github.com/thomhurst/Respire/issues/1987).
 
 Upgrade **all producers**, including transactional producers, before enabling Extend. Its
 deduplication record includes the winning mode and duration; older producers understand only
@@ -157,6 +156,72 @@ permissions; an Extend duplicate needs `SET` to renew, while a default duplicate
 The dashboard's bounded pending-delivery table shows the application job ID as the deduplication
 identity and the mode retained on the winning entry. These are submission metadata, not an
 indication that the deduplication window is still live. No payload is fetched for this display.
+
+### Replacing pending submissions
+
+Select `RespireJobDeduplicationMode.Replace` on the first submission to keep the latest envelope
+until a worker first acquires the job:
+
+<!-- doc-test-tail-declaration: split-before=public sealed record EmailJob -->
+```csharp
+using System.Text.Json;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<EmailJob>(client, "email",
+    job => JsonSerializer.SerializeToUtf8Bytes(job));
+await queue.EnqueueAsync(RespireJobDeduplicationMode.Replace,
+    "email:customer-42", new EmailJob("old@example.com"));
+// The stored mode applies even when a duplicate uses the default overload.
+await queue.EnqueueScheduledAsync("email:customer-42", new EmailJob("new@example.com"),
+    new() { Delay = TimeSpan.FromMinutes(5), Priority = 10 });
+
+public sealed record EmailJob(string Recipient);
+```
+
+The application job ID remains the deduplication identity. The first successful enqueue fixes
+the mode and the window deadline. A replacement does **not** renew that deadline. Duplicates
+cannot change a FirstSubmissionWins or Extend generation into Replace, or change Replace to
+another mode. Immediate, scheduled, grouped and transactional submissions share this policy.
+For a new scheduled generation, set `RespireJobEnqueueOptions.DeduplicationMode` to `Replace`;
+transactional `Enqueue` accepts the mode argument and `EnqueueScheduled` accepts the options.
+The transition runs inside `EXEC`, so a discarded or WATCH-aborted transaction replaces nothing.
+
+Each accepted replacement returns its new submission `EntryId` with `Enqueued == true`.
+Its payload, trace context, delay, priority, TTL, group and checkpoint settings replace the entire
+previous envelope. Delay and TTL restart from that submission's Redis server time; switching
+to immediate enqueue clears scheduled options. A replacement with resumability gets a fresh
+checkpoint identity. Concurrent submissions are serialized by Redis; the last accepted one wins.
+As with other scheduled jobs, promotion creates a different delivery ID.
+
+| State when a duplicate arrives | Replace behavior |
+| --- | --- |
+| Pending, scheduled, or promoted but unread | Accept a replacement and fence the superseded envelope from delivery. |
+| First acquisition wins the race | Preserve the acquired payload and options; return the latest submission ID with `Enqueued == false`. |
+| Retry backoff, visibility recovery, or cooperative yield after acquisition | Preserve the acquired generation, including its attempt count, checkpoint and backoff. |
+| Completed, dead-lettered, or discarded by a worker after job TTL expiry | Suppress duplicates until the original window expires; do not resurrect the generation. |
+| Deduplication window expired or evicted | Start a new independent generation using the new submission's policy. Earlier pending or active work can still run. |
+
+Replacement appends an immutable envelope and atomically updates a durable generation/revision
+fence. Worker acquisition freezes that fence in the same script as the consumer-group read.
+Workers discard superseded staging entries and acknowledge superseded ready entries without
+invoking a handler. No producer deletes a stream entry a worker may own. Superseded delayed
+entries are cleaned when their old due time is visited; retained ready entries follow the
+queue's normal trimming policy. The dashboard reports `Replace` and the application job ID.
+
+Upgrade **all producers and job workers** before enabling Replace. Older producers do not
+understand its deduplication record, and older workers do not enforce its acquisition fence.
+Default and Extend records retain their existing formats. Replace also needs `TYPE`, `HGET`,
+`HSET`, `HDEL` on the generated `:dedup-deliveries` hash and `PEXPIRETIME` on deduplication keys.
+All upgraded hosted job workers pass this hash as an explicit script key, so their ACL key
+patterns must permit it even for queues currently using only FirstSubmissionWins or Extend.
+Workers retire lifecycle records on terminal completion or job expiry, independently of the
+deduplication deadline. Protect the hash from eviction and do not expire, delete, or mutate it
+while work exists: missing lifecycle state is treated as terminal to avoid delivering stale work.
+Use the hosted job worker rather than reading Replace entries with a generic stream consumer.
+Dashboard operator retries clear the terminal generation fence and run independently of the
+original deduplication window; their displayed mode is `Separate lifecycle`.
 
 ## Transactional enqueue
 
@@ -1053,7 +1118,8 @@ Queue names must be nonblank and cannot contain braces. The generated ready stre
 `{respire-job:<name>}:ready`; its default dead-letter stream appends `:dead`, and deduplication
 keys append `:dedup:<SHA256-of-job-ID>`. The staging stream appends `:scheduled`, and its due-time
 sorted set appends `:due`. The event stream appends `:events`; the persistent control hash appends
-`:control` (`queue.ControlKey`). The shared hash tag keeps the atomic operations in one
+`:control` (`queue.ControlKey`), and Replace lifecycle tracking appends `:dedup-deliveries`.
+The shared hash tag keeps the atomic operations in one
 Redis Cluster slot, including through key-prefixed clients. Reserve this namespace exclusively
 for the queue. All worker hosts must agree on the codecs and worker policy for a queue.
 

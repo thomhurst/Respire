@@ -193,7 +193,8 @@ public class JobSchedulingIntegrationTests(RedisTestContainer redis)
         await queue.EnqueueAsync("immediate", "payload");
         var user = "immediate-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(user, ["on", ">password", "~" + queue.StreamKey,
-            "~" + queue.DeadLetterStreamKey, "~" + queue.EventsStreamKey, "~" + queue.ControlKey, "+@all"]);
+            "~" + queue.DeadLetterStreamKey, "~" + queue.EventsStreamKey, "~" + queue.ControlKey,
+            "~" + queue.StreamKey + ":dedup-deliveries", "+@all"]);
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.ConnectionString)

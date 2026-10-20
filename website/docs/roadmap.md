@@ -145,7 +145,7 @@ are described in the guides below; the remaining pre-release work is tracked sep
 - [Blocking queues](guides/blocking-queues.md) and [streamed string transfers](commands/strings-and-keys.md)
   on dedicated connections.
 - [Typed job queues](guides/job-queues.md) with transactional enqueue, delayed scheduling, batch priority, TTL, durable
-  retry backoff, bounded enqueue deduplication with FirstSubmissionWins and sliding Extend modes,
+  retry backoff, bounded enqueue deduplication with FirstSubmissionWins, sliding Extend and pending Replace modes,
   distributed round-robin job groups, scoped handlers, visibility recovery, dead letters,
   queue-wide pause/resume and shared fixed-window admission limits, per-group concurrency leases,
   GCRA rate limits and pause/resume,
