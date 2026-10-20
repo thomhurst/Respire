@@ -352,6 +352,46 @@ await redis.SortedSets.AddAsync("binary:scores", (member, 1.5), ("text", 2.5));
 await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
 ```
 
+### Weighted unions and intersections
+
+`UnionAsync` and `IntersectAsync` return members ordered by their combined score.
+`UnionStoreAsync` and `IntersectStoreAsync` overwrite a destination and return its
+member count. Their existing keys-only overloads use equal weights and sum scores.
+Pass `RespireSortedSetCombineOptions` to choose weights and aggregation:
+
+```csharp
+var options = new RespireSortedSetCombineOptions
+{
+    Weights = new double[] { 2, 3 },
+    Aggregate = RespireSortedSetAggregate.Max,
+};
+string[] members = await redis.SortedSets.UnionAsync(
+    ["{scores}:first", "{scores}:second"], options);
+long count = await redis.SortedSets.IntersectStoreAsync(
+    "{scores}:combined", ["{scores}:first", "{scores}:second"], options);
+var scored = await redis.SortedSets.RangeWithScoresAsync("{scores}:combined");
+```
+
+An empty `Weights` uses one for every key. Otherwise supply exactly one `double`
+per input key, in key order. `Sum`, `Min`, and `Max` combine scores after multiplying
+by the corresponding weight. `Count` ignores original scores: without weights it
+counts the input sets containing each member; with weights it sums those sets'
+weights. **`Count` requires Redis 8.8 or later**; Respire sends the selected option
+and older servers reject it. The read commands require Redis 6.2 or later; the
+store commands support weights and SUM/MIN/MAX from Redis 2.0.
+
+The options overloads reject empty key lists, mismatched weight counts, and unknown
+aggregate values before dispatch. `batch.SortedSets` and `transaction.SortedSets`
+provide the same options on `Union`, `Intersect`, `UnionStore`, and `IntersectStore`.
+Weights are copied into command arguments when called or queued. These overloads
+retain key-prefix mapping, routing, and cache behavior; all source and destination
+keys must share a slot on Redis Cluster.
+
+See Redis's [ZUNION](https://redis.io/docs/latest/commands/zunion/),
+[ZINTER](https://redis.io/docs/latest/commands/zinter/),
+[ZUNIONSTORE](https://redis.io/docs/latest/commands/zunionstore/), and
+[ZINTERSTORE](https://redis.io/docs/latest/commands/zinterstore/) references.
+
 ## Streams
 
 ### Idempotent production (Redis 8.6+)

@@ -26,6 +26,9 @@ Public interface compatibility and the post-2.0 extension policy are described i
   starters are tracked in [#1936](https://github.com/thomhurst/Respire/issues/1936)
   and [#1937](https://github.com/thomhurst/Respire/issues/1937).
 
+- [Weighted sorted-set unions and intersections](commands/collections.md#weighted-unions-and-intersections),
+  including SUM/MIN/MAX and Redis 8.8+ COUNT in immediate, batch, and transaction APIs.
+
 - [Polygon geo searches](commands/geo.md#polygon-searches-valkey-90) on Valkey 9.0+,
   including search/store, batch and transaction APIs, and client-side vertex validation.
 

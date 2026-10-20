@@ -138,8 +138,14 @@ public partial interface IRespireBatchSortedSetCommands
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false);
 
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    RespirePending<string[]> Intersect(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options);
+
     /// <summary>The sorted-set intersection. Redis: ZINTER.</summary>
     RespirePending<string[]> Intersect(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    RespirePending<string[]> Union(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options);
 
     /// <summary>The sorted-set union. Redis: ZUNION.</summary>
     RespirePending<string[]> Union(params ReadOnlySpan<RespireKey> keys);
@@ -147,8 +153,14 @@ public partial interface IRespireBatchSortedSetCommands
     /// <summary>Members in the first sorted set but not the rest. Redis: ZDIFF.</summary>
     RespirePending<string[]> Difference(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    RespirePending<long> IntersectStore(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options);
+
     /// <summary>Stores the intersection and returns its size. Redis: ZINTERSTORE.</summary>
     RespirePending<long> IntersectStore(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    RespirePending<long> UnionStore(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options);
 
     /// <summary>Stores the union and returns its size. Redis: ZUNIONSTORE.</summary>
     RespirePending<long> UnionStore(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
@@ -413,8 +425,20 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IRespi
                     "BYSCORE", offset, count, descending, withScores: true)),
             static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v));
 
+    public RespirePending<string[]> Intersect(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options)
+        => sink.Add<CmdN, string[]>(
+            "ZINTER", SortedSetCommands.CombineCommand(sink.Client, "ZINTER", Verbs.ZInter, keys, options),
+            keys,
+            static (c, v) => ResponseReader.StringArray(in v));
+
     public RespirePending<string[]> Intersect(params ReadOnlySpan<RespireKey> keys)
         => Algebra("ZINTER", Verbs.ZInter, keys);
+
+    public RespirePending<string[]> Union(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options)
+        => sink.Add<CmdN, string[]>(
+            "ZUNION", SortedSetCommands.CombineCommand(sink.Client, "ZUNION", Verbs.ZUnion, keys, options),
+            keys,
+            static (c, v) => ResponseReader.StringArray(in v));
 
     public RespirePending<string[]> Union(params ReadOnlySpan<RespireKey> keys)
         => Algebra("ZUNION", Verbs.ZUnion, keys);
@@ -422,9 +446,21 @@ internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IRespi
     public RespirePending<string[]> Difference(params ReadOnlySpan<RespireKey> keys)
         => Algebra("ZDIFF", Verbs.ZDiff, keys);
 
+    public RespirePending<long> IntersectStore(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options)
+        => sink.Add<Cmd1N, long>(
+            "ZINTERSTORE", SortedSetCommands.CombineStoreCommand(sink.Client, "ZINTERSTORE", Verbs.ZInterStore, destination, keys, options),
+            destination, keys,
+            static (c, v) => ResponseReader.Integer(in v));
+
     public RespirePending<long> IntersectStore(
         RespireKey destination, params ReadOnlySpan<RespireKey> keys)
         => AlgebraStore("ZINTERSTORE", Verbs.ZInterStore, destination, keys);
+
+    public RespirePending<long> UnionStore(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options)
+        => sink.Add<Cmd1N, long>(
+            "ZUNIONSTORE", SortedSetCommands.CombineStoreCommand(sink.Client, "ZUNIONSTORE", Verbs.ZUnionStore, destination, keys, options),
+            destination, keys,
+            static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> UnionStore(
         RespireKey destination, params ReadOnlySpan<RespireKey> keys)
