@@ -36,6 +36,7 @@
         "PingAsync(CancellationToken):ValueTask<TimeSpan>",
         "PublishAsync(RespireChannel,RespireValue,CancellationToken):ValueTask<long>",
         "PublishShardedAsync(RespireChannel,RespireValue,CancellationToken):ValueTask<long>",
+        "RegisterKeyTrackingAsync(RespireKey,RespireKey?,CancellationToken):ValueTask",
         "SetAsync(RespireKey,RespireValue,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
         "SetAsync`1(RespireKey,T,RespireExpiry,RespireSetWhen,CancellationToken):ValueTask<bool>",
         "SubscribeAsync(ReadOnlySpan<RespireChannel>,RespireSubscriptionOptions,CancellationToken):ValueTask<RespireSubscription>",

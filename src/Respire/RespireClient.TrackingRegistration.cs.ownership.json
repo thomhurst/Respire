@@ -1,0 +1,14 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireClient",
+      "OwnerType": "Respire.RespireClient",
+      "Members": [
+        "RegisterKeyTrackingAsync(RespireKey,RespireKey?,CancellationToken):ValueTask"
+      ],
+      "Contract": "Start the GET or HGET caller owner before cancellation, configuration and key validation. Keep it through tracked dispatch, reply inspection and disposal without consuming, publishing or coalescing cache entries."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

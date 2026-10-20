@@ -22,11 +22,10 @@ public interface IRespireClient : IAsyncDisposable
     /// Subscribe to invalidations before calling and register again after each invalidation.
     /// This does not reserve the key or guarantee tracking continuity across disconnects.
     /// Decorators must explicitly forward or implement this capability with their normal key routing
-    /// and access policies. The default implementation throws rather than falling back to a cached read.
+    /// and access policies. Implementations must not fall back to a cached read.
     /// </remarks>
     ValueTask RegisterKeyTrackingAsync(RespireKey key, RespireKey? field = null,
-        CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("This client does not implement fresh key tracking registration.");
+        CancellationToken cancellationToken = default);
 
     /// <summary>The configured data endpoint, or the latest validated primary for a Sentinel client.</summary>
     /// <remarks>Reading this property performs no network I/O. After a Sentinel handoff, a previously
