@@ -1,5 +1,5 @@
 // @ts-check
-import {respireDark, respireLight} from './src/prism-themes.js';
+import {respireDark, respireLight} from './src/prism-themes.mjs';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
