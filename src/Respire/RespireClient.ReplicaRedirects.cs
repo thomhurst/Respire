@@ -57,6 +57,9 @@ public sealed partial class RespireClient
                     observation.Handled(retired, new(connection.Host, connection.Port));
                     connection = target;
                     deadline = rerouted;
+                    // Maintenance may extend the deadline; subsequent redirect rents share it.
+                    acquisition.Dispose();
+                    acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     onConnectionSelected?.Invoke(connection);
                     // Retirement rejected admission; it does not consume a server redirect attempt.
@@ -83,7 +86,8 @@ public sealed partial class RespireClient
                     await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                 }
                 pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
-                rentedConnection = await pool.RentAsync(acquisition.Token).ConfigureAwait(false);
+                // The logical command owns the deadline, including any maintenance allowance.
+                rentedConnection = await pool.RentAsync(acquisition.Token, armHandshakeDeadline: false).ConfigureAwait(false);
                 connection = rentedConnection;
                 telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                 onConnectionSelected?.Invoke(connection);

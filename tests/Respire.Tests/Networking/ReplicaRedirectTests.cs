@@ -16,6 +16,57 @@ public class ReplicaRedirectTests
     [Arguments(true, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
+    public async Task RedirectAfterMaintenanceRerouteUsesRelaxedAcquisitionDeadline(bool circuit, bool delayHandshake)
+    {
+        await using var target = Server();
+        target.ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+            : command == "GET key" ? Bytes("$5\r\nvalue\r\n") : FakeRespServer.OkReply;
+        await using var replacement = Server();
+        replacement.ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+            : command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply;
+        await using var source = Server();
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
+        {
+            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
+            CircuitBreaker = circuit ? new() : null,
+        });
+        var original = client.Core.Multiplexer.GetConnection();
+        await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
+        using var maintenanceWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!original.HasMaintenanceWindow) await Task.Delay(10, maintenanceWait.Token);
+        var announcement = client.Core.Multiplexer.CaptureMovingAnnouncement(0, original,
+            new MaintenanceNotification("MOVING", 1, 10, new("127.0.0.1", replacement.Port)));
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Multiplexer.MovingHandoffPublished += () => published.TrySetResult();
+        client.Core.Multiplexer.QueueDedicatedMovingHandoff(original, announcement, static () => true);
+        await published.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Cross the normal deadline either before the redirect or while acquiring its target.
+        // Both waits must retain the maintenance allowance granted by the retired connection.
+        if (delayHandshake) target.DelayCommand("HELLO 3", 1500);
+        else replacement.DelayCommand("GET key", 1500);
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var reply = await client.SendOnConnectionAsync("GET", original,
+            new Respire.Commands.Cmd1(Respire.Commands.Verbs.Get, "key"), caller.Token);
+        await Assert.That(reply.AsString()).IsEqualTo("value");
+        await Assert.That(source.ReceivedCommands.Contains("GET key")).IsFalse();
+        await Assert.That(replacement.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+
+        static FakeRespServer Server() => new(4)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : FakeRespServer.OkReply,
+        };
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
     public async Task RetirementBeforeRedirectAdmissionReportsReplacementEndpoint(bool circuit, bool script)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
