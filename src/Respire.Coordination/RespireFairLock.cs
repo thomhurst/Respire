@@ -89,7 +89,9 @@ public sealed class RespireFairLock
         end
         local deadline = redis.call('HGET', KEYS[3], 'd' .. owner)
         if not deadline then
-            if ARGV[4] ~= 'join' then return {-1, '', 0} end
+            if ARGV[4] ~= 'join' then
+                return {-1, '', 0, now, 0, redis.call('PTTL', KEYS[3]), redis.call('HLEN', KEYS[3])}
+            end
             deadline = now + tonumber(ARGV[3])
             local tail = redis.call('HGET', KEYS[3], 'tail')
             if tail then
@@ -104,10 +106,14 @@ public sealed class RespireFairLock
             end
         end
         deadline = tonumber(deadline)
-        if deadline <= now then remove(owner); return {-1, '', 0} end
+        if deadline <= now then
+            local failure = {-1, '', 0, now, deadline, redis.call('PTTL', KEYS[3]), redis.call('HLEN', KEYS[3])}
+            remove(owner)
+            return failure
+        end
         -- Enqueue before yielding so cleanup continuations preserve arrival order and deadline.
         if head and tonumber(redis.call('HGET', KEYS[3], 'd' .. head)) <= now then
-            return {2, '', 0}
+            return {2, '', 0, now, deadline}
         end
         local ttl = redis.call('PTTL', KEYS[1])
         if ttl == -1 then return redis.error_reply('ERR fair lock lease must expire') end
@@ -121,7 +127,7 @@ public sealed class RespireFairLock
         end
         local delay = math.min(deadline, tonumber(redis.call('HGET', KEYS[3], 'd' .. head))) - now
         if ttl >= 0 then delay = math.min(delay, math.max(1, ttl)) end
-        return {0, '', math.max(1, delay)}
+        return {0, '', math.max(1, delay), now, deadline}
         """);
 
     /// <summary>Enqueues once and waits for a fenced lease, throwing <see cref="TimeoutException"/> when the queue deadline expires.</summary>
@@ -177,6 +183,7 @@ public sealed class RespireFairLock
         var owner = RespireLock.NewToken();
         var acquisitionUncertain = false;
         long started = 0;
+        long previousServerTime = 0, previousDeadline = 0, previousStarted = 0;
         var transferred = false;
         try
         {
@@ -194,7 +201,16 @@ public sealed class RespireFairLock
                 join = false;
                 var status = response[0].AsInteger();
                 acquisitionUncertain = status == 1;
-                if (status < 0) throw new TimeoutException("The fair lock waiter expired before acquisition.");
+                if (status < 0)
+                {
+                    // Capture the script's atomic observation before finally removes this waiter.
+                    // Redis deadlines use wall-clock TIME; local elapsed time is monotonic.
+                    var serverTime = response[3].AsInteger();
+                    var deadline = response[4].AsInteger();
+                    var reason = deadline == 0 ? "is no longer queued" : "reached its deadline";
+                    throw new TimeoutException(FormattableString.Invariant(
+                        $"The fair lock waiter {reason}. Redis TIME={serverTime}ms, deadline={deadline}ms, previous TIME={previousServerTime}ms, previous deadline={previousDeadline}ms, elapsed since previous attempt={(previousStarted == 0 ? 0 : Stopwatch.GetElapsedTime(previousStarted).TotalMilliseconds):F3}ms, queue PTTL={response[5].AsInteger()}ms, queue fields={response[6].AsInteger()}."));
+                }
                 if (status == 1)
                 {
                     var lease = new RespireLock(_client.Locks, Key, owner,
@@ -206,6 +222,9 @@ public sealed class RespireFairLock
                     transferred = true;
                     return new RespireFencedLock(lease, FencingCounterKey, fence);
                 }
+                previousServerTime = response[3].AsInteger();
+                previousDeadline = response[4].AsInteger();
+                previousStarted = started;
                 if (status == 2) continue; // Bounded cleanup has more expired heads to remove.
                 var delay = TimeSpan.FromMilliseconds(response[2].AsInteger()) - Stopwatch.GetElapsedTime(started);
                 if (delay > TimeSpan.Zero)

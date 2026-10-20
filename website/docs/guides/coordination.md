@@ -71,6 +71,15 @@ remain until they reach the head or are cancelled. The queue hash itself expires
 deadline when nobody remains to clean it up. Network unavailability can delay a client's
 observation of that expiry.
 
+Queue deadlines follow Redis server time. A forward clock adjustment can therefore expire
+a waiter before the same duration passes on the client's monotonic clock, just as it can
+for [Redis key expiry](https://redis.io/docs/latest/commands/expire/#expires-and-persistence).
+A queue timeout includes the current and previous Redis time and waiter deadline, local
+elapsed time since the previous attempt, and the queue's TTL and field count. A zero current
+deadline means the waiter was absent when Redis checked it; the entry may already have
+expired or been removed. These observations help distinguish clock changes from lost queue
+entries without re-enqueuing a waiter or extending its deadline.
+
 RESP3 tracking invalidations notify waiters when a lease is released or the queue changes.
 Keep `ClientSideCache.NoLoop` disabled (the default); the fair-lock API rejects it because it
 can suppress same-client release notifications. Tracking prefixes must cover both the lease
