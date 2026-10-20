@@ -1,3 +1,5 @@
+using System.Text;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -31,6 +33,107 @@ public class SortedSetAlgebraCommandTests
             "ZUNIONSTORE dest 1 a",
             "ZDIFFSTORE dest 1 a",
         });
+    }
+
+    [Test]
+    [Arguments("ZINTER")]
+    [Arguments("ZUNION")]
+    [Arguments("ZDIFF")]
+    [Arguments("ZINTERSTORE")]
+    [Arguments("ZUNIONSTORE")]
+    [Arguments("ZDIFFSTORE")]
+    public async Task ImmediateAlgebra_RejectsCrossSlotBeforeDiscovery(string operation)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2, UseCluster = true,
+            Endpoints = [new("localhost", 1)], Connections = 1,
+        });
+        foreach (var (prefix, first, second) in new[]
+        {
+            ("", "{a}:one", "{b}:two"),
+            ("tenant:", "{a}:one", "{b}:two"),
+            // The prefix changes the first hash tag despite matching logical key tags.
+            ("tenant:{", "one{same}", "two{same}"),
+        })
+        {
+            var view = prefix.Length == 0 ? client : client.WithKeyPrefix(prefix);
+            var error = (await Assert.That(() => ExecuteAlgebraAsync(view, operation, first, [first, second]))
+                .ThrowsExactly<RespireCrossSlotException>())!;
+            await Assert.That(error.CommandName).IsEqualTo(operation);
+            await Assert.That(error.ExpectedSlot).IsEqualTo(ClusterHash.GetSlot(prefix + first));
+            await Assert.That(error.ConflictingSlot).IsEqualTo(ClusterHash.GetSlot(prefix + second));
+            if (operation.EndsWith("STORE", StringComparison.Ordinal))
+            {
+                // Matching source slots must also match the destination slot.
+                var destinationError = (await Assert.That(() => ExecuteAlgebraAsync(view, operation, second, [first, first]))
+                    .ThrowsExactly<RespireCrossSlotException>())!;
+                await Assert.That(destinationError.ExpectedSlot).IsEqualTo(ClusterHash.GetSlot(prefix + second));
+                await Assert.That(destinationError.ConflictingSlot).IsEqualTo(ClusterHash.GetSlot(prefix + first));
+            }
+        }
+    }
+
+    [Test]
+    [Arguments("", "{sets}:first", "{sets}:second", "{sets}:dest")]
+    [Arguments("tenant:", "{sets}:first", "{sets}:second", "{sets}:dest")]
+    [Arguments("{tenant}:", "{a}:first", "{b}:second", "{c}:dest")]
+    public async Task ImmediateAlgebra_DispatchesMappedKeysToSlotOwner(
+        string prefix, string first, string second, string destination)
+    {
+        var slot = ClusterHash.GetSlot(prefix + first);
+        await Assert.That(slot).IsNotEqualTo(ClusterHash.GetSlot("2"));
+        await using var owner = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command.Contains("STORE", StringComparison.Ordinal)
+                ? ":1\r\n"u8.ToArray() : "*1\r\n$3\r\none\r\n"u8.ToArray(),
+        };
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
+        await using var seed = new FakeRespServer(
+            topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2, UseCluster = true,
+            Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1,
+        });
+        var view = prefix.Length == 0 ? client : client.WithKeyPrefix(prefix);
+        string[] operations = ["ZINTER", "ZUNION", "ZDIFF", "ZINTERSTORE", "ZUNIONSTORE", "ZDIFFSTORE"];
+        foreach (var operation in operations)
+        {
+            await ExecuteAlgebraAsync(view, operation, destination, [first, second]);
+        }
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(owner.ReceivedCommands.SequenceEqual(operations.Select(operation =>
+            operation + (operation.EndsWith("STORE", StringComparison.Ordinal) ? $" {prefix}{destination}" : "")
+            + $" 2 {prefix}{first} {prefix}{second}"))).IsTrue();
+    }
+
+    private static async Task ExecuteAlgebraAsync(
+        IRespireClient client, string operation, string destination, RespireKey[] keys)
+    {
+        if (operation.EndsWith("STORE", StringComparison.Ordinal))
+        {
+            var result = operation switch
+            {
+                "ZINTERSTORE" => await client.SortedSets.IntersectStoreAsync(destination, keys),
+                "ZUNIONSTORE" => await client.SortedSets.UnionStoreAsync(destination, keys),
+                "ZDIFFSTORE" => await client.SortedSets.DifferenceStoreAsync(destination, keys),
+                _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+            };
+            await Assert.That(result).IsEqualTo(1);
+        }
+        else
+        {
+            var result = operation switch
+            {
+                "ZINTER" => await client.SortedSets.IntersectAsync(keys),
+                "ZUNION" => await client.SortedSets.UnionAsync(keys),
+                "ZDIFF" => await client.SortedSets.DifferenceAsync(keys),
+                _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+            };
+            await Assert.That(result).IsEquivalentTo(["one"]);
+        }
     }
 
     [Test]

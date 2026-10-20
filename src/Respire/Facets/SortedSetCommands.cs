@@ -993,16 +993,25 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
 
     private ValueTask<string[]> AlgebraAsync(
         string operation, Verb verb, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.StringArrayAsync(
-            operation, new CmdN(verb, CountedKeys(client.MapKeys(keys))), cancellationToken);
+    {
+        var mappedKeys = client.MapKeys(keys);
+        ValidateCombineSlots(client, operation, mappedKeys);
+        return client.StringArrayAsync(
+            operation, new CmdN(verb, CountedKeys(mappedKeys)), cancellationToken);
+    }
 
     private ValueTask<long> AlgebraStoreAsync(
         string operation, Verb verb, RespireKey destination, ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken)
-        => client.IntegerAsync(
+    {
+        var mappedDestination = client.Key(in destination);
+        var mappedKeys = client.MapKeys(keys);
+        ValidateCombineSlots(client, operation, mappedKeys, mappedDestination);
+        return client.IntegerAsync(
             operation,
-            new Cmd1N(verb, client.Key(in destination), CountedKeys(client.MapKeys(keys))),
+            new Cmd1N(verb, mappedDestination, CountedKeys(mappedKeys)),
             cancellationToken);
+    }
 
     internal static CmdN CombineCommand(
         RespireClient client, string operation, Verb verb, ReadOnlySpan<RespireKey> keys,
