@@ -165,8 +165,20 @@ public partial interface IRespireSortedSetCommands
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> RemoveAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken);
 
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<string[]> IntersectAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Applies weights and aggregation to one sorted set. COUNT requires Redis 8.8+.</summary>
+    ValueTask<string[]> IntersectAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string[]> IntersectAsync(RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<string[]> UnionAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Applies weights and aggregation to one sorted set. COUNT requires Redis 8.8+.</summary>
+    ValueTask<string[]> UnionAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string[]> UnionAsync(RespireKey key, CancellationToken cancellationToken);
@@ -174,8 +186,20 @@ public partial interface IRespireSortedSetCommands
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string[]> DifferenceAsync(RespireKey key, CancellationToken cancellationToken);
 
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<long> IntersectStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Stores one sorted set with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
+
+    /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<long> UnionStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Stores one sorted set with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
@@ -415,9 +439,23 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     public ValueTask<long> RemoveAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)
         => RemoveAsync(key, [member], cancellationToken);
 
+    public ValueTask<string[]> IntersectAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => client.StringArrayAsync(
+            "ZINTER", CombineCommand(client, "ZINTER", Verbs.ZInter, keys, options), cancellationToken);
+
+    public ValueTask<string[]> IntersectAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => IntersectAsync([key], options, cancellationToken);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<string[]> IntersectAsync(RespireKey key, CancellationToken cancellationToken)
         => IntersectAsync([key], cancellationToken);
+
+    public ValueTask<string[]> UnionAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => client.StringArrayAsync(
+            "ZUNION", CombineCommand(client, "ZUNION", Verbs.ZUnion, keys, options), cancellationToken);
+
+    public ValueTask<string[]> UnionAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => UnionAsync([key], options, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<string[]> UnionAsync(RespireKey key, CancellationToken cancellationToken)
@@ -427,9 +465,23 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     public ValueTask<string[]> DifferenceAsync(RespireKey key, CancellationToken cancellationToken)
         => DifferenceAsync([key], cancellationToken);
 
+    public ValueTask<long> IntersectStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "ZINTERSTORE", CombineStoreCommand(client, "ZINTERSTORE", Verbs.ZInterStore, destination, keys, options), cancellationToken);
+
+    public ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => IntersectStoreAsync(destination, [key], options, cancellationToken);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
         => IntersectStoreAsync(destination, [key], cancellationToken);
+
+    public ValueTask<long> UnionStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "ZUNIONSTORE", CombineStoreCommand(client, "ZUNIONSTORE", Verbs.ZUnionStore, destination, keys, options), cancellationToken);
+
+    public ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => UnionStoreAsync(destination, [key], options, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
@@ -937,6 +989,75 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
             operation,
             new Cmd1N(verb, client.Key(in destination), CountedKeys(client.MapKeys(keys))),
             cancellationToken);
+
+    internal static CmdN CombineCommand(
+        RespireClient client, string operation, Verb verb, ReadOnlySpan<RespireKey> keys,
+        RespireSortedSetCombineOptions options)
+    {
+        var mappedKeys = client.MapKeys(keys);
+        var arguments = CombineArguments(mappedKeys, options);
+        ValidateCombineSlots(client, operation, mappedKeys);
+        return new CmdN(verb, arguments);
+    }
+
+    internal static Cmd1N CombineStoreCommand(
+        RespireClient client, string operation, Verb verb, RespireKey destination,
+        ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options)
+    {
+        var mappedKeys = client.MapKeys(keys);
+        var arguments = CombineArguments(mappedKeys, options);
+        var mappedDestination = client.Key(in destination);
+        ValidateCombineSlots(client, operation, mappedKeys, mappedDestination);
+        return new Cmd1N(verb, mappedDestination, arguments);
+    }
+
+    private static void ValidateCombineSlots(
+        RespireClient client, string operation, RespireValue[] keys, RespireValue? destination = null)
+    {
+        if (client.Core.Cluster is null) return;
+        int? slot = destination is { } key && key.TryGetClusterSlot(out var destinationSlot) ? destinationSlot : null;
+        foreach (var source in keys)
+        {
+            if (!source.TryGetClusterSlot(out var current)) continue;
+            if (slot is { } expected && expected != current)
+                throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, operation, expected, current, source);
+            slot = current;
+        }
+    }
+
+    private static RespireValue[] CombineArguments(RespireValue[] keys, RespireSortedSetCombineOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (keys.Length == 0)
+        {
+            throw new ArgumentException("At least one input key is required.", nameof(keys));
+        }
+        var weights = options.Weights.Span;
+        if (!weights.IsEmpty && weights.Length != keys.Length)
+        {
+            throw new ArgumentException("Supply one weight per input key, or omit weights.", nameof(options));
+        }
+        var aggregate = options.Aggregate switch
+        {
+            RespireSortedSetAggregate.Sum => "SUM",
+            RespireSortedSetAggregate.Min => "MIN",
+            RespireSortedSetAggregate.Max => "MAX",
+            RespireSortedSetAggregate.Count => "COUNT",
+            _ => throw new ArgumentOutOfRangeException(nameof(options), "Unknown sorted-set aggregate."),
+        };
+        var arguments = new RespireValue[keys.Length + 3 + (weights.IsEmpty ? 0 : weights.Length + 1)];
+        arguments[0] = keys.Length;
+        keys.CopyTo(arguments, 1);
+        var index = keys.Length + 1;
+        if (!weights.IsEmpty)
+        {
+            arguments[index++] = "WEIGHTS";
+            foreach (var weight in weights) arguments[index++] = weight;
+        }
+        arguments[index++] = "AGGREGATE";
+        arguments[index] = aggregate;
+        return arguments;
+    }
 
     internal static RespireValue[] CountedKeys(RespireValue[] keys)
     {
