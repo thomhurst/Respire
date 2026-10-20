@@ -71,9 +71,20 @@ public class BlockingCancellationTests
     [Arguments("cluster", RespireProtocol.Resp2)]
     [Arguments("sentinel", RespireProtocol.Resp2)]
     public async Task ThousandCancelledPopsReuseOneDedicatedConnection(string mode, RespireProtocol protocol)
+        => await CancelledPopsReuseOneDedicatedConnection(mode, protocol, 1000);
+
+    [Test]
+    public async Task SentinelRoleBetweenPopReceiptAndCallbackPreservesDedicatedConnection()
+        => await CancelledPopsReuseOneDedicatedConnection("sentinel", RespireProtocol.Resp2, 2,
+            interleaveRole: true);
+
+    private static async Task CancelledPopsReuseOneDedicatedConnection(string mode, RespireProtocol protocol,
+        int iterations, bool interleaveRole = false)
     {
         await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
         var received = NewSignal();
+        var popRecorded = NewSignal();
+        var releasePopCallback = NewSignal();
         var blockedId = -1;
         Task unblock = Task.CompletedTask;
         server.SuppressReply = command => command.StartsWith("BLPOP", StringComparison.Ordinal);
@@ -92,9 +103,11 @@ public class BlockingCancellationTests
             }
             return null;
         };
-        server.GateCommand("BLPOP", Task.CompletedTask, () =>
+        if (interleaveRole)
+            server.GateCommand("BLPOP", releasePopCallback.Task, () => popRecorded.TrySetResult());
+        server.GateCommand("BLPOP", Task.CompletedTask, id =>
         {
-            blockedId = server.ReceivedConnectionIds[^1];
+            blockedId = id;
             received.TrySetResult();
         });
         await using var sentinel = new FakeRespServer(4, FakeRespServer.OkReply)
@@ -110,11 +123,24 @@ public class BlockingCancellationTests
             UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "primary" : null,
             DedicatedPool = new() { UnblockOnCancel = true },
         });
-        for (var index = 0; index < 1000; index++)
+        for (var index = 0; index < iterations; index++)
         {
             received = NewSignal();
             using var cancellation = new CancellationTokenSource();
             var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
+            if (interleaveRole && index == 0)
+            {
+                try
+                {
+                    await popRecorded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    // Record a command on the control socket after BLPOP was recorded, but
+                    // before its callback selects the socket that receives the unblock reply.
+                    await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true)
+                        .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+                    await Assert.That(server.ReceivedCommands[^1]).IsEqualTo("ROLE");
+                }
+                finally { releasePopCallback.TrySetResult(); }
+            }
             await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
             cancellation.Cancel();
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
@@ -128,7 +154,7 @@ public class BlockingCancellationTests
         await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT ID"))
             .IsEqualTo(protocol == RespireProtocol.Resp3 ? 0 : 1);
         await Assert.That(server.ReceivedCommands.Count(command => command == $"CLIENT UNBLOCK {blockedId + 100} TIMEOUT"))
-            .IsEqualTo(1000);
+            .IsEqualTo(iterations);
     }
 
     [Test]
@@ -226,9 +252,9 @@ public class BlockingCancellationTests
                 ? Encoding.ASCII.GetBytes($"-{redirect} {slot} 127.0.0.1:{target.Port}\r\n")
                 : command == "CLIENT ID" ? ":101\r\n"u8.ToArray() : null;
         target.SuppressReply = command => command.StartsWith("BLPOP", StringComparison.Ordinal);
-        target.GateCommand("BLPOP", Task.CompletedTask, () =>
+        target.GateCommand("BLPOP", Task.CompletedTask, id =>
         {
-            blockedId = target.ReceivedConnectionIds[^1];
+            blockedId = id;
             received.TrySetResult();
         });
         target.ReplyOverride = (_, command) =>
@@ -294,9 +320,9 @@ public class BlockingCancellationTests
         var releaseControl = NewSignal();
         var blockedId = -1;
         server.SuppressReply = command => command.StartsWith("BLPOP", StringComparison.Ordinal);
-        server.GateCommand("BLPOP", Task.CompletedTask, () =>
+        server.GateCommand("BLPOP", Task.CompletedTask, id =>
         {
-            blockedId = server.ReceivedConnectionIds[^1];
+            blockedId = id;
             received.TrySetResult();
         });
         server.GateCommand("CLIENT UNBLOCK", releaseControl.Task, () => controlReceived.TrySetResult());
