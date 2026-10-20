@@ -41,6 +41,10 @@
   "overrides": {
     "@docusaurus/core": {
       "tinypool": "2.1.2"
+    },
+    "@docusaurus/bundler@3.10.2": {
+      "postcss-selector-parser": "7.1.6",
+      "serialize-javascript": "7.0.5"
     }
   },
   "browserslist": {
