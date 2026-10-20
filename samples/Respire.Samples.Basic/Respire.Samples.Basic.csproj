@@ -6,6 +6,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+    <!-- Source-project consumers must load the analyzers explicitly. -->
+    <ProjectReference Include="..\..\src\Respire.Analyzers\Respire.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
