@@ -1,3 +1,9 @@
+#if !NET9_0_OR_GREATER
+// This package cannot access the core library's internal Lock polyfill.
+// The disposal gate uses only lock statements, so net8 can use an object alias.
+using Lock = System.Object;
+#endif
+
 using Respire.StackExchangeCompat;
 using StackExchange.Redis;
 
@@ -10,7 +16,7 @@ namespace Respire.Testing.StackExchangeCompat;
 /// before a caller-supplied server. The fixture owns its client and multiplexer, but never a supplied server.</remarks>
 public sealed class RespireFakeConnection : IAsyncDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly RespireConnectionMultiplexer _connection;
     private readonly bool _ownsServer;
     private Task? _disposeTask;
