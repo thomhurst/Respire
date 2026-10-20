@@ -62,6 +62,38 @@ public class FairLockTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(RespireClientTrackingMode.OptIn)]
+    [Arguments(RespireClientTrackingMode.OptOut)]
+    [Arguments(RespireClientTrackingMode.Broadcast)]
+    public async Task ReleaseWakesWaiterWhileAnotherMutationSuppressesCachePublication(RespireClientTrackingMode trackingMode)
+    {
+        await using var holderClient = await ConnectAsync(trackingMode);
+        await using var waiterClient = await ConnectAsync(trackingMode);
+        var held = Create(holderClient);
+        var waiting = new RespireCoordination(waiterClient).CreateFairLock(held.Key, held.FencingCounterKey, held.QueueKey);
+        await using var holder = await held.AcquireAsync(Lease, Wait);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Keep a concurrent script's publication fence open while the waiter registers.
+        // Only the holder's client observes the queue, so no unrelated waiter-side read
+        // can accidentally establish tracking and hide the missed wakeup.
+        var cache = waiterClient.Core.ClientCache!;
+        var mutation = cache.BeginKeysMutation([held.Key, held.QueueKey]);
+        try
+        {
+            var pending = waiting.AcquireAsync(Lease, Wait, timeout.Token).AsTask();
+            await WaitForQueueAsync(holderClient, held, 1, timeout.Token);
+            await holder.DisposeAsync();
+            await using var acquired = await pending;
+            await Assert.That(acquired.FencingToken).IsEqualTo(2);
+            await Assert.That(await acquired.VerifyStillHeldAsync()).IsTrue();
+        }
+        finally
+        {
+            cache.CompleteMutation(in mutation);
+        }
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]

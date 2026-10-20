@@ -31,14 +31,7 @@ internal static class CoordinationCommandHooks
     {
         if (client is RespireClient concrete)
         {
-            if (field is { } hashField)
-                _ = await concrete.ConvertResponseUnhookedAsync("HGET",
-                    new Cmd2(Verbs.HGet, concrete.Key(in key), hashField), token, concrete,
-                    static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value)).ConfigureAwait(false);
-            else
-                _ = await concrete.ConvertResponseUnhookedAsync("GET",
-                    new Cmd1(Verbs.Get, concrete.Key(in key)), token, concrete,
-                    static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value)).ConfigureAwait(false);
+            await concrete.TrackKeyUnhookedAsync(key, field, token).ConfigureAwait(false);
         }
         else if (field is { } hashField)
             _ = await client.Hashes.GetBytesAsync(key, hashField, token).ConfigureAwait(false);
