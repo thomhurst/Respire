@@ -1,4 +1,4 @@
-param([string]$SdkVersion, [switch]$RollForwardAcrossMajor)
+param([string]$SdkVersion, [switch]$RollForwardAcrossMajor, [string]$DiagnosticsDirectory)
 
 $ErrorActionPreference = 'Stop'
 $guardScript = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
@@ -7,8 +7,23 @@ $previousMarker = $env:RESPIRE_MTP_GUARD_TEST_MARKER
 $previousHtmlReporter = $env:TUNIT_DISABLE_HTML_REPORTER
 $previousTestRunner = $env:DOTNET_TEST_RUNNER
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+# Keep CI diagnostics outside the disposable fixture. Each invocation gets its
+# own directory because the SDK override job runs this script more than once.
+$diagnosticsRoot = if ($DiagnosticsDirectory) {
+    Join-Path ([IO.Path]::GetFullPath($DiagnosticsDirectory)) (Split-Path $testRoot -Leaf)
+} else {
+    Join-Path $testRoot 'diagnostics'
+}
+New-Item -ItemType Directory -Path $diagnosticsRoot -Force | Out-Null
+$phaseLog = Join-Path $diagnosticsRoot 'phases.log'
+function Write-MtpPhase([string]$Message) {
+    $line = '{0:o} pid={1} {2}' -f [DateTimeOffset]::UtcNow, $PID, $Message
+    Add-Content -LiteralPath $phaseLog -Value $line
+    Write-Host $line
+}
 Push-Location $testRoot
 try {
+    Write-MtpPhase "fixture setup started; diagnostics=$diagnosticsRoot"
     $configuration = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../global.json') -Raw | ConvertFrom-Json
     if ($SdkVersion) {
         $configuration.sdk.version = $SdkVersion
@@ -52,7 +67,9 @@ public class GuardMtpTests
     # Use conflicting settings on both SDKs: .NET 10 follows global.json;
     # supporting SDKs follow the case-insensitive environment override.
     $env:DOTNET_TEST_RUNNER = if ($supportsOverride) { 'mIcRoSoFt.TeStInG.PLaTfOrM' } else { 'VSTest' }
+    Write-MtpPhase "fixture build started; SDK pin=$($configuration.sdk.version); rollForward=$($configuration.sdk.rollForward); runner=$env:DOTNET_TEST_RUNNER"
     & $guardScript -SingleNode -DotNetArguments @('build', $project, '-c', 'Release', '--nologo')
+    Write-MtpPhase "fixture build returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 0) { throw "MTP fixture build failed: $LASTEXITCODE" }
 
     $baseArguments = @('test', '--project', $project, '-c', 'Release', '-f', 'net10.0', '--no-build')
@@ -62,8 +79,11 @@ public class GuardMtpTests
     @'
 param([string]$PayloadPath)
 $payload = Get-Content -LiteralPath $PayloadPath -Raw | ConvertFrom-Json
+Add-Content -LiteralPath $payload.PhaseLog -Value ('{0:o} pid={1} discovery host entered guard' -f [DateTimeOffset]::UtcNow, $PID)
 & $payload.GuardScript -SingleNode -DotNetArguments @($payload.Arguments)
-exit $LASTEXITCODE
+$guardExitCode = $LASTEXITCODE
+Add-Content -LiteralPath $payload.PhaseLog -Value ('{0:o} pid={1} discovery guard returned; exit={2}' -f [DateTimeOffset]::UtcNow, $PID, $guardExitCode)
+exit $guardExitCode
 '@ | Set-Content -LiteralPath $captureScript
     $pwshPath = (Get-Process -Id $PID).Path
     $filter = '/*/*/GuardMtpTests/SelectedTestExecutes'
@@ -73,9 +93,14 @@ exit $LASTEXITCODE
     foreach ($separator in @($false, $true)) {
         $extensionSeparator = if ($separator) { @('--') } else { @() }
         $payloadPath = Join-Path $testRoot 'discovery.json'
-        @{ GuardScript = $guardScript; Arguments = $baseArguments + $listArguments + $extensionSeparator + @('--treenode-filter', $filter) } |
+        @{ GuardScript = $guardScript; PhaseLog = $phaseLog; Arguments = $baseArguments + $listArguments + $extensionSeparator + @('--treenode-filter', $filter) } |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $payloadPath
-        $discovery = @(& $pwshPath -NoProfile -File $captureScript $payloadPath 2>&1)
+        $discoveryLog = Join-Path $diagnosticsRoot "discovery-$separator.log"
+        Write-MtpPhase "discovery host started (separator=$separator); output=$discoveryLog"
+        # Redirect to disk so partial output survives a stalled capture or failure.
+        & $pwshPath -NoProfile -File $captureScript $payloadPath > $discoveryLog 2>&1
+        Write-MtpPhase "discovery host returned (separator=$separator); exit=$LASTEXITCODE"
+        $discovery = @(Get-Content -LiteralPath $discoveryLog)
         if ($LASTEXITCODE -ne 0) { throw "MTP discovery failed (separator=$separator): $LASTEXITCODE. $($discovery -join [Environment]::NewLine)" }
         # CI enables ANSI color even on redirected SDK output. Remove presentation
         # sequences before checking the same exact method name and global count.
@@ -87,7 +112,9 @@ exit $LASTEXITCODE
         }
         if (Test-Path -LiteralPath $env:RESPIRE_MTP_GUARD_TEST_MARKER) { throw 'Discovery executed a test.' }
         $results = Join-Path $testRoot "results-$separator"
+        Write-MtpPhase "filtered execution started (separator=$separator)"
         & $guardScript -SingleNode -DotNetArguments ($baseArguments + @('--results-directory', $results) + $extensionSeparator + @('--treenode-filter', $filter, '--report-trx'))
+        Write-MtpPhase "filtered execution returned (separator=$separator); exit=$LASTEXITCODE"
         if ($LASTEXITCODE -ne 0) { throw "MTP execution failed (separator=$separator): $LASTEXITCODE" }
         $reports = @(Get-ChildItem -LiteralPath $results -Filter '*.trx' -Recurse)
         if ($reports.Count -ne 1) { throw "Expected one TRX report, found $($reports.Count)." }
@@ -98,15 +125,26 @@ exit $LASTEXITCODE
         }
         if ((Get-Content -LiteralPath $env:RESPIRE_MTP_GUARD_TEST_MARKER).Count -ne 1) { throw 'Selected test did not execute exactly once.' }
         Remove-Item -LiteralPath $env:RESPIRE_MTP_GUARD_TEST_MARKER
+        Write-MtpPhase "discovery and execution assertions passed (separator=$separator)"
     }
 
+    Write-MtpPhase 'failure control started'
     & $guardScript -SingleNode -DotNetArguments ($baseArguments + @('--treenode-filter', '/*/*/GuardMtpTests/UnselectedTestFails'))
+    Write-MtpPhase "failure control returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 2) { throw "Expected test-failure exit 2, received $LASTEXITCODE" }
+    Write-MtpPhase 'zero-test control started'
     & $guardScript -SingleNode -DotNetArguments ($baseArguments + @('--treenode-filter', '/*/*/GuardMtpTests/NoSuchTest'))
+    Write-MtpPhase "zero-test control returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 8) { throw "Expected zero-tests exit 8, received $LASTEXITCODE" }
+    Write-MtpPhase 'all MTP assertions passed'
     Write-Output 'OK MTP discovery and execution preserve filtering/counts with both separator forms; failure and zero-test exits remain visible.'
 }
+catch {
+    Write-MtpPhase "FAILED: $_"
+    throw
+}
 finally {
+    Write-MtpPhase 'fixture cleanup started'
     Pop-Location
     $env:RESPIRE_MTP_GUARD_TEST_MARKER = $previousMarker
     $env:TUNIT_DISABLE_HTML_REPORTER = $previousHtmlReporter
