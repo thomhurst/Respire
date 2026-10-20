@@ -280,11 +280,19 @@ public class StandaloneReplicaReadyTests
         var view = client.WithReadFrom(RespireReadFrom.Replica);
         await view.GetStringAsync("warm");
         var activities = new List<Activity>();
+        var activitiesStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = listen ? new ActivityListener
         {
             ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); },
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                    if (activities.Count >= 4) activitiesStopped.TrySetResult();
+                }
+            },
         } : null;
         if (listener is not null) ActivitySource.AddActivityListener(listener);
         await Assert.That(await view.GetStringAsync("string")).IsEqualTo("hello");
@@ -295,8 +303,13 @@ public class StandaloneReplicaReadyTests
         await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("hello");
         if (listen)
         {
-            await Assert.That(activities.Count).IsEqualTo(4);
-            await Assert.That(activities.All(activity => Equals(activity.GetTagItem("server.port"), replica.Port))).IsTrue();
+            // The receive loop publishes stream EOF before invoking its telemetry callback.
+            // Observe callback completion explicitly rather than racing ReadToEndAsync.
+            await activitiesStopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Activity[] stopped;
+            lock (activities) stopped = activities.ToArray();
+            await Assert.That(stopped.Length).IsEqualTo(4);
+            await Assert.That(stopped.All(activity => Equals(activity.GetTagItem("server.port"), replica.Port))).IsTrue();
         }
     }
 
