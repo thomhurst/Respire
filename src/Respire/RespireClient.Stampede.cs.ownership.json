@@ -1,0 +1,12 @@
+{
+  "Surfaces": [
+    {
+      "Type": "Respire.RespireClient",
+      "OwnerType": "Respire.RespireClient",
+      "Members": ["GetOrSetAsync`1(RespireKey,RespireCacheAsideOptions,Func<CancellationToken,ValueTask<T?>>,RespireExpiry,CancellationToken):ValueTask<T?>"],
+      "Contract": "Own validation, hook admission, Redis scripts, factory, typed conversion and cleanup as one GETORSET caller. Internal scripts borrow the owner and bypass nested hooks."
+    }
+  ],
+  "Boundaries": [],
+  "NonRoutes": []
+}

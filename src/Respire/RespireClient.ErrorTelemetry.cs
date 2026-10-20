@@ -65,7 +65,7 @@ public sealed partial class RespireClient
         RespireScript script, RespireKey[] keys, RespireValue[] args, CancellationToken cancellationToken,
         bool requireReliableCorrectionOrdering = false, bool captureSendTimestampOnly = false,
         Action<long>? onSerialized = null, Action? onCommandNotApplied = null,
-        RespireTelemetry.ErrorObservation errorObservation = default)
+        RespireTelemetry.ErrorObservation errorObservation = default, bool physicalKeys = false)
     {
         var ownsObservation = errorObservation.IsEmpty;
         var observation = ownsObservation ? RespireTelemetry.ErrorObservation.Rent(force: true) : errorObservation;
@@ -73,7 +73,7 @@ public sealed partial class RespireClient
         {
             return await StartTrackedScriptExecutionCoreAsync(script, keys, args, cancellationToken,
                 requireReliableCorrectionOrdering, captureSendTimestampOnly, onSerialized, onCommandNotApplied,
-                observation).ConfigureAwait(false);
+                observation, physicalKeys).ConfigureAwait(false);
         }
         catch (Exception error)
         {

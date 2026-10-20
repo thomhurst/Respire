@@ -194,6 +194,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   OPTOUT, BCAST/prefix tracking, and optional NOLOOP.
 - [Cache-aside factories](fundamentals/client-side-caching.md#populate-missing-values-with-a-factory)
   with relative or absolute server expiry and optional concurrent-miss coalescing.
+- Opt-in [cross-instance cache stampede protection](fundamentals/client-side-caching.md#protect-factories-across-app-instances)
+  with token-owned leases, probabilistic early refresh, and stale reads during refresh.
 - Typed serialization, custom serializers, and [value compression codecs](guides/value-codecs.md).
 - Opt-in [client-side payload encryption](guides/payload-encryption.md) for cache values,
   near-cache maps, job arguments, and stream payloads, using ASP.NET Core Data Protection.

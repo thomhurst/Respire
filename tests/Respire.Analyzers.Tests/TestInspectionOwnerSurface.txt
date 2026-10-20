@@ -1,5 +1,5 @@
-# Reviewed source-declared member signatures: 429 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 65
+# Reviewed source-declared member signatures: 432 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 66
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -15,6 +15,7 @@ Respire.ClientSideCacheCoordinator | method ValidateDispatchAdmission`1(in TComm
 Respire.ClientSideCacheCoordinator | method BeginRead(in RespireKey) : ReadToken
 Respire.ClientSideCacheCoordinator | method BeginRead(string, in QueryRequest) : QueryReadToken
 Respire.ClientSideCacheCoordinator | method BeginUnknownMutation() : MutationFence
+Respire.ClientSideCacheCoordinator | method BeginKeysMutation(RespireKey[]) : MutationFence
 Respire.ClientSideCacheCoordinator | method CanCacheOperation(string) : bool
 Respire.ClientSideCacheCoordinator | method CanTrack(in RespireKey) : bool
 Respire.ClientSideCacheCoordinator | method Clear() : void

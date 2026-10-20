@@ -93,6 +93,9 @@ public class LoggingCatalogTests
                     LoggerExtensions.LogInformation(logger, "information");
                     LoggerMessage.Define<int>(LogLevel.Warning, default, "{Value}");
                     logger.GeneratedEvent();
+                    Math.Log(0.5);
+                    System.Math.Log(0.5);
+                    global::System.Math.Log(0.5);
                 }
             }
             """).GetRoot();
@@ -143,8 +146,9 @@ public class LoggingCatalogTests
             };
             if (name is "LogTrace" or "LogDebug" or "LogInformation" or "LogWarning" or "LogError" or "LogCritical"
                 || (name == "Define" && call.Expression.ToString().Contains("LoggerMessage", StringComparison.Ordinal))
-                // ACL LOG parses a Redis command reply; it does not emit a diagnostic.
-                || (name == "Log" && call.Expression.ToString() != "AclParser.Log"))
+                // ACL LOG parses a reply and Math.Log computes a logarithm; neither emits a diagnostic.
+                || (name == "Log" && call.Expression.ToString() is not
+                    ("AclParser.Log" or "Math.Log" or "System.Math.Log" or "global::System.Math.Log")))
                 yield return call.ToString();
         }
     }

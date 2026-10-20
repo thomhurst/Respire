@@ -203,6 +203,10 @@ application factory or a hook receive independent scopes. Each coalesced caller 
 own scope and cancellation outcome; canceling one caller can leave the shared producer
 running for other callers. The boundary also applies to `WithoutClientCache` views.
 
+The overload with `RespireCacheAsideOptions` uses the same `GETORSET` scope, including lease
+contention, factory execution, token-checked publication, and cleanup. Options are validated before
+admission. Internal Lua calls do not produce nested hook events; commands called by the factory do.
+
 `RespireDistributedCache` backed by a concrete `RespireClient` (including prefixed views)
 admits `GET` for Get/TryGet, `SET` for both Set overloads, `REFRESH` for Refresh, and
 `UNLINK` for Remove. Synchronous entry points use the same scopes. These are logical
