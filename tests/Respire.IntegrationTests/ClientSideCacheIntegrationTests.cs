@@ -346,6 +346,48 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SecondaryConnectionFailure_DisposesClientAndPreservesException(bool asynchronous)
+    {
+        // The outer owner also cleans up if the regression leaves the client alive.
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { ClientSideCache = new() });
+        await client.GetStringAsync($"cache:setup-failure:{Guid.NewGuid():N}");
+        var cache = client.ClientSideCache!;
+        await Assert.That(cache.Count).IsEqualTo(1);
+        var failure = new InvalidOperationException("Injected secondary connection failure.");
+
+        Task<ConnectionMultiplexer> FailConnection()
+        {
+            if (!asynchronous)
+            {
+                throw failure;
+            }
+
+            return FailAfterYieldAsync();
+        }
+
+        async Task<ConnectionMultiplexer> FailAfterYieldAsync()
+        {
+            await Task.Yield();
+            throw failure;
+        }
+
+        var actual = await Assert.That(async () =>
+        {
+            await using var resources = await Resources.CreateAsync(client, FailConnection);
+        }).Throws<InvalidOperationException>();
+
+        await Assert.That(actual).IsSameReferenceAs(failure);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.SizeBytes).IsEqualTo(0);
+        await Assert.That(client.IsConnected).IsFalse();
+        await Assert.That(async () => await client.GetStringAsync("cache:after-failed-setup"))
+            .Throws<ObjectDisposedException>();
+    }
+
+    [Test]
     public async Task Disposal_ReleasesResidentEntries()
     {
         var resources = await Resources.CreateAsync(fixture);
@@ -357,6 +399,8 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 
         await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(cache.SizeBytes).IsEqualTo(0);
+        await Assert.That(resources.Client.IsConnected).IsFalse();
+        await Assert.That(resources.Multiplexer.IsConnected).IsFalse();
     }
 
     [Test]
@@ -503,8 +547,32 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
                 ClientSideCache = new() { ReuseHashFields = reuseHashFields, CoalesceConcurrentMisses = coalesce },
             };
             var client = await RespireClient.ConnectAsync(options);
-            var multiplexer = await ConnectionMultiplexer.ConnectAsync(
-                fixture.StackExchangeConnectionString);
+            return await CreateAsync(client, () => ConnectionMultiplexer.ConnectAsync(
+                fixture.StackExchangeConnectionString));
+        }
+
+        public static async Task<Resources> CreateAsync(
+            RespireClient client, Func<Task<ConnectionMultiplexer>> connectMultiplexer)
+        {
+            ConnectionMultiplexer multiplexer;
+            try
+            {
+                multiplexer = await connectMultiplexer();
+            }
+            catch
+            {
+                try
+                {
+                    await client.DisposeAsync();
+                }
+                catch
+                {
+                    // Cleanup must not replace the original setup failure.
+                }
+
+                throw;
+            }
+
             return new Resources(client, multiplexer);
         }
 
