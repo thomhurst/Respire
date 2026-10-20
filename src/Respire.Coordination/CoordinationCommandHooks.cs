@@ -33,10 +33,8 @@ internal static class CoordinationCommandHooks
         {
             await concrete.TrackKeyUnhookedAsync(key, field, token).ConfigureAwait(false);
         }
-        else if (field is { } hashField)
-            _ = await client.Hashes.GetBytesAsync(key, hashField, token).ConfigureAwait(false);
         else
-            _ = await client.Strings.GetStringAsync(key, token).ConfigureAwait(false);
+            await client.RegisterKeyTrackingAsync(key, field, token).ConfigureAwait(false);
     }
 
     internal static ValueTask<RespireTtlResult> ExpiryAsync(IRespireClient client, RespireKey key, RespireKey? field,
