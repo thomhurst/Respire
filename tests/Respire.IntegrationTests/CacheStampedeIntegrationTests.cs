@@ -286,17 +286,27 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task EarlyRefreshCanRunWithoutSingleFlightAndAbsoluteExpiryIsPreserved(bool past)
+    [Arguments(false, false, 0)]
+    [Arguments(false, true, 0)]
+    [Arguments(false, true, 250)]
+    [Arguments(true, false, 0)]
+    [Arguments(true, true, 0)]
+    [Arguments(true, true, 250)]
+    public async Task AbsoluteExpiryIsPreservedWithEarlyRefresh(bool past, bool singleFlight, int staleMilliseconds)
     {
         await using var client = await ConnectAsync();
         var key = NewKey();
         var deadline = past ? DateTimeOffset.UnixEpoch.AddSeconds(1) : DateTimeOffset.UtcNow.AddMinutes(5);
-        var options = Options with { DistributedSingleFlight = false, EarlyRefreshBeta = 1 };
+        var options = Options with
+        {
+            DistributedSingleFlight = singleFlight,
+            EarlyRefreshBeta = 1,
+            StaleWhileRevalidate = TimeSpan.FromMilliseconds(staleMilliseconds)
+        };
         await Assert.That(await client.GetOrSetAsync<int>(key, options, _ => ValueTask.FromResult(42), deadline)).IsEqualTo(42);
         if (past) await Assert.That(await client.ExistsAsync(key)).IsFalse();
-        else await Assert.That((await client.Keys.ExpiryTimeAsync(key)).UnixTimeMilliseconds).IsEqualTo(deadline.ToUnixTimeMilliseconds());
+        else await Assert.That((await client.Keys.ExpiryTimeAsync(key)).UnixTimeMilliseconds)
+            .IsEqualTo(deadline.ToUnixTimeMilliseconds() + staleMilliseconds);
     }
 
     [Test]
