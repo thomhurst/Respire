@@ -64,6 +64,7 @@
     <Project Path="src/Respire.Probabilistic/Respire.Probabilistic.csproj" />
     <Project Path="src/Respire/Respire.csproj" />
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
+    <Project Path="src/Respire.Testing.StackExchangeCompat/Respire.Testing.StackExchangeCompat.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Respire.Gcp.Tests/Respire.Gcp.Tests.csproj" />

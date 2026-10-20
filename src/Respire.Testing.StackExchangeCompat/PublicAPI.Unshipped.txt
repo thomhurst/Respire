@@ -1,0 +1,8 @@
+#nullable enable
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection.Connection.get -> StackExchange.Redis.IConnectionMultiplexer!
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection.Database.get -> StackExchange.Redis.IDatabase!
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection.DisposeAsync() -> System.Threading.Tasks.ValueTask
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection.RespireFakeConnection() -> void
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection.RespireFakeConnection(Respire.Testing.RespireFakeServer! server) -> void
+[RSP0006]Respire.Testing.StackExchangeCompat.RespireFakeConnection.Server.get -> Respire.Testing.RespireFakeServer!

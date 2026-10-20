@@ -12,6 +12,7 @@
     <PackageReference Include="Moq" />
     <PackageReference Include="Hangfire.Redis.StackExchange" />
     <ProjectReference Include="../../src/Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
+    <ProjectReference Include="../../src/Respire.Testing.StackExchangeCompat/Respire.Testing.StackExchangeCompat.csproj" />
     <Compile Include="../RedisTestContainer.cs" Link="RedisTestContainer.cs" />
     <Compile Include="../ContainerStartRetry.cs" Link="ContainerStartRetry.cs" />
     <Compile Include="../../src/Respire.Testing.Containers/ContainerPortCollision.cs" Link="ContainerPortCollision.cs" />

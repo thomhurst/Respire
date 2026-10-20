@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Testing.StackExchangeCompat</PackageId>
+    <Title>Respire.Testing.StackExchangeCompat</Title>
+    <Description>In-memory test fixtures for the supported StackExchange.Redis compatibility subset.</Description>
+    <PackageTags>$(PackageTags);testing;fake;stackexchange</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire.Testing/Respire.Testing.csproj" />
+    <ProjectReference Include="../Respire.StackExchangeCompat/Respire.StackExchangeCompat.csproj" />
+  </ItemGroup>
+</Project>

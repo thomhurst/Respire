@@ -34,6 +34,70 @@ if (await client.GetStringAsync("greeting") is not null)
 - Dispose clients before the server. Server disposal closes all connections but does not dispose your clients. Options cannot connect after server disposal.
 - Malformed requests and unexpected failures close the affected connection only. Server disposal reports them, so always dispose the server, even when a test fails.
 
+## StackExchange.Redis test fixtures
+
+Install `Respire.Testing.StackExchangeCompat` to keep application tests that use the
+supported `IConnectionMultiplexer` / `IDatabase` members and replace their connection fixture:
+
+```bash
+dotnet add package Respire.Testing.StackExchangeCompat
+```
+
+The helper shares the adapter's experimental [RSP0006](../diagnostics/RSP0006.md) opt-in.
+Keep the Respire packages at matching versions.
+
+```csharp
+using Respire.Testing.StackExchangeCompat;
+using StackExchange.Redis;
+
+await using var fixture = new RespireFakeConnection();
+IConnectionMultiplexer connection = fixture.Connection;
+IDatabase database = connection.GetDatabase(); // Also available as fixture.Database.
+await database.HashSetAsync("session", "status", "active");
+var session = await database.HashGetAsync("session", "status");
+```
+
+The default fixture owns an isolated server. Pass an existing `RespireFakeServer` to share
+state between fixtures or supply a `RespireFakeClock`. The fixture always owns its multiplexer
+and native client; it never disposes a server passed to its constructor. Dispose every fixture
+before a caller-owned server. Disposing the fixture drains pending operations, closes its clients,
+then disposes its owned server. Release any paused fault gates before awaiting disposal.
+Disposing `Connection` alone closes the clients; still dispose the fixture to clean up its server.
+
+You can also compose the existing packages directly, without the helper:
+
+```csharp
+using Respire.StackExchangeCompat;
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var connection = RespireConnectionMultiplexer.Create(server.CreateOptions());
+var database = connection.GetDatabase();
+await database.HashSetAsync("session", "status", "active");
+```
+
+The usable surface is the **intersection** of the [adapter's supported members](stackexchange-interop.md)
+and this page's fake command list, including each command's options. Examples include string
+reads and integer increments, supported hash/list/set/sorted-set operations, key expiry,
+supported batches and transactions, and literal-channel pub/sub. Support by either package
+alone is insufficient.
+
+- Only database zero exists. The helper rejects `GetDatabase(1)` immediately with
+  `NotSupportedException`; direct `Create(options)` defers rejection until the fake receives
+  `SELECT` during connection establishment.
+- Unimplemented adapter members (for example `StringSet`, `StringGetLease`, and `ListLeftPop`)
+  throw `NotSupportedException`, even though the fake supports their underlying commands.
+- Commands the adapter can send but the fake cannot execute (for example arbitrary
+  `ScriptEvaluateAsync("return 1")`) throw native `RespireServerException`. A failed command
+  does not make later supported commands fail.
+- No authentication, TLS, Cluster, Sentinel, persistence, eviction, modules or realistic
+  network/performance behavior is simulated. The adapter's real-Redis acceptance results for
+  third-party libraries do not imply those libraries run on the fake.
+
+The [testing sample](testing-sample.md#stackexchangeredis-fixture-replacement) runs the same
+`IDatabase` assertions with this helper and with a real StackExchange.Redis connection.
+Arbitrary existing StackExchange.Redis suites are not guaranteed to work unchanged.
+
 ## Supported subset
 
 The fake is a test double, not a Redis implementation or compatibility oracle.

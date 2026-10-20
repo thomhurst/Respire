@@ -57,6 +57,7 @@
       Respire.VectorData;
       Respire.Testing;
       Respire.Testing.Containers;
+      Respire.Testing.StackExchangeCompat;
     </RespirePackageProjects>
     <_RespirePackageProjectList>;$([System.Text.RegularExpressions.Regex]::Replace('$(RespirePackageProjects)', '\s', ''))</_RespirePackageProjectList>
     <!-- Content-only packages have no shipping assembly or public API baseline. -->

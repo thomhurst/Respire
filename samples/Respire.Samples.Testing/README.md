@@ -18,6 +18,13 @@ dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --
 Use `-f net8.0` for .NET 8. Without a filter, all cases run and Docker is
 required. Missing Docker fails the container tests; they are not skipped.
 
+- `StackExchangeTests.cs` runs one unchanged `IDatabase` scenario suite with either
+  `RespireFakeConnection.Connection` or a real StackExchange.Redis connection to
+  Redis/Valkey. Only fixture setup differs. Run `/*/*/StackExchangeFakeTests/*` for
+  the socket-free case, or `/*/*/StackExchangeContainerTests/*` for the two container
+  cases. The optional `Respire.Testing.StackExchangeCompat` package requires the
+  adapter's experimental `RSP0006` opt-in and supports only the intersection of the
+  adapter and fake, in database zero. Caller-supplied fake servers remain caller-owned.
 - `SharedScenarios.cs` takes `RespireOptions` and runs binary values,
   hash/batch, `WATCH` abort, and pub/sub against either server. Each case owns
   its server and disposes clients first.

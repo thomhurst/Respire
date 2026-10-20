@@ -274,6 +274,9 @@ are described in the guides below; the remaining pre-release work is tracked sep
   `IServer`, and `ISubscriber`, plus value conversion and a raw-command bridge. It passes the
   upstream Microsoft distributed cache and DataProtection tests and
   [Hangfire acceptance](./guides/hangfire-acceptance). It is not full StackExchange.Redis parity.
+- [`Respire.Testing.StackExchangeCompat`](./guides/in-memory-testing.md#stackexchangeredis-test-fixtures)
+  supplies a database-zero in-memory connection fixture for the intersection of the adapter and
+  fake server. Supported `IDatabase` tests can replace their connection setup without sockets or containers.
 - Microsoft's SignalR Redis backplane does not run on the adapter, and support is not planned. Use
   [`Respire.SignalR`](./integrations/signalr).
 - The [Orleans 10.2.2 acceptance suite](./guides/orleans-compatibility) runs the Orleans Redis

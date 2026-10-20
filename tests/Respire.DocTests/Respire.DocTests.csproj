@@ -22,6 +22,7 @@
     <PackageReference Include="Respire.Compression.Zstd" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Testing" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Testing.Containers" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Testing.StackExchangeCompat" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Caching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Coordination" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Idempotency" Version="$(RespirePackageVersion)" />

@@ -30,8 +30,28 @@ dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --
 ```
 
 - Use `-f net8.0` for .NET 8.
-- Omit the filter to run all 12 cases (requires Docker).
+- Omit the filter to run all cases, including the StackExchange.Redis examples below (requires Docker).
 - Container startup errors fail the run; they are not skipped.
+
+## StackExchange.Redis fixture replacement
+
+`StackExchangeTests.cs` adds a shared suite whose assertions use only
+`IConnectionMultiplexer` and `IDatabase`: strings, counters, hashes, lists and key deletion.
+`StackExchangeFakeTests` supplies `RespireFakeConnection.Connection`.
+`StackExchangeContainerTests` supplies a real StackExchange.Redis `ConnectionMultiplexer`
+connected to Redis or Valkey. The scenario body is identical; only connection setup changes.
+
+Run the compatibility fake sample without Docker or a TCP listener:
+
+```sh
+dotnet run --project samples/Respire.Samples.Testing -c Release -f net10.0 -- --treenode-filter '/*/*/StackExchangeFakeTests/*'
+```
+
+Use the filter `/*/*/StackExchangeContainerTests/*` to run its two real-server counterparts.
+In your own project, reference `Respire.Testing.StackExchangeCompat` and opt in to
+[RSP0006](../diagnostics/RSP0006.md). Check the
+[supported intersection and ownership rules](in-memory-testing.md#stackexchangeredis-test-fixtures)
+before replacing your fixture. Script-heavy or topology-dependent suites still need real Redis.
 
 ## Notes
 
