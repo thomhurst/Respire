@@ -367,7 +367,8 @@ value without caching it. Null results, failures, and cancellation remove only t
 marker during bounded cleanup. Each refresh
 replaces the payload and its duration atomically. Reads always go to the primary
 through Lua scripts, including hits, so this trades local-cache hit speed for shared coordination.
-Redis ACLs must allow scripting, hash reads/writes (including HINCRBY), SET, DEL, PTTL, PEXPIRE and TIME. The deterministic
+Redis ACLs must allow scripting, hash reads/writes (including HINCRBY), SET, DEL, PTTL, PEXPIRE, PEXPIREAT and TIME.
+Absolute-expiry publication uses PEXPIREAT to preserve the supplied deadline, including any stale-retention interval. The deterministic
 binary lease key shares the data key's Redis Cluster slot, including binary and prefixed keys.
 Single-flight also uses CLIENT ID and CLIENT KILL to order cleanup after an acquisition whose reply
 was lost or canceled. Cleanup only releases a lease with that caller's token.
