@@ -67,12 +67,16 @@ public sealed partial class RespireClient
                 using var attempt = await AcquireProtectedCacheAsync(key, lockKey, token, options.DistributedSingleFlight,
                     [version, token, (long)options.LockTimeout.TotalMilliseconds, options.DistributedSingleFlight ? 1 : 0],
                     cancellationToken, observation).ConfigureAwait(false);
-                acquired = attempt.AsInteger() == 1;
+                var acquisition = attempt.AsInteger();
+                acquired = acquisition != 0;
+                // Empty markers belong to the latest successful acquirer, including
+                // successors that take over an existing pending generation.
+                if (acquisition == 2) version = token + ":pending";
             }
             if (acquired)
                 // Publication must replace the pending generation, so a contender that read
                 // the empty marker cannot acquire after another caller publishes its value.
-                return await PopulateProtectedCacheAsync(key, lockKey, token, version.Length == 0 ? token + ":pending" : version, factory, expiry,
+                return await PopulateProtectedCacheAsync(key, lockKey, token, version, factory, expiry,
                     options, cancellationToken, observation).ConfigureAwait(false);
 
             // A refresh contender can use the value it just read. Missing values never bypass the lease.
@@ -238,9 +242,10 @@ public sealed partial class RespireClient
     private static readonly RespireScript ProtectedCacheAcquire = RespireScript.Create("""
         if (redis.call('HGET', KEYS[1], 'version') or '') ~= ARGV[1] then return 0 end
         if ARGV[4] == '1' and not redis.call('SET', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3]) then return 0 end
-        if ARGV[1] == '' then
+        if redis.call('HEXISTS', KEYS[1], 'value') == 0 then
           redis.call('HSET', KEYS[1], 'version', ARGV[2] .. ':pending')
           redis.call('PEXPIRE', KEYS[1], ARGV[3])
+          return 2
         end
         local ttl = redis.call('PTTL', KEYS[1])
         local lease = tonumber(ARGV[3])

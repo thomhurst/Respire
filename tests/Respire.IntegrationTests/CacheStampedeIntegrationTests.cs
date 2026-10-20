@@ -373,11 +373,18 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task FailedColdFillCannotRemoveSuccessorGeneration(bool singleFlight)
+    [Arguments(false, true, "null")]
+    [Arguments(true, true, "null")]
+    [Arguments(false, false, "null")]
+    [Arguments(false, false, "failure")]
+    [Arguments(false, false, "cancellation")]
+    [Arguments(true, false, "null")]
+    [Arguments(true, false, "failure")]
+    [Arguments(true, false, "cancellation")]
+    public async Task FailedColdFillCannotRemoveSuccessorGeneration(bool singleFlight, bool deleteGeneration, string outcome)
     {
         await using var client = await ConnectAsync();
+        await using var successorClient = await ConnectAsync();
         var key = NewKey();
         var lockKey = RespireClient.CreateCacheAsideLockKey(key);
         var options = Options with { DistributedSingleFlight = singleFlight };
@@ -385,19 +392,22 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         var release = Signal();
         var successorEntered = Signal();
         var successorRelease = Signal();
+        using var cancellation = new CancellationTokenSource();
         var original = client.GetOrSetAsync<string>(key, options, async token =>
         {
             entered.TrySetResult();
             await release.Task.WaitAsync(token);
+            if (outcome == "failure") throw new InvalidOperationException("original factory");
             return null;
-        }, Ttl).AsTask();
+        }, Ttl, cancellation.Token).AsTask();
         Task<string?>? successor = null;
         try
         {
             await entered.Task.WaitAsync(Limit);
-            await client.DeleteAsync(key);
-            await client.DeleteAsync(lockKey); // Simulate removal of the old lease before its owner completes.
-            successor = client.GetOrSetAsync<string>(key, options, async token =>
+            if (deleteGeneration) await client.DeleteAsync(key);
+            if (singleFlight)
+                await client.DeleteAsync(lockKey); // Simulate lease loss while retaining the pending generation.
+            successor = successorClient.GetOrSetAsync<string>(key, options, async token =>
             {
                 successorEntered.TrySetResult();
                 await successorRelease.Task.WaitAsync(token);
@@ -406,8 +416,14 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
             await successorEntered.Task.WaitAsync(Limit);
             using var generation = await client.ExecuteAsync("HGET", key, "version");
             await Assert.That(generation.IsNull).IsFalse();
-            release.TrySetResult();
-            await Assert.That(await original.WaitAsync(Limit)).IsNull();
+            if (outcome == "cancellation") cancellation.Cancel();
+            else release.TrySetResult();
+            if (outcome == "failure")
+                await Assert.That(async () => await original.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
+            else if (outcome == "cancellation")
+                await Assert.That(async () => await original.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            else
+                await Assert.That(await original.WaitAsync(Limit)).IsNull();
             using var retained = await client.ExecuteAsync("HGET", key, "version");
             await Assert.That(retained.AsString()).IsEqualTo(generation.AsString());
             await Assert.That(await client.ExistsAsync(lockKey)).IsEqualTo(singleFlight);
@@ -416,7 +432,9 @@ public class CacheStampedeIntegrationTests(RedisTestContainer fixture)
         {
             release.TrySetResult();
             successorRelease.TrySetResult();
-            await original.WaitAsync(Limit);
+            try { await original.WaitAsync(Limit); }
+            catch (InvalidOperationException) when (outcome == "failure") { }
+            catch (OperationCanceledException) when (outcome == "cancellation") { }
             if (successor is not null) await successor.WaitAsync(Limit);
         }
         await Assert.That(await client.GetOrSetAsync<string>(key, options, _ => throw new Exception("hit"), Ttl))
