@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -109,7 +110,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     [Test, Arguments(2), Arguments(3)]
     public async Task EntryHasAtomicAbsoluteExpiry(int protocol)
     {
-        await using var scenario = await Create(protocol, new() { Dimensions = 2, TimeToLive = TimeSpan.FromSeconds(2) });
+        await using var scenario = await Create(protocol, new() { Dimensions = 2, TimeToLive = TimeSpan.FromMinutes(5), FailOpen = false });
         var first = await scenario.Ask("near");
         var keys = new List<RespireKey>();
         await foreach (var key in scenario.Redis.Keys.ScanAsync(match: scenario.Prefix + "*")) keys.Add(key);
@@ -117,15 +118,44 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         foreach (var key in keys)
         {
             using var ttl = await scenario.Redis.ExecuteAsync("PTTL", [key]);
-            ttl.AsInteger().Should().BeInRange(1, 2000);
+            ttl.AsInteger().Should().BeInRange(1, 300000);
         }
         using var expiry = await scenario.Redis.ExecuteAsync("PEXPIRETIME", [keys[0]]);
         (await scenario.Ask("near")).Text.Should().Be(first.Text);
         using (var afterHit = await scenario.Redis.ExecuteAsync("PEXPIRETIME", [keys[0]]))
             afterHit.AsInteger().Should().Be(expiry.AsInteger());
-        await Task.Delay(2100);
-        (await scenario.Ask("near")).Text.Should().NotBe(first.Text);
+        scenario.Provider.Calls.Should().Be(1);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task ExpiredEntryCannotSatisfyQuery(int protocol)
+    {
+        await using var scenario = await Create(protocol, new() { Dimensions = 2, TimeToLive = TimeSpan.FromSeconds(2), FailOpen = false });
+        var first = await scenario.Ask("near");
+        var keys = new List<RespireKey>();
+        await foreach (var key in scenario.Redis.Keys.ScanAsync(match: scenario.Prefix + "*")) keys.Add(key);
+        keys.Should().ContainSingle();
+        using var expiry = await scenario.Redis.ExecuteAsync("PEXPIRETIME", [keys[0]]);
+        var expiresAt = expiry.AsInteger();
+        expiresAt.Should().BePositive("the cache must install an expiry when it writes the entry");
+
+        // Redis owns the expiry clock. A fixed host delay can finish before the container
+        // reaches this deadline. Observe TIME only: PTTL/HGET could passively expire the
+        // hash before Search gets to see it, hiding a stale-result bug.
+        var wait = Stopwatch.StartNew();
+        long serverTime;
+        while ((serverTime = (await scenario.Redis.Server.TimeAsync()).ToUnixTimeMilliseconds()) <= expiresAt)
+        {
+            wait.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10),
+                $"Redis TIME must pass the entry deadline {expiresAt}; last server time was {serverTime}");
+            await Task.Delay(25);
+        }
+
+        // Do not retry the cache lookup: even one stale response after expiry is a failure.
+        (await scenario.Ask("near")).Text.Should().NotBe(first.Text,
+            $"Redis TIME {serverTime} has passed the entry deadline {expiresAt}");
         scenario.Provider.Calls.Should().Be(2);
+        (await scenario.Redis.Hashes.GetBytesAsync(keys[0], "response")).Should().BeNull();
     }
 
     [Test, Arguments(2), Arguments(3)]
