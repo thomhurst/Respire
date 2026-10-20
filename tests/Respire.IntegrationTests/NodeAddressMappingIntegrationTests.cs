@@ -63,7 +63,13 @@ public class NodeAddressMappingIntegrationTests
         await container.StartAsync(deadline.Token);
         var sentinelEndpoint = new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(26379));
         await using var sentinel = await RespireSentinelClient.ConnectAsync(sentinelEndpoint, cancellationToken: deadline.Token);
-        while (!(await sentinel.ReplicasAsync("nat-primary", deadline.Token)).Any(replica => replica.Endpoint.Port == 6380))
+        // Sentinel can list a newly discovered replica while it is still disconnected.
+        // Wait for the same healthy flags required by replica routing before connecting.
+        while (!(await sentinel.ReplicasAsync("nat-primary", deadline.Token)).Any(replica =>
+            replica.Endpoint.Port == 6380
+            && !replica.Flags.Contains("s_down", StringComparison.Ordinal)
+            && !replica.Flags.Contains("o_down", StringComparison.Ordinal)
+            && !replica.Flags.Contains("disconnected", StringComparison.Ordinal)))
             await Task.Delay(50, deadline.Token);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {

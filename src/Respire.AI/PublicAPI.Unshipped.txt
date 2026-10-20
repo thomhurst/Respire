@@ -18,6 +18,16 @@
 [RSP0002]Respire.AI.RespireChatHistoryStore.ExpireAsync(string! conversationId, System.TimeSpan timeToLive, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 [RSP0002]Respire.AI.RespireChatHistoryStore.ClearAsync(string! conversationId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 [RSP0002]static Respire.AI.RespireChatHistoryExtensions.UseRespireChatHistory(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Respire.AI.RespireChatHistoryStore! store, string! conversationId, int maximumMessages = 100) -> Microsoft.Extensions.AI.ChatClientBuilder!
+[RSP0002]Respire.AI.RespireEmbeddingCacheExtensions
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.RespireEmbeddingCacheOptions() -> void
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.CacheName.get -> string!
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.CacheName.init -> void
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.FailOpen.get -> bool
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.FailOpen.init -> void
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.TimeToLive.get -> System.TimeSpan?
+[RSP0002]Respire.AI.RespireEmbeddingCacheOptions.TimeToLive.init -> void
+[RSP0002]static Respire.AI.RespireEmbeddingCacheExtensions.UseRespireEmbeddingCache(this Microsoft.Extensions.AI.EmbeddingGeneratorBuilder<string!, Microsoft.Extensions.AI.Embedding<float>!>! builder, Respire.IRespireClient! client, Respire.AI.RespireEmbeddingCacheOptions! options) -> Microsoft.Extensions.AI.EmbeddingGeneratorBuilder<string!, Microsoft.Extensions.AI.Embedding<float>!>!
 *REMOVED*Respire.AI.RespireSemanticCacheExtensions
 [RSP0002]Respire.AI.RespireSemanticCacheExtensions
 *REMOVED*Respire.AI.RespireSemanticCacheOptions

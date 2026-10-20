@@ -2,8 +2,8 @@
   <PropertyGroup>
     <PackageId>Respire.AI</PackageId>
     <Title>Respire.AI</Title>
-    <Description>Redis chat history, agent memory, and semantic response caching for Microsoft.Extensions.AI.</Description>
-    <PackageTags>$(PackageTags);ai;semantic-cache;chat-history;agent-memory</PackageTags>
+    <Description>Redis chat history, agent memory, semantic response caching, and exact-text embedding caching for Microsoft.Extensions.AI.</Description>
+    <PackageTags>$(PackageTags);ai;semantic-cache;chat-history;agent-memory;embeddings</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Respire.Search/Respire.Search.csproj" />
