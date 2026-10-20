@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.VectorData;
@@ -11,6 +12,22 @@ namespace Respire.VectorData.Conformance.Tests;
 internal sealed class JsonTestStore(RedisServerFixture server, RespireProtocol protocol) : TestStore
 {
     private RespireClient? _client;
+
+    internal ValueTask<RespireSearchIndexInfo> GetIndexInfoAsync(string collectionName, CancellationToken cancellationToken)
+        => _client!.Search.GetIndexInfoAsync(((RespireVectorStore)DefaultVectorStore).IndexName(collectionName), cancellationToken);
+
+    public override async Task WaitForDataAsync<TKey, TRecord>(VectorStoreCollection<TKey, TRecord> collection,
+        int recordCount, Expression<Func<TRecord, bool>>? filter = null,
+        Expression<Func<TRecord, object?>>? vectorProperty = null, int? vectorSize = null, object? dummyVector = null)
+    {
+        // Vector search can already see every seed while FT.CREATE is still scanning and
+        // reindexing JSON documents. Wait for that scan before checking final vector visibility.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Xunit.TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        while ((await GetIndexInfoAsync(collection.Name, deadline.Token).ConfigureAwait(false)).Properties["indexing"].Scalar != "0")
+            await Task.Delay(20, deadline.Token).ConfigureAwait(false);
+        await base.WaitForDataAsync(collection, recordCount, filter, vectorProperty, vectorSize, dummyVector).ConfigureAwait(false);
+    }
 
     public override string DefaultDistanceFunction => DistanceFunction.CosineDistance;
 
