@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Respire.VectorData.Tests" />
+    <InternalsVisibleTo Include="Respire.VectorData.Conformance.Tests" />
     <ProjectReference Include="../Respire.Search/Respire.Search.csproj" />
     <ProjectReference Include="../Respire.Json/Respire.Json.csproj" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
