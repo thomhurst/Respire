@@ -227,9 +227,11 @@ public class JobGroupSchedulingIntegrationTests(RedisTestContainer redis)
         await queue.EnqueueScheduledAsync("existing", "p", new() { Group = "a" });
         var dedup = queue.StreamKey + ":dedup:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("new")));
         var source = JobSchedulingIntegrationTests.Script("Enqueue").Source;
-        var broken = RespireScript.Create(dedupFailure
-            ? source.Replace("redis.pcall('SET', KEYS[4], id, 'PX', ARGV[3])", "redis.pcall('SET', KEYS[4], id, 'PX', -1)")
-            : source.Replace("redis.pcall('ZADD', order, 0, prefix)", "redis.pcall('ZADD', order, 'bad-score', prefix)"));
+        var brokenSource = dedupFailure
+            ? source.Replace("record(id, ARGV[12], ARGV[3]), 'PX', ARGV[3]", "record(id, ARGV[12], ARGV[3]), 'PX', -1")
+            : source.Replace("redis.pcall('ZADD', order, 0, prefix)", "redis.pcall('ZADD', order, 'bad-score', prefix)");
+        await Assert.That(brokenSource).IsNotEqualTo(source);
+        var broken = RespireScript.Create(brokenSource);
         var keys = JobGroupIntegrationTests.Keys(queue);
         await Assert.That(async () =>
         {

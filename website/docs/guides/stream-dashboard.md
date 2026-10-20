@@ -15,6 +15,12 @@ For [resumable jobs](job-queues.md#resumable-jobs-and-checkpoints), the pending-
 table also shows the last saved cursor and optional completion percentage. Inspection is
 bounded by `EntryLimit` and does not display checkpoint state bytes or job payloads.
 
+For ordinary job enqueues, pending deliveries also show the application job ID (deduplication
+identity) and the winning submission's `FirstSubmissionWins` or `Extend` mode. These values
+survive retries and describe the submission, even after its deduplication window expires.
+Flow and batch members show `Separate lifecycle` because their own containers govern identity.
+Inspection projects only identity and mode from Redis, without transferring payloads.
+
 Install `Respire.Streaming.Dashboard` and `Respire.DependencyInjection` in an ASP.NET Core app.
 The dashboard supports .NET 8 and .NET 10 and requires Redis 7 or later for retry permission
 checks. Upgrade it together with the matching `Respire` package version.

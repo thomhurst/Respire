@@ -90,12 +90,8 @@ internal static class JobQueueScheduling
 
         """;
 
-    internal static readonly RespireScript Enqueue = RespireScript.Create("local groupOffset = 5\n" + Helpers + """
-        local existing = redis.call('GET', KEYS[4])
-        -- A deduplication hit needs no mutation permissions.
-        if existing then return {existing, 0} end
-
-        """ + StagePermissions + """
+    internal static readonly RespireScript Enqueue = RespireScript.Create("local groupOffset = 5\n" + Helpers
+        + "local deduplicationKey = KEYS[4]\n" + JobDeduplication.Duplicate + StagePermissions + """
         permit('ZREM', KEYS[3], '0-0')
         permit('SET', KEYS[4], '0-0', 'PX', ARGV[3])
         local clock = now()
@@ -103,6 +99,9 @@ internal static class JobQueueScheduling
         local fields = {'_respire.job.id', ARGV[1], '_respire.job.payload', ARGV[2],
             '_respire.job.priority', ARGV[5], '_respire.job.expires', tostring(expires),
             '_respire.job.attempts', '0'}
+        if ARGV[12] == '1' then
+            table.insert(fields, '_respire.job.deduplication'); table.insert(fields, 'Extend')
+        end
         if ARGV[9] and ARGV[9] ~= '' then
             table.insert(fields, '_respire.job.group'); table.insert(fields, ARGV[9])
         end
@@ -117,7 +116,7 @@ internal static class JobQueueScheduling
         local due = clock + tonumber(ARGV[4])
         local id = stage(fields, due)
         if type(id) == 'table' then return id end
-        local recorded = redis.pcall('SET', KEYS[4], id, 'PX', ARGV[3])
+        local recorded = redis.pcall('SET', KEYS[4], record(id, ARGV[12], ARGV[3]), 'PX', ARGV[3])
         if type(recorded) == 'table' and recorded.err then
             unstage(fields, due, id)
             return recorded

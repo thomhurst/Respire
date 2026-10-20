@@ -2,6 +2,25 @@ namespace Respire.Streaming.Dashboard;
 
 internal static class DashboardScripts
 {
+    // Only project identity and policy: payloads never leave Redis for this inspection.
+    internal static readonly RespireScript Deduplication = RespireScript.Create("""
+        local result = {}
+        for _, id in ipairs(ARGV) do
+            local rows = redis.call('XRANGE', KEYS[1], id, id)
+            if #rows == 1 then
+                local identity, mode = '', 'FirstSubmissionWins'
+                for i = 1, #rows[1][2], 2 do
+                    local name, value = rows[1][2][i], rows[1][2][i+1]
+                    if name == '_respire.job.id' then identity = value end
+                    if name == '_respire.job.deduplication' then mode = value end
+                    if name == '_respire.job.flow' or name == '_respire.job.batch' then mode = 'Separate lifecycle' end
+                end
+                table.insert(result, {id, identity, mode})
+            end
+        end
+        return result
+        """);
+
     // Keep the five positional metadata pairs aligned with the worker. Never decode/re-encode
     // original names or values in .NET: Redis Lua strings preserve arbitrary binary fields.
     internal static readonly RespireScript Mutate = RespireScript.Create("""

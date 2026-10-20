@@ -76,7 +76,12 @@ public class JobSchedulingClusterTests
             await Assert.That(callback.GetString("_respire.job.id")).IsEqualTo("callback");
             var queue = new RespireJobQueue<string>(client, "cluster", Encoding.UTF8.GetBytes);
             var keys = JobGroupIntegrationTests.Keys(queue);
-            await queue.EnqueueScheduledAsync("id{untrusted}", "payload", new() { Group = "tenant:{other}:東京" });
+            var original = await queue.EnqueueScheduledAsync("id{untrusted}", "payload", new()
+            {
+                Group = "tenant:{other}:東京", DeduplicationMode = RespireJobDeduplicationMode.Extend,
+            });
+            await Assert.That(await queue.EnqueueAsync("id{untrusted}", "duplicate"))
+                .IsEqualTo(new RespireJobEnqueueResult(original.EntryId, false));
             const string group = RespireJobQueue<string>.ConsumerGroup;
             await client.Streams.CreateGroupAsync(queue.StreamKey, group, RespireStreamId.Beginning);
             var first = (await JobGroupIntegrationTests.Read(client, queue, "owner")).Single();
@@ -95,6 +100,7 @@ public class JobSchedulingClusterTests
             await Assert.That(second.GetString("_respire.job.attempts")).IsEqualTo("1");
             await Assert.That(second.GetString("_respire.job.id")).IsEqualTo("id{untrusted}");
             await Assert.That(second.GetString("_respire.job.group")).IsEqualTo("tenant:{other}:東京");
+            await Assert.That(second.GetString("_respire.job.deduplication")).IsEqualTo("Extend");
             await Assert.That(await client.Scripts.ExecuteIntegerAsync(JobQueueIntegrationTests.JobScript("CompleteWithMetrics"),
                 [queue.StreamKey, queue.EventsStreamKey, queue.StreamKey + ":metrics"],
                 [group, "owner", second.Id.Value, 1, "completed", "", "", 0, Array.Empty<byte>(), 5])).IsEqualTo(1);
