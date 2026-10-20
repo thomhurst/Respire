@@ -54,7 +54,9 @@ public class HandshakeTests
     }
 
     [Test]
-    public async Task LibraryInfo_CapacityFailureDoesNotReplaceAuthenticationError()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LibraryInfo_CapacityFailureDoesNotReplaceAuthenticationError(bool advertiseRedirects)
     {
         await using var server = new FakeRespServer(
             "-WRONGPASS invalid password\r\n"u8.ToArray(), FakeRespServer.OkReply)
@@ -67,7 +69,7 @@ public class HandshakeTests
         var error = await Assert.That(async () => await RespireConnection.ConnectAsync(
             "127.0.0.1", server.Port,
             new RespireOptions { Password = "wrong", ClientName = "ordered", MaxInflightCommands = 2 }.ToConnectionOptions()
-                with { Protocol = RespireProtocol.Resp2 }, cancellationToken: timeout.Token))
+                with { Protocol = RespireProtocol.Resp2, AdvertiseReplicaRedirects = advertiseRedirects }, cancellationToken: timeout.Token))
             .Throws<RespireConnectionException>();
         await Assert.That(error!.Message).Contains("AUTH failed");
         await Assert.That(error.Message).Contains("invalid password");

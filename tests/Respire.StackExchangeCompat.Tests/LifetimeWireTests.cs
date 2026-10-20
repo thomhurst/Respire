@@ -10,6 +10,51 @@ namespace Respire.StackExchangeCompat.Tests;
 public class LifetimeWireTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReplicaRedirectsKeepIndividualCommandsInCallerOrder(bool retry)
+    {
+        var setReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HGET ", StringComparison.Ordinal)
+                ? "$5\r\nvalue\r\n"u8.ToArray() : command.StartsWith("HSET ", StringComparison.Ordinal)
+                    ? ":1\r\n"u8.ToArray() : FakeRespServer.OkReply,
+        };
+        await using var source = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("HGET ", StringComparison.Ordinal)
+                ? System.Text.Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("HSET ", StringComparison.Ordinal)) return false;
+                setReceived.TrySetResult();
+                return true;
+            },
+        };
+        await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", source.Port)],
+            Protocol = RespireProtocol.Resp2,
+            EnableReplicaRedirects = true,
+            RetryPolicy = retry ? new() : null,
+        });
+        var database = connection.GetDatabase();
+        var set = database.HashSetAsync("key", "field", "value");
+        await setReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var get = database.HashGetAsync("key", "field");
+        // A later command must stay behind the unresolved redirect, even though
+        // the first command has already been accepted by the source transport.
+        await Assert.ThrowsAsync<TimeoutException>(() => get.WaitAsync(TimeSpan.FromMilliseconds(200)));
+        Assert.DoesNotContain("HGET key field", source.ReceivedCommands);
+        await source.SendRawAsync(System.Text.Encoding.UTF8.GetBytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"));
+        Assert.True(await set.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("value", (string?)await get.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(new[] { "HSET key field value", "HGET key field" }, target.ReceivedCommands
+            .Where(command => command.StartsWith("HSET ", StringComparison.Ordinal) || command.StartsWith("HGET ", StringComparison.Ordinal)));
+    }
+
+    [Test]
     [Arguments("HSET", false)]
     [Arguments("HDEL", false)]
     [Arguments("PEXPIRE", false)]

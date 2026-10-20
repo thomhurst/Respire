@@ -61,10 +61,11 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
                 else
                 {
                     var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
-                    if (command.Name == "EVALSHA")
+                    if (command.Name == "EVALSHA" || client.Core.Options.EnableReplicaRedirects && client.Core.Cluster is null)
                     {
-                        // The native stored-procedure telemetry path cannot expose admission yet.
-                        // Keep dispatch order by holding the gate until this reply completes.
+                        // Stored procedures do not expose admission. Replica redirects can move
+                        // an admitted command onto a different FIFO, including during retries.
+                        // Hold the gate through the logical reply to preserve caller order.
                         pending = client.ExecuteLeaseAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
                         await pending.ConfigureAwait(false);
                     }

@@ -837,9 +837,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var deferSessionSteps = options.RequireClusterDatabaseSupport;
         if (options.AdvertiseReplicaRedirects)
         {
-            (pending ??= new(4)).Add(("CLIENT CAPA REDIRECT", SendAsync(
-                new Commands.ClientCapaRedirectCommand(),
-                cancellationToken, armCommandDeadline: armCommandDeadline)));
+            await QueueStepAsync("CLIENT CAPA REDIRECT", new Commands.ClientCapaRedirectCommand()).ConfigureAwait(false);
         }
         if (options.ReadOnly && !deferSessionSteps)
         {
