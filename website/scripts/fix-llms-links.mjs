@@ -4,7 +4,7 @@
 import {readdir, readFile, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import config from '../docusaurus.config.js';
+import config from '../docusaurus.config.mjs';
 
 const buildDir = fileURLToPath(new URL('../build/', import.meta.url));
 const siteUrl = config.url.replace(/\/$/, '');
