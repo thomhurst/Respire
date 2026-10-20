@@ -670,7 +670,8 @@ public class ClusterRetirementTests
             if (code == "ASK")
             {
                 var rejection = await Assert.That(async () => await Execute()).ThrowsExactly<RespireServerException>();
-                await Assert.That(rejection.Code).IsEqualTo("ASK");
+                var error = await Assert.That(rejection).IsNotNull();
+                await Assert.That(error.Code).IsEqualTo("ASK");
             }
             else await Assert.That(async () => await Execute()).ThrowsExactly<RespireReconnectLimitException>();
             var terminal = await exhausted.Task.WaitAsync(timeout.Token);

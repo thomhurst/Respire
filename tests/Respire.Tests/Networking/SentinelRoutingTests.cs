@@ -1310,7 +1310,7 @@ public partial class SentinelRoutingTests
             first.SuppressReply = null;
             await first.SendRawAsync(AddressReply(promoted.Port), blockedConnection);
             await worker.WaitAsync(Limit);
-            await Assert.That(router.NotificationRediscovery).IsNull();
+            await Assert.That((object?)router.NotificationRediscovery).IsNull();
         }
         await SendSentinelMessageAsync(second, second.ReceivedConnectionIds[secondMonitor], "+odown",
             $"master mymaster {secondHost} {original.Port} #quorum 2/2");

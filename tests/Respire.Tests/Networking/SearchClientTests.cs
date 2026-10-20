@@ -274,7 +274,7 @@ public class SearchClientTests
             values.AddRange(page.Rows.Select(row => row["n"]));
         }
 
-        await Assert.That(values).IsEquivalentTo(["1", "2"], CollectionOrdering.Matching);
+        await Assert.That(values).IsEquivalentTo(new string?[] { "1", "2" }, CollectionOrdering.Matching);
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT.CURSOR DEL", StringComparison.Ordinal))).IsFalse();
     }
 
@@ -549,7 +549,7 @@ public class SearchClientTests
         var query = new RespireSearchQuery(RespireSearchExpression.FromRaw("*"));
         await Assert.That(() => query with { Expression = default }).Throws<ArgumentException>();
         await Assert.That(() => RespireSearchExpression.FromRaw(" ")).Throws<ArgumentException>();
-        await Assert.That(() => RespireSearchQueryBuilder.And(default)).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchQueryBuilder.And(null!)).Throws<ArgumentException>();
         await Assert.That(() => _ = default(RespireSearchExpression).Value).Throws<InvalidOperationException>();
         await Assert.That(default(RespireSearchExpression).ToString()).IsEqualTo(string.Empty);
     }

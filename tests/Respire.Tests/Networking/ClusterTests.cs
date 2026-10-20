@@ -569,7 +569,7 @@ public class ClusterTests
         await Assert.That(routes.IsDueForRevalidation).IsTrue();
         var first = routes.JoinOrStartRefresh(() => Task.CompletedTask);
         await first!;
-        await Assert.That(routes.JoinOrStartRefresh(() => Task.CompletedTask)).IsNull();
+        await Assert.That((object?)routes.JoinOrStartRefresh(() => Task.CompletedTask)).IsNull();
         now += ClusterReplicaSet.RefreshIntervalMilliseconds;
         var second = routes.JoinOrStartRefresh(() => Task.CompletedTask);
         await Assert.That(second).IsNotNull();
@@ -591,7 +591,7 @@ public class ClusterTests
         }
         await routes.JoinOrStartRefresh(Fail)!;
         for (var index = 0; index < 100; index++)
-            await Assert.That(routes.JoinOrStartRefresh(Fail)).IsNull();
+            await Assert.That((object?)routes.JoinOrStartRefresh(Fail)).IsNull();
         await Assert.That(attempts).IsEqualTo(1);
         now += ClusterReplicaSet.RefreshIntervalMilliseconds;
         await routes.JoinOrStartRefresh(Fail)!;

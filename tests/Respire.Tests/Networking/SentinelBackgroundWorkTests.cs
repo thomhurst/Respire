@@ -27,7 +27,7 @@ public class SentinelBackgroundWorkTests
         foreach (var admitted in registrations)
             await Assert.That(snapshot.Contains(admitted)).IsTrue();
         var called = false;
-        await Assert.That(owner.TryStart(SentinelWorkKind.Rediscovery, () => { called = true; return Task.CompletedTask; })).IsNull();
+        await Assert.That((object?)owner.TryStart(SentinelWorkKind.Rediscovery, () => { called = true; return Task.CompletedTask; })).IsNull();
         await Assert.That(called).IsFalse();
         release.TrySetResult();
         await Task.WhenAll(snapshot).WaitAsync(Limit);
