@@ -993,16 +993,35 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
 
     private ValueTask<string[]> AlgebraAsync(
         string operation, Verb verb, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.StringArrayAsync(
-            operation, new CmdN(verb, CountedKeys(client.MapKeys(keys))), cancellationToken);
+    {
+        var owner = DispatchResponseSource<string[]>.Start();
+        try
+        {
+            var mappedKeys = client.MapKeys(keys);
+            ValidateCombineSlots(client, operation, mappedKeys);
+            return owner.Attach(client.StringArrayAsync(
+                operation, new CmdN(verb, CountedKeys(mappedKeys)), cancellationToken, observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     private ValueTask<long> AlgebraStoreAsync(
         string operation, Verb verb, RespireKey destination, ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken)
-        => client.IntegerAsync(
-            operation,
-            new Cmd1N(verb, client.Key(in destination), CountedKeys(client.MapKeys(keys))),
-            cancellationToken);
+    {
+        var owner = DispatchResponseSource<long>.Start();
+        try
+        {
+            var mappedDestination = client.Key(in destination);
+            var mappedKeys = client.MapKeys(keys);
+            ValidateCombineSlots(client, operation, mappedKeys, mappedDestination);
+            return owner.Attach(client.IntegerAsync(
+                operation,
+                new Cmd1N(verb, mappedDestination, CountedKeys(mappedKeys)),
+                cancellationToken, observation: owner.Observation));
+        }
+        catch (Exception error) { owner.Fail(error); throw; }
+    }
 
     internal static CmdN CombineCommand(
         RespireClient client, string operation, Verb verb, ReadOnlySpan<RespireKey> keys,
