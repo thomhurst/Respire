@@ -237,7 +237,9 @@ public class ContainerFixtureIntegrationTests
         await AssertContainerRemovedAsync(createdIds[^1]);
         using var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
             .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build();
-        (await docker.Containers.InspectContainerAsync(blocker.Id)).State.Running.Should().BeTrue();
+        var competingState = (await docker.Containers.InspectContainerAsync(blocker.Id)).State;
+        competingState.Should().NotBeNull("Docker inspection should include the competing container's state");
+        competingState!.Running.Should().BeTrue("fixture cleanup should preserve the competing container");
     }
 
     [Test]
