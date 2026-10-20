@@ -25,7 +25,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly byte[][] _replies;
     private readonly Dictionary<int, int> _replyDelays = [];
     private volatile (string Prefix, int Milliseconds)[] _commandDelays = [];
-    private volatile (string Prefix, Task Gate, Action? OnReceived)[] _commandGates = [];
+    private volatile (string Prefix, Task Gate, Action<int>? OnReceived)[] _commandGates = [];
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -192,6 +192,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// The optional callback signals arrival before waiting on the gate.
     /// </summary>
     public void GateCommand(string commandPrefix, Task gate, Action? onReceived = null)
+        => GateCommand(commandPrefix, gate, _ => onReceived?.Invoke());
+
+    /// <summary>
+    /// Gates a command and supplies its own accepted connection ID to the arrival callback.
+    /// Unlike the last entry in ReceivedConnectionIds, this remains the command's socket
+    /// even when another connection records a command before the callback runs.
+    /// </summary>
+    public void GateCommand(string commandPrefix, Task gate, Action<int> onReceived)
         => _commandGates = [.. _commandGates, (commandPrefix, gate, onReceived)];
 
     /// <summary>Injects a server-initiated frame (e.g. a pub/sub message) onto the wire.</summary>
@@ -367,7 +375,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     {
                         if (commandText.StartsWith(prefix, StringComparison.Ordinal))
                         {
-                            onReceived?.Invoke();
+                            onReceived?.Invoke(connectionId);
                             await gate.WaitAsync(_cts.Token);
                         }
                     }
