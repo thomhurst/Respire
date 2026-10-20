@@ -161,6 +161,48 @@ public class ReplicaRedirectTests
     [Arguments(true, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
+    public async Task RedirectFromConnectedMaintenanceSourcePreservesDeadline(bool circuit, bool delayHandshake)
+    {
+        await using var target = new FakeRespServer(4)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command == "GET key" ? Bytes("$5\r\nvalue\r\n") : FakeRespServer.OkReply,
+        };
+        await using var source = new FakeRespServer(4)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Bytes("%1\r\n$5\r\nproto\r\n:3\r\n")
+                : command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n") : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source.Port) with
+        {
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(1),
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
+            CircuitBreaker = circuit ? new() : null,
+        });
+        var original = client.Core.Multiplexer.GetConnection();
+        await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
+        using var maintenanceWait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!original.HasMaintenanceWindow) await Task.Delay(10, maintenanceWait.Token);
+
+        // No retirement or replacement: the still-connected source grants the allowance.
+        // Exercise both the check after a late reply and the timer during target acquisition.
+        if (delayHandshake) target.DelayCommand("HELLO 3", 1500);
+        else source.DelayCommand("GET key", 1500);
+        using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await Assert.That(await client.GetStringAsync("key", caller.Token)).IsEqualTo("value");
+        await Assert.That(original.IsConnected).IsTrue();
+        await Assert.That(source.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
     public async Task RedirectAfterMaintenanceRerouteUsesRelaxedAcquisitionDeadline(bool circuit, bool delayHandshake)
     {
         await using var target = Server();

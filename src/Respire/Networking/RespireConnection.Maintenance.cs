@@ -269,7 +269,7 @@ internal sealed partial class RespireConnection
     }
 
     /// <summary>
-    /// The deadline a send rejected by this retired socket carries to its replacement. When this
+    /// The deadline a send rerouted from this socket carries to its next connection. When this
     /// socket's maintenance window was relaxing it, the relaxed allowance is added once and
     /// marked, so the replacement socket's own window cannot add it again.
     /// </summary>

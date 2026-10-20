@@ -74,6 +74,11 @@ public sealed partial class RespireClient
 
                 if (error.Code != "REDIRECT" || attempt >= ClusterRouter.RedirectLimit
                     || !TryParseReplicaRedirect(error.Message, connection.Host, out var endpoint)) throw error;
+                // A connected source can grant maintenance time without retiring. Carry
+                // that allowance across the redirect, once, before checking or renting.
+                deadline = connection.GetReroutedCommandDeadline(deadline);
+                acquisition.Dispose();
+                acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
                 _core.ClientCache?.FlushForContinuityLoss();
                 command.ValidateAdmission();
                 acquisition.CheckDeadline(operation, _core);
