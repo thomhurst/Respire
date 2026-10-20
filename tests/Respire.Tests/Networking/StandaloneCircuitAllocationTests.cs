@@ -60,8 +60,10 @@ public class StandaloneCircuitAllocationTests
                 release.Set();
                 if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
             }
+#pragma warning disable RESP009 // The child entry point completes the isolated measurement before starting the test runner.
             RunMeasurementAsync(bool.Parse(Environment.GetEnvironmentVariable("RESPIRE_RAW_DISPATCH_ALLOCATION_PROBE") ?? "False"))
                 .GetAwaiter().GetResult();
+#pragma warning restore RESP009
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
@@ -106,7 +108,9 @@ public class StandaloneCircuitAllocationTests
             total += MeasureDispatch(client, control, raw, arguments, out var pending, out var rawPending);
             if (!connection.InspectForTests().Inflight.TryPeek(out var source)) throw new InvalidOperationException("Missing reply source.");
             if (!SpinWait.SpinUntil(() => server.CommandsSeen > commands, TimeSpan.FromSeconds(5))) throw new TimeoutException();
+#pragma warning disable RESP009 // Keep the measurement loop on one thread while releasing each deliberately parked reply.
             server.SendRawAsync(":5\r\n"u8.ToArray()).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (!SpinWait.SpinUntil(() => (raw ? rawPending.IsCompleted : pending.IsCompleted) && source!.InspectForTests().ReferenceCount <= 1,
                 TimeSpan.FromSeconds(5))) throw new TimeoutException();
             if (raw)
