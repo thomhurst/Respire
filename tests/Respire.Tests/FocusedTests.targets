@@ -1,0 +1,36 @@
+<Project>
+  <!-- Select source files before Roslyn/TUnit generation, rather than filtering only
+       at execution time. Pipe separates globs without MSBuild CLI semicolon escaping. -->
+  <Target Name="SelectFocusedTestSources" BeforeTargets="PrepareForBuild">
+    <ItemGroup>
+      <_FocusedSelection Include="$([MSBuild]::Unescape($(RespireTestFilter.Replace('|', ';'))))" />
+      <!-- Keep linked shared sources, helpers, configuration, and the real entry point. -->
+      <_FocusedInfrastructure Include="@(Compile)" Condition="'%(Compile.Link)' != ''" />
+      <_FocusedInfrastructure Include="
+        AllocationMeasurement.cs;ChildProcessProbes.cs;CommandRouteOwnership.cs;
+        MetricConfigurationScope.cs;Program.cs;TestCategories.cs;TestConfiguration.cs;
+        TestConstraints.cs;TestTelemetry.cs;TimingSensitive.cs;
+        Networking/ClusterRecoveryTestClock.cs;Networking/DispatchedWakeDiagnostics.cs;
+        Networking/FakeRespServer.cs;Networking/ReservedUnavailablePort.cs;
+        Networking/SentinelHintBuilder.cs;Networking/SentinelMonitorProbe.cs;
+        Networking/SentinelTestSetup.cs;Networking/TestTlsCertificate.cs" />
+      <!-- Program invokes these probes before starting TUnit. Keep their original
+           implementations and tests, even when the requested filter selects other tests. -->
+      <_FocusedInfrastructure Include="
+        ArgumentFormattingTests.cs;DispatchResponseObservationTests.cs;
+        ConnectionMetricCleanupTests.cs;Networking/AsyncFlushSignalTests.cs;
+        Networking/StandaloneBatchFlushTests.cs;Networking/StandaloneCircuitAllocationTests.cs;
+        Networking/StandaloneReplicaReadyTests.cs" />
+      <_FocusedUnselected Include="@(Compile)" Exclude="@(_FocusedSelection)" />
+      <_FocusedSelectedCompile Include="@(Compile)" Exclude="@(_FocusedUnselected)" />
+      <_FocusedRemoved Include="@(Compile)" Exclude="@(_FocusedSelection);@(_FocusedInfrastructure)" />
+      <Compile Remove="@(_FocusedRemoved)" />
+    </ItemGroup>
+
+    <Error Condition="'$(ContinuousIntegrationBuild)' == 'true'"
+           Text="RespireTestFilter is for local focused validation only. CI must compile the full suite." />
+    <Error Condition="'@(_FocusedSelectedCompile)' == ''"
+           Text="RespireTestFilter matched no source files. Use paths/globs relative to tests/Respire.Tests." />
+    <Message Importance="high" Text="Focused Respire.Tests build: $(RespireTestFilter). The full suite remains a separate CI check." />
+  </Target>
+</Project>

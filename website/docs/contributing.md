@@ -9,6 +9,51 @@ Update the [public API declarations](packages.md#public-api-review-and-deprecati
 each API change. Build both supported frameworks and run `Respire.PublicApi.Tests` to check
 the API and deprecation policy.
 
+## Focused unit tests within the agent memory guard
+
+The full `Respire.Tests` compilation can exceed the local agent's 2048 MB process-tree
+limit before TUnit applies `--treenode-filter`. For local changes, use `RespireTestFilter`
+to select source files **before compilation**, then select tests at execution time:
+
+```powershell
+& scripts/Invoke-AgentDotNet.ps1 -Verbose -SingleNode -DotNetArguments @(
+    'build', 'tests/Respire.Tests/Respire.Tests.csproj', '-c', 'Release', '-f', 'net10.0',
+    '-p:RespireTestFilter=TimeSeries*.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
+
+& scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
+    'run', '--project', 'tests/Respire.Tests/Respire.Tests.csproj',
+    '-c', 'Release', '-f', 'net10.0', '--no-build',
+    '-p:RespireTestFilter=TimeSeries*.cs', '--',
+    '--treenode-filter', '/*/*/TimeSeries*/*')
+```
+
+Use `net8.0` for the other supported framework. Patterns are relative to
+`tests/Respire.Tests`; join multiple patterns with `|`, for example
+`-p:RespireTestFilter=BlockingCancellationTests.cs|Networking/FakeRespServerTests.cs`.
+Include all partial-class files and any other test classes the selected tests depend on.
+A missing dependency produces a compiler error; add its source to the filter.
+An entirely unmatched filter fails the build. Keep selections small; a broad selection
+can still exceed the guard.
+
+Focused builds retain the project's packages, references, analyzers, source generators,
+resources, shared helpers, configuration, and original entry point. The tests implementing
+the entry point's child-process probes are always compiled. Use `--treenode-filter` to
+control which compiled tests execute.
+
+Outputs and NuGet assets live under `bin/focused` and `obj/focused`, separate from the
+full suite. Build again whenever the source selection changes, and pass the same source
+filter to `run --no-build`. Different selections reuse the focused output directory;
+do not build two selections concurrently in one checkout.
+Omitting the property builds the complete suite. CI rejects source filtering and retains
+full test coverage. Focused results are evidence for the selected tests, not a full-suite pass.
+
+Keep the default guard limits and required diagnostics enabled. `-Verbose` reports the
+peak sampled process-tree working set, including the compiler hosting source generators;
+it does not measure an individual generator's managed heap. Run
+`pwsh scripts/Test-FocusedTests.ps1` to check selection, retained infrastructure,
+output isolation, and rejection of invalid/CI invocations.
+
 ## Validate the package
 
 Every shipping project enables the SDK's

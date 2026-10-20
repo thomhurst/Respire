@@ -696,6 +696,7 @@ $trackedProcesses = [System.Collections.Generic.Dictionary[int, string]]::new()
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $memoryLimitBytes = [long]$MemoryLimitMb * 1MB
 $guardExitCode = $null
+$peakWorkingSetBytes = 0L
 $finalExitCode = 1
 $windowsJobHandle = [IntPtr]::Zero
 $windowsStartGate = $null
@@ -767,6 +768,7 @@ try {
         $treeState = Get-ProcessTreeState $process.Id
         Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
         $workingSetBytes = Get-TrackedWorkingSetBytes $trackedProcesses @($treeState.Snapshot)
+        $peakWorkingSetBytes = [math]::Max($peakWorkingSetBytes, $workingSetBytes)
 
         if ($workingSetBytes -gt $memoryLimitBytes) {
             $workingSetMb = [math]::Round($workingSetBytes / 1MB)
@@ -810,6 +812,8 @@ try {
     }
 }
 finally {
+    Write-Verbose ("Agent dotnet peak sampled process-tree working set: {0} MB (limit {1} MB)." -f
+        [math]::Round($peakWorkingSetBytes / 1MB), $MemoryLimitMb)
     if ($processStarted) {
         Stop-ProcessTree `
             -RootProcess $process `
