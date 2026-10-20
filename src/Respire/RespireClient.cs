@@ -5836,7 +5836,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             ?? core.Cluster!.GetDedicatedPool(identity.Endpoint);
         // Cleanup callers bound each attempt. They retire a canceled control connection and
         // retry; no caller may release the owner token before an acknowledged fence.
-        var control = await pool.RentAsync(cancellationToken, armHandshakeDeadline: false).ConfigureAwait(false);
+        var control = await pool.RentAsync(cancellationToken, armHandshakeDeadline: false,
+            recoverConnection: false).ConfigureAwait(false);
         try
         {
             // No command deadline applies. Cleanup cancellation still retires this control
@@ -6201,7 +6202,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 await using var lease = core.Cluster?.GetCorrectionLease(connectionIdentity.Connection);
                 await using var sentinelLease = core.Sentinel?.GetCorrectionLease(connectionIdentity.Connection);
                 var pool = sentinelLease?.Pool ?? lease!.Pool;
-                var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
+                var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false,
+                    recoverConnection: false).ConfigureAwait(false);
                 try
                 {
                     using var reply = connectionIdentity.RequiresAsking

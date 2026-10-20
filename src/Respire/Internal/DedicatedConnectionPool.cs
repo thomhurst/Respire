@@ -106,7 +106,8 @@ internal sealed partial class DedicatedConnectionPool(
 
     public async ValueTask<RespireConnection> RentAsync(
         CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true,
-        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null)
+        DedicatedLeaseKind kind = DedicatedLeaseKind.Ordinary, string? preferredZone = null,
+        bool recoverConnection = true)
     {
         if (Volatile.Read(ref _metricsRegistered) == 0 && Interlocked.Exchange(ref _metricsRegistered, 1) == 0)
             ConnectionTelemetry.TrackDedicatedPool(this, host, port, options.Database);
@@ -182,10 +183,11 @@ internal sealed partial class DedicatedConnectionPool(
             RespireConnection connection;
             try
             {
-                // Corrective fences own their retry/deadline rules and must not inherit an
-                // application acquisition limit. Healthy idle rentals never enter this path.
-                connection = connectionOptions.ReconnectPolicy is { } policy && armHandshakeDeadline
-                    ? await ConnectWithRecoveryAsync(policy, connectionOptions, connectCancellation.Token).ConfigureAwait(false)
+                // Deadline ownership and connection recovery are independent. Redirects keep
+                // recovery under their logical deadline; corrective fences disable both.
+                connection = connectionOptions.ReconnectPolicy is { } policy && recoverConnection
+                    ? await ConnectWithRecoveryAsync(policy, connectionOptions, connectCancellation.Token,
+                        armHandshakeDeadline).ConfigureAwait(false)
                     : await RespireConnection.ConnectAsync(
                         host, port, connectionOptions, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
             }

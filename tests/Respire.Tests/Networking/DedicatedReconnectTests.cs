@@ -200,10 +200,11 @@ public class DedicatedReconnectTests
     [Arguments(true)]
     public async Task NullPolicyAndCorrectiveFencesDoNotRetry(bool fencing)
     {
-        await using var server = new FakeRespServer("-ERR denied\r\n"u8.ToArray());
+        await using var server = new FakeRespServer("-LOADING dataset\r\n"u8.ToArray());
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = fencing ? Policy() : null }, null);
-        await Assert.That(async () => await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: !fencing))
+        await Assert.That(async () => await pool.RentAsync(CancellationToken.None,
+                armHandshakeDeadline: !fencing, recoverConnection: !fencing))
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }

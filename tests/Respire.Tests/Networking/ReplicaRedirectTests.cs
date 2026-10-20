@@ -11,6 +11,64 @@ namespace Respire.Tests.Networking;
 public class ReplicaRedirectTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectTargetHandshakeFailureOpensOnlyTargetCircuit(bool retry)
+    {
+        await using var target = new FakeRespServer(3) { CloseConnectionAfterCommand = 1 };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "GET key" ? Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n")
+                : command == "PING" ? FakeRespServer.PongReply : FakeRespServer.OkReply,
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        {
+            CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
+            RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.Loading } : null,
+            CommandTimeout = TimeSpan.FromSeconds(5),
+        });
+
+        await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireConnectionException>();
+        var error = await Assert.That(async () => await client.GetStringAsync("key")).Throws<RespireCircuitOpenException>();
+        await Assert.That(error!.Endpoint.Port).IsEqualTo(target.Port);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["CLIENT CAPA REDIRECT"]);
+        using var ping = await client.ExecuteAsync("PING");
+        await Assert.That(ping.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RedirectTargetReconnectPolicyRecoversBeforeApplicationDispatch(bool retry, bool circuit)
+    {
+        await using var target = new FakeRespServer(2)
+        {
+            CloseConnectionAfterCommand = 1,
+            ReplyOverride = (_, command) => command == "INCR counter" ? Bytes(":1\r\n") : FakeRespServer.OkReply,
+        };
+        await using var replica = new FakeRespServer
+        {
+            ReplyOverride = (_, command) => command == "CLIENT CAPA REDIRECT" ? FakeRespServer.OkReply
+                : Bytes($"-REDIRECT 127.0.0.1:{target.Port}\r\n"),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
+        {
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.FromMilliseconds(1), JitterRatio = 0 },
+            RetryPolicy = retry ? new() { RetryableErrors = RespireRetryableErrors.Loading } : null,
+            CircuitBreaker = circuit ? new() { MinimumFailureCount = 1 } : null,
+            CommandTimeout = TimeSpan.FromSeconds(5),
+        });
+
+        using var reply = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
+        await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        await Assert.That(replica.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT CAPA REDIRECT")).IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(1);
+    }
+
+    [Test]
     [NotInParallel]
     [Arguments(false, false)]
     [Arguments(true, false)]
@@ -30,6 +88,7 @@ public class ReplicaRedirectTests
             Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             CommandTimeout = TimeSpan.FromSeconds(1), MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = circuit ? new() : null,
+            ReconnectPolicy = new(),
         });
         var original = client.Core.Multiplexer.GetConnection();
         await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));
@@ -629,7 +688,10 @@ public class ReplicaRedirectTests
         };
         using var caller = new CancellationTokenSource();
         await using var client = await RespireClient.ConnectAsync(Options(replica.Port) with
-        { CommandTimeout = TimeSpan.FromMilliseconds(cancelCaller ? 5000 : 300), RetryPolicy = retry ? new() : null });
+        {
+            CommandTimeout = TimeSpan.FromMilliseconds(cancelCaller ? 5000 : 300),
+            RetryPolicy = retry ? new() : null, ReconnectPolicy = new(),
+        });
         var pending = client.GetStringAsync("key", caller.Token).AsTask();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (cancelCaller)

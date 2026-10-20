@@ -87,7 +87,7 @@ public sealed partial class RespireClient
                 }
                 pool = _core.CreateServerPool(endpoint, replicaRedirect: true);
                 // The logical command owns the deadline, including any maintenance allowance.
-                rentedConnection = await pool.RentAsync(acquisition.Token, armHandshakeDeadline: false).ConfigureAwait(false);
+                rentedConnection = await RentReplicaRedirectTargetAsync(pool, acquisition.Token).ConfigureAwait(false);
                 connection = rentedConnection;
                 telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                 onConnectionSelected?.Invoke(connection);
@@ -159,6 +159,20 @@ public sealed partial class RespireClient
             admission.Failed(error, cancellationToken);
             throw;
         }
+        finally { admission.Dispose(); }
+    }
+
+    private async ValueTask<RespireConnection> RentReplicaRedirectTargetAsync(
+        DedicatedConnectionPool pool, CancellationToken cancellationToken)
+    {
+        var admission = _core.Circuits?.Acquire(pool.Endpoint, cancellationToken) ?? default;
+        try
+        {
+            // The caller owns the logical deadline. Recovery may retry connection setup,
+            // but a successful handshake is not a successful application circuit probe.
+            return await pool.RentAsync(cancellationToken, armHandshakeDeadline: false).ConfigureAwait(false);
+        }
+        catch (Exception error) { admission.ConnectionFailed(error, cancellationToken); throw; }
         finally { admission.Dispose(); }
     }
 

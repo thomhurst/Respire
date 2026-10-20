@@ -164,7 +164,7 @@ public sealed partial class RespireClient
                             await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
                         }
                         redirectPool = _core.CreateServerPool(endpoint, replicaRedirect: true);
-                        redirectConnection = await redirectPool.RentAsync(token).ConfigureAwait(false);
+                        redirectConnection = await RentReplicaRedirectTargetAsync(redirectPool, token).ConfigureAwait(false);
                         connection = redirectConnection;
                         observation.UseEndpoint(new(connection.Host, connection.Port), token);
                         telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
