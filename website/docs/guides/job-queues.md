@@ -680,15 +680,21 @@ from 0 to 100. State is returned as owned `ReadOnlyMemory<byte>`. A save returni
 means that this delivery expired or lost ownership; stop doing work for that delivery.
 
 The runtime cap cancels the handler token. Observe it between units of work and in awaited
-operations. Let cancellation propagate, or return after finishing cancellation cleanup;
-the worker stages another run without spending the failure budget. The next run reads the
-last saved checkpoint. Exceptions and explicit Nack retries still count as failures, while
+operations. Let an `OperationCanceledException` propagate after any cancellation cleanup;
+when the handler token is cancelled, this tells the worker to stage another run without
+spending the failure budget. The next run reads the last saved checkpoint. Returning an
+explicit result after runtime expiry keeps its normal meaning: `Ack` completes the job and
+deletes its checkpoint, `Nack` spends the failure budget, `RetryAfter(...)` retains its retry
+delay and spends the failure budget, and `DeadLetter` dead-letters the job. Other exceptions
+still count as failures, while
 worker crashes still count as abandoned deliveries under the configured delivery limit.
 The cap is cooperative: a handler that ignores cancellation cannot be forcibly stopped.
 
 Graceful shutdown also cancels resumable handlers immediately. If a final checkpoint is
 needed, save it using a **separate bounded cancellation token** in the handler's cleanup,
-and await the save before leaving. The worker then requeues with a bounded cleanup token.
+and await the save before rethrowing the cancellation exception. The worker then requeues
+with a bounded cleanup token. Returning a result during shutdown does not request this
+budget-free yield; if processing is already cancelled, the delivery remains pending for recovery.
 If the process is killed before requeueing, visibility-timeout recovery on another worker
 reads the last successful save. Set the visibility timeout above the longest runtime slice
 plus cleanup time, or use a group concurrency lease, to avoid overlapping live runs.
