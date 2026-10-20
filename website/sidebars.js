@@ -6,8 +6,17 @@ const sidebars = {
     'guides/recipes',
     'packages',
     'contributing',
-    'guides/package-migration',
-    'stackexchange-redis',
+    {
+      type: 'category',
+      label: 'Migration',
+      items: [
+        'guides/package-migration',
+        'stackexchange-redis',
+        'guides/nredisstack-migration',
+        'guides/freeredis-migration',
+        'guides/csredis-migration',
+      ],
+    },
     {
       type: 'category',
       label: 'Usage diagnostics',
