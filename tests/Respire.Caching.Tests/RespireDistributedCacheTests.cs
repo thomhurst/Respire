@@ -1600,6 +1600,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public RespireEndpoint Endpoint => inner.Endpoint;
         public bool IsConnected => inner.IsConnected;
 
+        public ValueTask RegisterKeyTrackingAsync(RespireKey key, RespireKey? field = null,
+            CancellationToken cancellationToken = default)
+            => inner.RegisterKeyTrackingAsync(key, field, cancellationToken);
+
         public event Action<RespireConnectionStateChange>? ConnectionStateChanged
         {
             add => inner.ConnectionStateChanged += value;

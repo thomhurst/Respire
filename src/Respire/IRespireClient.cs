@@ -13,6 +13,20 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Client-side cache diagnostics, or null when caching is disabled.</summary>
     IRespireClientSideCache? ClientSideCache => null;
 
+    /// <summary>Registers a fresh Redis tracking read for a string key or a hash field, discarding the reply.</summary>
+    /// <remarks>
+    /// Requires client-side tracking enabled on this view and a key covered by its tracking prefixes.
+    /// Uses GET when <paramref name="field"/> is null, otherwise HGET. Applies the client's key prefix
+    /// to the key, never the field. Always sends a separate read to Redis, even during mutations;
+    /// neither consumes nor publishes cache entries and never coalesces with another read.
+    /// Subscribe to invalidations before calling and register again after each invalidation.
+    /// This does not reserve the key or guarantee tracking continuity across disconnects.
+    /// Decorators must explicitly forward or implement this capability with their normal key routing
+    /// and access policies. Implementations must not fall back to a cached read.
+    /// </remarks>
+    ValueTask RegisterKeyTrackingAsync(RespireKey key, RespireKey? field = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>The configured data endpoint, or the latest validated primary for a Sentinel client.</summary>
     /// <remarks>Reading this property performs no network I/O. After a Sentinel handoff, a previously
     /// captured endpoint can be historical; host and port always come from one generation.</remarks>

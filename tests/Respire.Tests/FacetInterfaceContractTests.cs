@@ -37,6 +37,7 @@ public class FacetInterfaceContractTests
     [Arguments(typeof(IRespireClient), "get_Arrays")]
     [Arguments(typeof(IRespireClient), "get_Functions")]
     [Arguments(typeof(IRespireClient), "GetOrSetAsync")]
+    [Arguments(typeof(IRespireClient), "RegisterKeyTrackingAsync")]
     [Arguments(typeof(IRespireClient), "WithKeyPrefix")]
     [Arguments(typeof(IRespireClient), "WithPubSubPrefix")]
     [Arguments(typeof(IRespireCommandQueue), "get_Server")]
