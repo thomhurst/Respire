@@ -357,9 +357,9 @@ public enum RespireTimeSeriesAggregation
     VarS,
     /// <summary>Time-weighted average. Requires RedisTimeSeries 1.8 or later.</summary>
     Twa,
-    /// <summary>Number of NaN values. Requires Redis 8.10.</summary>
+    /// <summary>Number of NaN values. Requires Redis 8.6.</summary>
     CountNaN,
-    /// <summary>Number of all values, including NaN. Requires Redis 8.10.</summary>
+    /// <summary>Number of all values, including NaN. Requires Redis 8.6.</summary>
     CountAll,
 }
 
@@ -376,7 +376,7 @@ public enum RespireTimeSeriesBucketTimestamp
 
 /// <summary>Options shared by TS.RANGE, TS.REVRANGE, TS.MRANGE, and TS.MREVRANGE.</summary>
 /// <remarks>
-/// <see cref="WithLabels"/>, <see cref="SelectedLabels"/>, <see cref="Filters"/>, and <see cref="GroupBy"/>
+/// <see cref="WithLabels"/>, <see cref="SelectedLabels"/>, <see cref="Filters"/>, <see cref="GroupBy"/>, and <see cref="ExcludeEmpty"/>
 /// apply only to the multi-series range commands; single-series ranges reject them.
 /// </remarks>
 public sealed record RespireTimeSeriesRangeOptions
@@ -408,17 +408,22 @@ public sealed record RespireTimeSeriesRangeOptions
     public IReadOnlyList<string> Filters { get; init; } = [];
     /// <summary>Group matching series by this label and reduce each group with the reducer, such as <c>max</c>. Multi-series ranges only.</summary>
     public (string Label, string Reducer)? GroupBy { get; init; }
+    /// <summary>Omit series with no samples in the requested range. Multi-series ranges only; requires Redis 8.10.</summary>
+    /// <remarks>NaN-only series are retained. Cannot be combined with <see cref="GroupBy"/>.</remarks>
+    public bool ExcludeEmpty { get; init; }
 
     internal RespireValue[] ToArguments(bool multiSeries, string[]? perKeyAggregators = null)
     {
         ArgumentNullException.ThrowIfNull(FilterByTimestamps, nameof(FilterByTimestamps));
         ArgumentNullException.ThrowIfNull(SelectedLabels, nameof(SelectedLabels));
         ArgumentNullException.ThrowIfNull(Filters, nameof(Filters));
-        if (!multiSeries && (WithLabels || SelectedLabels.Count > 0 || Filters.Count > 0 || GroupBy is not null))
+        if (!multiSeries && (WithLabels || SelectedLabels.Count > 0 || Filters.Count > 0 || GroupBy is not null || ExcludeEmpty))
         {
             throw new ArgumentException(
-                "WITHLABELS, SELECTED_LABELS, FILTER, and GROUPBY are only supported by multi-series range commands.");
+                "WITHLABELS, SELECTED_LABELS, FILTER, GROUPBY, and EXCLUDEEMPTY are only supported by multi-series range commands.");
         }
+        if (ExcludeEmpty && GroupBy is not null)
+            throw new ArgumentException("EXCLUDEEMPTY cannot be combined with GROUPBY/REDUCE.", nameof(ExcludeEmpty));
 
         var args = new List<RespireValue>();
         if (Latest) args.Add("LATEST");
@@ -476,6 +481,7 @@ public sealed record RespireTimeSeriesRangeOptions
         }
         if (multiSeries)
         {
+            if (ExcludeEmpty) args.Add("EXCLUDEEMPTY");
             AppendFilters(args, Filters, nameof(Filters));
             if (GroupBy is { } group)
             {
