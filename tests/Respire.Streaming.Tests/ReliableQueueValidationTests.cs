@@ -14,6 +14,8 @@ public class ReliableQueueValidationTests
     [Arguments(":receipts")]
     [Arguments(":attempts")]
     [Arguments(":dead")]
+    [Arguments(":scheduled")]
+    [Arguments(":scheduled-due")]
     public async Task SendRejectsDedupAliasesBeforeSerializingOrExecutingCommands(string suffix)
     {
         var client = DispatchProxy.Create<IResolvingClient, AliasingClient>();

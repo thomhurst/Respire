@@ -1,6 +1,6 @@
 ---
 title: Reliable message queues
-description: Receive typed messages with visibility leases, delayed rejection, delivery limits and dead letters.
+description: Schedule and receive typed messages with cancellation, visibility leases, delayed rejection and dead letters.
 ---
 
 # Reliable message queues
@@ -69,6 +69,68 @@ receive response or a deserializer failure leaves the whole batch leased; it can
 be received again after expiry and counts toward the delivery limit. A lost ACK
 response leaves its outcome uncertain, even if retrying returns `false`.
 
+## Initial delayed delivery
+
+Schedule a payload without adopting the hosted job queue:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireReliableQueue<string>(client, "notifications",
+    Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, deliveryLimit: 5);
+
+string scheduledId = await queue.ScheduleAsync("Send reminder", TimeSpan.FromMinutes(5));
+
+// Optional: cancel while the message is still pending.
+bool cancelled = await queue.CancelScheduledAsync(scheduledId);
+```
+
+`ScheduleAsync` stores the payload and deadline in Redis. The delay is nonnegative,
+rounded up to milliseconds, and at most `Int32.MaxValue` milliseconds (about 24.8
+days). Redis server time determines the deadline; client clock skew does not
+affect eligibility. Zero delay becomes eligible on the next receive call.
+
+**Call `ReceiveAsync` repeatedly to drive promotion.** There is no background timer.
+For example, polling every 100 ms adds at most one polling interval before the
+first eligible promotion attempt, plus command/network and application scheduling
+time. Each call promotes at most `max` due schedules, then performs normal lease
+recovery and reads ready messages. With no backlog, the first receive after the
+deadline delivers the message. A backlog requires additional calls: earlier
+schedules, expired leases and existing ready messages can delay delivery beyond
+one interval. Keep polling even after an empty batch.
+
+Promotion atomically appends one ready stream entry and removes its pending
+schedule. Concurrent receivers cannot promote the same schedule twice. Pending
+schedules have no TTL and survive producer/consumer restarts; server restart
+durability depends on your Redis persistence and eviction configuration. Upgrading
+receivers is required to drive promotion; older receivers only process ready
+messages.
+
+The returned scheduled ID is an opaque, queue-scoped cancellation handle, distinct
+from the stream `Id` assigned on promotion. Every scheduling call creates a new
+handle, even for identical payloads. `CancelScheduledAsync` returns `true` only
+when it removes a pending schedule; that message will never be delivered. It
+returns `false` for an unknown, cancelled or already promoted ID. Cancellation and
+promotion execute atomically: whichever reaches Redis first wins. Passing the
+deadline alone does not prevent cancellation if no receiver has promoted it yet.
+After promotion, use the delivered message's receipt with ACK/NACK.
+
+Scheduling does not use `SendAsync`'s deduplication window. Retrying a schedule
+after a lost response can create a second schedule, and losing the response also
+loses its cancellation handle. Include an application message ID in the payload
+and deduplicate application effects when retries are possible. Cancelling a local
+`CancellationToken` does not undo a dispatched schedule or cancellation command.
+Retrying cancellation is safe, but `false` after a lost response cannot distinguish
+an earlier successful cancellation from promotion.
+
+After promotion, the usual visibility timeout, delivery count, delayed NACK and
+dead-letter rules apply. A consumer that processes a message and crashes before
+ACK causes redelivery after the lease expires, with a new receipt that fences the
+old delivery. Atomic promotion does **not** promise exactly-once application effects.
+
 ## Delivery limit and dead letters
 
 After a message has been delivered `deliveryLimit` times (default five), the next
@@ -102,7 +164,7 @@ Queue names must be nonblank and contain no braces. Generated keys share the has
 tag `{respire-queue:<name>}` and support Redis Cluster and client key prefixes.
 The implementation validates that resolved keys are distinct and in the same slot.
 Reserve this namespace for the queue: do not externally trim its ready stream,
-alter its group, add other consumer groups, or edit its delivery metadata. Configure
+alter its group, add other consumer groups, or edit its delivery or scheduling metadata. Configure
 Redis persistence and eviction to suit your durability requirements.
 
 ## Server compatibility and choosing an API
@@ -124,7 +186,7 @@ private consumer group tracks initial delivery; receipts fence subsequent work.
 
 | API | Use it when |
 | --- | --- |
-| Reliable queue | You want to send and receive messages and explicitly ACK/NACK them. |
+| Reliable queue | You want to send or schedule messages, cancel pending schedules, and explicitly ACK/NACK deliveries. |
 | [Reliable topic](reliable-topics.md) | Every named subscription must receive each retained publication independently. |
 | [Job queue](job-queues.md) | You want hosted handlers, scheduling, priorities, job flows, progress or job logs. |
 | [Stream workers](stream-workers.md) | You want to consume existing streams and control their groups and recovery policy. |

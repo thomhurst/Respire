@@ -36,10 +36,12 @@ Respire.Streaming.RespireQueueMessage<T>.Payload.get -> T
 Respire.Streaming.RespireQueueMessage<T>.Receipt.get -> string!
 Respire.Streaming.RespireReliableQueue<T>
 Respire.Streaming.RespireReliableQueue<T>.AckAsync(Respire.Streaming.RespireQueueMessage<T>! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Respire.Streaming.RespireReliableQueue<T>.CancelScheduledAsync(string! scheduledMessageId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireReliableQueue<T>.DeadLetterStreamKey.get -> string!
 Respire.Streaming.RespireReliableQueue<T>.NackAsync(Respire.Streaming.RespireQueueMessage<T>! message, System.TimeSpan delay = default(System.TimeSpan), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
 Respire.Streaming.RespireReliableQueue<T>.ReceiveAsync(System.TimeSpan visibilityTimeout, int max = 1, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.Streaming.RespireQueueMessage<T>![]!>
 Respire.Streaming.RespireReliableQueue<T>.RespireReliableQueue(Respire.IRespireClient! client, string! queueName, System.Func<T, byte[]!>! serialize, System.Func<byte[]!, T>! deserialize, int deliveryLimit = 5) -> void
+Respire.Streaming.RespireReliableQueue<T>.ScheduleAsync(T payload, System.TimeSpan delay, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
 Respire.Streaming.RespireReliableQueue<T>.SendAsync(T payload, string? deduplicationId = null, System.TimeSpan? deduplicationWindow = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireStreamId>
 Respire.Streaming.RespireReliableQueue<T>.StreamKey.get -> string!
 Respire.Streaming.RespireJobGroupInfo

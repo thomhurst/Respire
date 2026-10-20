@@ -42,6 +42,35 @@ internal static class ReliableQueueScripts
         return id
         """);
 
+    private const string ScheduledState = Helpers + """
+        checktype(KEYS[1], 'hash')
+        checktype(KEYS[2], 'zset')
+
+        """;
+
+    internal static readonly RespireScript Schedule = RespireScript.Create(ScheduledState + """
+        local due = now() + tonumber(ARGV[3])
+        permit('HSET', KEYS[1], ARGV[1], ARGV[2])
+        permit('HDEL', KEYS[1], ARGV[1])
+        permit('ZADD', KEYS[2], due, ARGV[1])
+        redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+        local indexed = redis.pcall('ZADD', KEYS[2], due, ARGV[1])
+        if type(indexed) == 'table' and indexed.err then
+            redis.call('HDEL', KEYS[1], ARGV[1])
+            return indexed
+        end
+        return 1
+        """);
+
+    internal static readonly RespireScript CancelScheduled = RespireScript.Create(ScheduledState + """
+        if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+        permit('HDEL', KEYS[1], ARGV[1])
+        permit('ZREM', KEYS[2], ARGV[1])
+        redis.call('ZREM', KEYS[2], ARGV[1])
+        redis.call('HDEL', KEYS[1], ARGV[1])
+        return 1
+        """);
+
     private const string QueueState = Helpers + StreamWorkerScripts.CapabilitySource + """
         local group = 'respire-messages'
         checktype(KEYS[1], 'stream')
@@ -82,6 +111,8 @@ internal static class ReliableQueueScripts
 
     internal static readonly RespireScript Receive = RespireScript.Create(QueueState + """
         checktype(KEYS[5], 'stream')
+        checktype(KEYS[6], 'hash')
+        checktype(KEYS[7], 'zset')
         completionPermissions()
         permit('XGROUP', 'CREATE', KEYS[1], group, '0', 'MKSTREAM')
         permit('XREADGROUP', 'GROUP', group, 'queue', 'COUNT', ARGV[2], 'STREAMS', KEYS[1], '>')
@@ -93,9 +124,27 @@ internal static class ReliableQueueScripts
         permit('HSET', KEYS[3], '0-0', ARGV[4])
         permit('XADD', KEYS[5], '*', 'payload', '', 'source_id', '0-0', 'delivery_count', 1)
         permit('XDEL', KEYS[5], '0-0')
+        -- Read and preflight the entire bounded promotion batch before the first mutation.
+        local scheduled = redis.call('ZRANGEBYSCORE', KEYS[7], '-inf', clock, 'LIMIT', 0, ARGV[2])
+        local payloads = {}
+        if #scheduled > 0 then
+            permit('XADD', KEYS[1], '*', 'payload', '')
+            permit('HDEL', KEYS[6], scheduled[1])
+            permit('ZREM', KEYS[7], scheduled[1])
+            for i, id in ipairs(scheduled) do
+                payloads[i] = redis.call('HGET', KEYS[6], id)
+                if not payloads[i] then error('ERR reliable queue schedule has no payload') end
+            end
+        end
         local created = redis.pcall('XGROUP', 'CREATE', KEYS[1], group, '0', 'MKSTREAM')
         if type(created) == 'table' and created.err and not string.find(created.err, 'BUSYGROUP', 1, true) then
             return created
+        end
+        for i, id in ipairs(scheduled) do
+            -- A failed append leaves the pending schedule intact. Cleanup frees state and was preflighted.
+            redis.call('XADD', KEYS[1], '*', 'payload', payloads[i])
+            redis.call('ZREM', KEYS[7], id)
+            redis.call('HDEL', KEYS[6], id)
         end
         local result = {}
         local function deliver(entry, attempt)
