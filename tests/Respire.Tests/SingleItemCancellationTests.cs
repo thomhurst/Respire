@@ -9,6 +9,76 @@ namespace Respire.Tests;
 public class SingleItemCancellationTests
 {
     [Test]
+    public async Task DefaultCancellationAndExplicitSecondKeysPreserveWireShapes()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var connection = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = connection.WithKeyPrefix("tenant:");
+
+        await client.DeleteAsync("key", default);
+        await client.DeleteAsync("key", "other");
+        await client.Keys.UnlinkAsync("key", default);
+        await client.Keys.UnlinkAsync("key", "other");
+        await client.Keys.TouchAsync("key", default);
+        await client.Keys.TouchAsync("key", "other");
+        await client.Sets.UnionStoreAsync("dest", "key", default);
+        await client.Sets.UnionStoreAsync("dest", "key", "other");
+        await client.Sets.IntersectCountAsync(2, "key", default);
+        await client.Sets.IntersectCountAsync(2, "key", "other");
+        await client.Sets.DifferenceCountAsync(2, "key", default);
+        await client.Sets.DifferenceCountAsync(2, "key", "other");
+        await client.Sets.UnionCountAsync(new RespireSetUnionCountOptions(2), "key", default);
+        await client.Sets.UnionCountAsync(new RespireSetUnionCountOptions(2), "key", "other");
+        await client.SortedSets.IntersectCountAsync("key", default);
+        await client.SortedSets.IntersectCountAsync("key", "other");
+        await client.HyperLogLog.CountAsync("key", default);
+        await client.HyperLogLog.CountAsync("key", "other");
+        await client.Bitmaps.OperateAsync(RespireBitOperation.Or, "dest", "key", default);
+        await client.Bitmaps.OperateAsync(RespireBitOperation.Or, "dest", "key", "other");
+        // An explicitly typed default remains a real (empty) second key.
+        await client.DeleteAsync("key", default(RespireKey));
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "DEL tenant:key", "DEL tenant:key tenant:other",
+            "UNLINK tenant:key", "UNLINK tenant:key tenant:other",
+            "TOUCH tenant:key", "TOUCH tenant:key tenant:other",
+            "SUNIONSTORE tenant:dest tenant:key", "SUNIONSTORE tenant:dest tenant:key tenant:other",
+            "SINTERCARD 1 tenant:key LIMIT 2", "SINTERCARD 2 tenant:key tenant:other LIMIT 2",
+            "SDIFFCARD 1 tenant:key LIMIT 2", "SDIFFCARD 2 tenant:key tenant:other LIMIT 2",
+            "SUNIONCARD 1 tenant:key LIMIT 2", "SUNIONCARD 2 tenant:key tenant:other LIMIT 2",
+            "ZINTERCARD 1 tenant:key", "ZINTERCARD 2 tenant:key tenant:other",
+            "PFCOUNT tenant:key", "PFCOUNT tenant:key tenant:other",
+            "BITOP OR tenant:dest tenant:key", "BITOP OR tenant:dest tenant:key tenant:other",
+            "DEL tenant:key tenant:",
+        ], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task GetManyDefaultCancellationPreservesSingleAndMultipleKeys()
+    {
+        var oneReply = "*1\r\n$1\r\n7\r\n"u8.ToArray();
+        var twoReply = "*2\r\n$1\r\n7\r\n$1\r\n9\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(oneReply, twoReply, oneReply, twoReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var single = await client.Strings.GetManyAsync("a", default);
+        var multiple = await client.Strings.GetManyAsync("a", "b");
+        var typedSingle = await client.Strings.GetManyAsync<int>("a", default);
+        var typedMultiple = await client.Strings.GetManyAsync<int>("a", "b");
+
+        await Assert.That(single).IsEquivalentTo(new string?[] { "7" });
+        await Assert.That(multiple).IsEquivalentTo(new string?[] { "7", "9" });
+        await Assert.That(typedSingle.Length).IsEqualTo(1);
+        await Assert.That(typedSingle[0]).IsEqualTo(7);
+        await Assert.That(typedMultiple.Length).IsEqualTo(2);
+        await Assert.That(typedMultiple[0]).IsEqualTo(7);
+        await Assert.That(typedMultiple[1]).IsEqualTo(9);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            ["MGET a", "MGET a b", "MGET a", "MGET a b"], CollectionOrdering.Matching);
+    }
+
+    [Test]
     [Arguments("script")]
     [Arguments("script-span")]
     [Arguments("function")]

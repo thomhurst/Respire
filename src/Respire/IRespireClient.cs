@@ -150,6 +150,7 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Deletes keys and returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
     /// <summary>Deletes one key with cancellation. Redis: DEL.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
         => DeleteAsync([key], cancellationToken);
 
@@ -208,6 +209,7 @@ public interface IRespireClient : IAsyncDisposable
 
     // Batches and transactions.
     /// <summary>Creates a transaction watching one key with cancellation. Redis: WATCH.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<RespireWatchedTransaction> CreateTransactionAsync(RespireKey watchKey, CancellationToken cancellationToken)
         => CreateTransactionAsync([watchKey], cancellationToken);
 

@@ -62,12 +62,15 @@ public enum RespireKeyType
 public partial interface IRespireKeyCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
@@ -181,14 +184,17 @@ public partial interface IRespireKeyCommands
 internal sealed partial class KeyCommands(RespireClient client, TimeProvider? scanTimeProvider = null) : IRespireKeyCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
         => DeleteAsync([key], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> UnlinkAsync(RespireKey key, CancellationToken cancellationToken)
         => UnlinkAsync([key], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> TouchAsync(RespireKey key, CancellationToken cancellationToken)
         => TouchAsync([key], cancellationToken);
 

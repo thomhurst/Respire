@@ -180,6 +180,51 @@ public class MultiItemCancellationOverloadTests
         await Assert.That(coverage).IsNotNull();
     }
 
+    [Test]
+    public async Task SingleKeyDefaultCancellation_CompilesAcrossEveryKeyParamsOverload()
+    {
+        var coverage = CompileSingleKeyDefaultCancellation;
+        await Assert.That(coverage).IsNotNull();
+    }
+
+    // Never executed: compiling this method on both frameworks is the regression check.
+    // Keep default untyped so it could also be an expanded params key.
+    private static void CompileSingleKeyDefaultCancellation(IRespireClient client, RespireClient concrete)
+    {
+        _ = client.DeleteAsync("a", default);
+        _ = concrete.DeleteAsync("a", default);
+        _ = client.CreateTransactionAsync("a", default);
+        _ = concrete.CreateTransactionAsync("a", default);
+        _ = client.Keys.DeleteAsync("a", default);
+        _ = client.Keys.UnlinkAsync("a", default);
+        _ = client.Keys.TouchAsync("a", default);
+        _ = client.Strings.GetManyAsync("a", default);
+        _ = client.Strings.GetManyAsync<int>("a", default);
+        _ = client.Sets.IntersectAsync("a", default);
+        _ = client.Sets.UnionAsync("a", default);
+        _ = client.Sets.DifferenceAsync("a", default);
+        _ = client.Sets.IntersectStoreAsync("dest", "a", default);
+        _ = client.Sets.UnionStoreAsync("dest", "a", default);
+        _ = client.Sets.DifferenceStoreAsync("dest", "a", default);
+        _ = client.Sets.IntersectCountAsync("a", default);
+        _ = client.Sets.IntersectCountAsync(1, "a", default);
+        _ = client.Sets.DifferenceCountAsync("a", default);
+        _ = client.Sets.DifferenceCountAsync(1, "a", default);
+        _ = client.Sets.UnionCountAsync("a", default);
+        _ = client.Sets.UnionCountAsync(new RespireSetUnionCountOptions(1), "a", default);
+        _ = client.SortedSets.IntersectAsync("a", default);
+        _ = client.SortedSets.UnionAsync("a", default);
+        _ = client.SortedSets.DifferenceAsync("a", default);
+        _ = client.SortedSets.IntersectStoreAsync("dest", "a", default);
+        _ = client.SortedSets.UnionStoreAsync("dest", "a", default);
+        _ = client.SortedSets.DifferenceStoreAsync("dest", "a", default);
+        _ = client.SortedSets.IntersectCountAsync("a", default);
+        _ = client.SortedSets.IntersectCountAsync(1, "a", default);
+        _ = client.HyperLogLog.CountAsync("a", default);
+        _ = client.HyperLogLog.MergeAsync("dest", "a", default);
+        _ = client.Bitmaps.OperateAsync(RespireBitOperation.Or, "dest", "a", default);
+    }
+
     /// <summary>
     /// Never executed. Each call must bind to the cancellation overload rather than fold the
     /// token into the params collection, on both net8.0 and net10.0.

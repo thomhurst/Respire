@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 
 namespace Respire;
@@ -9,9 +10,11 @@ public interface IRespireHyperLogLogCommands
     ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<bool> MergeAsync(RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
 
     /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
@@ -41,10 +44,12 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperL
         => AddAsync(key, [value], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken)
         => CountAsync([key], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<bool> MergeAsync(RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
         => MergeAsync(destination, [sourceKey], cancellationToken);
 

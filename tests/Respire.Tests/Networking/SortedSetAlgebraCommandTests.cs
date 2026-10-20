@@ -7,6 +7,33 @@ namespace Respire.Tests.Networking;
 public class SortedSetAlgebraCommandTests
 {
     [Test]
+    public async Task SingleKeyDefaultCancellation_EmitsOnlyOneSourceKey()
+    {
+        var membersReply = "*1\r\n$3\r\none\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(
+            membersReply, membersReply, membersReply,
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        _ = await client.SortedSets.IntersectAsync("a", default);
+        _ = await client.SortedSets.UnionAsync("a", default);
+        _ = await client.SortedSets.DifferenceAsync("a", default);
+        _ = await client.SortedSets.IntersectStoreAsync("dest", "a", default);
+        _ = await client.SortedSets.UnionStoreAsync("dest", "a", default);
+        _ = await client.SortedSets.DifferenceStoreAsync("dest", "a", default);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "ZINTER 1 a",
+            "ZUNION 1 a",
+            "ZDIFF 1 a",
+            "ZINTERSTORE dest 1 a",
+            "ZUNIONSTORE dest 1 a",
+            "ZDIFFSTORE dest 1 a",
+        });
+    }
+
+    [Test]
     public async Task ImmediateCommands_EmitMultiScoreAndAlgebraFrames()
     {
         var membersReply = "*2\r\n$3\r\none\r\n$3\r\ntwo\r\n"u8.ToArray();

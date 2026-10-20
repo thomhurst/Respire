@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -178,6 +179,7 @@ public readonly struct RespireBitFieldOperation
 public interface IRespireBitmapCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> OperateAsync(RespireBitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -235,6 +237,7 @@ public interface IRespireBitmapCommands
 internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> OperateAsync(RespireBitOperation operation, RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken)
         => OperateAsync(operation, destination, [sourceKey], cancellationToken);
 
