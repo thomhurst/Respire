@@ -17,6 +17,7 @@ public class ClusterReplicaRoutingAllocationTests
     [Arguments("Replica")]
     [Arguments("ReplicaPreferred")]
     [Arguments("Nearest")]
+    [Arguments("Band")]
     [Arguments("Pinned")]
     [Arguments("Primary")]
     public async Task PreparedHealthyRoutesReturnInlineWithoutRefresh(string selection)
@@ -32,6 +33,7 @@ public class ClusterReplicaRoutingAllocationTests
             UseCluster = true,
             Endpoints = [new("127.0.0.1", primary.Port)],
             ClusterTopologyRefreshInterval = null,
+            ReplicaLatencyTolerance = selection == "Band" ? TimeSpan.Zero : null,
         });
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("ready-replica");
@@ -43,7 +45,7 @@ public class ClusterReplicaRoutingAllocationTests
             (connection, _) => ValueTask.FromResult(ReferenceEquals(connection.Multiplexer, replicaNode) ? 10L : 100L),
             static () => 0L);
         var pinned = selection == "Pinned";
-        var policy = pinned ? RespireReadFrom.Replica : Enum.Parse<RespireReadFrom>(selection);
+        var policy = pinned || selection == "Band" ? RespireReadFrom.Replica : Enum.Parse<RespireReadFrom>(selection);
         var expectedNode = policy == RespireReadFrom.Primary ? route.Primary! : replicaNode;
         _ = Measure(router, slot, expectedNode, policy, pinned, false);
         _ = Measure(router, slot, expectedNode, policy, pinned, true);

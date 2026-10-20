@@ -8,7 +8,7 @@ using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
-public class NearestReadRoutingTests
+public partial class NearestReadRoutingTests
 {
     private static readonly byte[] ReplicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
 
@@ -739,7 +739,7 @@ public class NearestReadRoutingTests
         await using var nearest = client.WithReadFrom(RespireReadFrom.Nearest);
         var first = await nearest.GetStringAsync("key");
         var second = await nearest.GetStringAsync("key");
-        await Assert.That(new[] { first, second }).IsEquivalentTo(new[] { "primary", "replica" });
+        await Assert.That(new[] { first, second }).IsEquivalentTo(new string?[] { "primary", "replica" });
     }
 
     [Test]

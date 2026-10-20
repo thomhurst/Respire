@@ -49,6 +49,14 @@ Respire.RespireOptions.NodeAddressResolver.get -> System.Func<Respire.RespireEnd
 Respire.RespireOptions.NodeAddressResolver.init -> void
 Respire.RespireOptions.UseMappedHostForTls.get -> bool
 Respire.RespireOptions.UseMappedHostForTls.init -> void
+Respire.RespireClient.GetReadRoutingSnapshot() -> Respire.RespireReadRoutingSnapshot?
+Respire.RespireOptions.ReplicaLatencyTolerance.get -> System.TimeSpan?
+Respire.RespireOptions.ReplicaLatencyTolerance.init -> void
+Respire.RespireReadRoutingSnapshot
+Respire.RespireReadRoutingSnapshot.CapturedAt.get -> System.DateTimeOffset
+Respire.RespireReadRoutingSnapshot.ClusterSlot.get -> int?
+Respire.RespireReadRoutingSnapshot.EligibleEndpoints.get -> System.Collections.Generic.IReadOnlyList<Respire.RespireEndpoint>!
+Respire.RespireReadRoutingSnapshot.ReadFrom.get -> Respire.RespireReadFrom
 Respire.RespireDedicatedPoolOptions
 Respire.RespireDedicatedPoolOptions.<Clone>$() -> Respire.RespireDedicatedPoolOptions!
 Respire.RespireDedicatedPoolOptions.Equals(Respire.RespireDedicatedPoolOptions? other) -> bool

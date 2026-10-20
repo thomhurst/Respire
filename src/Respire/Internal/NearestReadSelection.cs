@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
 using Respire.Networking;
 
@@ -109,6 +110,7 @@ internal static class NearestReadSelection
 /// </remarks>
 internal struct NearestReadSelection<T>
 {
+    private const int InlineBandCapacity = 8;
     private T _selected;
     private long _latency;
     private bool _linked;
@@ -120,16 +122,34 @@ internal struct NearestReadSelection<T>
     private int _nextSample;
     private int _sampleOrder;
     private int _selectedOrder;
+    private int _priority;
+    private readonly long? _tolerance;
+    private readonly uint _start;
+    private int _currentIndex;
+    private bool _enumerating;
+    private BandBuffer _inlineBand;
+    private List<BandSample>? _overflowBand;
+    private int _bandCount;
 
-    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order);
-    internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
-
-    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true)
+    [InlineArray(InlineBandCapacity)]
+    private struct BandBuffer
     {
-        var order = _sampleOrder++;
-        if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order);
-        // Only cold/expired samples allocate. Warm selections retain the allocation-free path.
-        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order));
+        private BandSample _element0;
+    }
+
+    internal readonly record struct PendingSample(T Candidate, ValueTask<ReadLatencyResult> Latency, bool Linked, int Order, int Priority);
+    private readonly record struct BandSample(T Candidate, long Latency, bool Linked, int Order, int Priority);
+    internal readonly bool HasPendingSamples => _pending is { Count: > 0 };
+    internal readonly bool HasPreferredCandidate => _hasValue && _priority == 0;
+    internal readonly int SelectedPriority => _priority;
+
+    internal void QueueSample(T candidate, ValueTask<ReadLatencyResult> latency, bool linked = true, int priority = 0)
+    {
+        var order = _tolerance is not null && _enumerating ? _currentIndex : _sampleOrder;
+        _sampleOrder++;
+        if (latency.IsCompletedSuccessfully) Consider(candidate, latency.Result, linked, order, priority);
+        // Without a band, only cold/expired samples allocate; warm minimum selection stays allocation-free.
+        else (_pending ??= new(4)).Add(new(candidate, latency, linked, order, priority));
     }
 
     internal bool TryNextSample(out PendingSample sample)
@@ -140,10 +160,12 @@ internal struct NearestReadSelection<T>
         return true;
     }
 
-    internal NearestReadSelection(uint start, int candidateCount)
+    internal NearestReadSelection(uint start, int candidateCount, TimeSpan? tolerance = null)
     {
         this = default;
         _next = start;
+        _start = start;
+        _tolerance = tolerance?.Ticks;
         _candidateCount = _remaining = candidateCount;
     }
 
@@ -153,25 +175,112 @@ internal struct NearestReadSelection<T>
         if (_remaining == 0) return false;
         _remaining--;
         index = (int)(_next++ % (uint)_candidateCount);
+        _currentIndex = index;
+        _enumerating = true;
         return true;
     }
 
-    internal void Consider(T candidate, ReadLatencyResult sample, bool linked = true, int order = int.MaxValue)
+    internal void Consider(T candidate, ReadLatencyResult sample, bool linked = true, int order = int.MaxValue, int priority = 0)
     {
         if (sample.Kind == ReadLatencyKind.Pending) return;
         var latency = sample.Kind == ReadLatencyKind.Measured ? sample.Ticks : long.MaxValue;
-        if (_hasValue && (_linked && !linked || _linked == linked
-            && (latency > _latency || latency == _latency && order >= _selectedOrder))) return;
+        if (_tolerance is not null)
+        {
+            var value = new BandSample(candidate, latency, linked, order, priority);
+            if (_bandCount < InlineBandCapacity) _inlineBand[_bandCount] = value;
+            else (_overflowBand ??= []).Add(value);
+            _bandCount++;
+        }
+        if (_hasValue && (priority > _priority || priority == _priority
+            && (_linked && !linked || _linked == linked
+                && (latency > _latency || latency == _latency && order >= _selectedOrder)))) return;
         _selected = candidate;
         _latency = latency;
         _linked = linked;
         _hasValue = true;
         _selectedOrder = order;
+        _priority = priority;
     }
 
     internal bool TryGet(out T selected)
     {
         selected = _selected;
+        if (_bandCount > 0)
+        {
+            // Candidate indices are stable even though probes start in rotated order.
+            // Rotate within the eligible set, so gaps left by slow nodes do not bias traffic.
+            // Small replica groups stay inline. Larger groups combine their overflow only here.
+            Span<BandSample> band = _inlineBand[..Math.Min(_bandCount, InlineBandCapacity)];
+            if (_overflowBand is not null)
+            {
+                var combined = new BandSample[_bandCount];
+                band.CopyTo(combined);
+                _overflowBand.CopyTo(combined, InlineBandCapacity);
+                band = combined;
+            }
+            band.Sort(static (left, right) => left.Order.CompareTo(right.Order));
+            for (var index = 0; index < band.Length; index++)
+            {
+                if (index < InlineBandCapacity) _inlineBand[index] = band[index];
+                else _overflowBand![index - InlineBandCapacity] = band[index];
+            }
+            var count = 0;
+            foreach (var sample in band)
+                if (IsInBand(sample)) count++;
+            var offset = count == 0 ? 0 : (int)(_start % (uint)count);
+            foreach (var sample in band)
+            {
+                if (!IsInBand(sample) || offset-- != 0) continue;
+                selected = sample.Candidate;
+                break;
+            }
+        }
         return _hasValue;
     }
+
+    // Subtraction cannot overflow: usable measured ticks are nonnegative, and the minimum
+    // belongs to this same tier. Unknown samples join only an entirely unmeasured tier.
+    private readonly bool IsInBand(BandSample sample)
+        => sample.Priority == _priority && sample.Linked == _linked
+            && (sample.Latency == long.MaxValue ? _latency == long.MaxValue
+                : sample.Latency - _latency <= _tolerance!.Value);
+
+    /// <summary>Revalidates every eligible member before the router publishes a band snapshot.</summary>
+    internal bool AllBandCandidatesMatch<TState>(TState state, Func<T, TState, bool> isCurrent)
+    {
+        for (var index = 0; index < _bandCount; index++)
+        {
+            var sample = BandAt(index);
+            if (IsInBand(sample) && !isCurrent(sample.Candidate, state)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Captures the band in topology order after <see cref="TryGet"/> has sorted it.</summary>
+    internal RespireReadRoutingSnapshot CaptureSnapshot(RespireReadFrom policy, int? slot,
+        Func<T, RespireEndpoint> endpoint, RespireReadRoutingSnapshot? previous = null)
+    {
+        var count = 0;
+        var unchanged = previous is not null && previous.ReadFrom == policy && previous.ClusterSlot == slot;
+        for (var index = 0; index < _bandCount; index++)
+        {
+            var sample = BandAt(index);
+            if (!IsInBand(sample)) continue;
+            unchanged &= previous is not null && count < previous.EligibleEndpoints.Count
+                && previous.EligibleEndpoints[count] == endpoint(sample.Candidate);
+            count++;
+        }
+        if (unchanged && count == previous!.EligibleEndpoints.Count) return previous;
+        var eligible = new RespireEndpoint[count];
+        count = 0;
+        for (var index = 0; index < _bandCount; index++)
+        {
+            var sample = BandAt(index);
+            if (IsInBand(sample)) eligible[count++] = endpoint(sample.Candidate);
+        }
+        return new(policy, slot, Array.AsReadOnly(eligible));
+    }
+
+    private BandSample BandAt(int index) => index < InlineBandCapacity
+        ? _inlineBand[index] : _overflowBand![index - InlineBandCapacity];
 }

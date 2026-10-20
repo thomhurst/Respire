@@ -226,6 +226,15 @@ public sealed record RespireOptions
     /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
     public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
 
+    /// <summary>
+    /// Optional latency band for replica selection and <see cref="RespireReadFrom.Nearest"/>.
+    /// Within the best role, replication-link and availability-zone tier, rotate among measured
+    /// candidates whose PING RTT is at most this much above the fastest. Null preserves existing
+    /// routing; zero selects only fastest ties. Must be nonnegative. Unknown RTTs rotate only
+    /// when the tier has no measured candidate. Pending probes remain excluded.
+    /// </summary>
+    public TimeSpan? ReplicaLatencyTolerance { get; init; }
+
     /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
     [Experimental("RSP0003", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
     public RespireHedgedReadOptions? HedgedReads { get; init; }
@@ -606,6 +615,8 @@ public sealed record RespireOptions
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
 
         Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be a defined RespireReadFrom policy");
+        Require(ReplicaLatencyTolerance is null || ReplicaLatencyTolerance >= TimeSpan.Zero,
+            nameof(ReplicaLatencyTolerance), "must be nonnegative when provided");
         Require(ClientAvailabilityZone is null || !string.IsNullOrWhiteSpace(ClientAvailabilityZone),
             nameof(ClientAvailabilityZone), "must be nonempty when provided");
         Require(LibraryName is null || LibraryName.Length > 0 && LibraryName.All(static character => character is >= '!' and <= '~'),

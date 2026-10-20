@@ -13,6 +13,8 @@ Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressResolver.get -> Sys
 Respire.DependencyInjection.RespireOptionsBuilder.NodeAddressResolver.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.UseMappedHostForTls.get -> bool
 Respire.DependencyInjection.RespireOptionsBuilder.UseMappedHostForTls.set -> void
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaLatencyTolerance.get -> System.TimeSpan?
+Respire.DependencyInjection.RespireOptionsBuilder.ReplicaLatencyTolerance.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.get -> Respire.RespireDedicatedPoolOptions!
 Respire.DependencyInjection.RespireOptionsBuilder.DedicatedPool.set -> void
 Respire.DependencyInjection.RespireOptionsBuilder.SplitCrossSlotCommands.get -> bool

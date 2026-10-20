@@ -28,6 +28,7 @@ internal sealed class ClusterReplicaSet
     private long Now => _clock?.Invoke() ?? Environment.TickCount64;
 
     private int _cursor;
+    private int _latencyCursor;
     private long _refreshNotBefore;
     private long _revalidateAt;
     private Task? _refresh;
@@ -51,6 +52,10 @@ internal sealed class ClusterReplicaSet
     /// <summary>Returns the next round-robin starting index. Requires a nonempty set.</summary>
     internal int NextStart()
         => (int)((uint)Interlocked.Increment(ref _cursor) % (uint)Nodes.Length);
+
+    // Keep the full ticket: the eligible band's size can differ from Nodes.Length.
+    // Independent range cursors prevent interleaved shard traffic from pinning each band to one node.
+    internal uint NextLatencyStart() => (uint)Interlocked.Increment(ref _latencyCursor);
 
     /// <summary>
     /// Joins the refresh already in flight, starts one when the interval has elapsed, or returns

@@ -233,6 +233,16 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         return _core.Cluster?.CaptureRetirementSnapshot();
     }
 
+    /// <summary>Returns the last latency-band selection, or null before one has completed.</summary>
+    /// <remarks>Requires <see cref="RespireOptions.ReplicaLatencyTolerance"/>. Performs no I/O.
+    /// Views share the observation; Cluster snapshots identify the most recently selected slot.</remarks>
+    public RespireReadRoutingSnapshot? GetReadRoutingSnapshot()
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        return _core.Cluster is { } cluster ? Volatile.Read(ref cluster.LastReadSelection)
+            : Volatile.Read(ref _core.ReadRouter.LastReadSelection);
+    }
+
     /// <inheritdoc/>
     public IRespireClientSideCache? ClientSideCache => _core.ClientCache;
 
@@ -3408,7 +3418,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 if (initialRejection.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                 {
                     connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                        connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                        connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                 }
                 discoveryPending = false;
             }
@@ -3467,7 +3477,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -3491,7 +3501,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     }
                     discoveryPending = false;
 
@@ -4251,7 +4261,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     discoveryPending = true;
                     connection = sendAsking
                         ? await cluster.GetReplacementConnectionAsync(connection, slot, null, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false)
-                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                        : await cluster.GetReadReplacementConnectionAsync(slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     discoveryPending = false;
                 }
                 catch (RespireServerException error)
@@ -4267,7 +4277,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                     {
                         connection = await cluster.SelectReadConnectionAfterRedirectAsync(
-                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone).ConfigureAwait(false);
+                            connection, slot, readFrom, backlogAcquisition.Token, discovery, observation, preferredZone, fallback.Policy).ConfigureAwait(false);
                     }
                     discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -4776,7 +4786,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     try
                     {
                         (pool, connection) = await cluster.RentDedicatedConnectionAsync(
-                            pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource),
+                            pool, new ClusterRouter.DedicatedRoute(slot, readFrom, askRedirect, askingSource, fallback.Policy),
                             cancellationToken, discovery, observation, preferredZone: preferredZone).ConfigureAwait(false);
                     }
                     catch (Exception error) when (askRedirect is null && fallback.OriginalFailure is not null
@@ -4845,7 +4855,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                             if (error.Code != RespireErrorCodes.Ask && readFrom != RespireReadFrom.Primary)
                             {
                                 redirectedPool = await cluster.GetReadDedicatedPoolAsync(
-                                        slot, readFrom, cancellationToken, discovery, observation, preferredZone)
+                                        slot, readFrom, cancellationToken, discovery, observation, preferredZone,
+                                        snapshotReadFrom: fallback.Policy)
                                     .ConfigureAwait(false);
                             }
                             acquiringRedirectPool = false;
