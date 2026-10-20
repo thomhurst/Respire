@@ -20,6 +20,8 @@
         <PackageReference Include="StackExchange.Redis" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp.CodeFix.Testing" />
+        <!-- NuGet.Packaging in the Roslyn test harness pulls a vulnerable Pkcs version (#1917). -->
+        <PackageReference Include="System.Security.Cryptography.Pkcs" PrivateAssets="all" />
         <!-- The testing packages float to Roslyn 1.0.1; pin the graph to the version the
              analyzer itself compiles against. -->
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
