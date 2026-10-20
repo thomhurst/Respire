@@ -8,11 +8,14 @@ namespace Respire.Coordination.Tests;
 public class CoordinationTrackingReadTests
 {
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task RegistrationAlwaysSendsTrackedReadWithoutPublishing(bool hash, bool concurrentMutation)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task RegistrationAlwaysSendsTrackedReadWithoutPublishing(
+        bool hash, bool concurrentMutation, bool residentValue)
     {
         var read = hash ? "HGET prefix:key field" : "GET prefix:key";
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
@@ -30,10 +33,14 @@ public class CoordinationTrackingReadTests
             Connections = 1, ClientSideCache = new(),
         });
         var view = client.WithKeyPrefix("prefix:");
-        // A resident value must not replace a fresh tracking registration either.
-        _ = hash ? await view.Hashes.GetStringAsync("key", "field") : await view.GetStringAsync("key");
+        // Empty-cache cases expose accidental publication; resident values must
+        // not replace a fresh tracking registration either.
+        if (residentValue)
+        {
+            _ = hash ? await view.Hashes.GetStringAsync("key", "field") : await view.GetStringAsync("key");
+        }
         var cache = client.Core.ClientCache!;
-        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(residentValue ? 1 : 0);
         var mutation = concurrentMutation ? cache.BeginUnknownMutation() : default;
         try
         {
