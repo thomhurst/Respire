@@ -74,6 +74,14 @@ response leaves its outcome uncertain, even if retrying returns `false`.
 Schedule a payload without adopting the hosted job queue:
 
 ```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireReliableQueue<string>(client, "notifications",
+    Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, deliveryLimit: 5);
+
 string scheduledId = await queue.ScheduleAsync("Send reminder", TimeSpan.FromMinutes(5));
 
 // Optional: cancel while the message is still pending.
