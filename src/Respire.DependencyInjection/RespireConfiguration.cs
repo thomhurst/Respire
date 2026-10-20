@@ -17,6 +17,7 @@ internal static class RespireConfiguration
         NodeAddressMap = section["NodeAddressMap"] is not null
             ? Parse(section.GetSection("NodeAddressMap"), NodeAddressMapping.Parse) : options.NodeAddressMap,
         UseMappedHostForTls = section.GetValue("UseMappedHostForTls", options.UseMappedHostForTls),
+        EnableMultipathTcp = section.GetValue("EnableMultipathTcp", options.EnableMultipathTcp),
         ReadFrom = section.GetValue("ReadFrom", options.ReadFrom),
         HedgedReads = HedgedReads(section.GetSection("HedgedReads"), options.HedgedReads),
         ClientAvailabilityZone = section.GetValue("ClientAvailabilityZone", options.ClientAvailabilityZone),

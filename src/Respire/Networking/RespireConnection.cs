@@ -425,27 +425,19 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         var physicalConnected = false;
         var socket = isUnixSocket
             ? new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
-            : new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-
-        if (options.SocketReceiveBufferSize > 0)
-        {
-            socket.ReceiveBufferSize = options.SocketReceiveBufferSize;
-        }
-
-        if (options.SocketSendBufferSize > 0)
-        {
-            socket.SendBufferSize = options.SocketSendBufferSize;
-        }
+            : options.EnableMultipathTcp ? null : new Socket(SocketType.Stream, ProtocolType.Tcp);
 
         SslStream? tlsStream = null;
         try
         {
-            if (!isUnixSocket) ApplyTcpKeepAlive(socket, options);
+            if (socket is not null) ConfigureSocket(socket, options, isUnixSocket);
 
             using var timeoutCts = CreateConnectTimeout(options, cancellationToken);
             try
             {
-                if (isUnixSocket)
+                if (socket is null)
+                    socket = await MultipathTcpSocket.ConnectAsync(socketEndpoint, options, logger, timeoutCts.Token).ConfigureAwait(false);
+                else if (isUnixSocket)
                     await socket.ConnectAsync(new UnixDomainSocketEndPoint(host), timeoutCts.Token).ConfigureAwait(false);
                 else
                     await socket.ConnectAsync(socketEndpoint.Host, socketEndpoint.Port, timeoutCts.Token).ConfigureAwait(false);
@@ -478,11 +470,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         catch (Exception error)
         {
             RespireException.PopulateEndpoint(error, new(host, port));
-            var peerClosed = physicalConnected && !isUnixSocket
+            var peerClosed = physicalConnected && !isUnixSocket && socket is not null
                 && ConnectionTelemetry.IsHandshakePeerClose(socket, error);
             try { if (tlsStream is not null) await tlsStream.DisposeAsync().ConfigureAwait(false); }
             catch { /* Preserve the original connection failure. */ }
-            finally { socket.Dispose(); }
+            finally { socket?.Dispose(); }
             if (physicalConnected && !isUnixSocket)
                 ConnectionTelemetry.ClosedBeforeHandshake(host, port, options, error, cancellationToken, peerClosed);
             if (options.ObserveEstablishmentErrors && !ConnectionTelemetry.IsCallerCancellation(error, cancellationToken))
@@ -699,6 +691,17 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw new ArgumentException(
                 $"{nameof(RespireConnectionOptions.TcpKeepAliveInterval)} and {nameof(RespireConnectionOptions.TcpKeepAliveRetryCount)} require {nameof(RespireConnectionOptions.TcpKeepAliveTime)} to be set.",
                 nameof(options));
+        }
+    }
+
+    internal static void ConfigureSocket(Socket socket, RespireConnectionOptions options, bool isUnixSocket = false)
+    {
+        if (options.SocketReceiveBufferSize > 0) socket.ReceiveBufferSize = options.SocketReceiveBufferSize;
+        if (options.SocketSendBufferSize > 0) socket.SendBufferSize = options.SocketSendBufferSize;
+        if (!isUnixSocket)
+        {
+            socket.NoDelay = true;
+            ApplyTcpKeepAlive(socket, options);
         }
     }
 
@@ -4542,6 +4545,7 @@ internal sealed record RespireConnectionOptions
     internal RespireConnectionHook? ConnectionHook { get; init; }
 
     internal Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory { get; init; }
+    internal bool EnableMultipathTcp { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory
     {

@@ -429,6 +429,7 @@ internal sealed class SentinelMonitoring(
         {
             Endpoints = [endpoint],
             ConnectionFactory = options.ConnectionFactory,
+            EnableMultipathTcp = options.EnableMultipathTcp,
             NodeAddressMap = options.NodeAddressMap,
             NodeAddressResolver = options.NodeAddressResolver,
             UseMappedHostForTls = options.UseMappedHostForTls,

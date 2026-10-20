@@ -176,6 +176,13 @@ public sealed record RespireOptions
     /// </remarks>
     public Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory { get; init; }
 
+    /// <summary>Request Multipath TCP for built-in TCP connections on Linux. Default: false.</summary>
+    /// <remarks>Falls back to TCP with an informational log when the local kernel cannot create MPTCP sockets.
+    /// On other platforms this is a logged no-op. Custom connection factories (including proxy helpers)
+    /// and Unix sockets take precedence. Reconnects, discovered nodes, Sentinel and dedicated connections
+    /// retain this setting. Multiple paths require MPTCP support and path configuration at both ends.</remarks>
+    public bool EnableMultipathTcp { get; init; }
+
     // Compatibility adapter for friend tests. All connections use the public factory path.
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory
     {
@@ -828,6 +835,7 @@ public sealed record RespireOptions
             MaintenanceRelaxedTimeout = MaintenanceRelaxedTimeout,
             MaintenanceWindowTimeout = MaintenanceWindowTimeout,
             ConnectionFactory = ConnectionFactory,
+            EnableMultipathTcp = EnableMultipathTcp,
             ConnectionHook = ConnectionHook,
             ConnectTimeout = ConnectTimeout,
             ReconnectPolicy = ReconnectPolicy,

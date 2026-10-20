@@ -7,6 +7,12 @@ namespace Respire;
 // Keep expensive formatting behind IsEnabled in the helper methods below.
 internal static partial class RespireLog
 {
+    [LoggerMessage(143, LogLevel.Information, "Multipath TCP unavailable; using TCP. {Reason}", EventName = "MultipathTcpFallback")]
+    private static partial void MultipathTcpFallbackMessage(ILogger logger, string reason, Exception? exception);
+
+    internal static void MultipathTcpFallback(this ILogger logger, string reason)
+        => MultipathTcpFallbackMessage(logger, reason, null);
+
     [LoggerMessage(1, LogLevel.Warning, "Stream read failed; retrying after {DelayMilliseconds} ms.", EventName = "StreamReadRetry")]
     private static partial void StreamReadRetryMessage(ILogger logger, int delayMilliseconds, Exception? exception);
 
