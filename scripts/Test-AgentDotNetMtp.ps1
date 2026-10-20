@@ -74,7 +74,9 @@ public class GuardMtpTests
     # supporting SDKs follow the case-insensitive environment override.
     $env:DOTNET_TEST_RUNNER = if ($supportsOverride) { 'mIcRoSoFt.TeStInG.PLaTfOrM' } else { 'VSTest' }
     Write-MtpPhase "fixture build started; SDK pin=$($configuration.sdk.version); rollForward=$($configuration.sdk.rollForward); runner=$env:DOTNET_TEST_RUNNER"
-    & $guardScript -SingleNode -DotNetArguments @('build', $project, '-c', 'Release', '--nologo')
+    # Smoke operations normally take seconds. Bound each invocation so a stalled
+    # child returns before the CI job deadline, leaving time to upload diagnostics.
+    & $guardScript -TimeoutSeconds 60 -SingleNode -DotNetArguments @('build', $project, '-c', 'Release', '--nologo')
     Write-MtpPhase "fixture build returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 0) { throw "MTP fixture build failed: $LASTEXITCODE" }
 
@@ -96,7 +98,7 @@ function Write-DiscoveryPhase([string]$Message) {
     }
 }
 Write-DiscoveryPhase 'discovery host entered guard'
-& $payload.GuardScript -SingleNode -DotNetArguments @($payload.Arguments)
+& $payload.GuardScript -TimeoutSeconds 60 -SingleNode -DotNetArguments @($payload.Arguments)
 $guardExitCode = $LASTEXITCODE
 Write-DiscoveryPhase "discovery guard returned; exit=$guardExitCode"
 exit $guardExitCode
@@ -129,7 +131,7 @@ exit $guardExitCode
         if (Test-Path -LiteralPath $env:RESPIRE_MTP_GUARD_TEST_MARKER) { throw 'Discovery executed a test.' }
         $results = Join-Path $testRoot "results-$separator"
         Write-MtpPhase "filtered execution started (separator=$separator)"
-        & $guardScript -SingleNode -DotNetArguments ($baseArguments + @('--results-directory', $results) + $extensionSeparator + @('--treenode-filter', $filter, '--report-trx'))
+        & $guardScript -TimeoutSeconds 60 -SingleNode -DotNetArguments ($baseArguments + @('--results-directory', $results) + $extensionSeparator + @('--treenode-filter', $filter, '--report-trx'))
         Write-MtpPhase "filtered execution returned (separator=$separator); exit=$LASTEXITCODE"
         if ($LASTEXITCODE -ne 0) { throw "MTP execution failed (separator=$separator): $LASTEXITCODE" }
         $reports = @(Get-ChildItem -LiteralPath $results -Filter '*.trx' -Recurse)
@@ -145,11 +147,11 @@ exit $guardExitCode
     }
 
     Write-MtpPhase 'failure control started'
-    & $guardScript -SingleNode -DotNetArguments ($baseArguments + @('--treenode-filter', '/*/*/GuardMtpTests/UnselectedTestFails'))
+    & $guardScript -TimeoutSeconds 60 -SingleNode -DotNetArguments ($baseArguments + @('--treenode-filter', '/*/*/GuardMtpTests/UnselectedTestFails'))
     Write-MtpPhase "failure control returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 2) { throw "Expected test-failure exit 2, received $LASTEXITCODE" }
     Write-MtpPhase 'zero-test control started'
-    & $guardScript -SingleNode -DotNetArguments ($baseArguments + @('--treenode-filter', '/*/*/GuardMtpTests/NoSuchTest'))
+    & $guardScript -TimeoutSeconds 60 -SingleNode -DotNetArguments ($baseArguments + @('--treenode-filter', '/*/*/GuardMtpTests/NoSuchTest'))
     Write-MtpPhase "zero-test control returned; exit=$LASTEXITCODE"
     if ($LASTEXITCODE -ne 8) { throw "Expected zero-tests exit 8, received $LASTEXITCODE" }
     Write-MtpPhase 'all MTP assertions passed'
