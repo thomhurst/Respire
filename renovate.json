@@ -2,6 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "packageRules": [
     {
+      "description": "Template Respire versions are placeholders stamped with the release version during packing.",
+      "matchManagers": ["nuget"],
+      "matchFileNames": ["src/Respire.Templates/templates/**"],
+      "matchPackageNames": ["Respire", "Respire.*"],
+      "enabled": false
+    },
+    {
       "description": "Update Orleans Redis providers together without changing the historical assessment pin.",
       "matchManagers": ["nuget"],
       "matchFileNames": ["Directory.Packages.props"],
