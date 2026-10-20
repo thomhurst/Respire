@@ -14,7 +14,8 @@ try {
     # Fail at the guard boundary without launching dotnet or changing its limits.
     @'
 param([int]$TimeoutSeconds, [switch]$SingleNode, [string[]]$DotNetArguments)
-if ($TimeoutSeconds -ne 60) { throw "Expected bounded smoke invocation, received timeout $TimeoutSeconds" }
+$expectedTimeout = if ($DotNetArguments[0] -eq 'build') { 180 } else { 60 }
+if ($TimeoutSeconds -ne $expectedTimeout) { throw "Expected timeout $expectedTimeout for $($DotNetArguments[0]), received $TimeoutSeconds" }
 $global:LASTEXITCODE = [int](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'exit-code.txt'))
 '@ | Set-Content -LiteralPath (Join-Path $scripts 'Invoke-AgentDotNet.ps1')
 
@@ -83,7 +84,7 @@ $global:LASTEXITCODE = [int](Get-Content -LiteralPath (Join-Path $PSScriptRoot '
     $capturePath = Join-Path $testRoot 'Capture-Guard.ps1'
     $capture.Value | Set-Content -LiteralPath $capturePath
     $payloadPath = Join-Path $testRoot 'discovery.json'
-    @{ PhaseLog = $scripts.FullName; GuardScript = (Join-Path $scripts 'Invoke-AgentDotNet.ps1'); Arguments = @('build') } |
+    @{ PhaseLog = $scripts.FullName; GuardScript = (Join-Path $scripts 'Invoke-AgentDotNet.ps1'); TimeoutSeconds = 60; Arguments = @('test') } |
         ConvertTo-Json | Set-Content -LiteralPath $payloadPath
     foreach ($guardFailureExitCode in @(73, 124)) {
         $guardFailureExitCode | Set-Content -LiteralPath (Join-Path $scripts 'exit-code.txt')
