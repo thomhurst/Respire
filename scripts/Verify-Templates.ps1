@@ -1,6 +1,6 @@
 <#
 Installs the packed template into a private hive, builds a renamed standalone app,
-and checks readiness and cache-aside across app restarts against an owned Redis.
+and checks cache-aside, job processing and dashboard authorization against an owned Redis.
 Also builds the Aspire starter and runs its AppHost, API and Redis through Aspire testing.
 Use -UseAgentGuard for all local agent invocations.
 #>
@@ -39,6 +39,8 @@ $sdk = (Get-Content (Join-Path $repositoryRoot 'global.json') -Raw | ConvertFrom
 @{ sdk = $sdk } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $scratch 'global.json')
 $hive = Join-Path $scratch 'hive'
 $generated = Join-Path $scratch 'Renamed.Api'
+$appName = 'Renamed.Api'
+$operatorPassword = [guid]::NewGuid().ToString('N')
 $guard = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $container = 'respire-template-' + [guid]::NewGuid().ToString('N')
 $ownsContainer = $false
@@ -109,14 +111,14 @@ function Stop-App {
     $script:appProcess = $null
 }
 
-function Start-App {
+function Start-App([string]$Environment = 'Development') {
     $script:run++
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $listener.Start()
     $port = $listener.LocalEndpoint.Port
     $listener.Stop()
     $url = "http://127.0.0.1:$port"
-    $arguments = @((Join-Path $generated 'bin/Release/net10.0/Renamed.Api.dll'), '--urls', $url)
+    $arguments = @((Join-Path $generated "bin/Release/net10.0/$appName.dll"), '--urls', $url)
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.WorkingDirectory = $generated
     $start.UseShellExecute = $false
@@ -124,6 +126,9 @@ function Start-App {
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     $start.Environment['ConnectionStrings__Redis'] = "redis://127.0.0.1:$script:redisPort"
+    $start.Environment['ASPNETCORE_ENVIRONMENT'] = $Environment
+    $start.Environment['DOTNET_ENVIRONMENT'] = $Environment
+    $start.Environment['Dashboard__Password'] = $operatorPassword
     # Do not inherit a workstation's collector configuration into this test.
     $start.Environment['OTEL_EXPORTER_OTLP_ENDPOINT'] = ''
     if ($UseAgentGuard) {
@@ -159,22 +164,37 @@ exit $LASTEXITCODE
     throw "Generated app did not become healthy. Last readiness error: $lastReadinessError Logs: $evidence"
 }
 
+function New-TemplateApp([string]$Template, [string]$Name, [int]$ReferenceCount) {
+    $destination = Join-Path $scratch $Name
+    Invoke-DotNet @('new', $Template, '-n', $Name, '-o', $destination, '--debug:custom-hive', $hive)
+    $project = Join-Path $destination "$Name.csproj"
+    [xml]$xml = Get-Content -LiteralPath $project -Raw
+    $references = $xml.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Respire")]')
+    if ($references.Count -ne $ReferenceCount) { throw "Expected $ReferenceCount Respire references in $Template." }
+    foreach ($reference in $references) {
+        if ($reference.Version -cne $Version) { throw "Unstamped package reference: $($reference.OuterXml)" }
+    }
+    if (Test-Path (Join-Path $destination '.template.config')) { throw 'Template engine metadata leaked into generated app.' }
+    Invoke-DotNet @('build', $project, '-c', 'Release', '-warnaserror',
+        "-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
+}
+
+function Assert-HttpStatus([string]$Uri, [int]$Expected, [hashtable]$Headers = @{}, [string]$Method = 'GET', [string]$Body = '') {
+    $request = @{ Uri = $Uri; Headers = $Headers; Method = $Method; SkipHttpErrorCheck = $true; TimeoutSec = 10 }
+    if ($Body) { $request.Body = $Body; $request.ContentType = 'application/json' }
+    $response = Invoke-WebRequest @request
+    if ([int]$response.StatusCode -ne $Expected) {
+        throw "Expected HTTP $Expected from $Method $Uri, got $($response.StatusCode)."
+    }
+}
+
 try {
     Push-Location $scratch
     try {
         # Install the artifact, not a source directory. Private hive leaves user templates untouched.
         Invoke-DotNet @('new', 'install', $package, '--debug:custom-hive', $hive)
-        Invoke-DotNet @('new', 'respire-api', '-n', 'Renamed.Api', '-o', $generated, '--debug:custom-hive', $hive)
-        $project = Join-Path $generated 'Renamed.Api.csproj'
-        [xml]$xml = Get-Content -LiteralPath $project -Raw
-        $references = $xml.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Respire")]')
-        if ($references.Count -ne 2) { throw 'Expected both Respire package references in the generated API.' }
-        foreach ($reference in $references) {
-            if ($reference.Version -cne $Version) { throw "Unstamped package reference: $($reference.OuterXml)" }
-        }
-        if (Test-Path (Join-Path $generated '.template.config')) { throw 'Template engine metadata leaked into generated app.' }
-        Invoke-DotNet @('build', $project, '-c', 'Release', '-warnaserror',
-            "-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
+        New-TemplateApp 'respire-api' 'Renamed.Api' 2
+        New-TemplateApp 'respire-worker' 'Renamed.Worker' 4
 
         docker run --detach --rm --name $container --memory 128m --cpus 1 --publish 127.0.0.1::6379 redis:7-alpine | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Could not start template Redis.' }
@@ -202,6 +222,57 @@ try {
         $other = Invoke-RestMethod "$url/values/other" -TimeoutSec 10
         if (-not $other.value -or $other.value -eq $first.value) { throw 'Distinct cache keys reused the same value.' }
         Write-Output 'PASS: package install, rename, standalone build, readiness, cache hit, Redis expiry and app restart.'
+        Stop-App
+
+        $appName = 'Renamed.Worker'
+        $generated = Join-Path $scratch $appName
+        $headers = @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("operator:$operatorPassword")) }
+        $url = Start-App
+        Assert-HttpStatus "$url/workers/" 401
+        Assert-HttpStatus "$url/workers/0/retry" 401 @{} 'POST'
+        Assert-HttpStatus "$url/jobs/smoke" 401 @{} 'POST' '{"message":"unauthorized"}'
+        Assert-HttpStatus "$url/jobs/smoke" 401
+        Assert-HttpStatus "$url/workers/" 401 @{ Authorization = 'Basic b3BlcmF0b3I6d3Jvbmc=' }
+        Assert-HttpStatus "$url/workers/" 401 @{ Authorization = 'Basic invalid!' }
+        $dashboard = Invoke-WebRequest "$url/workers/" -Headers $headers -TimeoutSec 10
+        if ($dashboard.Content -notmatch 'Sample jobs') {
+            throw 'Authorized dashboard did not render the configured job queue.'
+        }
+        # Antiforgery may combine no-store with no-cache in a single header value.
+        $cacheControl = $dashboard.Headers['Cache-Control'] -join ','
+        if ($cacheControl -notmatch '(^|,)\s*no-store\s*(,|$)') {
+            throw "Dashboard must disable storage. Cache-Control was: $cacheControl"
+        }
+        # Dashboard mutations still require antiforgery, even for an authenticated operator.
+        Assert-HttpStatus "$url/workers/0/retry" 400 $headers 'POST'
+        $submitted = Invoke-RestMethod "$url/jobs/smoke" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"message":"hello worker"}' -TimeoutSec 10
+        $duplicate = Invoke-RestMethod "$url/jobs/smoke" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"message":"ignored duplicate"}' -TimeoutSec 10
+        if (-not $submitted.enqueued -or $duplicate.enqueued -or $submitted.entryId -ne $duplicate.entryId) {
+            throw 'Job enqueue/deduplication failed.'
+        }
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $result = Invoke-WebRequest "$url/jobs/smoke" -Headers $headers -SkipHttpErrorCheck -TimeoutSec 5
+            $pending = @(docker exec $container redis-cli --raw XPENDING '{respire-job:Renamed.Worker}:ready' respire-jobs)
+            if ($LASTEXITCODE -ne 0) { throw 'Could not inspect worker acknowledgements.' }
+            if ($result.StatusCode -eq 200 -and ($result.Content | ConvertFrom-Json).result -eq 'HELLO WORKER' -and
+                $pending.Count -gt 0 -and $pending[0] -eq '0') { break }
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Worker did not process and acknowledge the job.' }
+            Start-Sleep -Milliseconds 100
+        } while ($true)
+        Stop-App
+        $url = Start-App
+        $persisted = Invoke-RestMethod "$url/jobs/smoke" -Headers $headers -TimeoutSec 10
+        if ($persisted.result -ne 'HELLO WORKER') { throw 'Job result did not survive worker restart.' }
+        Stop-App
+        # Valid credentials cannot enable the starter's HTTP exception outside Development.
+        $url = Start-App 'Production'
+        Assert-HttpStatus "$url/workers/" 403 $headers
+        $insecure = Invoke-WebRequest "$url/workers/" -SkipHttpErrorCheck -TimeoutSec 10
+        if ($insecure.StatusCode -ne 403 -or $insecure.Headers.ContainsKey('WWW-Authenticate')) {
+            throw 'Production HTTP must reject access without prompting for plaintext credentials.'
+        }
+        Write-Output 'PASS: worker enqueue, deduplication, processing, acknowledgement, restart, dashboard authentication and antiforgery.'
         Stop-App
         Test-AspireTemplate
     }

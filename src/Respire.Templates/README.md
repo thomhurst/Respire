@@ -37,4 +37,9 @@ endpoints. Use `aspire describe --non-interactive` to find the API URL and
 `aspire stop --non-interactive` from the AppHost directory to stop its resources.
 See the generated README for requests, telemetry and cleanup.
 
+Use `dotnet new respire-worker -n MyWorker` for a typed job queue, hosted sample
+handler, enqueue API and authorized operator dashboard. Set `Dashboard__Password`
+before running it, then sign in at `/workers/` as `operator`. Its README covers
+enqueueing, processing, authentication, health checks, telemetry and Redis cleanup.
+
 [Getting started](https://respire.tomlonghurst.dev/docs/getting-started#project-template)

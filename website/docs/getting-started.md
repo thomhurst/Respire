@@ -81,6 +81,46 @@ Templates are shipped with Respire releases. Generated Respire package reference
 use that same version. To remove the templates, run
 `dotnet new uninstall Respire.Templates`.
 
+### Job worker and dashboard
+
+The same package includes `respire-worker`, a standalone .NET 10 app with a typed
+job queue, sample handler, enqueue API and [operator dashboard](guides/stream-dashboard.md):
+
+```bash
+dotnet new respire-worker -n MyWorker
+cd MyWorker
+docker compose up -d --wait
+export Dashboard__Password='replace-with-your-own-password'
+dotnet run
+```
+
+In PowerShell, set `$env:Dashboard__Password = 'replace-with-your-own-password'`
+instead of `export`. Open `http://localhost:5080/workers/` and sign in as `operator`
+with that password. No default password is shipped. The sample uses HTTP Basic
+authentication with the `QueueOperators` authorization policy; plain HTTP credentials
+are accepted only on loopback in Development. Before deployment, configure HTTPS
+and replace the sample authentication handler with your identity provider.
+
+From another terminal, enqueue a job and read its result (curl prompts for your password):
+
+```bash
+curl -u operator -H 'Content-Type: application/json' -d '{"message":"hello worker"}' http://localhost:5080/jobs/welcome-1
+curl -u operator http://localhost:5080/jobs/welcome-1
+```
+
+Use `curl.exe` in Windows shells that alias `curl`. The handler stores `HELLO WORKER`
+in Redis for one hour and acknowledges the job. GET returns 404 until the result
+exists or after it expires. Reusing the same job ID within one day deduplicates
+enqueue; handlers must still tolerate redelivery. The dashboard retains its
+authorization and antiforgery checks for operator actions.
+
+Set `ConnectionStrings__Redis` for an existing Redis server, or use the generated
+Compose file. `/health/ready` checks Redis connectivity. Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to export client and worker traces and metrics.
+The generated README explains handler customization, queue retention, ports and
+authentication. Stop the app with Ctrl+C, then run `docker compose down`; removing
+the local Redis container discards queued jobs and results.
+
 The walkthrough below builds a different example by hand, with typed values,
 pub/sub, and batching.
 

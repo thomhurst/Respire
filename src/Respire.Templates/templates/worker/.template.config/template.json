@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Tom Hurst",
+  "classifications": ["Web", "Redis", "Worker"],
+  "identity": "Respire.Templates.Worker.CSharp",
+  "name": "Respire job worker and dashboard",
+  "description": "A typed job queue, sample worker, enqueue API and authorized operator dashboard.",
+  "shortName": "respire-worker",
+  "sourceName": "RespireWorker",
+  "preferNameDirectory": true,
+  "tags": { "language": "C#", "type": "project" }
+}
