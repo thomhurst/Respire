@@ -3,7 +3,7 @@ namespace Respire.Json;
 /// <summary>Source-generated command methods for the supported RedisJSON command set.</summary>
 /// <remarks>
 /// Every method sends exactly the arguments it declares. Commands whose modifiers are fixed tokens, such as
-/// <c>JSON.SET ... NX</c> and <c>JSON.DEBUG MEMORY</c>, are exposed only through the typed
+/// <c>JSON.SET ... NX</c>, <c>JSON.SET ... FPHA</c>, and <c>JSON.DEBUG MEMORY</c>, are exposed only through the typed
 /// <see cref="RespireJsonClient"/> methods so that invalid modifiers cannot be sent.
 /// </remarks>
 [RespireCommands]

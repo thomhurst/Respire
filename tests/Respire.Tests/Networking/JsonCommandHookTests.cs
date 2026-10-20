@@ -27,6 +27,9 @@ public class JsonCommandHookTests
     [Arguments("set", "JSON.SET")]
     [Arguments("set-text", "JSON.SET")]
     [Arguments("set-bytes", "JSON.SET")]
+    [Arguments("set-fpha", "JSON.SET")]
+    [Arguments("set-fpha-text", "JSON.SET")]
+    [Arguments("set-fpha-bytes", "JSON.SET")]
     [Arguments("merge", "JSON.MERGE")]
     [Arguments("multi-set", "JSON.MSET")]
     [Arguments("delete", "JSON.DEL")]
@@ -77,6 +80,9 @@ public class JsonCommandHookTests
                 case "set": await json.SetAsync("key", 1, IntInfo, cancellationToken: token); break;
                 case "set-text": await json.SetJsonAsync("key", "1", cancellationToken: token); break;
                 case "set-bytes": await json.SetJsonAsync("key", "1"u8.ToArray(), cancellationToken: token); break;
+                case "set-fpha": await json.SetAsync(RespireJsonFloatingPointType.Fp32, "key", 1, IntInfo, cancellationToken: token); break;
+                case "set-fpha-text": await json.SetJsonAsync(RespireJsonFloatingPointType.Fp32, "key", "1", cancellationToken: token); break;
+                case "set-fpha-bytes": await json.SetJsonAsync(RespireJsonFloatingPointType.Fp32, "key", "1"u8.ToArray(), cancellationToken: token); break;
                 case "merge": await json.MergeAsync("key", 1, IntInfo, cancellationToken: token); break;
                 case "multi-set": await json.MultiSetAsync([new("key", 1)], IntInfo, token); break;
                 case "delete": await json.DeleteAsync("key", cancellationToken: token); break;

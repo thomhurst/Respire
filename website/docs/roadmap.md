@@ -179,6 +179,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   [probabilistic](guides/probabilistic.md), and [vector-set](guides/vector-sets.md) APIs.
 - [TimeSeries multi-series range queries](guides/timeseries.md#redis-810-reads) support
   Redis 8.10 `EXCLUDEEMPTY` to omit series without samples in the requested range.
+- [JSON floating point array storage](guides/json.md#floating-point-array-storage) with Redis 8.8
+  `JSON.SET FPHA` types and conditional writes.
 - Source-generated [JSON mappers](guides/generated-json-mappers.md),
   [hash codecs](guides/generated-hash-codecs.md), and
   [Search schemas](guides/generated-search-schemas.md), with a
