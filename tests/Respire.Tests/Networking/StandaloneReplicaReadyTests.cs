@@ -381,8 +381,10 @@ public class StandaloneReplicaReadyTests
         try
         {
             if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+#pragma warning disable RESP009 // The child entry point completes the isolated measurement before starting the test runner.
             MeasurePreparedDispatchAsync(Environment.GetEnvironmentVariable("RESPIRE_REPLICA_DISPATCH_SHAPE")
                 ?? throw new InvalidOperationException("Missing dispatch shape.")).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
@@ -439,7 +441,9 @@ public class StandaloneReplicaReadyTests
             if (!SpinWait.SpinUntil(() => server.CommandsSeen > commands, TimeSpan.FromSeconds(10)))
                 throw new TimeoutException("Replica did not receive the measured command.");
             var response = typeof(T) == typeof(long) ? ":5\r\n"u8.ToArray() : "$5\r\nhello\r\n"u8.ToArray();
+#pragma warning disable RESP009 // Keep the measurement loop on one thread while releasing each deliberately parked reply.
             server.SendRawAsync(response).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             // Complete both ownership transitions before the next measured rental.
             if (!SpinWait.SpinUntil(() => pending.IsCompleted && source!.InspectForTests().ReferenceCount <= 1,
                 TimeSpan.FromSeconds(10)))

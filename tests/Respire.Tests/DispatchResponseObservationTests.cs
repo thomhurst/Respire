@@ -58,6 +58,7 @@ public class DispatchResponseObservationTests
         if (mode is null) return null;
         try
         {
+#pragma warning disable RESP009 // The child entry point completes its probe before starting the test runner.
             if (mode == "converter") NativeConverterProbeAsync().GetAwaiter().GetResult();
             else if (mode == "capacity") NativeCapacityProbeAsync().GetAwaiter().GetResult();
             else if (mode.StartsWith("retirement:", StringComparison.Ordinal)) NativeRetirementProbeAsync(mode.Split(':')[1]).GetAwaiter().GetResult();
@@ -66,6 +67,7 @@ public class DispatchResponseObservationTests
                 var parts = mode.Split(':');
                 NativeDispatchProbeAsync(parts[0], parts[1]).GetAwaiter().GetResult();
             }
+#pragma warning restore RESP009
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
@@ -663,7 +665,9 @@ public class DispatchResponseObservationTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var index = 0; index < 1000; index++)
         {
+#pragma warning disable RESP009 // This synchronous result is consumed on the thread whose allocations are measured.
             var result = DispatchResponseSource<int>.Run(42, static (value, _) => new ValueTask<int>(value)).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             if (result != 42) throw new InvalidOperationException("Unexpected response.");
             if (control) GC.KeepAlive(new byte[37]);
         }

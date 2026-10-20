@@ -165,7 +165,9 @@ public class AsyncFlushSignalTests
         // Every signal raced the unconsumed wake: none may resume the waiter again or queue a
         // second wake (a second SetResult would throw on its pool thread).
         await Assert.That(Volatile.Read(ref resumeCount)).IsEqualTo(1);
+#pragma warning disable RESP009 // Consume the already-signaled wake only after the signal storm; registering another continuation would change the race.
         pending.ConfigureAwait(false).GetAwaiter().GetResult();
+#pragma warning restore RESP009
 
         var next = signal.WaitAsync();
         await Assert.That(next.IsCompleted).IsFalse();

@@ -46,8 +46,10 @@ public class ConnectionMetricCleanupTests
         RespireConnection? connection = null;
         try
         {
+#pragma warning disable RESP009 // Set up on the child entry thread before this probe occupies the only pool worker.
             connection = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
                 new() { Protocol = RespireProtocol.Resp2 }).GetAwaiter().GetResult();
+#pragma warning restore RESP009
             using var listener = new MeterListener();
             var deliveries = 0;
             listener.InstrumentPublished = (instrument, current) =>
@@ -102,12 +104,14 @@ public class ConnectionMetricCleanupTests
         }
         finally
         {
+#pragma warning disable RESP009 // Finish bounded cleanup on the child entry thread before returning its exit code.
             try
             {
                 if (connection is not null)
                     connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
             }
             finally { server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(); }
+#pragma warning restore RESP009
         }
     }
 
