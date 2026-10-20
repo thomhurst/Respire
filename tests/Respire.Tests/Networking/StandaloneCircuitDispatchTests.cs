@@ -567,9 +567,14 @@ public partial class StandaloneCircuitDispatchTests
         await Prepare(client, source);
         var original = client.Core.Multiplexer.GetConnection();
         Open(client, source);
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Core.Multiplexer.MovingHandoffPublished += () => published.TrySetResult();
         await source.SendRawAsync(Encoding.UTF8.GetBytes($">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (client.Core.Multiplexer.ActiveConnectionEndpoint.Port != target.Port) await Task.Delay(1, deadline.Token);
+        // Endpoint publication precedes socket retirement. This event runs after
+        // retirement has closed admission on the original connection.
+        await published.Task.WaitAsync(deadline.Token);
+        await Assert.That(client.Core.Multiplexer.ActiveConnectionEndpoint.Port).IsEqualTo(target.Port);
         using var reply = await client.SendOnConnectionAsync("GET", original, new Cmd1(Verbs.Get, "routed"), deadline.Token);
         await Assert.That(reply.AsString()).IsEqualTo("routed");
         await Assert.That(target.ReceivedCommands.Count(command => command == "GET routed")).IsEqualTo(1);
