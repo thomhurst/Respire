@@ -18,8 +18,14 @@ New-Item -ItemType Directory -Path $diagnosticsRoot -Force | Out-Null
 $phaseLog = Join-Path $diagnosticsRoot 'phases.log'
 function Write-MtpPhase([string]$Message) {
     $line = '{0:o} pid={1} {2}' -f [DateTimeOffset]::UtcNow, $PID, $Message
-    Add-Content -LiteralPath $phaseLog -Value $line
     Write-Host $line
+    try {
+        Add-Content -LiteralPath $phaseLog -Value $line -ErrorAction Stop
+    }
+    catch {
+        # Diagnostics must never hide the test failure or interrupt finally.
+        Write-Warning "Could not append MTP phase log '${phaseLog}': $_" -WarningAction Continue
+    }
 }
 Push-Location $testRoot
 try {
@@ -79,10 +85,20 @@ public class GuardMtpTests
     @'
 param([string]$PayloadPath)
 $payload = Get-Content -LiteralPath $PayloadPath -Raw | ConvertFrom-Json
-Add-Content -LiteralPath $payload.PhaseLog -Value ('{0:o} pid={1} discovery host entered guard' -f [DateTimeOffset]::UtcNow, $PID)
+function Write-DiscoveryPhase([string]$Message) {
+    $line = '{0:o} pid={1} {2}' -f [DateTimeOffset]::UtcNow, $PID, $Message
+    Write-Host $line
+    try {
+        Add-Content -LiteralPath $payload.PhaseLog -Value $line -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Could not append MTP discovery phase log: $_" -WarningAction Continue
+    }
+}
+Write-DiscoveryPhase 'discovery host entered guard'
 & $payload.GuardScript -SingleNode -DotNetArguments @($payload.Arguments)
 $guardExitCode = $LASTEXITCODE
-Add-Content -LiteralPath $payload.PhaseLog -Value ('{0:o} pid={1} discovery guard returned; exit={2}' -f [DateTimeOffset]::UtcNow, $PID, $guardExitCode)
+Write-DiscoveryPhase "discovery guard returned; exit=$guardExitCode"
 exit $guardExitCode
 '@ | Set-Content -LiteralPath $captureScript
     $pwshPath = (Get-Process -Id $PID).Path
