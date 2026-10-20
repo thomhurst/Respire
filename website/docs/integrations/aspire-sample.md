@@ -14,9 +14,9 @@ ports or passwords in its configuration. For configuration details, see
 
 ## Requirements and build
 
-- The .NET 10 SDK from `global.json` (10.0.401 or a later compatible band) and runtime. The
+- The .NET 10 SDK from `global.json` (10.0.402 or a later compatible band) and runtime. The
   sample targets `net10.0` only; the integration itself also supports .NET 8.
-- [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6 (the repository uses Aspire 13.6.1
+- [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6 (the repository uses Aspire 13.6.2
   hosting packages).
 - A running Docker-compatible runtime. The first start downloads the Redis 8.10 and Valkey 9 images.
 - PowerShell 7 for the optional `Smoke.ps1` helper.
@@ -30,6 +30,13 @@ dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0
 ```
 
 Building the AppHost also builds the HTTP service.
+
+The AppHost sets `AspireUseCliBundle=true`, so orchestration (DCP) and the dashboard come from
+the Aspire CLI bundle. The SDK can prepare the bundle during the first build; without a compatible
+CLI on `PATH`, it uses the SDK-paired CLI package through .NET 10's `dnx`. That first build needs
+network access. The integration test starts this same AppHost through
+`DistributedApplicationTestingBuilder` and uses its resolved bundle paths; the test project does
+not need its own AppHost SDK or bundle setting.
 
 ## Start, readiness, and dashboard
 

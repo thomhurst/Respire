@@ -315,8 +315,8 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       - name: Build .NET 10 Aspire sample and test host
         run: |
-          dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0
-          dotnet build tests/Aspire.Respire.IntegrationTests -c Release -f net10.0
+          dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net10.0 -warnaserror:ASPIRE010
+          dotnet build tests/Aspire.Respire.IntegrationTests -c Release -f net10.0 -warnaserror:ASPIRE010
       - name: Verify injected clients and HTTP caches
         run: >-
           dotnet run --project tests/Aspire.Respire.IntegrationTests -c Release --no-build --
