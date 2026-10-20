@@ -292,7 +292,11 @@ Console.WriteLine($"Acquired fencing token {attempt.Lock.FencingToken}");
 lease key's `PTTL`, then retries the atomic acquisition script. Only the script grants ownership.
 Cancellation stops waiting but does not undo an acquisition Redis already accepted.
 
-Enable RESP3 client-side caching on the client. Redis needs no `notify-keyspace-events` flags.
+Enable RESP3 client-side caching on the client and keep `ClientSideCache.NoLoop = false` (the
+default). `AcquireFencedLockAsync` rejects `NoLoop = true` with `RespireConfigurationException`
+before sending wait commands: Redis would suppress same-client release notifications, and local
+mutation notifications occur before writes commit. Redis needs no `notify-keyspace-events` flags.
+The immediate `TryAcquireFencedLockAsync` API does not require tracking and can use `NoLoop = true`.
 
 ```csharp
 using Respire.Coordination;
@@ -390,6 +394,10 @@ await using var lease = await leaseCoordination.AcquireLeaseAsync(
 Requirements:
 
 - Redis 7.4 or later. Older servers fail before writing, with an error naming the required feature.
+- `AcquireLeaseAsync` requires RESP3 client-side caching with `ClientSideCache.NoLoop = false`
+  (the default). It rejects `NoLoop = true` with `RespireConfigurationException` before sending
+  wait commands, so same-client releases cannot silently leave a waiter asleep until expiry.
+  `TryAcquireLeaseAsync` does not require tracking and can use `NoLoop = true`.
 - The hash key must have no key-level expiry (Redis would delete the whole hash). Acquisition
   rejects expiring hash keys.
 - With a concrete `RespireClient`, Redis ACL permission for `CLIENT ID` and `CLIENT KILL`, used to

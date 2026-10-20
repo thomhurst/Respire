@@ -1,5 +1,5 @@
-# Reviewed source-declared member signatures: 432 total; per-type counts include owner, derived and accessible nested declarations.
-# Count: Respire.ClientSideCacheCoordinator | 66
+# Reviewed source-declared member signatures: 433 total; per-type counts include owner, derived and accessible nested declarations.
+# Count: Respire.ClientSideCacheCoordinator | 67
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
 Respire.ClientSideCacheCoordinator | class InflightRead(RespireKey, bool)
@@ -54,6 +54,7 @@ Respire.ClientSideCacheCoordinator | method TryPeekRead(in RespireKey, out GetRe
 Respire.ClientSideCacheCoordinator | property ActiveSharedReadCount [internal; get] : int
 Respire.ClientSideCacheCoordinator | property CoalesceConcurrentMisses [internal; get] : bool
 Respire.ClientSideCacheCoordinator | property Count [public; get] : int
+Respire.ClientSideCacheCoordinator | property NoLoop [internal; get] : bool
 Respire.ClientSideCacheCoordinator | property ReuseHashFields [internal; get] : bool
 Respire.ClientSideCacheCoordinator | property SharedReadRetirements [internal; get] : long
 Respire.ClientSideCacheCoordinator | property SizeBytes [public; get] : long

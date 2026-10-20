@@ -241,6 +241,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal bool ReuseHashFields => _options.ReuseHashFields;
 
+    internal bool NoLoop => _options.NoLoop;
+
     public long SizeBytes => Volatile.Read(ref _store).SizeBytes;
 
     public RespireClientSideCacheStatistics GetStatistics()
