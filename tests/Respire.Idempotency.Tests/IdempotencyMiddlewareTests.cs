@@ -613,23 +613,38 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task EmptyNoContentResponseIsReplayed(bool kestrel)
+    [Arguments(false, StatusCodes.Status200OK)]
+    [Arguments(true, StatusCodes.Status200OK)]
+    [Arguments(false, StatusCodes.Status204NoContent)]
+    [Arguments(true, StatusCodes.Status204NoContent)]
+    [Arguments(false, StatusCodes.Status304NotModified)]
+    [Arguments(true, StatusCodes.Status304NotModified)]
+    public async Task EmptyNoContentResponseIsReplayed(bool kestrel, int status)
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
         var executions = 0;
+        var firstRequestFinished = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var server = CreateServer(client, context =>
         {
             Interlocked.Increment(ref executions);
-            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            context.Response.StatusCode = status;
             return Task.CompletedTask;
-        }, kestrel: kestrel);
+        }, options => options.StoredStatusCodes.Add(status), before: app => app.Use(async (context, next) =>
+        {
+            Exception? failure = null;
+            try { await next(context); }
+            catch (Exception error) { failure = error; throw; }
+            finally { firstRequestFinished.TrySetResult(failure); }
+        }), kestrel: kestrel);
         using var http = server.CreateClient();
         using var first = await SendAsync(http);
+        // Kestrel can deliver the headers before a forbidden empty write aborts the
+        // connection. Observe server completion as well as the client response.
+        await Assert.That(await firstRequestFinished.Task.WaitAsync(TimeSpan.FromSeconds(20))).IsNull();
         using var replay = await SendAsync(http);
-        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(first.StatusCode).IsEqualTo((HttpStatusCode)status);
+        await Assert.That(replay.StatusCode).IsEqualTo((HttpStatusCode)status);
+        await Assert.That((await first.Content.ReadAsByteArrayAsync()).Length).IsEqualTo(0);
         await Assert.That((await replay.Content.ReadAsByteArrayAsync()).Length).IsEqualTo(0);
         await Assert.That(executions).IsEqualTo(1);
     }

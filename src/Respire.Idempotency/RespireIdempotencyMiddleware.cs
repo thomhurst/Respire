@@ -104,7 +104,9 @@ internal sealed class RespireIdempotencyMiddleware(RequestDelegate next, Respire
                     }
                 }
             }
-            await original.Stream.WriteAsync(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), context.RequestAborted).ConfigureAwait(false);
+            // Kestrel rejects even an empty write for bodyless statuses such as 204/304.
+            if (buffer.Length > 0)
+                await original.Stream.WriteAsync(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), context.RequestAborted).ConfigureAwait(false);
         }
         catch (ResponseLimitException)
         {
