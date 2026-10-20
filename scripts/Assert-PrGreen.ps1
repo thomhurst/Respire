@@ -16,10 +16,10 @@
 # check, an unresolved thread, or an API hiccup — exits 1 so the caller MUST NOT
 # merge. The default on uncertainty is DENY.
 #
-# Why this exists: the repo is on a tier WITHOUT branch protection, so GitHub
-# cannot enforce "green before merge" itself. This script is the deterministic
-# gate the prose rules alone cannot guarantee — the skill calls it immediately
-# before `gh pr merge`, and only merges if it exits 0.
+# Why this exists: GitHub branch protection enforces required status checks.
+# This script supplements those rules with validation of every reported check
+# and review dispositions. The merge wrapper calls this fail-closed gate
+# immediately before `gh pr merge`, and only merges if it exits 0.
 #
 # Usage: pwsh scripts/Assert-PrGreen.ps1 -Pr 1234 [-Repo owner/name]
 # Exit:  0 = safe to merge; 1 = DO NOT MERGE (reason printed to stderr).
