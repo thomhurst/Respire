@@ -82,7 +82,9 @@ public class ClusterReplicaRoutingBenchmarks
         // when periodic revalidation starts in the background.
         if (!pending.IsCompletedSuccessfully)
             throw new InvalidOperationException("Prepared cluster selection did not complete synchronously.");
+#pragma warning disable RESP009 // The completion check above guarantees synchronous prepared-route selection.
         return pending.GetAwaiter().GetResult().Port;
+#pragma warning restore RESP009
     }
 
     [Benchmark]

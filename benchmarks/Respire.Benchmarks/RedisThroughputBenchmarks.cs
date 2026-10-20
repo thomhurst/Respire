@@ -14,7 +14,8 @@ namespace Respire.Benchmarks;
 [Config(typeof(Config))]
 public class RedisThroughputBenchmarks
 {
-    private readonly IContainer _redisContainer = new RedisBuilder().Build();
+    // Preserve the image previously selected by Testcontainers' parameterless constructor.
+    private readonly IContainer _redisContainer = new RedisBuilder("redis:7.0").Build();
     private RespireClient _kevaClient = null!;
     private ConnectionMultiplexer _stackExchangeRedis = null!;
     private IDatabase _stackExchangeDb = null!;

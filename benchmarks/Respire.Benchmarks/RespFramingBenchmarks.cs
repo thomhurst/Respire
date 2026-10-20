@@ -121,8 +121,10 @@ public class RespFramingPublicBenchmarks
     public ValueTask<bool> SetWithExpiry() => _client.Strings.SetAsync(_setKey, _value, _expiry);
 
     [Benchmark]
+#pragma warning disable RESP011 // Intentionally measures the full-range command against the validated two-member fixture.
     public ValueTask<RespireSortedSetEntry[]> ReverseRangeWithScores()
         => _client.SortedSets.RangeWithScoresAsync(_rangeKey, 0, -1, descending: true);
+#pragma warning restore RESP011
 
     [Benchmark(OperationsPerInvoke = 8)]
     public async ValueTask<int> SetWithExpiryPipeline()

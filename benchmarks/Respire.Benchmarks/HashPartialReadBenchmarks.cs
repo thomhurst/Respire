@@ -67,8 +67,10 @@ public class HashPartialReadBenchmarks
         // hash, so no earlier operation turns a planned miss into a hit. Priming is excluded.
         _client.ClientSideCache!.Clear();
         if (CachedFields == 0) return;
+#pragma warning disable RESP009 // BDN iteration setup must be synchronous; finish priming before the measured reads.
         foreach (var key in _keys)
             _client.Hashes.GetManyAsync(key, _primedFields).AsTask().GetAwaiter().GetResult();
+#pragma warning restore RESP009
     }
 
     [Benchmark(OperationsPerInvoke = HashCount)]

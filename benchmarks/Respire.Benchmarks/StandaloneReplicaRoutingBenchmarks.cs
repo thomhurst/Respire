@@ -78,7 +78,9 @@ public class StandaloneReplicaRoutingBenchmarks
         var pending = _client.Core.ReadRouter.GetConnectionAsync(policy, default, observation: default);
         if (!pending.IsCompletedSuccessfully)
             throw new InvalidOperationException("A prepared standalone selection did not complete synchronously.");
+#pragma warning disable RESP009 // The completion check above guarantees synchronous prepared-route selection.
         var connection = pending.GetAwaiter().GetResult();
+#pragma warning restore RESP009
         if (connection.Port != expectedPort)
             throw new InvalidOperationException("A prepared standalone selection chose the wrong role.");
         return connection.Port;

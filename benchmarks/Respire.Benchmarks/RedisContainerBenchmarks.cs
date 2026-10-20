@@ -13,10 +13,12 @@ namespace Respire.Benchmarks;
 [Config(typeof(Config))]
 public class RedisContainerBenchmarks
 {
-    private readonly IContainer _redisContainer = new RedisBuilder().Build();
+    // Preserve the image previously selected by Testcontainers' parameterless constructor.
+    private readonly IContainer _redisContainer = new RedisBuilder("redis:7.0").Build();
     private RespireClient _kevaClient = null!;
     private ConnectionMultiplexer? _stackExchangeRedis;
-    private IDatabase? _stackExchangeDb;
+    // GlobalSetup initializes this before warmup or any benchmark invocation.
+    private IDatabase _stackExchangeDb = null!;
     
     private readonly string _smallValue = "Hello, World!";
     private readonly string _mediumValue = new string('X', 1024); // 1KB

@@ -232,12 +232,14 @@ internal static class TransportStreamDiagnostics
         var gate = new StreamTransportGate(writes: !get);
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379");
+#pragma warning disable RESP010 // One client per transport control, reused across observations outside measured boundaries.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(host, port)], Connections = connections, Protocol = RespireProtocol.Resp2,
             ThreadPoolMonitoring = false, TestingStreamFactory = gate.ConnectAsync,
             CircuitBreaker = get ? new() : null,
         }).ConfigureAwait(false);
+#pragma warning restore RESP010
         using var source = CreateSource(streamCase);
         var buffer = new byte[RespireConnection.StreamChunkSize];
         await ObserveAsync(get ? "held-get-receive" : "held-upload-payload-write", iterations, observations, async () =>
