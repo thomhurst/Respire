@@ -13,7 +13,9 @@
         "Difference(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
         "DifferenceStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
         "Increment(RespireKey,RespireValue,double):RespirePending<double>",
+        "Intersect(ReadOnlySpan<RespireKey>,RespireSortedSetCombineOptions):RespirePending<string[]>",
         "Intersect(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "IntersectStore(RespireKey,ReadOnlySpan<RespireKey>,RespireSortedSetCombineOptions):RespirePending<long>",
         "IntersectStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>",
         "Pop(RespireKey,bool):RespirePending<RespireSortedSetEntry?>",
         "PopMany(RespireKey,long,bool):RespirePending<RespireSortedSetEntry[]>",
@@ -40,7 +42,9 @@
         "StoreRange(RespireKey,RespireKey,long,long,bool):RespirePending<long>",
         "StoreRangeByLex(RespireKey,RespireKey,RespireLexRange,long,long?,bool):RespirePending<long>",
         "StoreRangeByScore(RespireKey,RespireKey,RespireScoreRange,long,long?,bool):RespirePending<long>",
+        "Union(ReadOnlySpan<RespireKey>,RespireSortedSetCombineOptions):RespirePending<string[]>",
         "Union(params ReadOnlySpan<RespireKey>):RespirePending<string[]>",
+        "UnionStore(RespireKey,ReadOnlySpan<RespireKey>,RespireSortedSetCombineOptions):RespirePending<long>",
         "UnionStore(RespireKey,params ReadOnlySpan<RespireKey>):RespirePending<long>"
       ],
       "Contract": "Queue methods own synchronous validation and serialization. Execute/commit owns transport and cleanup; each pending result owns its later caller inspection and conversion. Never consume a pending result to observe errors."

@@ -168,11 +168,17 @@ public partial interface IRespireSortedSetCommands
     /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
     ValueTask<string[]> IntersectAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
 
+    /// <summary>Applies weights and aggregation to one sorted set. COUNT requires Redis 8.8+.</summary>
+    ValueTask<string[]> IntersectAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string[]> IntersectAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
     ValueTask<string[]> UnionAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Applies weights and aggregation to one sorted set. COUNT requires Redis 8.8+.</summary>
+    ValueTask<string[]> UnionAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<string[]> UnionAsync(RespireKey key, CancellationToken cancellationToken);
@@ -183,11 +189,17 @@ public partial interface IRespireSortedSetCommands
     /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
     ValueTask<long> IntersectStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
 
+    /// <summary>Stores one sorted set with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Combine sorted sets with weights and aggregation. COUNT requires Redis 8.8+.</summary>
     ValueTask<long> UnionStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Stores one sorted set with weights and aggregation. COUNT requires Redis 8.8+.</summary>
+    ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken);
@@ -431,6 +443,9 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         => client.StringArrayAsync(
             "ZINTER", CombineCommand(client, "ZINTER", Verbs.ZInter, keys, options), cancellationToken);
 
+    public ValueTask<string[]> IntersectAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => IntersectAsync([key], options, cancellationToken);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<string[]> IntersectAsync(RespireKey key, CancellationToken cancellationToken)
         => IntersectAsync([key], cancellationToken);
@@ -438,6 +453,9 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     public ValueTask<string[]> UnionAsync(ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
         => client.StringArrayAsync(
             "ZUNION", CombineCommand(client, "ZUNION", Verbs.ZUnion, keys, options), cancellationToken);
+
+    public ValueTask<string[]> UnionAsync(RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => UnionAsync([key], options, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<string[]> UnionAsync(RespireKey key, CancellationToken cancellationToken)
@@ -451,6 +469,9 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
         => client.IntegerAsync(
             "ZINTERSTORE", CombineStoreCommand(client, "ZINTERSTORE", Verbs.ZInterStore, destination, keys, options), cancellationToken);
 
+    public ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => IntersectStoreAsync(destination, [key], options, cancellationToken);
+
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> IntersectStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)
         => IntersectStoreAsync(destination, [key], cancellationToken);
@@ -458,6 +479,9 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     public ValueTask<long> UnionStoreAsync(RespireKey destination, ReadOnlySpan<RespireKey> keys, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
         => client.IntegerAsync(
             "ZUNIONSTORE", CombineStoreCommand(client, "ZUNIONSTORE", Verbs.ZUnionStore, destination, keys, options), cancellationToken);
+
+    public ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, RespireSortedSetCombineOptions options, CancellationToken cancellationToken = default)
+        => UnionStoreAsync(destination, [key], options, cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     public ValueTask<long> UnionStoreAsync(RespireKey destination, RespireKey key, CancellationToken cancellationToken)

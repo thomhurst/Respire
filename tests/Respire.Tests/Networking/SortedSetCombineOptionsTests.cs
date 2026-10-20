@@ -5,6 +5,48 @@ namespace Respire.Tests.Networking;
 public class SortedSetCombineOptionsTests
 {
     [Test]
+    public async Task DefaultCancellationToken_PreservesKeysOnlyOverloads()
+    {
+        await using var server = new FakeRespServer(
+            "*0\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(),
+            "*0\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        // These default literals must continue to bind to CancellationToken, not options.
+        await client.SortedSets.UnionAsync(["a", "b"], default);
+        await client.SortedSets.IntersectAsync(["a", "b"], default);
+        await client.SortedSets.UnionStoreAsync("dest", ["a", "b"], default);
+        await client.SortedSets.IntersectStoreAsync("dest", ["a", "b"], default);
+        RespireKey[] keys = ["a", "b"];
+        await client.SortedSets.UnionAsync(keys, default);
+        await client.SortedSets.IntersectAsync(keys, default);
+        await client.SortedSets.UnionStoreAsync("dest", keys, default);
+        await client.SortedSets.IntersectStoreAsync("dest", keys, default);
+        await Assert.That(server.ReceivedCommands.Where(c => c.StartsWith('Z')).SequenceEqual(new[]
+        {
+            "ZUNION 2 a b", "ZINTER 2 a b", "ZUNIONSTORE dest 2 a b", "ZINTERSTORE dest 2 a b",
+            "ZUNION 2 a b", "ZINTER 2 a b", "ZUNIONSTORE dest 2 a b", "ZINTERSTORE dest 2 a b",
+        })).IsTrue();
+    }
+
+    [Test]
+    public async Task SingleKeyOptions_SerializeWeightsAndAggregation()
+    {
+        await using var server = new FakeRespServer(
+            "*0\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var options = new RespireSortedSetCombineOptions { Weights = new double[] { 2 }, Aggregate = RespireSortedSetAggregate.Max };
+        await client.SortedSets.UnionAsync("a", options);
+        await client.SortedSets.IntersectAsync("a", options);
+        await client.SortedSets.UnionStoreAsync("dest", "a", options);
+        await client.SortedSets.IntersectStoreAsync("dest", "a", options);
+        await Assert.That(server.ReceivedCommands.Where(c => c.StartsWith('Z')).SequenceEqual(new[]
+        {
+            "ZUNION 1 a WEIGHTS 2 AGGREGATE MAX", "ZINTER 1 a WEIGHTS 2 AGGREGATE MAX",
+            "ZUNIONSTORE dest 1 a WEIGHTS 2 AGGREGATE MAX", "ZINTERSTORE dest 1 a WEIGHTS 2 AGGREGATE MAX",
+        })).IsTrue();
+    }
+
+    [Test]
     [Arguments("immediate")]
     [Arguments("batch")]
     [Arguments("transaction")]
