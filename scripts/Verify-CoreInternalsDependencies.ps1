@@ -13,6 +13,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Write-Host "Core dependency validation: PowerShell $($PSVersionTable.PSVersion); runtime $([System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription); $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repositoryRoot = Split-Path $PSScriptRoot -Parent
