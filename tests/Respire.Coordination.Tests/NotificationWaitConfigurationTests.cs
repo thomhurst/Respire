@@ -1,3 +1,4 @@
+using System.Reflection;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,11 +9,15 @@ namespace Respire.Coordination.Tests;
 public class NotificationWaitConfigurationTests
 {
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task NoLoopIsRejectedBeforeSendingWaitCommands(bool hashFieldLease, bool prefixedView)
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task NoLoopIsRejectedBeforeSendingWaitCommands(bool hashFieldLease, bool prefixedView, bool decorated)
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
         {
@@ -31,7 +36,14 @@ public class NotificationWaitConfigurationTests
             ClientSideCache = new() { NoLoop = true },
         });
         var commandsBeforeWait = server.CommandsSeen;
-        var coordination = new RespireCoordination(prefixedView ? client.WithKeyPrefix("tenant:") : client);
+        IRespireClient waitClient = prefixedView ? client.WithKeyPrefix("tenant:") : client;
+        if (decorated)
+        {
+            var proxy = DispatchProxy.Create<IRespireClient, ForwardingClient>();
+            ((ForwardingClient)proxy).Inner = waitClient;
+            waitClient = proxy;
+        }
+        var coordination = new RespireCoordination(waitClient);
 
         await Assert.That(async () =>
         {
@@ -47,5 +59,13 @@ public class NotificationWaitConfigurationTests
             }
         }).ThrowsExactly<RespireConfigurationException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(commandsBeforeWait);
+    }
+
+    public class ForwardingClient : DispatchProxy
+    {
+        public IRespireClient Inner { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+            => targetMethod!.Invoke(Inner, args);
     }
 }

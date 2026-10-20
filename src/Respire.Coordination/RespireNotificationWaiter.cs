@@ -15,7 +15,9 @@ internal static class RespireNotificationWaiter
         var cache = client.ClientSideCache
             ?? throw new RespireConfigurationException(
                 "Notification-driven coordination waits require RESP3 client-side caching and tracking.");
-        if (client is RespireClient concrete && concrete.Core.Options.ClientSideCache?.NoLoop == true)
+        // Read tracking metadata from the shared cache so forwarding client decorators
+        // receive the same validation as root clients and prefixed views.
+        if (cache is ClientSideCacheCoordinator { NoLoop: true })
             throw new RespireConfigurationException(
                 "Notification-driven coordination waits require ClientSideCache.NoLoop=false so same-client releases wake waiters.");
         var physicalKey = client.ResolveKey(key).Snapshot();
