@@ -3,7 +3,7 @@ new file mode 100644
 index 00000000..3e44be98
 --- /dev/null
 +++ a/src/Respire/RespireClient.ReadySend.cs
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,269 @@
 +using System.Runtime.CompilerServices;
 +using Respire.Commands;
 +using Respire.Infrastructure;
@@ -22,7 +22,8 @@ index 00000000..3e44be98
 +        where TCommand : struct, IRespCommand
 +        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
 +        // scripting commands need here; the ready send captures that decision once afterwards.
-+        => !_core.Options.EnableReplicaRedirects && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
++        => (!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)
++            && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
 +            && !ShouldSkipTracking(operation, in command)
 +            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
 +            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
@@ -413,7 +414,7 @@ index 463ad128..422098a3 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -6553,235 +6457,5 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -6553,236 +6457,5 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
  
          return result;
      }
@@ -425,7 +426,8 @@ index 463ad128..422098a3 100644
 -        where TCommand : struct, IRespCommand
 -        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
 -        // scripting commands need here; the ready send captures that decision once afterwards.
--        => !_core.Options.EnableReplicaRedirects && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
+-        => (!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)
+-            && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
 -            && !ShouldSkipTracking(operation, in command)
 -            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
 -            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)

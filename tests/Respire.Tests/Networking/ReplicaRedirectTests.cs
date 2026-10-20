@@ -157,11 +157,15 @@ public class ReplicaRedirectTests
 
     [Test]
     [NotInParallel]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(false, true)]
-    [Arguments(true, true)]
-    public async Task RedirectFromConnectedMaintenanceSourcePreservesDeadline(bool circuit, bool delayHandshake)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(true, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, true, true)]
+    public async Task RedirectFromConnectedMaintenanceSourcePreservesDeadline(bool circuit, bool delayHandshake, bool retry)
     {
         await using var target = new FakeRespServer(4)
         {
@@ -180,6 +184,7 @@ public class ReplicaRedirectTests
             CommandTimeout = TimeSpan.FromSeconds(1),
             MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(10),
             CircuitBreaker = circuit ? new() : null,
+            RetryPolicy = retry ? new() : null,
         });
         var original = client.Core.Multiplexer.GetConnection();
         await source.SendRawAsync(Bytes(">3\r\n+MIGRATING\r\n:1\r\n:10\r\n"));

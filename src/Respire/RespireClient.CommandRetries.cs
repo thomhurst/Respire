@@ -120,8 +120,11 @@ public sealed partial class RespireClient
                     state.IsRetry = attempt > 1;
                     for (var redirects = 0; ; redirects++)
                     {
+                        // The connection enforces the send deadline and can relax it for
+                        // maintenance. The acquisition timer must not cancel that allowance.
                         var result = await connection.SendAttemptAsync(redirects == 0 ? command : command.WithoutTracking(),
-                            token, operation, deadline, repliesBeforeFinal: redirects == 0 && track ? 1 : 0,
+                            connection.ReplicaRedirectsEnabled ? callerToken : token, operation, deadline,
+                            repliesBeforeFinal: redirects == 0 && track ? 1 : 0,
                             errorObservation: observation).ConfigureAwait(false);
                         if (redirects == 0 && state.IsRetry && state.AcceptedAttempt)
                             RespireTelemetry.RecordCommandRetry(state.Category, "attempted");
@@ -145,6 +148,15 @@ public sealed partial class RespireClient
                             || rejection.Code != "REDIRECT" || redirects >= ClusterRouter.RedirectLimit
                             || !TryParseReplicaRedirect(rejection.Message, connection.Host, out var endpoint)) throw rejection;
 
+                        // Carry the source's maintenance allowance across acquisition and
+                        // later sends. IsRelaxed prevents a second hop extending it again.
+                        deadline = connection.GetReroutedCommandDeadline(deadline);
+                        timeout?.Dispose();
+                        timeout = deadline.IsSet
+                            ? CommandTimeoutCancellation.Create(callerToken,
+                                TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
+                            : null;
+                        token = timeout?.Token ?? callerToken;
                         // REDIRECT proves this hop did not execute the command. The next hop owns
                         // fresh write evidence, including an unwritten connection/handshake failure.
                         outcome = CommandWriteOutcome.DefinitelyUnwritten;
