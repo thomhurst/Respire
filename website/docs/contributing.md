@@ -30,7 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
 
 Use `net8.0` for the other supported framework. Patterns are relative to
 `tests/Respire.Tests`; join multiple patterns with `|`, for example
-`-p:RespireTestFilter=BlockingCancellationTests.cs|Networking/FakeRespServerTests.cs`.
+`-p:RespireTestFilter=Networking/BlockingCancellationTests.cs|Networking/FakeRespServerTests.cs`.
 Include all partial-class files and any other test classes the selected tests depend on.
 A missing dependency produces a compiler error; add its source to the filter.
 An entirely unmatched filter fails the build. Keep selections small; a broad selection

@@ -67,3 +67,7 @@ try {
 finally {
     Pop-Location
 }
+
+# Expected rejection probes leave LASTEXITCODE nonzero. Report the contract's
+# success explicitly so GitHub Actions' PowerShell wrapper does not fail the job.
+exit 0
