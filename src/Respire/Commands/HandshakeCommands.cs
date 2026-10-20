@@ -2,6 +2,14 @@ using Respire.Protocol;
 
 namespace Respire.Commands;
 
+/// <summary>Optional standalone replica redirect capability negotiation.</summary>
+internal readonly struct ClientCapaRedirectCommand : IConnectionProtocolCommand
+{
+    public ReadCommandKind ReadKind => ReadCommandKind.None;
+    public int GetWriteSizeHint() => "*3\r\n$6\r\nCLIENT\r\n$4\r\nCAPA\r\n$8\r\nREDIRECT\r\n"u8.Length;
+    public void Write(ref RespWriter writer) => writer.WriteRaw("*3\r\n$6\r\nCLIENT\r\n$4\r\nCAPA\r\n$8\r\nREDIRECT\r\n"u8);
+}
+
 /// <summary>A fully pre-encoded command frame (PING, FLUSHDB, ...).</summary>
 internal readonly struct RawCommand(byte[] preEncoded, ReadCommandKind readKind = ReadCommandKind.None) : IRespCommand
 {

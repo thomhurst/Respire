@@ -75,10 +75,11 @@ internal sealed class ClientCore : IAsyncDisposable
 
     /// <summary>Preserves the logical cache owner on every data, replica and dedicated transport.</summary>
     internal RespireConnectionOptions CreateConnectionOptions(RespirePushHandler? pushHandler = null,
-        bool enableClientTracking = false, bool enableMaintenanceNotifications = false)
+        bool enableClientTracking = false, bool enableMaintenanceNotifications = false, bool enableReplicaRedirects = false)
         => Options.ToConnectionOptions(pushHandler, enableClientTracking, enableMaintenanceNotifications) with
         {
             CacheMutationAdmission = ClientCache,
+            AdvertiseReplicaRedirects = enableReplicaRedirects && Options.EnableReplicaRedirects && !Options.UseCluster,
         };
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
@@ -132,7 +133,7 @@ internal sealed class ClientCore : IAsyncDisposable
         RespirePushHandler? pushHandler = clientCache is null ? null : clientCache.HandlePush;
         var connectionOptions = CreateConnectionOptions(
             pushHandler,
-            enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true) with
+            enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true, enableReplicaRedirects: true) with
         {
             CredentialCacheInvalidation = clientCache is null ? null : clientCache.FlushForContinuityLossWithoutMetrics,
             CredentialCacheRetirementFence = clientCache is null ? null : clientCache.FlushForMovingRetirementFence,
@@ -770,13 +771,14 @@ internal sealed class ClientCore : IAsyncDisposable
     }
 
     internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint, bool controlConnection = false,
-        TimeSpan? commandTimeout = null)
+        TimeSpan? commandTimeout = null, bool replicaRedirect = false)
     {
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             var options = controlConnection ? Options.ToControlConnectionOptions() with { CacheMutationAdmission = ClientCache }
                 : CreateConnectionOptions(enableMaintenanceNotifications: !endpoint.IsUnixSocket);
+            if (replicaRedirect) options = options with { AdvertiseReplicaRedirects = Options.EnableReplicaRedirects };
             if (commandTimeout is { } timeout) options = options with { CommandTimeout = timeout };
             var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, options, Logger,
                 NotifyRecoveryStateChanged);

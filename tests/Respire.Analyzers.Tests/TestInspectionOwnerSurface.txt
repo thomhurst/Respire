@@ -1,4 +1,4 @@
-# Reviewed source-declared member signatures: 433 total; per-type counts include owner, derived and accessible nested declarations.
+# Reviewed source-declared member signatures: 435 total; per-type counts include owner, derived and accessible nested declarations.
 # Count: Respire.ClientSideCacheCoordinator | 67
 Respire.ClientSideCacheCoordinator | class CacheEntry(byte[]?, long, long, string?)
 Respire.ClientSideCacheCoordinator | class CacheStore()
@@ -246,13 +246,14 @@ Respire.Networking.PendingResponseSource | readonly struct PoolPolicy(PendingRes
 # Count: Respire.Networking.PendingResponseSource.PoolPolicy | 2
 Respire.Networking.PendingResponseSource.PoolPolicy | method Create() : PendingResponseSource
 Respire.Networking.PendingResponseSource.PoolPolicy | method TryReset(PendingResponseSource) : bool
-# Count: Respire.Networking.RespireConnection | 111
+# Count: Respire.Networking.RespireConnection | 112
 # Production shutdown operation: releases an inline completion before owner workers are joined.
 Respire.Networking.RespireConnection | method ReleaseCompletionRunner() : void
 Respire.Networking.RespireConnection | method RecordConnectionRecycle() : void
 Respire.Networking.RespireConnection | property IsConnectionLifetimeExpired [internal; get] : bool
 Respire.Networking.RespireConnection | property LifetimeExpiresAt [internal; get, private set] : long?
 Respire.Networking.RespireConnection | property RemainingConnectionLifetime [internal; get] : TimeSpan?
+Respire.Networking.RespireConnection | property ReplicaRedirectsEnabled [internal; get, private set] : bool
 Respire.Networking.RespireConnection | class CommandWriteObservation()
 # Operational upload reader. Tests invoke its existing fill/retry API; no connection state accessor is added.
 Respire.Networking.RespireConnection | class StreamPayloadReader(Stream, long, ArrayPool<byte>?)

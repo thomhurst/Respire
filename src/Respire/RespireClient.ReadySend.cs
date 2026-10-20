@@ -16,7 +16,8 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
         // With no listeners, IsOperationEnabled reduces to the command metric check, which only
         // scripting commands need here; the ready send captures that decision once afterwards.
-        => _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
+        => (!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)
+            && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
             && !ShouldSkipTracking(operation, in command)
             && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
             && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)

@@ -506,7 +506,7 @@ internal static partial class RespireTelemetry
     {
         "ERR" or "WRONGTYPE" or "NOSCRIPT" or "BUSYGROUP" or "NOAUTH" or "NOPERM"
             or "WRONGPASS" or "LOADING" or "BUSY" or "BUSYKEY" or "CLUSTERDOWN"
-            or "TRYAGAIN" or "MASTERDOWN" or "MOVED" or "ASK" or "READONLY" or "OOM"
+            or "TRYAGAIN" or "MASTERDOWN" or "MOVED" or "ASK" or "REDIRECT" or "READONLY" or "OOM"
             or "EXECABORT" or "CROSSSLOT" or "MISCONF" or "NOGROUP" or "NOREPLICAS" => code,
         _ => null,
     };

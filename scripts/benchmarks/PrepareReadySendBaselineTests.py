@@ -31,10 +31,13 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
     def test_pre_optout_control_preserves_primary_backlog_helpers(self):
         self.assert_current_production_control(before_optout=True)
 
+    def test_pre_redirect_control_preserves_primary_backlog_helpers(self):
+        self.assert_current_production_control(before_redirect=True)
+
     def test_unknown_strategy_drift_fails_without_changing_production(self):
         self.assert_current_production_control(drift=True)
 
-    def assert_current_production_control(self, standalone=False, drift=False, before_optout=False):
+    def assert_current_production_control(self, standalone=False, drift=False, before_optout=False, before_redirect=False):
         repository = Path(__file__).resolve().parents[2]
         paths = ('src/Respire/RespireClient.cs', 'src/Respire/RespireClient.ReadySend.cs')
         with tempfile.TemporaryDirectory() as directory:
@@ -56,6 +59,9 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 strategy.write_text(strategy.read_text().replace('UsesPrimaryBacklog', 'UsesUnknownBacklog'))
             if before_optout:
                 strategy.write_text(strategy.read_text().replace('            && !ShouldSkipTracking(operation, in command)\n', ''))
+            if before_optout or before_redirect:
+                strategy.write_text(strategy.read_text().replace(
+                    '(!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)\n            && ', ''))
             ready = strategy.read_text()
             environment = git_environment()
 
@@ -79,6 +85,7 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
             self.assertEqual(recorded['baseline_commit'], git('rev-parse', 'HEAD'))
             self.assertEqual(recorded['before_sha256'], before)
             patch_name = ('ReadySendStrategy.Standalone.patch' if standalone else
+                          'ReadySendStrategy.BeforeReplicaRedirects.patch' if before_redirect else
                           'ReadySendStrategy.BeforeOptOut.patch' if before_optout else 'ReadySendStrategy.patch')
             self.assertEqual(recorded['patch_file'], patch_name)
             self.assertEqual(recorded['patch_sha256'], hashlib.sha256(
@@ -91,6 +98,8 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
             control = (checkout / paths[0]).read_text()
             if not standalone and not before_optout:
                 self.assertIn('&& !ShouldSkipTracking(operation, in command)', control)
+            if not standalone and not before_optout and not before_redirect:
+                self.assertIn('(!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)', control)
             # Compare complete relocated blocks, so ownership behavior cannot drift
             # while the names and interfaces still happen to compile.
             mutation_helpers = ready[ready.index('    // A typed source reports'):

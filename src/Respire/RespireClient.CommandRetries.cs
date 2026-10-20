@@ -45,7 +45,7 @@ public sealed partial class RespireClient
             state, cancellationToken, deadline, observation, track, backlogConnection);
     }
 
-    private async ValueTask<RespValue> SendBackloggedImmediateRetryAsync<TCommand>(string operation, TCommand command,
+    private async ValueTask<RespValue> SendBackloggedImmediateRetryAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken token, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track) where TCommand : struct, IRespCommand
     {
@@ -63,13 +63,14 @@ public sealed partial class RespireClient
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-    private async ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, TCommand command,
+    private async ValueTask<RespValue> SendImmediateRetryCoreAsync<TCommand>(string operation, ImmediateRetryCommand<TCommand> command,
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection = null) where TCommand : struct, IRespCommand
     {
         CancellationTokenSource? timeout = null;
         var token = callerToken;
         RespireConnection? connection = null;
+        var telemetryEndpoint = _core.Endpoint;
         RespireTelemetry.OperationScope telemetry = default;
         try
         {
@@ -92,6 +93,8 @@ public sealed partial class RespireClient
                 ObjectDisposedException.ThrowIf(_core.Disposed, this);
                 var outcome = CommandWriteOutcome.DefinitelyUnwritten;
                 CircuitAdmission admission = default;
+                DedicatedConnectionPool? redirectPool = null;
+                RespireConnection? redirectConnection = null;
                 try
                 {
                     // Use the same validated ready route as default dispatch. Healthy Sentinel
@@ -109,26 +112,84 @@ public sealed partial class RespireClient
                         ? await multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false)
                         : backlogConnection ?? GetCircuitAwareConnection(multiplexer, token);
                     observation.UseEndpoint(new(connection.Host, connection.Port), token);
+                    telemetryEndpoint = new(connection.Host, connection.Port);
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
                     connection.ThrowIfRetired();
                     if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
                     ThrowIfRetryStopped(operation, token, deadline);
                     state.IsRetry = attempt > 1;
-                    var result = await connection.SendAttemptAsync(command, token, operation, deadline,
-                        repliesBeforeFinal: track ? 1 : 0, errorObservation: observation).ConfigureAwait(false);
-                    if (state.IsRetry && state.AcceptedAttempt)
-                        RespireTelemetry.RecordCommandRetry(state.Category, "attempted");
-                    outcome = result.WriteOutcome;
-                    var response = result.GetResult();
-                    if (response.IsError)
+                    for (var redirects = 0; ; redirects++)
                     {
-                        var error = ResponseReader.ServerError(in response, operation);
-                        response.Dispose();
-                        throw error;
+                        // The connection enforces the send deadline and can relax it for
+                        // maintenance. The acquisition timer must not cancel that allowance.
+                        var result = await connection.SendAttemptAsync(redirects == 0 ? command : command.WithoutTracking(),
+                            connection.ReplicaRedirectsEnabled ? callerToken : token, operation, deadline,
+                            repliesBeforeFinal: redirects == 0 && track ? 1 : 0,
+                            errorObservation: observation).ConfigureAwait(false);
+                        if (redirects == 0 && state.IsRetry && state.AcceptedAttempt)
+                            RespireTelemetry.RecordCommandRetry(state.Category, "attempted");
+                        outcome = result.WriteOutcome;
+                        RespireServerException rejection;
+                        try
+                        {
+                            var response = result.GetResult();
+                            if (!response.IsError)
+                            {
+                                admission.Success();
+                                if (state.Retries != 0) RespireTelemetry.RecordCommandRetry(state.Category, "succeeded");
+                                return response;
+                            }
+                            try { rejection = ResponseReader.ServerError(in response, operation, new(connection.Host, connection.Port)); }
+                            finally { response.Dispose(); }
+                        }
+                        catch (RespireServerException error) { rejection = error; }
+
+                        if ((redirects == 0 && !connection.ReplicaRedirectsEnabled) || CursorCommandMetadata.HasServerCursor(in command)
+                            || rejection.Code != "REDIRECT" || redirects >= ClusterRouter.RedirectLimit
+                            || !TryParseReplicaRedirect(rejection.Message, connection.Host, out var endpoint)) throw rejection;
+
+                        // Carry the source's maintenance allowance across acquisition and
+                        // later sends. IsRelaxed prevents a second hop extending it again.
+                        deadline = connection.GetReroutedCommandDeadline(deadline);
+                        timeout?.Dispose();
+                        timeout = deadline.IsSet
+                            ? CommandTimeoutCancellation.Create(callerToken,
+                                TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
+                            : null;
+                        token = timeout?.Token ?? callerToken;
+                        // REDIRECT proves this hop did not execute the command. The next hop owns
+                        // fresh write evidence, including an unwritten connection/handshake failure.
+                        outcome = CommandWriteOutcome.DefinitelyUnwritten;
+                        admission.Success();
+                        admission.Dispose();
+                        admission = default;
+                        _core.ClientCache?.FlushForContinuityLoss();
+                        command.ValidateAdmission();
+                        ThrowIfRetryStopped(operation, token, deadline);
+                        if (observation.IsEmpty)
+                            RespireTelemetry.RecordError(rejection, internallyHandled: true, redirects, new(connection.Host, connection.Port));
+                        else observation.Handled(rejection, new(connection.Host, connection.Port));
+                        if (redirectPool is not null)
+                        {
+                            var completedPool = redirectPool;
+                            redirectPool = null;
+                            completedPool.Return(redirectConnection!);
+                            redirectConnection = null;
+                            await _core.ReleaseServerPoolAsync(completedPool).ConfigureAwait(false);
+                        }
+                        telemetryEndpoint = endpoint;
+                        connection = null;
+                        observation.UseEndpoint(endpoint, token);
+                        telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
+                        redirectPool = _core.CreateServerPool(endpoint, replicaRedirect: true);
+                        redirectConnection = await RentReplicaRedirectTargetAsync(redirectPool, token).ConfigureAwait(false);
+                        connection = redirectConnection;
+                        observation.UseEndpoint(new(connection.Host, connection.Port), token);
+                        telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                        connection.ThrowIfRetired();
+                        if (_core.Circuits is not null) admission = AcquireCircuit(connection, token);
+                        ThrowIfRetryStopped(operation, token, deadline);
                     }
-                    admission.Success();
-                    if (state.Retries != 0) RespireTelemetry.RecordCommandRetry(state.Category, "succeeded");
-                    return response;
                 }
                 catch (Exception error)
                 {
@@ -144,7 +205,15 @@ public sealed partial class RespireClient
                     ThrowIfRetryStopped(operation, token, deadline);
                     state.AcceptedAttempt = false;
                 }
-                finally { admission.Dispose(); }
+                finally
+                {
+                    admission.Dispose();
+                    if (redirectPool is not null)
+                    {
+                        if (redirectConnection is not null) redirectPool.Return(redirectConnection);
+                        await _core.ReleaseServerPoolAsync(redirectPool).ConfigureAwait(false);
+                    }
+                }
             }
         }
         catch (OperationCanceledException error) when (callerToken.IsCancellationRequested
@@ -164,7 +233,8 @@ public sealed partial class RespireClient
         {
             if (finalError is not null && state.Retries != 0)
                 RespireTelemetry.RecordCommandRetry(state.Category, "exhausted");
-            try { telemetry.Complete(_core, operation, error: finalError, connection: connection); }
+            try { telemetry.Complete(operation, telemetryEndpoint.Host, telemetryEndpoint.Port,
+                _core.Options.Database, error: finalError, connection: connection); }
             catch (Exception) { /* A listener cannot replace the logical command outcome. */ }
             try { timeout?.Dispose(); }
             finally { state.Return(); }
@@ -352,12 +422,14 @@ public sealed partial class RespireClient
             writer.WriteRaw(state.Frame.Span);
         }
         public ReadCommandKind ReadKind => command.ReadKind;
+        public int CursorArgumentIndex => command.CursorArgumentIndex;
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
         public bool TryGetClusterSlot(out int slot) => state.TryGetClusterSlot(out slot);
         public bool IsConnectionProtocol => false;
         public void ValidateAdmission() => command.ValidateAdmission();
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
-        public void OnAccepted() { state.Accepted(); command.OnAccepted(); }
+        public void OnAccepted() { if (!state.AcceptedAttempt) state.Accepted(); command.OnAccepted(); }
+        internal ImmediateRetryCommand<TCommand> WithoutTracking() => new(command, state, track: false);
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in command);
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);

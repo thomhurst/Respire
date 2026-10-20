@@ -733,6 +733,51 @@ Discovery reads `SENTINEL MASTER` for `config-epoch` so a stale Sentinel cannot 
 
 Replica sources: `ReplicaEndpoints` (standalone; `Endpoints` still holds one primary, not with `UseCluster`), `SENTINEL REPLICAS` from the first well-formed Sentinel reply, or Cluster slots. A `ReadFrom` other than `Primary` without one throws `RespireConfigurationException`.
 
+Set `EnableReplicaRedirects = true` to advertise `CLIENT CAPA REDIRECT` on standalone and
+Sentinel command connections. This is opt-in because the server can direct a command to a
+different endpoint. Unsupported-command and ACL errors during capability negotiation are
+ignored, so Redis and older compatible servers keep their existing behavior.
+
+**Trust boundary:** the server chooses each redirect target, and Respire sends the configured
+authentication credentials to that target using the configured TLS settings. There is no
+redirect-target allowlist or validator. A compromised or misconfigured replica can therefore
+direct credentials to an unintended host. Enable this option only when you trust the servers
+to select destinations, and restrict network egress to trusted endpoints. TLS does not itself
+restrict which destinations a server may name. Leave the option disabled and configure the
+primary endpoint directly when you cannot grant that trust.
+
+Valkey returns `REDIRECT host:port` when a command belongs on its primary. Respire follows
+these replies for individual buffered commands, including keyless writes such as `FLUSHDB`.
+Redirects use the configured credentials, TLS, and database, and share a bounded redirect
+count and command deadline. No general retry policy is needed: the server rejected the
+command before executing it. When a retry policy is configured, each attempt can follow
+redirects within the original command deadline; transport failures still use the policy's
+write-safety rules. Cluster continues to use its existing `MOVED`/`ASK` handling.
+
+Redirect targets use temporary connections without persistent client tracking. Redirected
+reads therefore bypass client-side cache publication and invalidate existing cache continuity;
+repeated redirected reads still reach the server. Configure the primary endpoint directly
+to retain client-side caching. Persistent tracked redirect targets are planned in
+[#1910](https://github.com/thomhurst/Respire/issues/1910).
+
+Read-policy connections send `READONLY` after successful capability negotiation. Read-only
+commands, including `SCAN` and `RANDOMKEY`, can therefore keep using replicas and accept
+replica staleness; writes always use the primary route. A primary-policy connection pointed
+at a replica follows redirects for reads too, except server-cursor commands (`SCAN`, `HSCAN`,
+`SSCAN`, and `ZSCAN`). These commands keep their selected server from the first page onward
+and surface `REDIRECT` instead of moving a cursor. Use an explicit replica read policy to scan
+the replica, or configure the primary endpoint to scan the primary.
+Server-node operations, blocking commands, streamed payloads, connection-affine transactions,
+and correction-bound operations are not automatically replayed. Correction-bound operations
+include lock release and extension, distributed-cache scripts, and coordination scripts: their
+ordering barriers must retain the connection that submitted the mutation. Ordinary
+`Scripts.ExecuteAsync` calls can follow redirects. Batches
+retain their existing per-command error behavior. Prefer a primary endpoint for these APIs.
+
+The [Valkey capability documentation](https://valkey.io/commands/client-capa/) describes the
+wire reply and `READONLY` behavior. The capability exists since Valkey 8.0; Valkey 9.2 extends
+its handling of keyless commands.
+
 | `RespireReadFrom` | Behavior |
 | --- | --- |
 | `Primary` (default) | Always the primary. |
@@ -744,7 +789,7 @@ Replica sources: `ReplicaEndpoints` (standalone; `Endpoints` still holds one pri
 
 - `WithReadFrom` overrides per view and composes with `WithKeyPrefix`.
 - Only catalog read-only commands (including blocking reads like `XREAD BLOCK` and fire-and-forget reads) follow the policy. Writes, custom commands, subscriptions, batches, and transactions use the primary.
-- Without hedging, fallback happens only during selection; a written command is never resent.
+- Without hedging, fallback happens during selection. With `EnableReplicaRedirects`, an explicit server rejection can also redirect an individual command before execution.
 - Blocking reads rent a dedicated connection with no response timeout; replica connections validate `ROLE` first. Cancellation discards the connection. Removing a replica drains accepted blocking reads; disposal aborts them.
 - For blocking reads, preferred policies can switch roles once after `LOADING`, `MASTERDOWN`, or `CLUSTERDOWN`, keeping the original error if no fallback connection is available. Cancellation never triggers fallback.
 

@@ -80,7 +80,8 @@ public class DedicatedPoolRetirementTests
         };
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1 }, null);
-        var acquisition = pool.RentAsync(CancellationToken.None, armHandshakeDeadline: !fencing).AsTask();
+        var acquisition = pool.RentAsync(CancellationToken.None,
+            armHandshakeDeadline: !fencing, recoverConnection: !fencing).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await pool.RetireAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();

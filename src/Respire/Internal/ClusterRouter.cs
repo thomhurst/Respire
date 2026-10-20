@@ -1389,28 +1389,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return false;
         }
 
-        var address = message[(secondSpace + 1)..].Trim();
-        var colon = address.LastIndexOf(':');
-        if (colon < 0 || !int.TryParse(address[(colon + 1)..], out var port))
-        {
-            return false;
-        }
-
-        var host = address[..colon].Trim();
-        if (host.Length >= 2 && host[0] == '[' && host[^1] == ']')
-        {
-            host = host[1..^1];
-        }
-
-        // Redis uses ? when hostname routing is configured but the target has no announced
-        // hostname. It is not a DNS name and must not use the empty-host fallback.
-        if (host.SequenceEqual("?"))
-        {
-            return false;
-        }
-
-        endpoint = new RespireEndpoint(host.IsEmpty ? sourceHost : host.ToString(), port);
-        return true;
+        return RedirectEndpoint.TryParse(message[(secondSpace + 1)..], sourceHost, out endpoint);
     }
 
     internal static int RedirectLimit => MaxRedirects;

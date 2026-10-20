@@ -13,23 +13,32 @@ namespace Respire.Tests.Networking;
 public class ClusterReadyReplyTests
 {
     [Test]
-    [Arguments("string", false)]
-    [Arguments("string", true)]
-    [Arguments("bytes", false)]
-    [Arguments("bytes", true)]
-    [Arguments("integer", false)]
-    [Arguments("integer", true)]
-    public async Task ReadyPrimaryUsesTypedInflightSource(string shape, bool reconnectPolicy)
+    [Arguments("string", false, false)]
+    [Arguments("string", true, false)]
+    [Arguments("bytes", false, false)]
+    [Arguments("bytes", true, false)]
+    [Arguments("integer", false, false)]
+    [Arguments("integer", true, false)]
+    [Arguments("string", false, true)]
+    [Arguments("string", true, true)]
+    [Arguments("bytes", false, true)]
+    [Arguments("bytes", true, true)]
+    [Arguments("integer", false, true)]
+    [Arguments("integer", true, true)]
+    public async Task ReadyPrimaryUsesTypedInflightSource(string shape, bool reconnectPolicy, bool replicaRedirects)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.None });
         await using var server = Primary();
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
             ReconnectPolicy = reconnectPolicy ? new() : null,
+            EnableReplicaRedirects = replicaRedirects,
         });
         var operation = shape == "integer" ? "STRLEN" : "GET";
         var connection = client.Core.Cluster!.TryAcquireReadyConnection(ClusterHash.GetSlot("ready"), default)!;
         await Assert.That(connection).IsNotNull();
+        await Assert.That(connection.ReplicaRedirectsEnabled).IsFalse();
+        await Assert.That(server.ReceivedCommands.Contains("CLIENT CAPA REDIRECT")).IsFalse();
         server.SuppressReply = command => command.StartsWith(operation + " ", StringComparison.Ordinal);
         switch (shape)
         {

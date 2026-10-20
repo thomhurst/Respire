@@ -218,7 +218,7 @@ public class DedicatedHandshakeTests
             return;
         }
 
-        var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false);
+        var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false, recoverConnection: false);
         pool.Return(control);
         var ordinary = await pool.RentAsync(CancellationToken.None);
         await Assert.That(ordinary).IsSameReferenceAs(control);
@@ -240,7 +240,7 @@ public class DedicatedHandshakeTests
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1 }, null);
         using var caller = new CancellationTokenSource();
-        var pending = pool.RentAsync(caller.Token, armHandshakeDeadline: false).AsTask();
+        var pending = pool.RentAsync(caller.Token, armHandshakeDeadline: false, recoverConnection: false).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (disposePool)
             await pool.DisposeAsync();
