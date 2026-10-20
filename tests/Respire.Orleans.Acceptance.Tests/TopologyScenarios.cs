@@ -22,14 +22,22 @@ public partial class SiloScenarios
         await using var connections = new ProviderConnections(ClusterOptions(redis), shared: true);
         var serviceId = Guid.NewGuid().ToString("N");
         var clusterId = Guid.NewGuid().ToString("N");
-        await using var silo = BuildSilo(connections, serviceId, clusterId);
-        await silo.Start();
-        var table = silo.Host.Services.GetRequiredService<IMembershipTable>();
+        // Own the probe table until migration completes. A live silo's heartbeat can invalidate
+        // WATCH on the membership hash even when its table version has not changed.
+        await using var table = new RedisMembershipTable(
+            Microsoft.Extensions.Options.Options.Create(new RedisClusteringOptions
+            {
+                CreateMultiplexer = _ => connections.Create("migration-probe")
+            }),
+            Microsoft.Extensions.Options.Options.Create(new ClusterOptions { ServiceId = serviceId, ClusterId = clusterId }));
+        await table.InitializeMembershipTable(true);
         var key = (string)RedisClusteringOptions.DefaultCreateRedisKey(new() { ServiceId = serviceId, ClusterId = clusterId })!;
         var slot = (int)await redis.Command(0, "KEYSLOT", key);
         var source = Math.Min(slot / 5461, 2);
         var target = (source + 1) % 3;
         var before = await table.ReadAll();
+        Assert.Empty(before.Members);
+        Assert.Equal(0, before.Version.Version);
         await redis.BeginMigration(source, target, slot, key);
         try
         {
@@ -41,8 +49,10 @@ public partial class SiloScenarios
                     HostName = "localhost", SiloName = "migration-probe", Status = SiloStatus.Joining,
                     StartTime = DateTime.UtcNow, IAmAliveTime = DateTime.UtcNow
                 };
-                Assert.True(await table.InsertRow(entry, before.Version.Next()));
+                var accepted = await table.InsertRow(entry, before.Version.Next());
                 var inserted = await table.ReadRow(entry.SiloAddress);
+                Assert.True(accepted,
+                    $"ASK insert returned false: before={before.Version.Version}, observed={inserted.Version.Version}, rows={inserted.Members.Count}.");
                 var row = Assert.Single(inserted.Members);
                 Assert.Equal(before.Version.Next().Version, inserted.Version.Version);
                 Assert.False(await table.InsertRow(entry, inserted.Version.Next())); // duplicate
@@ -58,15 +68,20 @@ public partial class SiloScenarios
                 Assert.Equal(inserted.Version.Next().Version, updated.Version.Version);
                 Assert.Equal(SiloStatus.ShuttingDown, Assert.Single(updated.Members).Item1.Status);
                 Assert.Equal(heartbeat, Assert.Single(updated.Members).Item1.IAmAliveTime);
+                // The synthetic row is not a real silo and must not enter membership discovery.
+                await table.DeleteMembershipTableEntries(clusterId);
             }
         }
         finally
         {
-            // Restore routability before host shutdown even when an assertion fails.
+            // Restore routability even when an assertion fails.
             await redis.FinishMigration(target, slot);
         }
 
-        // The existing adapter has cached the old route. A new silo writes membership through it.
+        // The same adapter has cached the old route (ASK must not replace it). Real silos now
+        // initialize and write membership through MOVED without racing the controlled probe.
+        await using var silo = BuildSilo(connections, serviceId, clusterId);
+        await silo.Start();
         await using var joined = BuildSilo(connections, serviceId, clusterId);
         await joined.Start();
         Assert.Equal(2, (await table.ReadAll()).Members.Count(row => row.Item1.Status == SiloStatus.Active));
