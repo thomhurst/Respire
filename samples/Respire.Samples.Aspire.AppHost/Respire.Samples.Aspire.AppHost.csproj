@@ -10,6 +10,8 @@
     <PackageReference Include="Aspire.Hosting.AppHost" />
     <PackageReference Include="Aspire.Hosting.Redis" />
     <PackageReference Include="Aspire.Hosting.Valkey" />
+    <!-- Select the centrally managed security patch instead of Aspire's transitive minimum. -->
+    <PackageReference Include="MessagePack" />
     <ProjectReference Include="../Respire.Samples.Aspire.Api/Respire.Samples.Aspire.Api.csproj" />
   </ItemGroup>
 </Project>

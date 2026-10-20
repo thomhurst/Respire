@@ -9,6 +9,8 @@
   <ItemGroup>
     <ProjectReference Include="../../samples/Respire.Samples.Aspire.AppHost/Respire.Samples.Aspire.AppHost.csproj" />
     <PackageReference Include="Aspire.Hosting.Testing" />
+    <!-- Match the AppHost's patched MessagePack dependency in the test host. -->
+    <PackageReference Include="MessagePack" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
   </ItemGroup>
