@@ -140,7 +140,8 @@ public sealed partial class RespireJobQueue<T>
             [jobId, bytes, (long)Math.Ceiling(options.DeduplicationWindow.TotalMilliseconds),
                 (long)Math.Ceiling(options.Delay.TotalMilliseconds), options.Priority,
                 (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), trace.Parent, trace.State,
-                options.Group ?? string.Empty], cancellationToken).ConfigureAwait(false);
+                options.Group ?? string.Empty, (long)Math.Ceiling(options.MaximumRuntime?.TotalMilliseconds ?? 0),
+                options.MaximumRuntime is null ? string.Empty : Guid.NewGuid().ToString("N")], cancellationToken).ConfigureAwait(false);
         trace.Succeeded = true;
         return new(new(result[0].AsString()), result[1].AsInteger() == 1);
     }

@@ -142,7 +142,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
   retry backoff, bounded enqueue deduplication, distributed round-robin job groups, scoped handlers, visibility recovery, dead letters,
   queue-wide pause/resume and shared fixed-window admission limits, per-group concurrency leases,
   GCRA rate limits and pause/resume,
-  fenced progress and bounded per-job logs, retained completion events, enqueue-to-processing trace links, nested
+  fenced progress and bounded per-job logs, resumable jobs with durable checkpoints and cooperative runtime slices,
+  retained completion events, enqueue-to-processing trace links, nested
   parent/child flows with retained results and failure policies, flat batches with atomic
   success/failure/completion callback publication, progress counts, cooperative cancellation and dashboard monitoring, and durable
   UTC cron/fixed-interval schedules with cross-instance tick deduplication and missed-tick policies.

@@ -17,6 +17,19 @@ public sealed record RespireJob<T>(string Id, T Payload, RespireStreamId EntryId
 
     void IJobDelivery.Attach(JobProgress progress) => _progress = progress;
 
+    /// <summary>Reads the last durable checkpoint, or null before the first save.</summary>
+    public ValueTask<RespireJobCheckpoint?> ReadCheckpointAsync(CancellationToken cancellationToken = default)
+        => (_progress ?? throw new InvalidOperationException("Checkpoints require a hosted resumable job."))
+            .ReadCheckpointAsync(cancellationToken);
+
+    /// <summary>Saves a cursor, up to 4096 state bytes and optional progress. False means this delivery lost ownership or expired.</summary>
+    /// <remarks>The cursor must fit 1024 UTF-8 bytes. Await saves before returning. On cancellation,
+    /// use a separate bounded token to save the final checkpoint before leaving the handler.</remarks>
+    public ValueTask<bool> SaveCheckpointAsync(string cursor, byte[] state, int? percent = null,
+        CancellationToken cancellationToken = default)
+        => (_progress ?? throw new InvalidOperationException("Checkpoints require a hosted resumable job."))
+            .SaveCheckpointAsync(cursor, state, percent, cancellationToken);
+
     /// <summary>Returns Ack with an owned copy of a binary result for this flow node.</summary>
     /// <remarks>Return this from the handler. Only a current, successful flow delivery persists the result.
     /// Ordinary jobs do not retain results. Results must not exceed 4 KiB; flow state is rewritten on each completion.</remarks>

@@ -653,6 +653,71 @@ On Redis 8.2+, these transitions also require `COMMAND INFO` to detect `XACKDEL`
 or acknowledging. Denied discovery fails the transition and leaves the original delivery pending.
 Older servers retain acknowledged entries for trimming. Expiry does not remove the deduplication record.
 
+## Resumable jobs and checkpoints
+
+Set `RespireJobEnqueueOptions.MaximumRuntime` on `EnqueueScheduledAsync` (or transactional
+`EnqueueScheduled`) to opt a job into checkpointed processing. Register **every worker for
+that queue** with non-null `RespireJobQueueOptions`, as for delayed jobs. For example:
+
+```csharp
+using System.Text;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<string>(client, "imports", Encoding.UTF8.GetBytes);
+await queue.EnqueueScheduledAsync("large-import", "source.csv", new RespireJobEnqueueOptions
+{
+    MaximumRuntime = TimeSpan.FromSeconds(30),
+});
+```
+
+In the handler, call `await job.ReadCheckpointAsync(token)` to restore the last cursor and
+state; it returns null before the first save. After each completed unit of work, await
+`job.SaveCheckpointAsync(nextCursor, stateBytes, percent, token)`. A checkpoint stores a
+cursor of at most 1024 UTF-8 bytes, at most 4096 binary state bytes, and optional progress
+from 0 to 100. State is returned as owned `ReadOnlyMemory<byte>`. A save returning false
+means that this delivery expired or lost ownership; stop doing work for that delivery.
+
+The runtime cap cancels the handler token. Observe it between units of work and in awaited
+operations. Let an `OperationCanceledException` propagate after any cancellation cleanup;
+when the handler token is cancelled, this tells the worker to stage another run without
+spending the failure budget. The next run reads the last saved checkpoint. Returning an
+explicit result after runtime expiry keeps its normal meaning: `Ack` completes the job and
+deletes its checkpoint, `Nack` spends the failure budget, `RetryAfter(...)` retains its retry
+delay and spends the failure budget, and `DeadLetter` dead-letters the job. Other exceptions
+still count as failures, while
+worker crashes still count as abandoned deliveries under the configured delivery limit.
+The cap is cooperative: a handler that ignores cancellation cannot be forcibly stopped.
+
+Graceful shutdown also cancels resumable handlers immediately. If a final checkpoint is
+needed, save it using a **separate bounded cancellation token** in the handler's cleanup,
+and await the save before rethrowing the cancellation exception. The worker then requeues
+with a bounded cleanup token. Returning a result during shutdown does not request this
+budget-free yield; if processing is already cancelled, the delivery remains pending for recovery.
+If the process is killed before requeueing, visibility-timeout recovery on another worker
+reads the last successful save. Set the visibility timeout above the longest runtime slice
+plus cleanup time, or use a group concurrency lease, to avoid overlapping live runs.
+
+Checkpoint writes check the pending entry's consumer and delivery count, and the group lease
+when present. Each enqueue has its own checkpoint identity; reusing an application job ID
+after deduplication expires starts fresh. Acknowledging success deletes the checkpoint
+atomically with completion. A job's TTL also expires its checkpoint. Without a TTL, pending
+and dead-letter checkpoints remain until successful completion or explicit operator cleanup;
+include `:checkpoint:*` keys when removing an abandoned queue. Dashboard dead-letter retry
+retains any checkpoint that has not expired. Manually deleting stream entries does not delete
+their checkpoints.
+
+The dashboard shows the cursor and optional percentage for its bounded page of pending jobs,
+without showing application state. `RespireJobCheckpoints.ReadAsync(client, stream, entryId)`
+provides the same inspection for a retained ready-stream entry. Checkpoint operations need
+GET/SET on the queue's `:checkpoint:*` keys, and successful completion additionally needs DEL.
+All keys stay in the queue's Cluster slot and honor client key prefixes.
+
+Checkpointing does not make external effects exactly once. Make each unit idempotent: a
+crash between an external effect and saving its cursor can repeat that unit. Redis persistence
+and replication settings determine checkpoint durability across Redis failures.
+
 ## Recurring and cron jobs
 
 Create a scheduler from a typed producer to manage durable recurring schedules:

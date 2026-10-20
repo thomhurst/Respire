@@ -122,10 +122,26 @@ internal static class DashboardPage
         else if (stream.Pending.Length == 0) html.Append("<p class=\"empty\">No pending deliveries in this group.</p>");
         else
         {
-            html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Entry</th><th scope=\"col\">Consumer</th><th scope=\"col\">Idle seconds</th><th scope=\"col\">Deliveries</th></tr></thead><tbody>");
+            html.Append("<div class=\"table-wrap\"><table><thead><tr><th scope=\"col\">Entry</th><th scope=\"col\">Consumer</th><th scope=\"col\">Idle seconds</th><th scope=\"col\">Deliveries</th>");
+            if (config.IsJobQueue) html.Append("<th scope=\"col\">Checkpoint</th>");
+            html.Append("</tr></thead><tbody>");
             foreach (var entry in stream.Pending)
+            {
                 html.Append("<tr><td class=\"key\">").Append(E(entry.Id.ToString())).Append("</td><td>").Append(E(entry.Consumer))
-                    .Append("</td><td>").Append(entry.IdleTime.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).Append("</td><td>").Append(N(entry.DeliveryCount)).Append("</td></tr>");
+                    .Append("</td><td>").Append(entry.IdleTime.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).Append("</td><td>").Append(N(entry.DeliveryCount)).Append("</td>");
+                if (config.IsJobQueue)
+                {
+                    html.Append("<td>");
+                    if (stream.Checkpoints?.TryGetValue(entry.Id, out var checkpoint) == true && checkpoint is not null)
+                    {
+                        html.Append(E(checkpoint.Cursor));
+                        if (checkpoint.Percent is { } percent) html.Append(" · ").Append(N(percent)).Append('%');
+                    }
+                    else html.Append('—');
+                    html.Append("</td>");
+                }
+                html.Append("</tr>");
+            }
             html.Append("</tbody></table></div>");
         }
         html.Append("</section><section class=\"section\"><h3>Dead letters</h3>");

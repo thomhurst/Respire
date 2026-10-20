@@ -53,7 +53,8 @@ public sealed partial class RespireJobQueue<T>
             [jobId, bytes, (long)Math.Ceiling(options.DeduplicationWindow.TotalMilliseconds),
                 (long)Math.Ceiling(options.Delay.TotalMilliseconds), options.Priority,
                 (long)Math.Ceiling(options.TimeToLive?.TotalMilliseconds ?? 0), parent, state,
-                options.Group ?? string.Empty]);
+                options.Group ?? string.Empty, (long)Math.Ceiling(options.MaximumRuntime?.TotalMilliseconds ?? 0),
+                options.MaximumRuntime is null ? string.Empty : Guid.NewGuid().ToString("N")]);
     }
 
     private IPendingSink GetTransactionSink(RespireTransactionBase transaction)

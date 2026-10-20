@@ -106,6 +106,10 @@ internal static class JobQueueScheduling
         if ARGV[9] and ARGV[9] ~= '' then
             table.insert(fields, '_respire.job.group'); table.insert(fields, ARGV[9])
         end
+        if ARGV[10] and tonumber(ARGV[10]) > 0 then
+            table.insert(fields, '_respire.job.runtime'); table.insert(fields, ARGV[10])
+            table.insert(fields, '_respire.job.checkpoint'); table.insert(fields, ARGV[11])
+        end
         if ARGV[7] and ARGV[7] ~= '' then
             table.insert(fields, 'traceparent'); table.insert(fields, ARGV[7])
             if ARGV[8] and ARGV[8] ~= '' then table.insert(fields, 'tracestate'); table.insert(fields, ARGV[8]) end
@@ -212,6 +216,9 @@ internal static class JobQueueScheduling
         -- ARGV[4] is both the fenced delivery count and this copy's contribution;
         -- a newly staged copy starts its consumer-group delivery count from zero.
         local attempts = tonumber(field(fields, '_respire.job.attempts', '0')) + tonumber(ARGV[4])
+        -- A cooperative yield does not spend this run's failure budget. Earlier
+        -- abandoned deliveries of the same entry still count toward the limit.
+        if ARGV[7] == 'yield' then attempts = attempts - 1 end
         local updated = false
         for i = 1, #fields, 2 do
             if fields[i] == '_respire.job.attempts' then fields[i+1] = tostring(attempts); updated = true end
