@@ -73,6 +73,7 @@ $requiredPackages = @(
     'Respire.AI'
     'Respire.TimeSeries'
     'Respire.Testing.Containers'
+    'Respire.Testing.StackExchangeCompat'
 )
 
 $allowedExternalPackages = @(

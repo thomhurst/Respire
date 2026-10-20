@@ -46,6 +46,27 @@ General rules:
 - Unsupported members throw `NotSupportedException` with guidance on the native API.
 - Exceptions are native Respire types (for example `RespireServerException`). Update handlers that catch StackExchange.Redis exceptions.
 
+## Test without a Redis server
+
+`Respire.Testing.StackExchangeCompat` provides `RespireFakeConnection`, an async-disposable
+fixture exposing `IConnectionMultiplexer` and `IDatabase` over in-memory pipes:
+
+```csharp
+using Respire.Testing.StackExchangeCompat;
+
+await using var fixture = new RespireFakeConnection();
+var database = fixture.Connection.GetDatabase();
+await database.HashSetAsync("session", "status", "active");
+```
+
+Only the intersection of this adapter and the fake server is supported, in database zero.
+The default fixture owns the server; a constructor-supplied `RespireFakeServer` stays caller-owned.
+Dispose fixtures before borrowed servers. Unsupported members, commands and database selections
+fail explicitly. This does not promise general StackExchange.Redis test-suite compatibility.
+See [in-memory testing](in-memory-testing.md#stackexchangeredis-test-fixtures) for setup,
+ownership, limitations, and direct composition with
+`RespireConnectionMultiplexer.Create(server.CreateOptions())`.
+
 ## Execute native commands with StackExchange.Redis values
 
 ### Public type names during migration

@@ -85,6 +85,7 @@ pipeline tracks it in `RespireContentPackageProjects`.
 | [`Respire.Serialization.MemoryPack`](fundamentals/values-and-serialization.md#binary-serializer-packages) | MemoryPack serializer and DI registration |
 | [`Respire.Compression.Zstd`](guides/value-codecs.md) | Optional Zstandard value codec |
 | [`Respire.Testing`](guides/in-memory-testing.md) | In-memory RESP test server |
+| [`Respire.Testing.StackExchangeCompat`](guides/in-memory-testing.md#stackexchangeredis-test-fixtures) | In-memory fixture for the supported StackExchange.Redis compatibility subset |
 | [`Respire.Testing.Containers`](guides/testing-containers.md) | Redis and Valkey container fixtures |
 
 - `Respire.Analyzers` ships inside the core `Respire` package, not as its own package.
