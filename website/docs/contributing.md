@@ -128,11 +128,15 @@ When a compatible update is available, update the affected dependency and commit
 `website/package-lock.json`. Check the resolved paths:
 
 ```shell
-npm explain whatwg-encoding uuid --prefix website
+npm explain whatwg-encoding --prefix website
+npm explain uuid --prefix website
 npm ls @easyops-cn/docusaurus-search-local cheerio encoding-sniffer @docusaurus/core webpack-dev-server sockjs --prefix website
 ```
 
-After removal, `npm explain` reports that the removed packages are absent. Repeat a
+Run each `npm explain` command separately: an absent package produces a
+`No dependencies found matching` error and exit status 1. This is expected after
+that package is removed. A combined command can succeed for the remaining package
+without reporting the missing one. Repeat a
 clean `npm ci`, the production build and search check, and the development-server
 check before removing these notes. Keep install warnings visible while the upstream
 release work remains outstanding.
