@@ -16,7 +16,10 @@ The examples below are native Respire code and compile in the documentation snip
 
 ## Concepts and common calls
 
-Here `cli` is a FreeRedis client and `redis` is a Respire client or key-prefixed view.
+Here `cli` is a FreeRedis client, `client` is the unprefixed Respire root client, and `redis`
+is that client or a key-prefixed view. Search commands require the unprefixed root client;
+key-prefixed views reject them. Preserve physical document prefixes (for example, `app:product:`)
+in the index definition's `Prefixes` instead.
 
 | FreeRedis | Respire | Migration detail |
 | --- | --- | --- |
@@ -31,7 +34,7 @@ Here `cli` is a FreeRedis client and `redis` is a Respire client or key-prefixed
 | `cli.Multi()` / `tran.Exec()` | `redis.CreateTransaction()` / `await transaction.CommitAsync()` | A transaction is atomic; a batch is not. |
 | `cli.Subscribe(channel, ondata)` | `await redis.SubscribeAsync(channel)` | Replace the callback with `await foreach`; dispose the subscription. |
 | `cli.Publish(channel, payload)` | `await redis.PublishAsync(channel, payload)` | Channels are separate from key prefixes. |
-| `cli.FtSearch(...).Execute()` | `await redis.Search.SearchAsync(index, query)` | Install `Respire.Search` and import `using Respire.Search;`; `query` is a `RespireSearchQuery`. Translate the query and result projection; see the [complete module example](nredisstack-migration.md#search-json-and-time-series-together). |
+| `cli.FtSearch(...).Execute()` | `await client.Search.SearchAsync(index, query)` | Use the unprefixed root client. Install `Respire.Search` and import `using Respire.Search;`; `query` is a `RespireSearchQuery`. Translate the query and result projection; see the [complete module example](nredisstack-migration.md#search-json-and-time-series-together). |
 
 ## Connection, prefixes, and pipelining
 

@@ -52,6 +52,8 @@ dotnet add package Respire.TimeSeries
 This complete Respire example uses raw JSON text to keep the stored document shape explicit.
 Run it on a server with JSON, Search, and TimeSeries support and an unused `migration-products`
 index name. For an existing index, skip creation and keep its existing schema and name.
+The initial scan of existing documents runs in the background, so the example waits for
+`FT.INFO` to report indexing complete, with a 30-second deadline, before searching.
 
 ```csharp
 using Respire;
@@ -74,6 +76,12 @@ await redis.Search.CreateIndexAsync("migration-products", new RespireSearchIndex
     Prefixes = ["product:"],
     Fields = [new("$.name", RespireSearchFieldType.Text) { Alias = "name" }],
 });
+using var indexingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+while ((await redis.Search.GetIndexInfoAsync("migration-products", indexingDeadline.Token))
+    .Properties["indexing"].Scalar != "0")
+{
+    await Task.Delay(50, indexingDeadline.Token);
+}
 var matches = await redis.Search.SearchAsync("migration-products", new RespireSearchQuery(
     RespireSearchExpression.FromRaw("@name:tea"),
     new RespireSearchQueryOptions { Dialect = 2, Limit = (0, 10) }));
