@@ -438,6 +438,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         }
 
         SslStream? tlsStream = null;
+        RespireConnection connection;
         try
         {
             if (!isUnixSocket) ApplyTcpKeepAlive(socket, options);
@@ -474,6 +475,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             {
                 throw TranslateConnectCancellation(error, cancellationToken, options, host, port);
             }
+
+            // Keep ownership here until logging and construction both succeed.
+            logger?.ConnectionConnected(host, port);
+            connection = new RespireConnection(socket, tlsStream, host, port, options, logger);
         }
         catch (Exception error)
         {
@@ -490,8 +495,6 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        logger?.ConnectionConnected(host, port);
-        var connection = new RespireConnection(socket, tlsStream, host, port, options, logger);
         try
         {
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);

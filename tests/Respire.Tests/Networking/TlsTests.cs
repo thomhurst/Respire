@@ -47,7 +47,7 @@ public class TlsTests
             }, deadline.Token);
             await client.PingAsync(deadline.Token);
             await servers.WaitAsync(deadline.Token);
-            await Assert.That(names.ToArray()).IsEquivalentTo(["sentinel.example", "sentinel.example"]);
+            await Assert.That(names.ToArray()).IsEquivalentTo(new string?[] { "sentinel.example", "sentinel.example" });
             await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
         }
         finally
