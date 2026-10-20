@@ -14,22 +14,23 @@ public class DecoratorTrackingTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task EarlyReleaseWakesDecoratedWaiterDuringMutation(bool hashField)
+    public async Task EarlyReleaseInvalidatesDecoratedRegistrationDuringMutation(bool hashField)
     {
-        var expiryRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var hook = new ExpiryHook(hashField ? "HPTTL" : "PTTL", expiryRead);
+        var invalidated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var options = Redis.CreateOptions() with
         {
             Protocol = RespireProtocol.Resp3, Connections = 1,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         };
         await using var ownerClient = await RespireClient.ConnectAsync(options);
-        await using var waiterClient = await RespireClient.ConnectAsync(options with { CommandHook = hook });
+        await using var waiterClient = await RespireClient.ConnectAsync(options);
         var prefix = SharedRespireContainer.Prefix("decorator");
         var owner = new RespireCoordination(ownerClient.WithKeyPrefix(prefix));
         var proxy = DispatchProxy.Create<IRespireClient, ForwardingClient>();
         ((ForwardingClient)proxy).Inner = waiterClient.WithKeyPrefix(prefix);
-        var waiter = new RespireCoordination(proxy);
+        // Registration supports forwarding decorators, but coordination wait admission
+        // deliberately requires a built-in client whose routing can be verified.
+        var waiter = new RespireCoordination(waiterClient.WithKeyPrefix(prefix));
         var duration = TimeSpan.FromSeconds(30);
         await using IAsyncDisposable holder = hashField
             ? await owner.TryAcquireLeaseAsync("lease", "worker", duration)
@@ -38,29 +39,25 @@ public class DecoratorTrackingTests
         var cache = (ClientSideCacheCoordinator)waiterClient.ClientSideCache!;
         var mutation = cache.BeginUnknownMutation();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        Task<IAsyncDisposable>? pending = null;
+        using var subscription = cache.SubscribeInvalidations(prefix + "lease", notification =>
+        {
+            if ((notification.Reasons & RespireClientCacheInvalidationReason.ServerInvalidation) != 0)
+                invalidated.TrySetResult();
+        }, cancellation.Token);
         try
         {
-            pending = AcquireAsync(waiter, hashField, duration, cancellation.Token);
-            await expiryRead.Task.WaitAsync(cancellation.Token);
-            await Assert.That(pending.IsCompleted).IsFalse();
+            await CoordinationCommandHooks.TrackAsync(proxy, "lease",
+                hashField ? (RespireKey)"worker" : (RespireKey?)null, cancellation.Token);
+            await Assert.That(cache.Count).IsEqualTo(0);
+            await Assert.That(invalidated.Task.IsCompleted).IsFalse();
             await holder.DisposeAsync();
-            await using var acquired = await pending;
-            pending = null;
+            await invalidated.Task.WaitAsync(cancellation.Token);
+            await using var acquired = await AcquireAsync(waiter, hashField, duration, cancellation.Token);
             await Assert.That(cache.Count).IsEqualTo(0);
         }
         finally
         {
-            try
-            {
-                await cancellation.CancelAsync();
-                if (pending is not null)
-                {
-                    try { await using var acquired = await pending; }
-                    catch (OperationCanceledException) { }
-                }
-            }
-            finally { cache.CompleteMutation(in mutation, succeeded: false); }
+            cache.CompleteMutation(in mutation, succeeded: false);
         }
     }
 
@@ -69,18 +66,6 @@ public class DecoratorTrackingTests
         => hashField
             ? await coordination.AcquireLeaseAsync("lease", "worker", duration, token)
             : await coordination.AcquireFencedLockAsync("lease", "counter", duration, token);
-
-    private sealed class ExpiryHook(string command, TaskCompletionSource completed) : RespireCommandHook
-    {
-        public override object? OnExecuting(RespireCommandContext context) => null;
-
-        public override void OnCompleted(RespireCommandContext context, object? state,
-            RespireCommandOutcome outcome, Exception? error)
-        {
-            if (context.Command == command && outcome == RespireCommandOutcome.Succeeded)
-                completed.TrySetResult();
-        }
-    }
 
     public class ForwardingClient : DispatchProxy, IRespireNameResolver
     {
