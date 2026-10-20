@@ -738,6 +738,14 @@ Sentinel command connections. This is opt-in because the server can direct a com
 different endpoint. Unsupported-command and ACL errors during capability negotiation are
 ignored, so Redis and older compatible servers keep their existing behavior.
 
+**Trust boundary:** the server chooses each redirect target, and Respire sends the configured
+authentication credentials to that target using the configured TLS settings. There is no
+redirect-target allowlist or validator. A compromised or misconfigured replica can therefore
+direct credentials to an unintended host. Enable this option only when you trust the servers
+to select destinations, and restrict network egress to trusted endpoints. TLS does not itself
+restrict which destinations a server may name. Leave the option disabled and configure the
+primary endpoint directly when you cannot grant that trust.
+
 Valkey returns `REDIRECT host:port` when a command belongs on its primary. Respire follows
 these replies for individual buffered commands, including keyless writes such as `FLUSHDB`.
 Redirects use the configured credentials, TLS, and database, and share a bounded redirect

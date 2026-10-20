@@ -244,6 +244,9 @@ public sealed record RespireOptions
 
     /// <summary>Advertise Valkey's CLIENT CAPA REDIRECT and follow standalone replica redirects for individual commands.</summary>
     /// <remarks>Disabled by default. Replica read connections also request READONLY when the capability succeeds.
+    /// Redirect targets are chosen by the server and receive the configured authentication credentials and TLS settings.
+    /// There is no redirect-target allowlist: a compromised or misconfigured server can direct credentials to an unintended host.
+    /// Enable only when you trust the servers to select destinations; restrict network egress to trusted endpoints.
     /// Server-cursor commands, endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>
     public bool EnableReplicaRedirects { get; init; }
 
