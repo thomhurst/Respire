@@ -22,7 +22,11 @@ await using var client = await RespireClient.ConnectAsync(new RespireOptions
 The client kernel must support MPTCP (Linux 5.6 or later, built with `CONFIG_MPTCP`
 and enabled with `net.mptcp.enabled=1`). Respire requests `IPPROTO_MPTCP` (262)
 directly, while retaining socket buffers, TCP_NODELAY, keepalive, TLS and connection
-timeouts. DNS addresses are tried in order with a fresh socket for each attempt.
+timeouts. On Linux, DNS addresses are tried sequentially with a fresh socket for
+each attempt, sharing one `ConnectTimeout` budget. An unreachable first address can
+consume that budget before later addresses are tried. This also applies when native
+socket creation falls back to TCP; disable the option to restore the default .NET
+hostname-connect path.
 The option applies again on reconnect, and is retained for discovered Cluster nodes,
 replicas, Sentinel, pub/sub and dedicated connections.
 
@@ -31,7 +35,8 @@ and suitable path-manager configuration, such as `ip mptcp endpoint` and limits.
 Enabling the client option alone does not make an ordinary Redis TCP listener use
 multiple paths. See the [Linux MPTCP documentation](https://www.kernel.org/doc/html/v6.12/networking/mptcp.html).
 
-If native socket creation returns `EINVAL`, `EPROTONOSUPPORT` or `ENOPROTOOPT`,
+If the libc library or its `socket` entry point cannot be loaded, or native socket
+creation returns `EINVAL`, `EPROTONOSUPPORT` or `ENOPROTOOPT`,
 Respire opens ordinary TCP and emits the Information event `MultipathTcpFallback`
 (143) through `LoggerFactory`. Other creation, configuration and connection errors
 remain errors. On platforms other than Linux, the option uses ordinary TCP and emits

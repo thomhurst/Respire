@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Respire.Networking;
 
-internal static partial class MultipathTcpSocket
+internal static class MultipathTcpSocket
 {
     internal static async Task<Socket> ConnectAsync(RespireEndpoint endpoint, RespireConnectionOptions options,
         ILogger? logger, CancellationToken cancellationToken)
@@ -59,7 +59,8 @@ internal static partial class MultipathTcpSocket
     internal static Socket CreateLinux(AddressFamily family, ILogger? logger,
         Func<int, int, int, int>? createSocket = null)
     {
-        // Linux ABI values, not the managed enums. SOCK_CLOEXEC prevents descriptor inheritance.
+        // Linux ABI values for .NET's supported architectures, not the managed enums.
+        // These values are not portable to MIPS or SPARC. SOCK_CLOEXEC prevents descriptor inheritance.
         var domain = family switch
         {
             AddressFamily.InterNetwork => 2,
@@ -69,9 +70,18 @@ internal static partial class MultipathTcpSocket
         const int streamCloseOnExec = 1 | 0x80000;
         const int protocolMptcp = 262;
         // ProtocolType casts are rejected by System.Native on .NET 8 and .NET 10.
-        var descriptor = createSocket is null
-            ? SocketNative(domain, streamCloseOnExec, protocolMptcp)
-            : createSocket(domain, streamCloseOnExec, protocolMptcp);
+        int descriptor;
+        try
+        {
+            descriptor = createSocket is null
+                ? SocketNative(domain, streamCloseOnExec, protocolMptcp)
+                : createSocket(domain, streamCloseOnExec, protocolMptcp);
+        }
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException)
+        {
+            logger?.MultipathTcpFallback($"Linux socket binding unavailable: {error.GetType().Name}");
+            return new Socket(family, SocketType.Stream, ProtocolType.Tcp);
+        }
         if (descriptor == -1)
         {
             var error = Marshal.GetLastPInvokeError();
@@ -92,6 +102,9 @@ internal static partial class MultipathTcpSocket
         catch { handle.Dispose(); throw; }
     }
 
-    [LibraryImport("libc", EntryPoint = "socket", SetLastError = true)]
-    private static partial int SocketNative(int domain, int type, int protocol);
+    // This blittable signature needs no generated marshalling. DllImport avoids the
+    // LibraryImport generator's SkipLocalsInit, which violates our initialization policy.
+    [DllImport("libc", EntryPoint = "socket", ExactSpelling = true, SetLastError = true,
+        CallingConvention = CallingConvention.Cdecl)]
+    private static extern int SocketNative(int domain, int type, int protocol);
 }

@@ -41,6 +41,29 @@ public class MultipathTcpTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MissingNativeBindingFallsBackWithLog(bool missingEntryPoint)
+    {
+        var logger = new CaptureLogger();
+        Exception error = missingEntryPoint ? new EntryPointNotFoundException() : new DllNotFoundException();
+        using var socket = MultipathTcpSocket.CreateLinux(AddressFamily.InterNetwork, logger, (_, _, _) => throw error);
+        await Assert.That(socket.ProtocolType).IsEqualTo(ProtocolType.Tcp);
+        await Assert.That(logger.Messages.Single()).Contains(error.GetType().Name);
+    }
+
+    [Test]
+    public async Task UnrelatedBindingExceptionsAreNotHidden()
+    {
+        var logger = new CaptureLogger();
+        var error = new InvalidOperationException("unrelated binding failure");
+        var actual = await Assert.That(() => MultipathTcpSocket.CreateLinux(
+            AddressFamily.InterNetwork, logger, (_, _, _) => throw error)).Throws<InvalidOperationException>();
+        await Assert.That(actual).IsSameReferenceAs(error);
+        await Assert.That(logger.Messages).IsEmpty();
+    }
+
+    [Test]
     [Arguments(1)]
     [Arguments(13)]
     [Arguments(24)]
