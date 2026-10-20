@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -32,11 +33,13 @@ public enum RespireSetWhen
 public partial interface IRespireStringCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<string?[]> GetManyAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(1)]
     ValueTask<T?[]> GetManyAsync<T>(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -335,12 +338,14 @@ public partial interface IRespireStringCommands
 internal sealed partial class StringCommands(RespireClient client) : IRespireStringCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<string?[]> GetManyAsync(RespireKey key, CancellationToken cancellationToken)
         => GetManyAsync([key], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(1)]
     public ValueTask<T?[]> GetManyAsync<T>(RespireKey key, CancellationToken cancellationToken)
         => GetManyAsync<T>([key], cancellationToken);
 

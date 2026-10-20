@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -62,6 +63,7 @@ public sealed partial class RespireClient
         => Keys.DeleteAsync(keys, cancellationToken);
 
     /// <summary>Deletes one key with cancellation. Redis: DEL.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
         => DeleteAsync([key], cancellationToken);
 

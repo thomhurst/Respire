@@ -1510,6 +1510,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     // Batches and transactions
     /// <summary>Creates a transaction watching one key with cancellation. Redis: WATCH.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(RespireKey watchKey, CancellationToken cancellationToken)
         => CreateTransactionAsync([watchKey], cancellationToken);
 

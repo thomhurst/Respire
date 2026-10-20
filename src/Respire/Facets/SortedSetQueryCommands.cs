@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -9,9 +10,11 @@ namespace Respire;
 public partial interface IRespireSortedSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> IntersectCountAsync(RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     ValueTask<long> IntersectCountAsync(long limit, RespireKey key, CancellationToken cancellationToken);
 
     /// <summary>One random UTF-8 member, or null when absent. Redis: ZRANDMEMBER (6.2+).</summary>
@@ -60,10 +63,12 @@ public partial interface IRespireSortedSetCommands
 internal sealed partial class SortedSetCommands
 {
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> IntersectCountAsync(RespireKey key, CancellationToken cancellationToken)
         => IntersectCountAsync([key], cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    [OverloadResolutionPriority(1)]
     public ValueTask<long> IntersectCountAsync(long limit, RespireKey key, CancellationToken cancellationToken)
         => IntersectCountAsync(limit, [key], cancellationToken);
 
