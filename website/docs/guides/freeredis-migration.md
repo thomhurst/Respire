@@ -31,7 +31,7 @@ Here `cli` is a FreeRedis client and `redis` is a Respire client or key-prefixed
 | `cli.Multi()` / `tran.Exec()` | `redis.CreateTransaction()` / `await transaction.CommitAsync()` | A transaction is atomic; a batch is not. |
 | `cli.Subscribe(channel, ondata)` | `await redis.SubscribeAsync(channel)` | Replace the callback with `await foreach`; dispose the subscription. |
 | `cli.Publish(channel, payload)` | `await redis.PublishAsync(channel, payload)` | Channels are separate from key prefixes. |
-| `cli.FtSearch(...).Execute()` | `await redis.Search.SearchAsync(index, query)` | Install `Respire.Search`; translate the query and result projection. |
+| `cli.FtSearch(...).Execute()` | `await redis.Search.SearchAsync(index, query)` | Install `Respire.Search` and import `using Respire.Search;`; `query` is a `RespireSearchQuery`. Translate the query and result projection; see the [complete module example](nredisstack-migration.md#search-json-and-time-series-together). |
 
 ## Connection, prefixes, and pipelining
 
