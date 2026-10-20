@@ -39,6 +39,44 @@ The container requires Docker Compose and uses Redis 7. Set
 Stop the app with Ctrl+C and run `docker compose down` to remove the local container.
 The generated README covers configuration and custom HTTP ports.
 
+### Aspire starter
+
+After installing the same template package, use `respire-aspire` for an AppHost
+and minimal API with an Aspire-managed Redis container:
+
+```powershell
+dotnet new respire-aspire -n MyRedisApp
+cd MyRedisApp
+dotnet build MyRedisApp.slnx
+cd MyRedisApp.AppHost
+aspire start --non-interactive
+aspire wait api --non-interactive --timeout 120
+aspire describe --non-interactive
+```
+
+You need .NET SDK **10.0.401 or later**, [Aspire CLI](https://aspire.dev/get-started/install-cli/)
+**13.6 or later**, a running Docker-compatible runtime, and a trusted development
+certificate (`dotnet dev-certs https --trust`). The starter uses Aspire 13.6.1
+hosting packages and Redis 8.10. Add `--isolated` to `aspire start` when running
+multiple copies.
+
+Use the API HTTP URL shown by `describe` or the dashboard; ports are dynamic.
+`WithReference` supplies Redis credentials and `WaitFor` gates API startup on
+Redis readiness. The API establishes its client connection before serving
+`/health/ready`; `/health/live` checks only the running API. Send a JSON string to
+`PUT /values/hello`, then call `GET /values/hello` to read it back. Values expire
+after five minutes; a missing value returns HTTP 404.
+
+`Aspire.Respire` registers the client, Redis health check, and Respire traces and
+metrics. Logs and telemetry export to the Aspire dashboard through its injected
+OTLP configuration. See the generated README for runnable requests and
+[Aspire integration](integrations/aspire.md) for configuration options.
+
+Run `aspire stop --non-interactive` from the AppHost directory to stop its API,
+dashboard and Redis container. This starter uses no persistent volume, so Redis
+data is discarded. For a larger example including Valkey and HTTP caching, see
+the [Aspire sample](integrations/aspire-sample.md).
+
 Templates are shipped with Respire releases. Generated Respire package references
 use that same version. To remove the templates, run
 `dotnet new uninstall Respire.Templates`.

@@ -1,6 +1,7 @@
 <#
 Installs the packed template into a private hive, builds a renamed standalone app,
 and checks readiness and cache-aside across app restarts against an owned Redis.
+Also builds the Aspire starter and runs its AppHost, API and Redis through Aspire testing.
 Use -UseAgentGuard for all local agent invocations.
 #>
 [CmdletBinding()]
@@ -48,6 +49,54 @@ function Invoke-DotNet([string[]]$CommandArguments) {
     if ($UseAgentGuard) { & $guard -SingleNode -DotNetArguments $CommandArguments }
     else { & dotnet @CommandArguments }
     if ($LASTEXITCODE -ne 0) { throw "dotnet $($CommandArguments[0]) failed: $LASTEXITCODE" }
+}
+
+function Test-AspireTemplate {
+    $aspireApp = Join-Path $scratch 'Renamed.Aspire-Store'
+    Invoke-DotNet @('new', 'respire-aspire', '-n', 'Renamed.Aspire-Store', '-o', $aspireApp, '--debug:custom-hive', $hive)
+    $projects = @(Get-ChildItem -LiteralPath $aspireApp -Recurse -Filter '*.csproj')
+    if ($projects.Count -ne 2) { throw 'Expected an AppHost and API in the Aspire starter.' }
+    $respireReferences = @()
+    foreach ($project in $projects) {
+        [xml]$xml = Get-Content -LiteralPath $project.FullName -Raw
+        $respireReferences += @($xml.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Respire") or starts-with(@Include, "Aspire.Respire")]'))
+        foreach ($reference in $xml.SelectNodes('/Project/ItemGroup/ProjectReference')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $project.DirectoryName $reference.Include))) {
+                throw "Broken generated project reference: $($reference.Include)"
+            }
+        }
+    }
+    if ($respireReferences.Count -ne 1 -or $respireReferences[0].Include -ne 'Aspire.Respire' -or $respireReferences[0].Version -cne $Version) {
+        throw 'Expected Aspire.Respire stamped with the packed version.'
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $aspireApp -Recurse -File -Force) {
+        if ($file.FullName -match '[\\/]\.template\.config[\\/]' -or
+            $file.Name.Contains('Respire.Aspire-Starter') -or
+            (Get-Content -LiteralPath $file.FullName -Raw).Contains('Respire.Aspire-Starter')) {
+            throw "Unreplaced template name or leaked metadata: $($file.FullName)"
+        }
+    }
+    $appHost = Join-Path $aspireApp 'Renamed.Aspire-Store.AppHost/Renamed.Aspire-Store.AppHost.csproj'
+    [xml]$hostProject = Get-Content -LiteralPath $appHost -Raw
+    $aspireVersion = $hostProject.SelectSingleNode('/Project/Sdk[@Name="Aspire.AppHost.Sdk"]').Version
+    foreach ($reference in $hostProject.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Aspire.Hosting.")]')) {
+        if ($reference.Version -cne $aspireVersion) { throw 'Aspire hosting SDK and package versions differ.' }
+    }
+    $restore = @("-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
+    Invoke-DotNet (@('build', (Join-Path $aspireApp 'Renamed.Aspire-Store.slnx'), '-c', 'Release', '-warnaserror') + $restore)
+
+    # A fixture outside the checkout tests the generated AppHost, not the repository sample.
+    # Aspire testing assigns ports and disposes only the resources it starts, including Redis.
+    $smoke = Join-Path $scratch 'AspireSmoke'
+    New-Item -ItemType Directory -Path $smoke | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'template-smoke/Program.cs') -Destination $smoke
+    $smokeProject = Join-Path $smoke 'AspireSmoke.csproj'
+    (Get-Content (Join-Path $PSScriptRoot 'template-smoke/AspireSmoke.csproj.template') -Raw).
+        Replace('__ASPIRE_VERSION__', $aspireVersion) | Set-Content -LiteralPath $smokeProject
+    Invoke-DotNet (@('build', $smokeProject, '-c', 'Release', '-warnaserror') + $restore)
+    # DCP launches the already-built API; --no-build keeps restores out of the runtime check.
+    Invoke-DotNet @('run', '--project', $smokeProject, '-c', 'Release', '--no-build') *> (Join-Path $evidence 'aspire-smoke.log')
+    Write-Output 'PASS: Aspire template install, rename, version stamping, standalone solution build and AppHost smoke.'
 }
 
 function Stop-App {
@@ -153,6 +202,8 @@ try {
         $other = Invoke-RestMethod "$url/values/other" -TimeoutSec 10
         if (-not $other.value -or $other.value -eq $first.value) { throw 'Distinct cache keys reused the same value.' }
         Write-Output 'PASS: package install, rename, standalone build, readiness, cache hit, Redis expiry and app restart.'
+        Stop-App
+        Test-AspireTemplate
     }
     finally { Pop-Location }
 }

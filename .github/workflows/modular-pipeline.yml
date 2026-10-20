@@ -91,7 +91,7 @@ jobs:
         shell: pwsh
         run: ./scripts/Verify-GettingStarted.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
 
-      - name: Install and run project templates against Redis
+      - name: Install and run API and Aspire project templates against Redis
         shell: pwsh
         run: ./scripts/Verify-Templates.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
 

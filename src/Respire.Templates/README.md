@@ -20,4 +20,21 @@ readiness check, and optional OpenTelemetry OTLP export. See the generated READM
 for endpoints, configuration, and cleanup. Requires the .NET 10 SDK and Docker
 (or an existing Redis 7+ server).
 
+For an Aspire AppHost and minimal API with Redis, health checks and dashboard telemetry:
+
+```sh
+dotnet new respire-aspire -n MyRedisApp
+cd MyRedisApp
+dotnet build MyRedisApp.slnx
+cd MyRedisApp.AppHost
+aspire start --non-interactive
+```
+
+The `respire-aspire` starter requires .NET SDK 10.0.401+, Aspire CLI 13.6+, a running
+Docker-compatible runtime, and a trusted development certificate
+(`dotnet dev-certs https --trust`). Aspire supplies Redis credentials and dynamic
+endpoints. Use `aspire describe --non-interactive` to find the API URL and
+`aspire stop --non-interactive` from the AppHost directory to stop its resources.
+See the generated README for requests, telemetry and cleanup.
+
 [Getting started](https://respire.tomlonghurst.dev/docs/getting-started#project-template)
