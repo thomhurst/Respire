@@ -1,0 +1,33 @@
+# These exceptions apply only to this integration suite, not src/ or samples/.
+# Keep other Respire diagnostics enabled, especially ownership of pooled results.
+
+[*Tests.cs]
+# Tests own clients for their isolated database, protocol, topology, credentials,
+# or cache options and dispose them at the end of the scenario. Sharing an
+# application-lifetime client would break that isolation. Client creation inside
+# loops also deliberately covers separate nodes or connection configurations.
+dotnet_diagnostic.RESP010.severity = none
+
+# Whole-collection reads below verify the complete, small fixture, including
+# absence of unexpected members. Paging would change the behavior under test.
+# Keep RESP011 enabled in other files; audit fixture bounds before adding one.
+
+# Seeded hash/set/list/sorted-set fixtures for batching and cache invalidation.
+[{BatchFacetIntegrationTests,ClientSideCacheIntegrationTests}.cs]
+dotnet_diagnostic.RESP011.severity = none
+
+# Fixed parity fixtures, including state preservation after rejected commands.
+[{FakeListParityTests,FakeSetParityTests,FakeSortedSetParityTests}.cs]
+dotnet_diagnostic.RESP011.severity = none
+
+# Small seeded lists and sorted sets, copied/moved/stored results, and missing keys.
+[{KeySerializationIntegrationTests,KeySortIntegrationTests,ListMoveManyIntegrationTests,MultiKeyListPopIntegrationTests,SetManyIfNotExistsIntegrationTests,SortedSetCombineOptionsIntegrationTests,SortedSetQueryIntegrationTests,Valkey92IntegrationTests}.cs]
+dotnet_diagnostic.RESP011.severity = none
+
+# Complete typed/binary/codec round trips over explicitly seeded fixture members.
+[{PrimitiveValueInteroperabilityTests,SortedSetBulkInputTests,TypedCommandIntegrationTests,TypedValueIntegrationTests,ValueCodecIntegrationTests}.cs]
+dotnet_diagnostic.RESP011.severity = none
+
+[ServerNodeIntegrationTests.cs]
+# KEYS itself is under test against a dedicated container containing one key.
+dotnet_diagnostic.RESP011.severity = none
