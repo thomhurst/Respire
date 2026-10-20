@@ -266,7 +266,12 @@ public sealed partial class RespireClient
         end
         if ttl > 0 then
           redis.call('HSET', KEYS[1], 'value', ARGV[4], 'duration', ARGV[5], 'version', ARGV[2], 'stale', ARGV[8], 'retained', 0)
-          redis.call('PEXPIRE', KEYS[1], ttl + tonumber(ARGV[8]))
+          if ARGV[7] == '1' then
+            -- PEXPIRE can sample a later millisecond than TIME; retain the supplied deadline.
+            redis.call('PEXPIREAT', KEYS[1], tonumber(ARGV[6]) + tonumber(ARGV[8]))
+          else
+            redis.call('PEXPIRE', KEYS[1], ttl + tonumber(ARGV[8]))
+          end
         else
           redis.call('DEL', KEYS[1])
         end
