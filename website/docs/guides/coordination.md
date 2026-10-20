@@ -29,6 +29,16 @@ property on `RespireClient` or `IRespireClient`. It returns one wrapper per clie
 views get their own), including its `RateLimiters` factory, and does no network I/O. On older
 language versions, use `new RespireCoordination(client)`. The coordinator never disposes the client.
 
+Notification-driven waits (`RespireFairLock.AcquireAsync`, `AcquireFencedLockAsync`, and
+`AcquireLeaseAsync`) require a built-in `RespireClient` or one of its key-prefixed views,
+primary reads, active client-side caching, and `ClientSideCache.NoLoop = false`. Cache tracking
+prefixes must cover the physical lease key (the hash key for field leases), plus the queue key
+for fair locks. These APIs reject custom `IRespireClient` implementations and decorators,
+including those that forward or wrap the built-in cache, with `RespireConfigurationException`
+before subscribing or sending wait commands: the interfaces do not expose enough information
+to verify read routing and tracking guarantees. Pass the underlying supported client or view
+to `RespireCoordination` when using these waits.
+
 ## Fair FIFO locks
 
 `CreateFairLock` creates a non-reentrant `RespireFairLock` view. Each acquisition joins a

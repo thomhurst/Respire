@@ -12,15 +12,8 @@ internal static class RespireNotificationWaiter
         CancellationToken cancellationToken)
         where TTarget : struct, IRespireNotificationWaitTarget<TResult>
     {
-        var cache = client.ClientSideCache
-            ?? throw new RespireConfigurationException(
-                "Notification-driven coordination waits require RESP3 client-side caching and tracking.");
-        // Read tracking metadata from the shared cache so forwarding client decorators
-        // receive the same validation as root clients and prefixed views.
-        if (cache is ClientSideCacheCoordinator { NoLoop: true })
-            throw new RespireConfigurationException(
-                "Notification-driven coordination waits require ClientSideCache.NoLoop=false so same-client releases wake waiters.");
         var physicalKey = client.ResolveKey(key).Snapshot();
+        var cache = CoordinationWaitAdmission.Validate(client, physicalKey);
         using var signal = new SemaphoreSlim(0, 1);
         using var subscription = cache.SubscribeInvalidations(physicalKey, invalidation =>
         {

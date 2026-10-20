@@ -476,6 +476,9 @@ public sealed class RespireCoordination
     /// <remarks>
     /// Requires RESP3 client-side caching/tracking with <c>ClientSideCache.NoLoop=false</c>.
     /// NOLOOP suppresses same-client release notifications and is rejected before waiting.
+    /// Requires a built-in <see cref="RespireClient"/> or its views, primary reads, and active
+    /// cache tracking coverage for the physical lease key. Custom clients and decorators whose
+    /// routing and tracking cannot be verified are rejected before subscribing or sending commands.
     /// Subscribe-before-check ordering avoids missed
     /// wakeups; every wake retries the atomic acquisition script, so a notification never grants
     /// ownership. Notifications are hints and can be coalesced. The lease PTTL schedules one
@@ -603,8 +606,10 @@ public sealed class RespireCoordination
     /// <remarks>
     /// Requires RESP3 client-side caching/tracking with <c>ClientSideCache.NoLoop=false</c>
     /// and Redis 7.4 or later. NOLOOP suppresses same-client release notifications and is
-    /// rejected before waiting. With a concrete
-    /// <see cref="RespireClient"/>, reliable cleanup after an uncertain acquisition also requires
+    /// rejected before waiting. Requires a built-in <see cref="RespireClient"/> or its views,
+    /// primary reads, and active cache tracking coverage for the physical hash key. Custom clients
+    /// and decorators whose routing and tracking cannot be verified are rejected before subscribing
+    /// or sending commands. Reliable cleanup after an uncertain acquisition also requires
     /// Redis <c>CLIENT ID</c> and <c>CLIENT KILL</c> permissions.
     /// </remarks>
     public ValueTask<RespireCoordinationLease> AcquireLeaseAsync(
