@@ -460,7 +460,14 @@ internal sealed partial class DedicatedConnectionPool(
             _connections.Remove(entry.Connection);
             SignalAvailabilityLocked();
             if (failure is null) entry.Closed!.TrySetResult();
-            else entry.Closed!.TrySetException(failure);
+            else
+            {
+                entry.Closed!.TrySetException(failure);
+                // Return, idle eviction and Stop can close entries without a DiscardAsync
+                // waiter. The pool owns observation; awaiting Closed still preserves the
+                // failure for discarders, as does the shared retirement completion.
+                _ = entry.Closed.Task.Exception;
+            }
             CompleteIfDrainedLocked();
         }
         if (failure is not null)

@@ -274,8 +274,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
         {
             // Test teardown before every optional connection was opened.
         }
-
-        await Task.WhenAll(connections);
+        finally
+        {
+            // Stop can race AcceptSocketAsync with a socket/disposal failure instead of
+            // cancellation. Every handler already started still belongs to this loop.
+            await Task.WhenAll(connections);
+        }
     }
 
     private async Task HandleConnectionAsync(Socket socket, int connectionId)

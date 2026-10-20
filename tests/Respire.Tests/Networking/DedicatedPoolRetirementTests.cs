@@ -224,6 +224,20 @@ public class DedicatedPoolRetirementTests
         await pool.DisposeAsync();
     }
 
+    [Test]
+    public async Task DiscardPreservesCleanupFailure()
+    {
+        await using var server = new FakeRespServer();
+        var logger = new FailingDisconnectLogger();
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            RespireConnectionOptions.Default, logger);
+        var connection = await pool.RentAsync(CancellationToken.None);
+        var error = await Assert.That(async () => await pool.DiscardAsync(connection))
+            .ThrowsExactly<InvalidOperationException>();
+        await Assert.That(error).IsSameReferenceAs(logger.Failure);
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
     private sealed class FailingDisconnectLogger : ILogger
     {
         internal readonly InvalidOperationException Failure = new("Test disconnect failure.");
