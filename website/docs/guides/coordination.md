@@ -308,9 +308,10 @@ before sending wait commands: Redis would suppress same-client release notificat
 mutation notifications occur before writes commit. Redis needs no `notify-keyspace-events` flags.
 The immediate `TryAcquireFencedLockAsync` API does not require tracking and can use `NoLoop = true`.
 
-Client decorators used for notification waits must forward or implement
-`IRespireClient.RegisterKeyTrackingAsync(key, field, cancellationToken)`. This applies to fenced
-locks, hash-field leases, and fair locks. The capability performs a fresh `GET` or `HGET` without
+Client decorators can forward or implement
+`IRespireClient.RegisterKeyTrackingAsync(key, field, cancellationToken)` for explicit tracking
+registration. This capability alone does not admit decorators to coordination waits: use a
+built-in client or view for those APIs, as described above. Registration performs a fresh `GET` or `HGET` without
 using, populating, or coalescing cache entries, even while another mutation fences cache publication.
 Forward the logical key and unchanged field through your normal routing and authorization policies;
 the inner client's key prefix is applied once. Respire calls the decorator directly and does not
