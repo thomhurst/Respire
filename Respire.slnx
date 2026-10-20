@@ -25,6 +25,7 @@
     <Project Path="samples/Respire.Samples.VectorData/Respire.Samples.VectorData.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Respire.Templates/Respire.Templates.csproj" />
     <Project Path="src/Respire.AI/Respire.AI.csproj" />
     <Project Path="src/Aspire.Respire/Aspire.Respire.csproj" />
     <Project Path="src/Aspire.Respire.DistributedCaching/Aspire.Respire.DistributedCaching.csproj" />

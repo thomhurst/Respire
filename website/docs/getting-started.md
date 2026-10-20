@@ -10,6 +10,42 @@ Build a small ASP.NET Core API that stores a user, publishes updates, and reads 
 
 Respire targets both `net8.0` and `net10.0`. For an existing .NET 8 app, use a **C# 13 or newer compiler** (SDK 9 or newer) and set `<LangVersion>13</LangVersion>` or higher in its `.csproj`. The .NET 8 SDK's C# 12 compiler cannot call Respire's `params ReadOnlySpan<T>` APIs in expanded form. You can keep `<TargetFramework>net8.0</TargetFramework>` while building with the .NET 10 SDK.
 
+## Project template
+
+For a ready-to-run cache-aside API, install the template package with the **.NET 10 SDK**:
+
+Choose the exact template version from its
+[GitHub release](https://github.com/thomhurst/Respire/releases), including the
+`-rc.N` suffix for a release candidate. Replace `<exact-version>` below before running
+the command. Before the first stable template release, an unversioned install
+cannot select a candidate.
+
+```bash
+dotnet new install Respire.Templates@<exact-version>
+dotnet new respire-api -n MyCacheApi
+cd MyCacheApi
+docker compose up -d --wait
+dotnet run
+```
+
+Open `http://localhost:5080/health/ready`, then request
+`http://localhost:5080/values/hello` twice. The API caches a generated value for five
+minutes. Replace its factory with your database or service lookup. The starter
+includes a shared DI client, Redis readiness checks, and OpenTelemetry traces and
+metrics. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable export to your collector.
+
+The container requires Docker Compose and uses Redis 7. Set
+`ConnectionStrings__Redis` to use an existing Redis 7+ server instead.
+Stop the app with Ctrl+C and run `docker compose down` to remove the local container.
+The generated README covers configuration and custom HTTP ports.
+
+Templates are shipped with Respire releases. Generated Respire package references
+use that same version. To remove the templates, run
+`dotnet new uninstall Respire.Templates`.
+
+The walkthrough below builds a different example by hand, with typed values,
+pub/sub, and batching.
+
 ## 1. Create the app
 
 ```bash

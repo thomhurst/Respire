@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <!--
-      Projects that ship as NuGet packages, one per line. Add a new package project here.
+      Library projects that ship as NuGet packages, one per line. Add a new library package here.
       Whitespace is stripped and the list gets a leading ';', so membership is an exact ';Name;' match.
       _RespireValidatePackageProjectList (below) fails the build when a listed name has no project under
       src/, or when a src/ project is neither listed nor in RespireNonPackageProjects.
@@ -59,9 +59,14 @@
       Respire.Testing.Containers;
     </RespirePackageProjects>
     <_RespirePackageProjectList>;$([System.Text.RegularExpressions.Regex]::Replace('$(RespirePackageProjects)', '\s', ''))</_RespirePackageProjectList>
+    <!-- Content-only packages have no shipping assembly or public API baseline. -->
+    <RespireContentPackageProjects>;Respire.Templates;</RespireContentPackageProjects>
     <IsRespirePackageProject>false</IsRespirePackageProject>
     <IsRespirePackageProject Condition="$(_RespirePackageProjectList.Contains(';$(MSBuildProjectName);'))">true</IsRespirePackageProject>
+    <IsRespireContentPackageProject>false</IsRespireContentPackageProject>
+    <IsRespireContentPackageProject Condition="$(RespireContentPackageProjects.Contains(';$(MSBuildProjectName);'))">true</IsRespireContentPackageProject>
     <IsPackable>$(IsRespirePackageProject)</IsPackable>
+    <IsPackable Condition="'$(IsRespireContentPackageProject)' == 'true'">true</IsPackable>
     <!-- src/ projects that deliberately do not ship as their own package. -->
     <RespireNonPackageProjects>;Respire.Analyzers;</RespireNonPackageProjects>
   </PropertyGroup>
@@ -83,12 +88,13 @@
   <Target Name="_RespireValidatePackageProjectList" BeforeTargets="Build" Condition="'$(MSBuildProjectName)' == 'Respire'">
     <ItemGroup>
       <_RespireListedPackageProject Include="$([MSBuild]::Unescape($(_RespirePackageProjectList)))" />
+      <_RespireListedPackageProject Include="$(RespireContentPackageProjects)" />
       <_RespireSourceProject Include="$(MSBuildThisFileDirectory)src/*/*.csproj" />
     </ItemGroup>
     <Error Condition="!Exists('$(MSBuildThisFileDirectory)src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj')"
-           Text="RespirePackageProjects lists '%(_RespireListedPackageProject.Identity)', but src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj does not exist." />
-    <Error Condition="!$(_RespirePackageProjectList.Contains(';%(_RespireSourceProject.Filename);')) And !$(RespireNonPackageProjects.Contains(';%(_RespireSourceProject.Filename);'))"
-           Text="src project '%(_RespireSourceProject.Filename)' is not in RespirePackageProjects or RespireNonPackageProjects in Directory.Build.props." />
+           Text="The package inventory lists '%(_RespireListedPackageProject.Identity)', but src/%(_RespireListedPackageProject.Identity)/%(_RespireListedPackageProject.Identity).csproj does not exist." />
+    <Error Condition="!$(_RespirePackageProjectList.Contains(';%(_RespireSourceProject.Filename);')) And !$(RespireContentPackageProjects.Contains(';%(_RespireSourceProject.Filename);')) And !$(RespireNonPackageProjects.Contains(';%(_RespireSourceProject.Filename);'))"
+           Text="src project '%(_RespireSourceProject.Filename)' is not in RespirePackageProjects, RespireContentPackageProjects or RespireNonPackageProjects in Directory.Build.props." />
   </Target>
 
   <Target Name="_RespireValidateLibraryNaming" BeforeTargets="PrepareForBuild"
@@ -110,7 +116,7 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+  <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true' Or '$(IsRespireContentPackageProject)' == 'true'">
     <IsAotCompatible>true</IsAotCompatible>
     <Authors>Tom Hurst</Authors>
     <Company>Respire</Company>
@@ -142,6 +148,8 @@
   <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">
     <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
     <!-- The package's buildTransitive targets include the two PublicAPI files as AdditionalFiles. -->
+  </ItemGroup>
+  <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true' Or '$(IsRespireContentPackageProject)' == 'true'">
     <Content Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="/" />
     <None Include="$(RepositoryRoot)assets/nuget/icon.png" Pack="true" PackagePath="/" />
   </ItemGroup>

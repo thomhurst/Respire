@@ -9,7 +9,7 @@ Each library uses one name for its NuGet package, assembly, and root namespace: 
 
 ## Public API review and deprecation
 
-Every shipping package has a checked-in public API baseline in
+Every shipping library package has a checked-in public API baseline in
 `src/<package>/PublicAPI.Shipped.txt` and `PublicAPI.Unshipped.txt`. Both net8.0 and net10.0
 check the same baseline: the packages expose the same public surface on both frameworks.
 These baselines were seeded from the pre-2.0 API; the filename does not declare a stable release.
@@ -44,6 +44,11 @@ Packing also runs SDK package validation. See [Contributing API changes](contrib
 for the released-package baseline, intentional-break process, and experimental API exceptions.
 
 ## Choose a package
+
+[`Respire.Templates`](getting-started.md#project-template) installs project starters
+with `dotnet new install Respire.Templates`. It contains template files rather than
+a runtime assembly, so it has no namespace or public API baseline. The release
+pipeline tracks it in `RespireContentPackageProjects`.
 
 | Package, assembly, and root namespace | Purpose |
 | --- | --- |

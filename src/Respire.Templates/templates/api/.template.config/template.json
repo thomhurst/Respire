@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Tom Hurst",
+  "classifications": ["Web", "Redis", "Cache"],
+  "identity": "Respire.Templates.Api.CSharp",
+  "name": "Respire cache-aside API",
+  "description": "A minimal API with Respire cache-aside, health checks and OpenTelemetry.",
+  "shortName": "respire-api",
+  "sourceName": "RespireApi",
+  "preferNameDirectory": true,
+  "tags": { "language": "C#", "type": "project" }
+}
