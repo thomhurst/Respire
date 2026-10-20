@@ -5,6 +5,49 @@ description: Configure endpoints, timeouts, reconnects, and connection lifecycle
 
 # Connections and options
 
+## Multipath TCP on Linux
+
+Set `RespireOptions.EnableMultipathTcp = true` to request Linux Multipath TCP (MPTCP)
+for built-in TCP connections. It defaults to `false`. The dependency injection builder
+and configuration binding expose the same option.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("redis.example.com", 6379)],
+    EnableMultipathTcp = true,
+});
+```
+
+The client kernel must support MPTCP (Linux 5.6 or later, built with `CONFIG_MPTCP`
+and enabled with `net.mptcp.enabled=1`). Respire requests `IPPROTO_MPTCP` (262)
+directly, while retaining socket buffers, TCP_NODELAY, keepalive, TLS and connection
+timeouts. On Linux, DNS addresses are tried sequentially with a fresh socket for
+each attempt, sharing one `ConnectTimeout` budget. An unreachable first address can
+consume that budget before later addresses are tried. This also applies when native
+socket creation falls back to TCP; disable the option to restore the default .NET
+hostname-connect path.
+The option applies again on reconnect, and is retained for discovered Cluster nodes,
+replicas, Sentinel, pub/sub and dedicated connections.
+
+Multiple paths also require an MPTCP-enabled server listener or terminating proxy
+and suitable path-manager configuration, such as `ip mptcp endpoint` and limits.
+Enabling the client option alone does not make an ordinary Redis TCP listener use
+multiple paths. See the [Linux MPTCP documentation](https://www.kernel.org/doc/html/v6.12/networking/mptcp.html).
+
+If the libc library or its `socket` entry point cannot be loaded, or native socket
+creation returns `EINVAL`, `EPROTONOSUPPORT` or `ENOPROTOOPT`,
+Respire opens ordinary TCP and emits the Information event `MultipathTcpFallback`
+(143) through `LoggerFactory`. Other creation, configuration and connection errors
+remain errors. On platforms other than Linux, the option uses ordinary TCP and emits
+the same event. If the remote server or a middlebox does not negotiate MPTCP, Linux
+transparently continues over one TCP path; this kernel negotiation does not emit a
+Respire fallback event.
+
+`ConnectionFactory` takes precedence, including factories supplied by proxy helpers:
+the factory owns the transport and must configure MPTCP itself. Unix sockets ignore
+the option. Neither override emits a TCP fallback event.
+
 For deployments that advertise internal node addresses, see [node address mapping](../guides/node-address-mapping.md).
 
 Connect with a URI for the common case, or with `RespireOptions` for explicit control. This page covers connection strings, timeouts, protocol, Cluster, Sentinel, and replica reads.

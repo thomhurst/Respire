@@ -66,6 +66,8 @@ are described in the guides below; the remaining pre-release work is tracked sep
 
 ### Connections, routing, and recovery
 
+- Opt-in [Linux Multipath TCP](fundamentals/connections.md#multipath-tcp-on-linux), with logged local TCP fallback.
+
 - A [timeouts and thread-pool starvation guide](guides/timeouts.md) explains timeout
   snapshots, scheduling diagnostics, and StackExchange.Redis v3 message equivalents.
 - [Physical connection hooks](guides/connection-hooks.md) for auditing, timing, and rejection,

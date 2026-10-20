@@ -2,6 +2,8 @@
 Respire.RespireProxy
 static Respire.RespireProxy.Socks5(Respire.RespireEndpoint proxy, string? username = null, string? password = null) -> System.Func<Respire.RespireEndpoint, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.IO.Stream!>>!
 static Respire.RespireProxy.HttpConnect(Respire.RespireEndpoint proxy, string? username = null, string? password = null) -> System.Func<Respire.RespireEndpoint, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.IO.Stream!>>!
+Respire.RespireOptions.EnableMultipathTcp.get -> bool
+Respire.RespireOptions.EnableMultipathTcp.init -> void
 Respire.IRespireGeoCommands.SearchAsync(Respire.RespireKey key, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions), System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Respire.RespireGeoSearchResult[]!>
 Respire.IRespireGeoCommands.SearchStoreAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions), bool storeDistance = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<long>
 Respire.IRespireBatchGeoCommands.Search(Respire.RespireKey key, Respire.RespireGeoSearchShape shape, Respire.RespireGeoSearchOptions options = default(Respire.RespireGeoSearchOptions)) -> Respire.RespirePending<Respire.RespireGeoSearchResult[]!>!
