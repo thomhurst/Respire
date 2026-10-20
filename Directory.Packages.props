@@ -23,8 +23,6 @@
     <PackageVersion Include="FluentAssertions" Version="8.11.0" />
     <PackageVersion Include="K4os.Compression.LZ4" Version="1.3.8" />
     <PackageVersion Include="MessagePack" Version="3.1.12" />
-    <!-- Keep Aspire's MessagePack 2.x dependency on the patched release for GHSA-qhrr-8q5h-9q3h. -->
-    <PackageVersion Update="MessagePack" Version="2.5.307" Condition="'$(MSBuildProjectName)' == 'Respire.Samples.Aspire.AppHost' Or '$(MSBuildProjectName)' == 'Aspire.Respire.IntegrationTests'" />
     <PackageVersion Include="MemoryPack" Version="1.21.4" />
     <PackageVersion Include="protobuf-net" Version="3.4.30" />
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.32" Condition="'$(TargetFramework)' == 'net8.0'" />
