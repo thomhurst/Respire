@@ -15,6 +15,7 @@ internal static class DashboardScripts
                     if name == '_respire.job.id' then identity = value end
                     if name == '_respire.job.deduplication' then mode = value end
                     if name == '_respire.job.flow' or name == '_respire.job.batch'
+                        or name == '_respire.job.batch_callback'
                         or name == '_respire.job.schedule' then separateLifecycle = true end
                 end
                 if separateLifecycle then mode = 'Separate lifecycle' end

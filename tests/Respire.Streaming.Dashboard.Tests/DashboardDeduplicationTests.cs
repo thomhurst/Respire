@@ -10,6 +10,41 @@ namespace Respire.Streaming.Dashboard.Tests;
 public class DashboardDeduplicationTests(RedisTestContainer redis)
 {
     [Test]
+    public async Task BatchCallbacksUseSeparateLifecycle()
+    {
+        await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var queue = new RespireJobQueue<string>(client, "batch-callback-policy", Encoding.UTF8.GetBytes);
+        await queue.CreateBatchAsync(new()
+        {
+            OnSuccess = new("success", "success-secret"),
+            OnComplete = new("complete", "complete-secret"),
+        }, "batch");
+        await queue.SealBatchAsync("batch");
+        await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
+        var entries = await client.Streams.ReadGroupOnceAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, "worker", new() { Count = 2 });
+        await Assert.That(entries.Length).IsEqualTo(2);
+        var options = new RespireDashboardOptions();
+        options.Streams.Add(new() { Name = "batch-callback-policy", Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup, IsJobQueue = true });
+
+        var snapshot = await new DashboardState(client, options).ReadAsync(default);
+        var policies = snapshot.Streams[0].Deduplication!;
+        await Assert.That(policies.Count).IsEqualTo(2);
+        foreach (var entry in entries)
+        {
+            await Assert.That(entry.GetString("_respire.job.batch_callback")).IsNotNull();
+            await Assert.That(policies[entry.Id].Identity).IsEqualTo(entry.GetString("_respire.job.id"));
+            await Assert.That(policies[entry.Id].Mode).IsEqualTo("Separate lifecycle");
+        }
+        await Assert.That(snapshot.Streams[0].Error).IsNull();
+        var html = DashboardPage.Render(snapshot, "/workers", "token", "value");
+        await Assert.That(html).Contains("Separate lifecycle");
+        await Assert.That(html).DoesNotContain("FirstSubmissionWins");
+        await Assert.That(html).DoesNotContain("success-secret");
+        await Assert.That(html).DoesNotContain("complete-secret");
+    }
+
+    [Test]
     public async Task RecurringTicksUseSeparateLifecycle()
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
