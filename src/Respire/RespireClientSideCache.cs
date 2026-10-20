@@ -212,7 +212,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     private const int MaxIdleQueryStates = 256;
 
     private readonly RespireClientSideCacheOptions _options;
-    internal bool NoLoop => _options.NoLoop;
     private readonly ClientCachePrefixSet _keyPrefixes;
     private readonly ConcurrentDictionary<RespireKey, InflightRead> _inflight = new();
     private readonly Lock _queryLock = new();
@@ -241,6 +240,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     public int Count => Volatile.Read(ref _store).Count;
 
     internal bool ReuseHashFields => _options.ReuseHashFields;
+
+    internal bool NoLoop => _options.NoLoop;
 
     public long SizeBytes => Volatile.Read(ref _store).SizeBytes;
 
