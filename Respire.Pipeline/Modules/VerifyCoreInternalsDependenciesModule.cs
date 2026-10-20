@@ -20,6 +20,23 @@ public class VerifyCoreInternalsDependenciesModule : Module<string>
     internal static async Task<string> VerifyAsync(string repositoryRoot, string packagesPath, string version,
         CancellationToken cancellationToken)
     {
+        // PowerShell's Unix startup profile is shared even with -NoProfile. Concurrent
+        // hosts can corrupt it (PowerShell/PowerShell#26528, dotnet/runtime#121977).
+        // Isolate before pwsh starts; changing this inside the script is too late.
+        var cache = OperatingSystem.IsWindows() ? null : Directory.CreateTempSubdirectory("Respire-pwsh-");
+        try
+        {
+            return await VerifyWithCacheAsync(repositoryRoot, packagesPath, version, cache?.FullName, cancellationToken);
+        }
+        finally
+        {
+            cache?.Delete(recursive: true);
+        }
+    }
+
+    private static async Task<string> VerifyWithCacheAsync(string repositoryRoot, string packagesPath, string version,
+        string? cachePath, CancellationToken cancellationToken)
+    {
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo("pwsh")
@@ -34,6 +51,9 @@ public class VerifyCoreInternalsDependenciesModule : Module<string>
                      Path.Combine(repositoryRoot, "scripts", "Verify-CoreInternalsDependencies.ps1"),
                      "-PackagesPath", packagesPath, "-Version", version })
             process.StartInfo.ArgumentList.Add(argument);
+
+        if (cachePath is not null)
+            process.StartInfo.Environment["XDG_CACHE_HOME"] = cachePath;
 
         if (!process.Start())
             throw new InvalidOperationException("Failed to start core dependency validation.");
