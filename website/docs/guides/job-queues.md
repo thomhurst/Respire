@@ -107,10 +107,20 @@ the earlier stream ID even if an operator has since deleted that entry.
 
 Use `Extend` to renew the winning enqueue's window on each duplicate:
 
+<!-- doc-test-tail-declaration: split-before=public sealed record EmailJob -->
 ```csharp
+using System.Text.Json;
+using Respire;
+using Respire.Streaming;
+
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var queue = new RespireJobQueue<EmailJob>(client, "email",
+    job => JsonSerializer.SerializeToUtf8Bytes(job));
 await queue.EnqueueAsync(RespireJobDeduplicationMode.Extend,
     "email:customer-42", new EmailJob("customer@example.com"),
     deduplicationWindow: TimeSpan.FromMinutes(10));
+
+public sealed record EmailJob(string Recipient);
 ```
 
 For scheduled jobs, set `RespireJobEnqueueOptions.DeduplicationMode` to
